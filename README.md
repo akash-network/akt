@@ -1,10 +1,20 @@
 # `akt`: Akash CLI
 
-## Gettng Started
+## Workflow
 
-### Linux
-### OSX
-### Windows
+```sh
+# create global account
+akt account create main
+
+# initialize environment
+akt init .
+
+akt deploy create foo \
+    --template web --template-args "image=nginx" \
+    --bid-selection interactive
+
+akt deploy status foo
+```
 
 ## Commands
 
@@ -12,26 +22,19 @@
 
 Initialize a local configuration directory.
 
-Default directory at "$PWD/.akash"
+Default directory at "$PWD/.akt"
 
 ### `akt account`
 
 Manage accounts.
 
 #### `akt account create <name>`
-
-|Argument|Required?|Description|
-|---|---|---|
-|`--account`|No|Use given account instead of default.|
-|`--network`|No|Use given network instead of default.|
-|`--template`|No|Use given template.|
-|`--template-args`|No|Use given template arguments.|
-
-
 #### `akt account set-default <name>`
 #### `akt account list`
 
 ### `akt network`
+#### `akt network create`
+#### `akt network list`
 
 ### `akt sdl`
 
@@ -47,6 +50,14 @@ Manage accounts.
 ### `akt deploy`
 
 #### `akt deploy create <name>`
+
+|Argument|Required?|Description|
+|---|---|---|
+|`--account`|No|Use given account instead of default.|
+|`--network`|No|Use given network instead of default.|
+|`--template`|No|Use given template.|
+|`--template-args`|No|Use given template arguments.|
+
 #### `akt deploy status <name>`
 #### `akt deploy destroy <name>`
 #### `akt deploy list`
@@ -59,28 +70,6 @@ Escape hatch to low-level cosmos transactions.
 
 Escape hatch to low-level cosmos queries.
 
-
-## Workflow
-
-### Initialize
-
-```sh
-# create global account
-akt account create main
-
-# initialize environment
-akt init .
-
-akt sdl create foo \
-    --template web --template-args "image=nginx" \
-    [--local=false]
-
-akt deploy create foo \
-    --template web --template-args "image=nginx" \
-    --bid-selection interactive
-
-akt deploy status foo
-```
 
 ## Configuration
 
@@ -96,12 +85,6 @@ working tree: deployments.
 * `type`
 * `type-details` (directory, etc...)
 * `address` for default network prefix (akash)?
-
-### Profiles
-
-* `name`
-* `account`
-* `network`
 
 ### Networks
 
@@ -121,7 +104,7 @@ working tree: deployments.
 
 ### Directory
 
-1. if `--confdir` is set, use that.  do not use global.
+1. if `--confdir` is set, use that.
 1. `$PWD/.akt` (`--global`)
 1. closest `.git` sibling named `.akt`
 1. `~/.akt` (`--global`)
@@ -131,10 +114,3 @@ working tree: deployments.
 1. `config.yml`
 1. `deployment/$name/sdl.yml`
 1. `deployment/$name/state.yml`
-
-
-# copy deployments?
-```
-akt config deploy copy $name $name-mainnet --profile mainnet
-akt config deploy create $name-mainnet --copy $name --profile mainnet
-```
