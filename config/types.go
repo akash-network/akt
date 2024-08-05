@@ -32,3 +32,8 @@ type Endpoint struct {
 	Type string
 	URI  string
 }
+
+type LoadOptions struct {
+	Path   string
+	Global bool
+}

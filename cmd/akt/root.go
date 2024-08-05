@@ -11,6 +11,9 @@ func rootCmd() *cobra.Command {
 	}
 
 	cmd.AddCommand(loadingCmd())
+	cmd.AddCommand(initCmd)
+	cmd.AddCommand(configCmd)
+	cmd.AddCommand(accountCmd)
 
 	return cmd
 }
