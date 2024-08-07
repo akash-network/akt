@@ -1,12 +1,11 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"os"
 	"path/filepath"
-
-	"encoding/json"
 
 	"github.com/akash-network/akt/config" // Replace with the actual import path
 	"github.com/spf13/cobra"
@@ -20,20 +19,27 @@ var initCmd = &cobra.Command{
 	RunE:  runInitCmd,
 }
 
-var (
-	globalFlag  bool
-	initConfDir string
-	initOutput  string
-)
-
 func init() {
-	initCmd.Flags().BoolVar(&globalFlag, "global", false, "Initialize the global configuration at ~/.akt")
-	initCmd.Flags().StringVar(&initConfDir, "confdir", "", "Directory to create the .akt directory and copy the config file")
-	initCmd.Flags().StringVarP(&initOutput, "output", "o", "json", "Output format (json or yaml)")
+	initCmd.Flags().Bool("global", false, "Initialize the global configuration at ~/.akt")
+	initCmd.Flags().String("confdir", "", "Directory to create the .akt directory and copy the config file")
+	initCmd.Flags().StringP("output", "o", "json", "Output format (json or yaml)")
 }
 
 func runInitCmd(cmd *cobra.Command, args []string) error {
 	fmt.Println("Starting init command")
+
+	globalFlag, err := cmd.Flags().GetBool("global")
+	if err != nil {
+		return err
+	}
+	initConfDir, err := cmd.Flags().GetString("confdir")
+	if err != nil {
+		return err
+	}
+	initOutput, err := cmd.Flags().GetString("output")
+	if err != nil {
+		return err
+	}
 
 	// Determine the source configuration file path
 	var sourceConfigFile string

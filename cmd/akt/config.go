@@ -15,19 +15,26 @@ var configCmd = &cobra.Command{
 	RunE:  runConfigCmd,
 }
 
-var (
-	confDir  string
-	noGlobal bool
-	output   string
-)
-
 func init() {
-	configCmd.Flags().StringVar(&confDir, "confdir", "", "Use an explicit directory instead of auto-discovered path")
-	configCmd.Flags().BoolVar(&noGlobal, "no-global", false, "Do not include global ~/.akt configuration")
-	configCmd.Flags().StringVarP(&output, "output", "o", "json", "Output format (json or yaml)")
+	configCmd.Flags().String("confdir", "", "Use an explicit directory instead of auto-discovered path")
+	configCmd.Flags().Bool("no-global", false, "Do not include global ~/.akt configuration")
+	configCmd.Flags().StringP("output", "o", "json", "Output format (json or yaml)")
 }
 
 func runConfigCmd(cmd *cobra.Command, args []string) error {
+	confDir, err := cmd.Flags().GetString("confdir")
+	if err != nil {
+		return err
+	}
+	noGlobal, err := cmd.Flags().GetBool("no-global")
+	if err != nil {
+		return err
+	}
+	output, err := cmd.Flags().GetString("output")
+	if err != nil {
+		return err
+	}
+
 	opts := config.DefaultLoadOptions()
 	if confDir != "" {
 		opts.Path = confDir

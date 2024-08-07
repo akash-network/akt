@@ -20,21 +20,20 @@ var accountCmd = &cobra.Command{
 	Short: "Manage accounts",
 }
 
-var (
-	accountName   string
-	accountGlobal bool
-	accountType   string
-)
-
 func init() {
 	accountCmd.AddCommand(createAccountCmd)
 	accountCmd.AddCommand(listAccountsCmd)
 
-	createAccountCmd.Flags().BoolVar(&accountGlobal, "global", true, "Create a global account")
-	createAccountCmd.Flags().StringVar(&accountType, "type", keyring.BackendTest, "Use the given keyring backend")
+	createAccountCmd.Flags().Bool("global", true, "Create a global account")
+	createAccountCmd.Flags().String("type", keyring.BackendTest, "Use the given keyring backend")
 
-	listAccountsCmd.Flags().BoolVar(&accountGlobal, "global", true, "List global accounts")
-	listAccountsCmd.Flags().StringVar(&accountType, "type", keyring.BackendTest, "Use the given keyring backend")
+	listAccountsCmd.Flags().Bool("global", true, "List global accounts")
+	listAccountsCmd.Flags().String("type", keyring.BackendTest, "Use the given keyring backend")
+
+	// Set Bech32 prefix for Akash
+	config := sdk.GetConfig()
+	config.SetBech32PrefixForAccount("akash", "akashpub")
+	config.Seal()
 }
 
 var createAccountCmd = &cobra.Command{
@@ -45,7 +44,15 @@ var createAccountCmd = &cobra.Command{
 }
 
 func runCreateAccountCmd(cmd *cobra.Command, args []string) error {
-	accountName = args[0]
+	accountName := args[0]
+	accountGlobal, err := cmd.Flags().GetBool("global")
+	if err != nil {
+		return err
+	}
+	accountType, err := cmd.Flags().GetString("type")
+	if err != nil {
+		return err
+	}
 
 	keyringDir := getKeyringDir(accountGlobal)
 	interfaceRegistry := types.NewInterfaceRegistry()
@@ -97,6 +104,15 @@ var listAccountsCmd = &cobra.Command{
 }
 
 func runListAccountsCmd(cmd *cobra.Command, args []string) error {
+	accountGlobal, err := cmd.Flags().GetBool("global")
+	if err != nil {
+		return err
+	}
+	accountType, err := cmd.Flags().GetString("type")
+	if err != nil {
+		return err
+	}
+
 	keyringDir := getKeyringDir(accountGlobal)
 	interfaceRegistry := types.NewInterfaceRegistry()
 	std.RegisterInterfaces(interfaceRegistry)
