@@ -10,10 +10,9 @@ func rootCmd() *cobra.Command {
 		Use: "akt",
 	}
 
-	cmd.AddCommand(loadingCmd())
-	cmd.AddCommand(initCmd)
-	cmd.AddCommand(configCmd)
-	cmd.AddCommand(accountCmd)
+	cmd.AddCommand(initCmd())
+	cmd.AddCommand(configCmd())
+	cmd.AddCommand(accountCmd())
 
 	return cmd
 }

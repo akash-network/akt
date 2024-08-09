@@ -15,35 +15,48 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var accountCmd = &cobra.Command{
-	Use:   "account",
-	Short: "Manage accounts",
+func accountCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "account",
+		Short: "Manage accounts",
+	}
+
+	cmd.AddCommand(createAccountCmd())
+	cmd.AddCommand(listAccountsCmd())
+
+	return cmd
 }
 
-func init() {
-	accountCmd.AddCommand(createAccountCmd)
-	accountCmd.AddCommand(listAccountsCmd)
+func createAccountCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "create <name>",
+		Short: "Create a new account",
+		Args:  cobra.ExactArgs(1),
+		RunE:  runCreateAccountCmd,
+	}
 
-	createAccountCmd.Flags().Bool("global", true, "Create a global account")
-	createAccountCmd.Flags().String("type", keyring.BackendTest, "Use the given keyring backend")
+	cmd.Flags().Bool("global", true, "Create a global account")
+	cmd.Flags().String("type", keyring.BackendTest, "Use the given keyring backend")
 
-	listAccountsCmd.Flags().Bool("global", true, "List global accounts")
-	listAccountsCmd.Flags().String("type", keyring.BackendTest, "Use the given keyring backend")
-
-	// Set Bech32 prefix for Akash
-	config := sdk.GetConfig()
-	config.SetBech32PrefixForAccount("akash", "akashpub")
-	config.Seal()
+	return cmd
 }
 
-var createAccountCmd = &cobra.Command{
-	Use:   "create <name>",
-	Short: "Create a new account",
-	Args:  cobra.ExactArgs(1),
-	RunE:  runCreateAccountCmd,
+func listAccountsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "list",
+		Short: "List current accounts",
+		RunE:  runListAccountsCmd,
+	}
+
+	cmd.Flags().Bool("global", true, "List global accounts")
+	cmd.Flags().String("type", keyring.BackendTest, "Use the given keyring backend")
+
+	return cmd
 }
 
 func runCreateAccountCmd(cmd *cobra.Command, args []string) error {
+	setBech32PrefixForAkash()
+
 	accountName := args[0]
 	accountGlobal, err := cmd.Flags().GetBool("global")
 	if err != nil {
@@ -97,13 +110,9 @@ func runCreateAccountCmd(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-var listAccountsCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List current accounts",
-	RunE:  runListAccountsCmd,
-}
-
 func runListAccountsCmd(cmd *cobra.Command, args []string) error {
+	setBech32PrefixForAkash()
+
 	accountGlobal, err := cmd.Flags().GetBool("global")
 	if err != nil {
 		return err
@@ -149,4 +158,10 @@ func getKeyringDir(global bool) string {
 		return filepath.Join(homeDir, ".akash")
 	}
 	return "./.akash"
+}
+
+func setBech32PrefixForAkash() {
+	config := sdk.GetConfig()
+	config.SetBech32PrefixForAccount("akash", "akashpub")
+	config.Seal()
 }

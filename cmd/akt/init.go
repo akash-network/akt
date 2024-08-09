@@ -7,22 +7,24 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/akash-network/akt/config" // Replace with the actual import path
+	"github.com/akash-network/akt/config"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v2"
 )
 
-var initCmd = &cobra.Command{
-	Use:   "init [directory]",
-	Short: "Initialize configuration",
-	Args:  cobra.MaximumNArgs(1),
-	RunE:  runInitCmd,
-}
+func initCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "init [directory]",
+		Short: "Initialize configuration",
+		Args:  cobra.MaximumNArgs(1),
+		RunE:  runInitCmd,
+	}
 
-func init() {
-	initCmd.Flags().Bool("global", false, "Initialize the global configuration at ~/.akt")
-	initCmd.Flags().String("confdir", "", "Directory to create the .akt directory and copy the config file")
-	initCmd.Flags().StringP("output", "o", "json", "Output format (json or yaml)")
+	cmd.Flags().Bool("global", false, "Initialize the global configuration at ~/.akt")
+	cmd.Flags().String("confdir", "", "Directory to create the .akt directory and copy the config file")
+	cmd.Flags().StringP("output", "o", "json", "Output format (json or yaml)")
+
+	return cmd
 }
 
 func runInitCmd(cmd *cobra.Command, args []string) error {
