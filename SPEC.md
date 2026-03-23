@@ -1237,6 +1237,8 @@ The sync engine tracks all accounts present in the current context's keyring. Wh
 
 ## 6. TUI Specification
 
+The TUI incorporates the real-time monitoring functionality of [`aktop`](https://github.com/cloud-j-luna/aktop) -- a community-built terminal UI for Akash consensus and provider monitoring. The consensus view, validator voting view, provider fleet monitor, and governance parameters view are derived from `aktop` and integrated as first-class views in the `akt` TUI.
+
 ### 6.1 Application Shell Layout
 
 ```
@@ -1470,7 +1472,199 @@ Navigation Stack Example:
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### 6.3.8 Additional Views
+#### 6.3.8 Consensus Monitor View (from aktop)
+
+Real-time consensus state monitoring. Polls the RPC `/consensus_state` endpoint at a configurable interval (default 1s).
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  akt  Context: mainnet > Consensus                                           │
+├──────────────────────────────────────────────────────────────────────────────┤
+│  Consensus State                                                             │
+│                                                                              │
+│  Height:       18,234,567              Round:     0                          │
+│  Step:         Precommit               Elapsed:   1.2s                       │
+│  Proposer:     akash1abc...xyz (idx 42)                                      │
+│──────────────────────────────────────────────────────────────────────────────│
+│  Vote Progress                                                               │
+│                                                                              │
+│  Prevotes:    ████████████████████████████░░░░░░░░░░░░  67.2%  (71.3M/106.1M)│
+│  Precommits:  ██████████████████████████████████░░░░░░░  82.1%  (87.1M/106.1M)│
+│──────────────────────────────────────────────────────────────────────────────│
+│  Validator Votes (prevotes)                                                  │
+│                                                                              │
+│  ●●●●●●●●●●●●●○●●●●●●●●●○○●●●●●●●●●●●●●●●●●●●●●●●●○                       │
+│  ●●●●●●●○●●●●●●●●●●●●●●●●●●●●●●●○●●●●●●●●●●●●●●●●●●                       │
+│                                                                              │
+│  ● voted (89)  ○ not voted (11)                                              │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│  <r> Refresh  <2> Validators  <3> Provider Monitor  <?> Help                │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Data sources**:
+- `GET {rpc}/consensus_state` -- Round state, vote bit arrays, proposer info
+- `GET {rpc}/validators?per_page=100` -- Validator set (cached per session)
+
+**Displayed data**:
+- Height (with thousand separators), Round, Step (human-readable: NewHeight, NewRound, Propose, Prevote, PrevoteWait, Precommit, PrecommitWait, Commit)
+- Elapsed time since round start
+- Proposer address (truncated) and index
+- Prevote/Precommit progress bars: `█`/`░` (40 chars wide), percentage (green if >= 66.7%, yellow otherwise), power fraction
+- Validator vote grid: `●` (voted, green) / `○` (not voted, muted), line-wrapped to terminal width
+
+**Refresh interval**: Configurable, default 1s. Supports fast mode (250ms).
+
+#### 6.3.9 Validator Voting View (from aktop)
+
+Detailed validator list with real-time vote status.
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  akt  Context: mainnet > Validators (Voting)                                 │
+├──────────────────────────────────────────────────────────────────────────────┤
+│  Consensus: Height 18,234,567  Round 0  Step Precommit  Elapsed 1.2s        │
+│                                                                              │
+│  Prevotes:    ████████████████████████████░░░░░░░░░░░░  67.2%  (71.3M/106.1M)│
+│  Precommits:  ██████████████████████████████████░░░░░░░  82.1%  (87.1M/106.1M)│
+│──────────────────────────────────────────────────────────────────────────────│
+│     #   VALIDATOR                               POWER      PREVOTE  PRECOMMIT│
+│  *  1   Forbole                                 8.7M         ✓        ✓      │
+│     2   Polkachu                                6.5M         ✓        ✓      │
+│>    3   Cosmostation                            5.9M         ✓        ✗      │
+│     4   Figment                                 4.2M         ✗        ✗      │
+│     5   Chorus One                              3.8M         ✓        ✓      │
+│     ...                                                                      │
+│                                                                              │
+│  Showing 1-25 of 100 (j/k to scroll)                                        │
+├──────────────────────────────────────────────────────────────────────────────┤
+│  <1> Consensus  <j/k> Scroll  <g/G> Top/Bottom  <r> Refresh  <?> Help       │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Columns**:
+- Proposer indicator: `*` (yellow bold) for current proposer
+- Index: validator index in the set
+- Validator: Moniker (resolved from consensus pubkey via `/cosmos/staking/v1beta1/validators`; emoji-stripped; cached in `~/.config/akt/cache/monikers.json`)
+- Voting Power: formatted as K/M/B
+- Prevote: `✓` (green) or `✗` (red)
+- Precommit: `✓` (green) or `✗` (red)
+
+**Actions**: j/k scroll, g/G jump to top/bottom, r refresh.
+
+#### 6.3.10 Provider Fleet Monitor View (from aktop)
+
+Real-time monitoring of all Akash providers -- version distribution, resource utilization, and health status.
+
+**Provider List Sub-View**:
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  akt  Context: mainnet > Provider Monitor                                    │
+├──────────────────────────────────────────────────────────────────────────────┤
+│  Scanning providers... 142/247 checked, 98 online  ████████████████░░░░ 57% │
+│──────────────────────────────────────────────────────────────────────────────│
+│  Provider Version Distribution                                               │
+│                                                                              │
+│  ► 0.6.4        ●●●●●●●●●●●●●●●●●●●●●●●○○○○○○○○○○○  62  63.3%             │
+│    0.6.3        ○○○○○○○○○○○●●●●●●●●○○○○○○○○○○○○○○○  18  18.4%             │
+│    0.6.2        ○○○○○○○○○○○○○○○○○●●●●●○○○○○○○○○○○○  10  10.2%             │
+│    0.6.1-rc2   ○○○○○○○○○○○○○○○○○○○○●●●○○○○○○○○○○○   8   8.2%             │
+│                                     h/l: select version                      │
+│──────────────────────────────────────────────────────────────────────────────│
+│  Providers (98 online, showing v0.6.4: 62)                                   │
+│                                                                              │
+│     #   URL                                VERSION      CPU       MEMORY    GPU│
+│  >  1   provider1.akash.network            0.6.4     42/64     128/256Gi  4 H100│
+│     2   provider2.akash.network            0.6.4     18/32      64/128Gi  -  │
+│     3   provider3.example.com              0.6.4    120/256    512/1024Gi  8 A100│
+│     ...                                                                      │
+│  Showing 1-20 of 62 (j/k scroll, Enter detail)                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│  <Enter> Detail  <h/l> Version  <j/k> Scroll  <r> Re-scan  <?> Help        │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Provider Detail Sub-View** (Enter on a provider):
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  akt  Context: mainnet > Provider Monitor > provider1.akash.network          │
+├──────────────────────────────────────────────────────────────────────────────┤
+│  Provider Info                                                               │
+│  Name:     Equinix Dallas                                                    │
+│  URL:      provider1.akash.network                                           │
+│  Version:  0.6.4                                                             │
+│  Location: US                                                                │
+│  CPU:      42/64 cores           Memory: 128/256 Gi                          │
+│──────────────────────────────────────────────────────────────────────────────│
+│  Nodes (4 nodes, 12 GPUs total)                                              │
+│                                                                              │
+│  NODE                 CPU          MEMORY           GPU                      │
+│  node-gpu-01          8/16         32/64 Gi         2/4 NVIDIA H100 (80Gi)  │
+│  node-gpu-02          8/16         32/64 Gi         2/4 NVIDIA H100 (80Gi)  │
+│  node-cpu-01         12/16         32/64 Gi         -                        │
+│  node-cpu-02         14/16         32/64 Gi         -                        │
+│                                                                              │
+├──────────────────────────────────────────────────────────────────────────────┤
+│  <Esc> Back  <j/k> Scroll  <r> Refresh  <?> Help                           │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Data sources**:
+- On-chain provider list: ABCI query via RPC for `akash.provider.v1beta4.Query/Providers`
+- Per-provider health check: gRPC on port 8444 (preferred, includes GPU model info), REST `/status` + `/version` (fallback)
+- Active leases: REST `/akash/market/v1beta5/leases/list?filters.state=active` (for priority scheduling)
+
+**Provider cache** (stored at `~/.config/akt/cache/providers.json`):
+- Smart scheduling: online providers checked every 1m, recently offline every 5m, long-term offline every 6h
+- Priority queue: unchecked first, then online, then recently offline, then long-term offline
+- Max 10 concurrent provider checks
+- Cache saved to disk every 30s
+- Chain re-sync (full provider list refresh) every 10m
+
+**Version distribution**: Versions sorted newest-first (semver-aware, handles `-rc` suffixes). Dot visualization with `●` for selected version, `○` for others.
+
+**Resource display**: CPU in cores (millicores/1000), Memory in Mi/Gi/Ti (binary units), GPU with model name and count.
+
+#### 6.3.11 Governance Parameters View (from aktop)
+
+Module-by-module governance parameter browsing.
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  akt  Context: mainnet > Governance Params                                   │
+├──────────────────────────────────────────────────────────────────────────────┤
+│  Modules          │  Parameters: staking                                     │
+│                   │                                                          │
+│    gov            │  {                                                       │
+│    mint           │    "unbonding_time": "1814400s",                         │
+│  ▶ staking        │    "max_validators": 100,                               │
+│    slashing       │    "max_entries": 7,                                     │
+│    distribution   │    "historical_entries": 10000,                          │
+│    auth           │    "bond_denom": "uakt",                                │
+│    bank           │    "min_commission_rate": "0.000000000000000000"          │
+│    deployment     │  }                                                       │
+│    market         │                                                          │
+│    transfer       │                                                          │
+│    ibc            │                                                          │
+│    crisis         │                                                          │
+│                   │                                                          │
+├──────────────────────────────────────────────────────────────────────────────┤
+│  <j/k> Module  <h/l> Scroll params  <r> Refresh  <?> Help                   │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Data sources**:
+- Direct module endpoints: `/cosmos/gov/v1beta1/params/voting`, `/cosmos/mint/v1beta1/params`, etc.
+- Generic params subspace: `/cosmos/params/v1beta1/subspaces` + `/cosmos/params/v1beta1/params?subspace=...&key=...`
+
+**Modules displayed**: gov, mint, staking, slashing, distribution, auth, bank, deployment, market, transfer, ibc, crisis.
+
+**Refresh interval**: 5 minutes.
+
+#### 6.3.12 Additional Views
 
 The following views follow the same list/detail pattern as above:
 
@@ -1578,6 +1772,13 @@ Transaction actions (close, update, delegate, vote, etc.) show a confirmation di
 | `d` | Validator detail | Delegate |
 | `u` | Validator detail | Undelegate |
 | `r` | Validator detail | Redelegate |
+| `h`, `Left` | Provider monitor | Select previous version |
+| `l`, `Right` | Provider monitor | Select next version |
+| `Enter` | Provider monitor list | Open provider detail (node list, GPU info) |
+| `Esc` | Provider monitor detail | Back to provider list |
+| `h`, `Left` | Governance params | Scroll params left/up |
+| `l`, `Right` | Governance params | Scroll params right/down |
+| `r` | Consensus/Validator/Provider monitor | Manual refresh |
 
 #### Keybinding Configuration
 
@@ -1641,18 +1842,34 @@ tui:
 
 ```
 App (root model)
-├── Header           (component: context info, sync status, block height)
-├── Navigation       (manages view stack, breadcrumbs)
-│   ├── Dashboard    (home view)
-│   ├── ResourceView (generic, parameterized by resource type)
-│   │   ├── ResourceTable    (bubbles/table with sort, filter, pagination)
-│   │   └── DetailPane       (bubbles/viewport with YAML/JSON toggle)
-│   ├── LogViewer    (bubbles/viewport with auto-scroll, service filter)
+├── Header              (component: context info, sync status, block height)
+├── Navigation          (manages view stack, breadcrumbs)
+│   ├── Dashboard       (home view)
+│   ├── ResourceView    (generic, parameterized by resource type)
+│   │   ├── ResourceTable     (bubbles/table with sort, filter, pagination)
+│   │   └── DetailPane        (bubbles/viewport with YAML/JSON toggle)
+│   ├── ConsensusView   (from aktop: real-time consensus state)
+│   │   ├── ConsensusHeader   (height, round, step, elapsed, proposer)
+│   │   ├── VoteProgress      (prevote/precommit progress bars with power fractions)
+│   │   └── VoteGrid          (● / ○ validator bit-array grid)
+│   ├── ValidatorVotingView  (from aktop: validator voting status)
+│   │   ├── ConsensusHeader   (compact)
+│   │   ├── VoteProgress      (compact)
+│   │   └── ValidatorTable    (scrollable: moniker, power, prevote/precommit status)
+│   ├── ProviderMonitorView  (from aktop: provider fleet health)
+│   │   ├── ScanProgress      (progress bar: X/Y checked, Z online)
+│   │   ├── VersionDist       (dot visualization per version, h/l to select)
+│   │   ├── ProviderTable     (scrollable: URL, version, CPU, memory, GPU)
+│   │   └── ProviderDetail    (sub-view: info + node list with GPU details)
+│   ├── GovernanceParamsView (from aktop: module parameter browser)
+│   │   ├── ModuleList        (left panel: selectable module list)
+│   │   └── ParamsPane        (right panel: scrollable pretty-printed JSON)
+│   ├── LogViewer       (bubbles/viewport with auto-scroll, service filter)
 │   └── ...
-├── CommandPalette   (overlay: bubbles/textinput with fuzzy list)
-├── ConfirmDialog    (overlay: transaction confirmation)
-├── HelpOverlay      (overlay: keybinding reference, bubbles/help)
-└── StatusBar        (component: shortcuts, last action, errors)
+├── CommandPalette      (overlay: bubbles/textinput with fuzzy list)
+├── ConfirmDialog       (overlay: transaction confirmation)
+├── HelpOverlay         (overlay: keybinding reference, bubbles/help)
+└── StatusBar           (component: shortcuts, last action, errors)
 ```
 
 ---
@@ -1939,12 +2156,17 @@ Error: cannot connect to RPC endpoint
 | 3.6 | Leases view | List + detail views with actions | User can browse and manage leases |
 | 3.7 | Providers view | List + detail views | User can browse providers and their attributes |
 | 3.8 | Log viewer | Streaming viewport with service filter and search | Logs stream in real-time, search works |
-| 3.9 | Command palette | Fuzzy search across resources and actions | User can quickly navigate to any resource or action |
-| 3.10 | Confirmation dialog | Transaction confirmation with fee preview | All destructive actions require confirmation |
-| 3.11 | Help overlay | Keybinding reference panel | Help shows all available actions for current view |
-| 3.12 | Live sync integration | Store updates trigger TUI re-renders | View updates within 2 seconds of chain state change |
-| 3.13 | Configurable keybindings | Config-driven key mapping | Custom keybindings work correctly |
-| 3.14 | Theme system | Dark/light themes, custom color config | Both built-in themes render correctly |
+| 3.9 | Consensus monitor (from aktop) | Real-time consensus state: height/round/step, vote progress bars, validator vote grid | Consensus state updates at configurable interval, vote percentages match chain state |
+| 3.10 | Validator voting view (from aktop) | Scrollable validator list with moniker resolution, prevote/precommit status, proposer indicator | All validators shown with correct vote status, monikers resolved and cached |
+| 3.11 | Provider fleet monitor (from aktop) | Version distribution visualization, provider health scanning with priority scheduling, per-provider detail with node-level CPU/memory/GPU | Providers scanned with smart scheduling, version distribution accurate, GPU models shown via gRPC |
+| 3.12 | Provider cache | Smart-scheduled provider cache with disk persistence | Cache persists across sessions, scheduling intervals respected (1m/5m/6h) |
+| 3.13 | Governance params view (from aktop) | Module-by-module parameter browser with pretty-printed JSON | All 12 modules' params displayed correctly |
+| 3.14 | Command palette | Fuzzy search across resources and actions | User can quickly navigate to any resource or action |
+| 3.15 | Confirmation dialog | Transaction confirmation with fee preview | All destructive actions require confirmation |
+| 3.16 | Help overlay | Keybinding reference panel | Help shows all available actions for current view |
+| 3.17 | Live sync integration | Store updates trigger TUI re-renders | View updates within 2 seconds of chain state change |
+| 3.18 | Configurable keybindings | Config-driven key mapping | Custom keybindings work correctly |
+| 3.19 | Theme system | Dark/light themes, custom color config | Both built-in themes render correctly |
 
 ### Phase 4: Extended Features
 

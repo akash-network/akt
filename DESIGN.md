@@ -9,6 +9,7 @@
 - **Unified entry point**: One binary (`akt`) for all Akash user interactions -- deployments, leases, provider queries, certificate management, governance, staking, and more.
 - **Switchable contexts**: named contexts allowing users to work across multiple networks, accounts, and environments seamlessly.
 - **Dual-mode interface**: Traditional CLI for scripting and automation, plus an interactive TUI for real-time monitoring and management.
+- **Real-time network monitoring**: Live consensus state visualization, validator voting status, and provider fleet health monitoring -- incorporating the functionality of [`aktop`](https://github.com/cloud-j-luna/aktop) directly into the TUI.
 - **Local state tracking**: A local store that tracks deployment lifecycle, syncs with chain state, and supports backup/restore.
 - **Plugin extensibility**: A plugin system for community-contributed commands and integrations.
 
@@ -26,6 +27,7 @@
 | `akash-network/node`             | Blockchain node binary (`akash`). Imports chain-sdk CLI, adds server/genesis/testnet commands.           | **Keeps** only node-operator commands: `start`, `comet`, `export`, `prepare-genesis`, `testnet`, `testnetify`, `auth jwt`. Stops exporting user-facing CLI. |
 | `akash-network/provider`         | Provider binary (`provider-services`). Imports chain-sdk CLI, adds provider gateway + operator commands. | **Keeps** only provider-operator commands: `run`, `operator *`, `tools *`, `migrate`. Stops exporting user-facing CLI.                                      |
 | `ovrclk/akt`                     | MVP CLI prototype. Config system, account/network/deploy commands.                                       | Design reference. Concepts (profiles, git-like config) evolved into the context system.                                                                     |
+| `cloud-j-luna/aktop`             | Community TUI for monitoring Akash consensus state, validator voting, and provider operations.            | Design reference and prior art for TUI. Its consensus/validator/provider monitoring views inform the TUI design. Functionality to be subsumed by `akt` TUI.  |
 | **`akash-network/akt`**          | **New.** This repository.                                                                                | The unified user CLI and TUI.                                                                                                                               |
 
 ---
@@ -47,22 +49,22 @@
 │   └───────────┘  └──────────────┘  └──────────────────────────┘    │
 ├─────────────────────────────────────────────────────────────────────┤
 │                        Core Services                                │
-│   ┌───────────┐  ┌───────────┐  ┌───────────┐  ┌──────────────┐   │
-│   │  Context  │  │  Keyring  │  │  Client   │  │  Provider    │   │
-│   │  Manager  │  │  Manager  │  │  (chain)  │  │  Gateway     │   │
-│   └───────────┘  └───────────┘  └───────────┘  └──────────────┘   │
+│   ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌───────────┐ ┌──────────┐│
+│   │ Context  │ │ Keyring  │ │ Client   │ │ Provider  │ │Consensus ││
+│   │ Manager  │ │ Manager  │ │ (chain)  │ │ Gateway   │ │ Monitor  ││
+│   └──────────┘ └──────────┘ └──────────┘ └───────────┘ └──────────┘│
 ├─────────────────────────────────────────────────────────────────────┤
 │                        Storage Layer                                │
-│   ┌───────────────────┐  ┌─────────────────┐  ┌────────────────┐   │
-│   │  Config Store     │  │  Deployment     │  │  Sync Engine   │   │
-│   │  (YAML files)     │  │  Store (bbolt)  │  │  (RPC watcher) │   │
-│   └───────────────────┘  └─────────────────┘  └────────────────┘   │
+│   ┌─────────────┐ ┌──────────────┐ ┌────────────┐ ┌─────────────┐ │
+│   │ Config      │ │ Deployment   │ │ Sync       │ │ Provider    │ │
+│   │ (YAML)      │ │ Store(bbolt) │ │ Engine     │ │ Cache       │ │
+│   └─────────────┘ └──────────────┘ └────────────┘ └─────────────┘ │
 ├─────────────────────────────────────────────────────────────────────┤
 │                        Transport Layer                              │
-│   ┌────────────┐  ┌────────────┐  ┌────────────┐                   │
-│   │  RPC       │  │  gRPC      │  │  REST/API  │                   │
-│   │  Client    │  │  Client    │  │  Client    │                   │
-│   └────────────┘  └────────────┘  └────────────┘                   │
+│   ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐  │
+│   │  RPC       │  │  gRPC      │  │  REST/API  │  │  Provider   │  │
+│   │  Client    │  │  Client    │  │  Client    │  │  gRPC/REST  │  │
+│   └────────────┘  └────────────┘  └────────────┘  └────────────┘  │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -274,6 +276,8 @@ github.com/akash-network/akt/
 │   │   │   ├── escrow.go
 │   │   │   ├── governance.go
 │   │   │   ├── validators.go
+│   │   │   ├── consensus.go            # Real-time consensus state (from aktop)
+│   │   │   ├── provider_monitor.go     # Provider fleet health monitor (from aktop)
 │   │   │   ├── wasm.go
 │   │   │   ├── oracle.go
 │   │   │   ├── bme.go
@@ -287,10 +291,14 @@ github.com/akash-network/akt/
 │   │   │   ├── command_palette.go
 │   │   │   ├── confirm_dialog.go
 │   │   │   ├── log_stream.go
+│   │   │   ├── progress_bar.go         # Progress bar component (votes, scanning)
+│   │   │   ├── vote_grid.go            # Validator vote visualization grid
 │   │   │   └── help_overlay.go
 │   │   └── messages/                    # Custom bubbletea messages
 │   │       ├── sync.go
 │   │       ├── chain.go
+│   │       ├── consensus.go            # Consensus state tick/update messages
+│   │       ├── providermon.go          # Provider scan progress messages
 │   │       └── navigation.go
 │   ├── context/                         # Context management core
 │   │   ├── manager.go                   # CRUD, switching, resolution
@@ -324,6 +332,14 @@ github.com/akash-network/akt/
 │   │   ├── engine.go                    # WebSocket subscription + event routing
 │   │   ├── reconciler.go               # State reconciliation
 │   │   └── filters.go                   # Event filtering
+│   ├── consensus/                       # Consensus state monitoring (from aktop)
+│   │   ├── monitor.go                   # Real-time consensus state polling
+│   │   ├── types.go                     # RoundState, HeightVote, ValidatorStatus
+│   │   └── parser.go                    # BitArray parsing, vote counting
+│   ├── providermon/                     # Provider fleet monitoring (from aktop)
+│   │   ├── scanner.go                   # Provider health checking (gRPC + REST)
+│   │   ├── cache.go                     # Smart-scheduled provider cache
+│   │   └── types.go                     # ProviderStatus, NodeInfo, GPUInfo
 │   ├── plugin/                          # Plugin system
 │   │   ├── discovery.go                 # Plugin path scanning
 │   │   ├── executor.go                  # Exec-based plugin runner
@@ -446,16 +462,21 @@ This replaces the MVP's manual backup-endpoint approach with transparent, automa
 
 ### Phase 3: TUI Mode
 
-**Goal**: A fully interactive terminal UI for real-time Akash management.
+**Goal**: A fully interactive terminal UI for real-time Akash management, incorporating the monitoring functionality of [`aktop`](https://github.com/cloud-j-luna/aktop).
 
 - Bubbletea application shell: header, main area, status bar
 - Navigation system: resource type selector, breadcrumb trail, back/forward
 - Resource views: deployments, leases, bids, orders, providers, certificates
 - Detail panes: YAML/JSON toggle, scrollable viewport
+- **Consensus monitor view** (from aktop): Real-time consensus state (height, round, step), prevote/precommit progress bars with voting power percentages, validator vote grid visualization (`●`/`○`)
+- **Validator voting view** (from aktop): Scrollable validator list with moniker resolution, voting power, prevote/precommit status (`✓`/`✗`), proposer indicator
+- **Provider fleet monitor view** (from aktop): Provider version distribution with dot visualization, provider health scanning with priority-based scheduling, per-provider detail with node-level CPU/memory/GPU resources, smart caching with configurable check intervals
+- **Governance parameters view** (from aktop): Module-by-module parameter browsing with pretty-printed JSON display
 - Real-time log streaming view
 - Command palette with fuzzy search
 - Transaction confirmation dialogs
 - Live sync integration (store changes reflected in TUI immediately)
+- Provider cache with smart scheduling (online: 1m, recently offline: 5m, long-term offline: 6h)
 - Configurable keybindings (vim-style defaults)
 - Theme system (light/dark, customizable colors)
 
