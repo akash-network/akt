@@ -10,12 +10,13 @@ This document is the detailed technical specification for the `akt` CLI. For arc
 2. [CLI Command Reference](#2-cli-command-reference)
 3. [Flag Specification](#3-flag-specification)
 4. [Store Specification](#4-store-specification)
-5. [Sync Engine Specification](#5-sync-engine-specification)
-6. [TUI Specification](#6-tui-specification)
-7. [Plugin System Specification](#7-plugin-system-specification)
-8. [Output Format Specification](#8-output-format-specification)
-9. [Error Handling](#9-error-handling)
-10. [Phased Implementation Plan](#10-phased-implementation-plan)
+5. [Action Log Specification](#5-action-log-specification)
+6. [Sync Engine Specification](#6-sync-engine-specification)
+7. [TUI Specification](#7-tui-specification)
+8. [Plugin System Specification](#8-plugin-system-specification)
+9. [Output Format Specification](#9-output-format-specification)
+10. [Error Handling](#10-error-handling)
+11. [Phased Implementation Plan](#11-phased-implementation-plan)
 
 ---
 
@@ -38,6 +39,8 @@ The `--home` flag overrides all of the above.
 
 ### 1.2 Config File Schema (`config.yaml`)
 
+A context is a composition of four objects: a **network** (shared), a **keyring** (shared), a **state store** (unique), and an **action log** (unique). Networks and keyrings are defined as top-level shared resources and referenced by name from contexts.
+
 ```yaml
 # ~/.config/akt/config.yaml
 
@@ -45,10 +48,11 @@ The `--home` flag overrides all of the above.
 version: 1
 
 # The currently active context
-current-context: mainnet
+current-context: prod
 
-# Named contexts -- each defines a complete environment
-contexts:
+# Named networks -- shared, can be referenced by multiple contexts
+# Instantiatable from built-in templates (mainnet, testnet, sandbox)
+networks:
   - name: mainnet
     chain-id: akashnet-2
     endpoints:
@@ -60,16 +64,8 @@ contexts:
         - https://akash-api.polkachu.com:443
       grpc:
         - grpc.akashnet.net:443
-    keyring: default                    # references a keyring definition
-    default-account: ""                 # account name or address; empty = prompt
-    fee-defaults:
-      gas: auto
-      gas-adjustment: "1.5"
-      gas-prices: "0.025uakt"
-      fees: ""                          # if set, overrides gas-prices
-    provider-defaults:
-      auth-type: jwt                    # jwt | mtls
-    store-path: ""                      # empty = <config-root>/stores/<context-name>/
+    gas-prices: "0.025uakt"
+    gas-adjustment: "1.5"
 
   - name: testnet
     chain-id: testnet-02
@@ -80,15 +76,8 @@ contexts:
         - https://api.testnet-02.aksh.pw:443
       grpc:
         - grpc.testnet-02.aksh.pw:443
-    keyring: default
-    default-account: testaccount
-    fee-defaults:
-      gas: auto
-      gas-adjustment: "1.5"
-      gas-prices: "0.025uakt"
-    provider-defaults:
-      auth-type: jwt
-    store-path: ""
+    gas-prices: "0.025uakt"
+    gas-adjustment: "1.5"
 
   - name: sandbox
     chain-id: sandbox-01
@@ -99,17 +88,23 @@ contexts:
         - https://api.sandbox-01.aksh.pw:443
       grpc:
         - grpc.sandbox-01.aksh.pw:443
-    keyring: default
-    default-account: ""
-    fee-defaults:
-      gas: auto
-      gas-adjustment: "1.5"
-      gas-prices: "0.025uakt"
-    provider-defaults:
-      auth-type: jwt
-    store-path: ""
+    gas-prices: "0.025uakt"
+    gas-adjustment: "1.5"
 
-# Keyring definitions -- global, referenced by contexts
+  - name: mainnet-custom              # Example: forked from mainnet for one context
+    chain-id: akashnet-2
+    endpoints:
+      rpc:
+        - https://my-private-rpc.example.com:443
+      api:
+        - https://my-private-api.example.com:443
+      grpc:
+        - my-private-grpc.example.com:443
+    gas-prices: "0.04uakt"
+    gas-adjustment: "2.0"
+
+# Keyring definitions -- shared, referenced by contexts
+# Adding a key to a keyring makes it available to ALL contexts using that keyring
 keyrings:
   - name: default
     backend: os                         # os | file | test | kwallet | pass
@@ -118,6 +113,35 @@ keyrings:
   - name: test-keyring
     backend: test
     dir: ""
+
+# Named contexts -- each composes a network + keyring + unique store + unique action log
+contexts:
+  - name: prod
+    network: mainnet                    # references a network definition
+    keyring: default                    # references a keyring definition
+    default-account: "alice"            # account name or address; empty = prompt
+    gas: auto                           # gas limit override (or "auto")
+    fees: ""                            # fixed fees override (overrides network gas-prices)
+    provider-defaults:
+      auth-type: jwt                    # jwt | mtls
+
+  - name: staging
+    network: testnet
+    keyring: default
+    default-account: "testaccount"
+    gas: auto
+    fees: ""
+    provider-defaults:
+      auth-type: jwt
+
+  - name: monitoring                   # read-only context, shares mainnet network
+    network: mainnet
+    keyring: default
+    default-account: ""
+    gas: auto
+    fees: ""
+    provider-defaults:
+      auth-type: jwt
 
 # TUI settings
 tui:
@@ -138,25 +162,46 @@ defaults:
   broadcast-mode: sync                  # sync | async | block
 ```
 
-### 1.3 Context Schema (Detailed)
+### 1.3 Network Schema
+
+Networks define chain connectivity. They are shared resources -- a single network definition can be referenced by multiple contexts.
+
+| Field | Type | Required | Default | Description |
+|---|---|---|---|---|
+| `name` | string | yes | -- | Unique network identifier |
+| `chain-id` | string | yes | -- | Blockchain chain ID |
+| `endpoints.rpc` | []string | yes | -- | RPC endpoint URLs (ordered by priority, failover) |
+| `endpoints.api` | []string | no | [] | REST API endpoint URLs |
+| `endpoints.grpc` | []string | no | [] | gRPC endpoint URLs |
+| `gas-prices` | string | no | `"0.025uakt"` | Default gas price for transactions |
+| `gas-adjustment` | string | no | `"1.5"` | Gas estimation multiplier (when gas=auto) |
+
+**Network sharing rules:**
+- Multiple contexts can reference the same network by name.
+- Editing a network (e.g., changing an RPC endpoint) affects all contexts that reference it.
+- When editing a network from within a context, the user is prompted:
+  - **Edit parent**: Modify the shared network definition. All contexts using it see the change.
+  - **Fork**: Create a copy of the network with a new name (e.g., `mainnet` -> `mainnet-<context>`). The current context switches to the fork. Other contexts are unaffected.
+
+**Network templates**: Built-in templates for `mainnet`, `testnet`, and `sandbox` are available via `akt network create --template <name>`. Templates populate all fields with known-good defaults.
+
+### 1.4 Context Schema
+
+Contexts compose a network, keyring, and context-specific settings. The state store and action log are implicitly created at `<config-root>/contexts/<name>/`.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
 | `name` | string | yes | -- | Unique context identifier |
-| `chain-id` | string | yes | -- | Blockchain chain ID |
-| `endpoints.rpc` | []string | yes | -- | RPC endpoint URLs (ordered by priority) |
-| `endpoints.api` | []string | no | [] | REST API endpoint URLs |
-| `endpoints.grpc` | []string | no | [] | gRPC endpoint URLs |
+| `network` | string | yes | -- | Name of network definition to use |
 | `keyring` | string | no | `"default"` | Name of keyring definition to use |
 | `default-account` | string | no | `""` | Default `--from` value (account name or bech32 address) |
-| `fee-defaults.gas` | string | no | `"auto"` | Gas limit or `"auto"` |
-| `fee-defaults.gas-adjustment` | string | no | `"1.5"` | Gas estimation multiplier (when gas=auto) |
-| `fee-defaults.gas-prices` | string | no | `"0.025uakt"` | Gas price |
-| `fee-defaults.fees` | string | no | `""` | Fixed fees (overrides gas-prices if set) |
+| `gas` | string | no | `"auto"` | Gas limit or `"auto"` (overrides network gas settings per-context) |
+| `fees` | string | no | `""` | Fixed fees (overrides network gas-prices if set) |
 | `provider-defaults.auth-type` | string | no | `"jwt"` | Provider auth: `jwt` or `mtls` |
-| `store-path` | string | no | `""` | Custom store path (default: `<root>/stores/<name>/`) |
 
-### 1.4 Keyring Schema
+### 1.5 Keyring Schema
+
+Keyrings are shared wallet storage. Adding a key to a keyring makes it immediately available to all contexts that reference that keyring.
 
 | Field | Type | Required | Default | Description |
 |---|---|---|---|---|
@@ -164,33 +209,69 @@ defaults:
 | `backend` | string | no | `"os"` | Backend type: `os`, `file`, `test`, `kwallet`, `pass` |
 | `dir` | string | no | `""` | Keyring directory (default: `<root>/keyrings/<name>/`) |
 
-### 1.5 Environment Variable Mapping
+### 1.6 Context Propagation
 
-All environment variables use the `AKT_` prefix. When set, they override the corresponding config/context value.
+The context is resolved once at application startup and propagated through the entire session as a single object that all services receive.
+
+**Resolution order** (highest priority wins):
+
+1. Command-line flags (`--context`, `--chain-id`, `--node`, `--from`, etc.)
+2. Environment variables (`AKT_CONTEXT`, `AKT_CHAIN_ID`, `AKT_NODE`, `AKT_FROM`, etc.)
+3. Context config (which references its network and keyring)
+4. Built-in defaults
+
+The resolved context is injected into every service: chain client, provider gateway, sync engine, store, action log, and TUI models.
+
+### 1.7 Live Reload
+
+The config file (`config.yaml`) is watched for changes using filesystem notifications (fsnotify) with polling fallback.
+
+**CLI mode behavior:**
+- If the config changes during a long-running command (e.g., `akt deploy`), the change is picked up for subsequent operations within that command.
+- Flags and env vars still take precedence over config values.
+- Example: If the config's RPC endpoint changes and no `--node` flag or `AKT_NODE` env var is set, subsequent queries within the session use the new endpoint.
+
+**TUI mode behavior:**
+- Config changes are detected and applied **immediately** to all subsequent actions.
+- In TUI mode, config changes override flags and env vars. This is intentional: the TUI is a long-lived session where the user expects real-time configuration to take effect.
+- The TUI header updates to reflect the new network/account state.
+- Active WebSocket connections are re-established if endpoints change.
+- A notification is shown in the status bar when config is reloaded.
+
+**What triggers a reload:**
+- Any write to `config.yaml`.
+- Network definition changes (endpoints, gas-prices, etc.) propagate to all contexts using that network.
+- Keyring changes are picked up on next key operation.
+- Context-level changes (default-account, gas, fees) apply to subsequent actions.
+
+### 1.8 Environment Variable Mapping
+
+All environment variables use the `AKT_` prefix. When set, they override the corresponding config value.
 
 | Environment Variable | Overrides | Example |
 |---|---|---|
 | `AKT_HOME` | Config root path | `/home/user/.akt` |
-| `AKT_CONTEXT` | `current-context` | `testnet` |
-| `AKT_CHAIN_ID` | `contexts[*].chain-id` | `akashnet-2` |
-| `AKT_NODE` | `contexts[*].endpoints.rpc[0]` | `https://rpc.akashnet.net:443` |
-| `AKT_GRPC_ADDR` | `contexts[*].endpoints.grpc[0]` | `grpc.akashnet.net:443` |
+| `AKT_CONTEXT` | `current-context` | `prod` |
+| `AKT_CHAIN_ID` | `networks[*].chain-id` (via context's network) | `akashnet-2` |
+| `AKT_NODE` | `networks[*].endpoints.rpc[0]` (via context's network) | `https://rpc.akashnet.net:443` |
+| `AKT_GRPC_ADDR` | `networks[*].endpoints.grpc[0]` (via context's network) | `grpc.akashnet.net:443` |
 | `AKT_FROM` | `contexts[*].default-account` | `alice` |
-| `AKT_KEYRING_BACKEND` | `keyrings[*].backend` | `os` |
-| `AKT_KEYRING_DIR` | `keyrings[*].dir` | `/path/to/keyring` |
-| `AKT_GAS` | `contexts[*].fee-defaults.gas` | `auto` |
-| `AKT_GAS_PRICES` | `contexts[*].fee-defaults.gas-prices` | `0.025uakt` |
-| `AKT_GAS_ADJUSTMENT` | `contexts[*].fee-defaults.gas-adjustment` | `1.5` |
-| `AKT_FEES` | `contexts[*].fee-defaults.fees` | `5000uakt` |
+| `AKT_KEYRING_BACKEND` | `keyrings[*].backend` (via context's keyring) | `os` |
+| `AKT_KEYRING_DIR` | `keyrings[*].dir` (via context's keyring) | `/path/to/keyring` |
+| `AKT_GAS` | `contexts[*].gas` | `auto` |
+| `AKT_GAS_PRICES` | `networks[*].gas-prices` (via context's network) | `0.025uakt` |
+| `AKT_GAS_ADJUSTMENT` | `networks[*].gas-adjustment` (via context's network) | `1.5` |
+| `AKT_FEES` | `contexts[*].fees` | `5000uakt` |
 | `AKT_BROADCAST_MODE` | `defaults.broadcast-mode` | `sync` |
 | `AKT_OUTPUT` | `defaults.output` | `json` |
 
-### 1.6 Built-in Network Presets
+### 1.9 Built-in Network Templates
 
-The `akt context create --preset <name>` command provisions a context with pre-configured values.
+The `akt network create --template <name>` command creates a network definition from a built-in template.
 
-**Preset: `mainnet`**
+**Template: `mainnet`**
 ```yaml
+name: mainnet
 chain-id: akashnet-2
 endpoints:
   rpc:
@@ -201,14 +282,13 @@ endpoints:
     - https://akash-api.polkachu.com:443
   grpc:
     - grpc.akashnet.net:443
-fee-defaults:
-  gas: auto
-  gas-adjustment: "1.5"
-  gas-prices: "0.025uakt"
+gas-prices: "0.025uakt"
+gas-adjustment: "1.5"
 ```
 
-**Preset: `testnet`**
+**Template: `testnet`**
 ```yaml
+name: testnet
 chain-id: testnet-02
 endpoints:
   rpc:
@@ -217,14 +297,13 @@ endpoints:
     - https://api.testnet-02.aksh.pw:443
   grpc:
     - grpc.testnet-02.aksh.pw:443
-fee-defaults:
-  gas: auto
-  gas-adjustment: "1.5"
-  gas-prices: "0.025uakt"
+gas-prices: "0.025uakt"
+gas-adjustment: "1.5"
 ```
 
-**Preset: `sandbox`**
+**Template: `sandbox`**
 ```yaml
+name: sandbox
 chain-id: sandbox-01
 endpoints:
   rpc:
@@ -233,10 +312,8 @@ endpoints:
     - https://api.sandbox-01.aksh.pw:443
   grpc:
     - grpc.sandbox-01.aksh.pw:443
-fee-defaults:
-  gas: auto
-  gas-adjustment: "1.5"
-  gas-prices: "0.025uakt"
+gas-prices: "0.025uakt"
+gas-adjustment: "1.5"
 ```
 
 ---
@@ -250,11 +327,18 @@ akt
 ├── context                              # Context management
 │   ├── create <name>                    # Create a new context
 │   ├── delete <name>                    # Delete a context
-│   ├── edit <name>                      # Edit context interactively
+│   ├── edit <name>                      # Edit context (fork/edit-parent for network)
 │   ├── list                             # List all contexts
-│   ├── current                          # Show active context
+│   ├── current                          # Show active context with full details
 │   ├── use <name>                       # Switch active context
-│   └── rename <old> <new>              # Rename a context
+│   ├── rename <old> <new>              # Rename a context
+│   └── log                              # View action log for current context
+├── network                              # Network management (shared resource)
+│   ├── create <name>                    # Create a new network
+│   ├── delete <name>                    # Delete a network (fails if in use)
+│   ├── edit <name>                      # Edit network definition
+│   ├── list                             # List all networks (show which contexts use each)
+│   └── show <name>                      # Show network details
 ├── keys                                 # Key management
 │   ├── add <name>                       # Add key (mnemonic, ledger, or multisig)
 │   ├── delete <name>                    # Delete key
@@ -374,20 +458,13 @@ akt
 │   │   ├── denom-metadata
 │   │   └── send-enabled [denom1...]
 │   ├── deployment
-│   │   ├── list
-│   │   ├── get
+│   │   ├── deployments [--owner] [--dseq] [--state]
 │   │   ├── group get
 │   │   └── params
 │   ├── market
-│   │   ├── order
-│   │   │   ├── list
-│   │   │   └── get
-│   │   ├── bid
-│   │   │   ├── list
-│   │   │   └── get
-│   │   ├── lease
-│   │   │   ├── list
-│   │   │   └── get
+│   │   ├── orders [--owner] [--dseq] [--gseq] [--oseq] [--state]
+│   │   ├── bids [--owner] [--dseq] [--gseq] [--oseq] [--provider] [--state]
+│   │   ├── leases [--owner] [--dseq] [--gseq] [--oseq] [--provider] [--state]
 │   │   └── params
 │   ├── provider
 │   │   ├── list
@@ -496,7 +573,7 @@ akt
 │   ├── list
 │   └── remove <name>
 ├── events                               # Live blockchain event streaming
-├── ui                                   # Launch TUI mode
+│                                        # (no subcommand launches TUI mode)
 ├── version                              # Version information
 └── completion                           # Shell completion scripts
 ```
@@ -505,64 +582,194 @@ akt
 
 #### `akt context create <name>`
 
-Create a new named context.
+Create a new named context. A context references a network and keyring by name.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--preset` | string | `""` | Use built-in preset: `mainnet`, `testnet`, `sandbox` |
-| `--chain-id` | string | `""` | Chain ID (required if no preset) |
-| `--rpc` | []string | `[]` | RPC endpoint URLs |
-| `--api` | []string | `[]` | REST API endpoint URLs |
-| `--grpc` | []string | `[]` | gRPC endpoint URLs |
+| `--network` | string | `""` | Network name to use (required; must exist) |
 | `--keyring` | string | `"default"` | Keyring name to use |
 | `--default-account` | string | `""` | Default account name |
-| `--gas-prices` | string | `"0.025uakt"` | Default gas prices |
-| `--set-default` | bool | `false` | Set as current context after creation |
+| `--gas` | string | `"auto"` | Gas limit override |
+| `--fees` | string | `""` | Fixed fees override |
+| `--set-current` | bool | `false` | Set as current context after creation |
 
 **Examples:**
 ```bash
-# Create from preset
-akt context create mainnet --preset mainnet --set-default
+# Create context using an existing network
+akt context create prod --network mainnet --default-account alice --set-current
 
-# Create custom
-akt context create local --chain-id localnet-1 --rpc http://localhost:26657 --keyring test-keyring
+# Create context for monitoring (no default account)
+akt context create monitoring --network mainnet
+
+# Create context for testnet
+akt context create staging --network testnet --keyring test-keyring --default-account testaccount
 ```
 
 #### `akt context use <name>`
 
-Switch the active context.
+Switch the active context. This changes which network, keyring, store, and action log are used for all subsequent operations.
 
 ```bash
-akt context use testnet
+akt context use staging
 ```
 
 #### `akt context list`
 
-List all configured contexts. Marks the current context with `*`.
+List all configured contexts. Marks the current context with `*`. Shows which network and keyring each context references.
 
 ```bash
 $ akt context list
-  NAME       CHAIN-ID      RPC                           DEFAULT-ACCOUNT
-* mainnet    akashnet-2    rpc.akashnet.net:443          alice
-  testnet    testnet-02    rpc.testnet-02.aksh.pw:443    testaccount
-  sandbox    sandbox-01    rpc.sandbox-01.aksh.pw:443
+  NAME          NETWORK     KEYRING     DEFAULT-ACCOUNT   CHAIN-ID
+* prod          mainnet     default     alice             akashnet-2
+  staging       testnet     test-kr     testaccount       testnet-02
+  monitoring    mainnet     default                       akashnet-2
 ```
 
 #### `akt context current`
 
-Print the current context name and details.
+Print the current context name and full details (resolved network, keyring, store path, action log path, and all effective settings).
+
+```bash
+$ akt context current
+Context:         prod
+Network:         mainnet
+  Chain ID:      akashnet-2
+  RPC:           https://rpc.akashnet.net:443 (+1 backup)
+  API:           https://api.akashnet.net:443 (+1 backup)
+  gRPC:          grpc.akashnet.net:443
+  Gas Prices:    0.025uakt
+  Gas Adj:       1.5
+Keyring:         default (backend: os)
+Default Account: alice
+Gas:             auto
+Fees:            (none)
+Provider Auth:   jwt
+Store:           ~/.config/akt/contexts/prod/store/
+Action Log:      ~/.config/akt/contexts/prod/actions.log
+```
 
 #### `akt context edit <name>`
 
-Opens the context for editing. In interactive mode, presents a form. In non-interactive mode, accepts `--chain-id`, `--rpc`, `--api`, `--grpc`, `--keyring`, `--default-account`, `--gas-prices` flags to update specific fields.
+Edit context-level settings. For network-level changes (endpoints, gas-prices), prompts the user to choose:
+- **Edit parent network**: Modify the shared network. Changes apply to all contexts using it.
+- **Fork network**: Create a private copy of the network for this context only.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--network` | string | `""` | Switch to a different network |
+| `--keyring` | string | `""` | Switch to a different keyring |
+| `--default-account` | string | `""` | Change default account |
+| `--gas` | string | `""` | Change gas setting |
+| `--fees` | string | `""` | Change fees setting |
+| `--fork-network` | bool | `false` | Force fork when editing network fields |
+
+```bash
+# Change default account
+akt context edit prod --default-account bob
+
+# Switch to a different network
+akt context edit staging --network sandbox
+
+# Edit the network's RPC (prompts: edit parent or fork?)
+akt context edit prod --rpc https://my-private-rpc:443
+```
 
 #### `akt context delete <name>`
 
-Delete a context. Prompts for confirmation unless `--yes` is passed. Cannot delete the current context (switch first).
+Delete a context. Prompts for confirmation unless `--yes` is passed. Cannot delete the current context (switch first). Removes the context's store and action log.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--yes` | bool | `false` | Skip confirmation |
+| `--keep-data` | bool | `false` | Delete context config but keep store and action log on disk |
 
 #### `akt context rename <old> <new>`
 
-Rename a context. Updates `current-context` if the renamed context was active.
+Rename a context. Updates `current-context` if the renamed context was active. Renames the context data directory.
+
+#### `akt context log`
+
+View the action log for the current context.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--context` | string | current | Context to view log for |
+| `--limit` | int | `50` | Number of entries to show |
+| `--type` | string | `""` | Filter by action type: `tx`, `query`, `workflow`, `error` |
+| `--since` | string | `""` | Show entries since timestamp or duration (e.g., `1h`, `2024-01-01`) |
+
+```bash
+$ akt context log --limit 5
+  TIME                    TYPE      SUMMARY                                    STATUS
+  2026-03-23 10:15:32     tx        deployment create (dseq: 12345)            success
+  2026-03-23 10:15:45     tx        market lease create (dseq: 12345)          success
+  2026-03-23 10:15:50     workflow  send-manifest -> akash1prov1...            success
+  2026-03-23 10:20:01     query     deployment deployments --dseq 12345        success
+  2026-03-23 10:25:00     tx        deployment close (dseq: 12345)             success
+```
+
+### 2.2.1 Network Commands
+
+#### `akt network create <name>`
+
+Create a new network definition.
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--template` | string | `""` | Use built-in template: `mainnet`, `testnet`, `sandbox` |
+| `--chain-id` | string | `""` | Chain ID (required if no template) |
+| `--rpc` | []string | `[]` | RPC endpoint URLs |
+| `--api` | []string | `[]` | REST API endpoint URLs |
+| `--grpc` | []string | `[]` | gRPC endpoint URLs |
+| `--gas-prices` | string | `"0.025uakt"` | Default gas prices |
+| `--gas-adjustment` | string | `"1.5"` | Gas estimation multiplier |
+
+**Examples:**
+```bash
+# Create from built-in template
+akt network create mainnet --template mainnet
+
+# Create custom network
+akt network create local --chain-id localnet-1 --rpc http://localhost:26657
+
+# Create all standard networks at once
+akt network create mainnet --template mainnet && \
+akt network create testnet --template testnet && \
+akt network create sandbox --template sandbox
+```
+
+#### `akt network edit <name>`
+
+Edit a network definition. Changes apply to all contexts using this network.
+
+```bash
+# Add a backup RPC endpoint
+akt network edit mainnet --rpc https://rpc.akashnet.net:443,https://my-backup-rpc:443
+
+# Change gas prices
+akt network edit mainnet --gas-prices 0.04uakt
+```
+
+#### `akt network delete <name>`
+
+Delete a network definition. Fails if any context references it. Use `--force` to delete anyway (affected contexts become invalid).
+
+#### `akt network list`
+
+List all networks and which contexts reference each.
+
+```bash
+$ akt network list
+  NAME              CHAIN-ID       RPC                          USED BY
+  mainnet           akashnet-2     rpc.akashnet.net:443         prod, monitoring
+  testnet           testnet-02     rpc.testnet-02.aksh.pw:443   staging
+  sandbox           sandbox-01     rpc.sandbox-01.aksh.pw:443
+  mainnet-custom    akashnet-2     my-private-rpc:443           (none)
+```
+
+#### `akt network show <name>`
+
+Show full network details.
 
 ### 2.3 Workflow Commands
 
@@ -855,18 +1062,19 @@ Used by deployment, market, and escrow commands. These compose hierarchically: L
 | `--oseq` | uint32 | `1` | Order sequence number |
 | `--provider` | string | `""` | Provider address |
 
-### 3.6 Deployment Filter Flags
+### 3.6 Deployment Query Flags
 
-Used by `query deployment list`.
+Used by `query deployment deployments`. When `--dseq` is provided, returns a single deployment (replaces the old `get` subcommand). When omitted, returns a filtered list (replaces the old `list` subcommand).
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--owner` | string | `""` | Filter by owner |
-| `--state` | string | `""` | Filter by state |
+| `--owner` | string | context default | Filter by owner (defaults to current account if set) |
+| `--dseq` | uint64 | `0` | Get specific deployment by sequence (0 = list all matching) |
+| `--state` | string | `""` | Filter by state: `active`, `closed`, or empty for all |
 
-### 3.7 Market Filter Flags
+### 3.7 Market Query Flags
 
-Used by `query market order/bid/lease list` commands.
+Used by `query market orders`, `query market bids`, and `query market leases`. When resource ID flags are fully specified (e.g., `--dseq` + `--gseq` + `--oseq` for an order), returns a single record. When partially specified or omitted, returns a filtered list.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
@@ -874,7 +1082,7 @@ Used by `query market order/bid/lease list` commands.
 | `--dseq` | uint64 | `0` | Filter by deployment sequence |
 | `--gseq` | uint32 | `0` | Filter by group sequence |
 | `--oseq` | uint32 | `0` | Filter by order sequence |
-| `--provider` | string | `""` | Filter by provider |
+| `--provider` | string | `""` | Filter by provider (bids and leases only) |
 | `--state` | string | `""` | Filter by state |
 
 ---
@@ -1156,13 +1364,120 @@ bids:
 
 ---
 
-## 5. Sync Engine Specification
+## 5. Action Log Specification
 
-### 5.1 Overview
+The action log is an append-only log unique to each context. It records every user action performed within the context, providing an audit trail and enabling troubleshooting.
+
+### 5.1 Action Log Location
+
+Each context has its own action log at:
+```
+<config-root>/contexts/<context-name>/actions.log
+```
+
+### 5.2 Action Types
+
+| Type | Description | Logged Fields |
+|---|---|---|
+| `tx` | A blockchain transaction | Msg type, msg body, tx hash, height, gas used, result code, error |
+| `query` | A chain query | Query path, parameters, result summary, duration |
+| `workflow` | A multi-step workflow (e.g., `akt deploy`) | Workflow name, step sequence, each step's type and result |
+| `provider` | A provider gateway operation | Operation (send-manifest, lease-logs, etc.), provider address, result |
+| `context` | A context management operation | Operation (switch, edit, etc.), old/new values |
+| `error` | A failed operation | Original action type, error message, context |
+
+### 5.3 Action Entry Format
+
+Each log entry is a single JSON line (JSONL format) for easy parsing:
+
+```jsonl
+{"ts":"2026-03-23T10:15:32Z","type":"tx","action":"deployment.MsgCreateDeployment","dseq":12345,"tx_hash":"ABC123...","height":18234567,"gas_used":200000,"code":0}
+{"ts":"2026-03-23T10:15:45Z","type":"tx","action":"market.MsgCreateLease","dseq":12345,"provider":"akash1prov1...","tx_hash":"DEF456...","height":18234568,"gas_used":150000,"code":0}
+{"ts":"2026-03-23T10:15:50Z","type":"provider","action":"send-manifest","dseq":12345,"provider":"akash1prov1...","status":"success"}
+{"ts":"2026-03-23T10:20:01Z","type":"query","action":"deployment.deployments","params":{"dseq":12345},"duration_ms":120}
+{"ts":"2026-03-23T10:25:00Z","type":"tx","action":"deployment.MsgCloseDeployment","dseq":12345,"tx_hash":"GHI789...","height":18234600,"gas_used":100000,"code":0}
+{"ts":"2026-03-23T10:30:00Z","type":"error","action":"tx.bank.send","error":"insufficient funds","account":"alice"}
+```
+
+### 5.4 Action Entry Schema
+
+```go
+type ActionEntry struct {
+    // Common fields (all action types)
+    Timestamp  time.Time       `json:"ts"`
+    Type       ActionType      `json:"type"`       // tx, query, workflow, provider, context, error
+    Action     string          `json:"action"`     // specific action identifier
+
+    // Transaction fields (type=tx)
+    TxHash     string          `json:"tx_hash,omitempty"`
+    Height     int64           `json:"height,omitempty"`
+    GasUsed    int64           `json:"gas_used,omitempty"`
+    ResultCode uint32          `json:"code,omitempty"`
+
+    // Resource ID fields (type=tx, query, provider)
+    DSeq       uint64          `json:"dseq,omitempty"`
+    GSeq       uint32          `json:"gseq,omitempty"`
+    OSeq       uint32          `json:"oseq,omitempty"`
+    Provider   string          `json:"provider,omitempty"`
+    Account    string          `json:"account,omitempty"`
+
+    // Query fields (type=query)
+    Params     json.RawMessage `json:"params,omitempty"`
+    DurationMs int64           `json:"duration_ms,omitempty"`
+
+    // Workflow fields (type=workflow)
+    WorkflowID string          `json:"workflow_id,omitempty"` // groups steps of a single workflow
+    Step       int             `json:"step,omitempty"`
+    StepName   string          `json:"step_name,omitempty"`
+
+    // Error fields (type=error, or on any failed action)
+    Error      string          `json:"error,omitempty"`
+    Status     string          `json:"status,omitempty"`   // success, failed, timeout
+}
+```
+
+### 5.5 Log Interface
+
+```go
+type ActionLog interface {
+    // Append a new entry to the log
+    Log(ctx context.Context, entry ActionEntry) error
+
+    // Read entries with filtering
+    Read(ctx context.Context, filter ActionFilter) ([]ActionEntry, error)
+
+    // Export the full log
+    Export(ctx context.Context, w io.Writer) error
+
+    // Lifecycle
+    Close() error
+}
+
+type ActionFilter struct {
+    Type    ActionType    // filter by action type (empty = all)
+    Since   time.Time     // entries after this time
+    Limit   int           // max entries to return (0 = no limit)
+    DSeq    uint64        // filter by deployment sequence
+    Account string        // filter by account
+}
+```
+
+### 5.6 Log Rotation
+
+- Log files are rotated when they exceed 10 MB.
+- Rotated logs are named `actions.log.1`, `actions.log.2`, etc.
+- A maximum of 5 rotated logs are kept (total ~50 MB per context).
+- `akt context log` reads across all rotated files transparently.
+
+---
+
+## 6. Sync Engine Specification
+
+### 6.1 Overview
 
 The sync engine keeps the local deployment store synchronized with on-chain state. It runs as a background goroutine during active CLI/TUI sessions. There is no persistent daemon.
 
-### 5.2 Subscription
+### 6.2 Subscription
 
 The engine subscribes to the RPC WebSocket endpoint for two event types:
 
@@ -1180,7 +1495,7 @@ tm.event='Tx' AND akash.market.v1beta4.EventBidCreated.owner='<owner-address>'
 tm.event='Tx' AND akash.market.v1beta4.EventLeaseCreated.owner='<owner-address>'
 ```
 
-### 5.3 Event Processing
+### 6.3 Event Processing
 
 Events are routed to the reconciler based on their type:
 
@@ -1197,13 +1512,13 @@ Events are routed to the reconciler based on their type:
 | `escrow.EventAccountSettled` | Update `DeploymentRecord` escrow balance |
 | `escrow.EventPaymentCompleted` | Update transferred amount |
 
-### 5.4 Startup Reconciliation
+### 6.4 Startup Reconciliation
 
 On first launch for a context (no `SyncState` in store):
 
-1. Query all deployments for each tracked account: `query deployment list --owner <addr>`.
-2. For each deployment, query leases: `query market lease list --owner <addr> --dseq <dseq>`.
-3. For each deployment, query bids: `query market bid list --owner <addr> --dseq <dseq>`.
+1. Query all deployments for each tracked account: `query deployment deployments --owner <addr>`.
+2. For each deployment, query leases: `query market leases --owner <addr> --dseq <dseq>`.
+3. For each deployment, query bids: `query market bids --owner <addr> --dseq <dseq>`.
 4. Store all records.
 5. Set `SyncState.LastBlockHeight` to the current chain height.
 
@@ -1213,7 +1528,7 @@ On subsequent launches (existing `SyncState`):
 2. If `current_height - last_block_height > 1000`, perform a full reconciliation.
 3. Otherwise, query transaction events in the missed block range and apply them.
 
-### 5.5 Reconnection Strategy
+### 6.5 Reconnection Strategy
 
 | Attempt | Delay | Notes |
 |---|---|---|
@@ -1229,17 +1544,17 @@ Jitter: random value in `[0, 0.5 * delay)`.
 
 On reconnection, the engine reconciles all blocks missed during the disconnection period.
 
-### 5.6 Multi-Account Tracking
+### 6.6 Multi-Account Tracking
 
 The sync engine tracks all accounts present in the current context's keyring. When a new key is added, the engine re-reconciles to pick up deployments from the new account.
 
 ---
 
-## 6. TUI Specification
+## 7. TUI Specification
 
 The TUI incorporates the real-time monitoring functionality of [`aktop`](https://github.com/cloud-j-luna/aktop) -- a community-built terminal UI for Akash consensus and provider monitoring. The consensus view, validator voting view, provider fleet monitor, and governance parameters view are derived from `aktop` and integrated as first-class views in the `akt` TUI.
 
-### 6.1 Application Shell Layout
+### 7.1 Application Shell Layout
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -1271,7 +1586,7 @@ The TUI incorporates the real-time monitoring functionality of [`aktop`](https:/
 
 **Status Bar** (1 line): Quick-access shortcuts, command input area, help hint.
 
-### 6.2 Navigation Model
+### 7.2 Navigation Model
 
 Navigation uses a **stack-based** model:
 
@@ -1287,9 +1602,9 @@ Navigation Stack Example:
        Esc <-           Esc <-                Esc <-
 ```
 
-### 6.3 Resource Views
+### 7.3 Resource Views
 
-#### 6.3.1 Deployments List View
+#### 7.3.1 Deployments List View
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -1328,7 +1643,7 @@ Navigation Stack Example:
 
 **Sorting**: Click column header or press `s` then column key to sort. Default: DSEQ descending.
 
-#### 6.3.2 Deployment Detail View
+#### 7.3.2 Deployment Detail View
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -1373,7 +1688,7 @@ Navigation Stack Example:
 - `s` -- Open shell into active lease
 - `y` -- Toggle YAML/formatted view of raw on-chain data
 
-#### 6.3.3 Leases List View
+#### 7.3.3 Leases List View
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -1392,7 +1707,7 @@ Navigation Stack Example:
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### 6.3.4 Providers List View
+#### 7.3.4 Providers List View
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -1410,7 +1725,7 @@ Navigation Stack Example:
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### 6.3.5 Governance Proposals View
+#### 7.3.5 Governance Proposals View
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -1428,7 +1743,7 @@ Navigation Stack Example:
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### 6.3.6 Validators View
+#### 7.3.6 Validators View
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -1446,7 +1761,7 @@ Navigation Stack Example:
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### 6.3.7 Log Viewer
+#### 7.3.7 Log Viewer
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -1472,7 +1787,7 @@ Navigation Stack Example:
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### 6.3.8 Consensus Monitor View (from aktop)
+#### 7.3.8 Consensus Monitor View (from aktop)
 
 Real-time consensus state monitoring. Polls the RPC `/consensus_state` endpoint at a configurable interval (default 1s).
 
@@ -1516,7 +1831,7 @@ Real-time consensus state monitoring. Polls the RPC `/consensus_state` endpoint 
 
 **Refresh interval**: Configurable, default 1s. Supports fast mode (250ms).
 
-#### 6.3.9 Validator Voting View (from aktop)
+#### 7.3.9 Validator Voting View (from aktop)
 
 Detailed validator list with real-time vote status.
 
@@ -1553,7 +1868,7 @@ Detailed validator list with real-time vote status.
 
 **Actions**: j/k scroll, g/G jump to top/bottom, r refresh.
 
-#### 6.3.10 Provider Fleet Monitor View (from aktop)
+#### 7.3.10 Provider Fleet Monitor View (from aktop)
 
 Real-time monitoring of all Akash providers -- version distribution, resource utilization, and health status.
 
@@ -1628,7 +1943,7 @@ Real-time monitoring of all Akash providers -- version distribution, resource ut
 
 **Resource display**: CPU in cores (millicores/1000), Memory in Mi/Gi/Ti (binary units), GPU with model name and count.
 
-#### 6.3.11 Governance Parameters View (from aktop)
+#### 7.3.11 Governance Parameters View (from aktop)
 
 Module-by-module governance parameter browsing.
 
@@ -1664,7 +1979,7 @@ Module-by-module governance parameter browsing.
 
 **Refresh interval**: 5 minutes.
 
-#### 6.3.12 Additional Views
+#### 7.3.12 Additional Views
 
 The following views follow the same list/detail pattern as above:
 
@@ -1677,7 +1992,7 @@ The following views follow the same list/detail pattern as above:
 - **BME State**: Vault state, mint status, recent ledger entries.
 - **IBC Channels**: List with Channel ID, Port, Counterparty, State.
 
-### 6.4 Command Palette
+### 7.4 Command Palette
 
 Activated with `:` (colon), the command palette provides fuzzy search across:
 
@@ -1698,7 +2013,7 @@ Activated with `:` (colon), the command palette provides fuzzy search across:
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-### 6.5 Confirmation Dialog
+### 7.5 Confirmation Dialog
 
 Transaction actions (close, update, delegate, vote, etc.) show a confirmation dialog:
 
@@ -1719,7 +2034,7 @@ Transaction actions (close, update, delegate, vote, etc.) show a confirmation di
 └──────────────────────────────────────────────┘
 ```
 
-### 6.6 Keybinding Specification
+### 7.6 Keybinding Specification
 
 #### Default Keybindings (vim-style)
 
@@ -1810,7 +2125,7 @@ tui:
     action-delegate: ["D"]
 ```
 
-### 6.7 Theme System
+### 7.7 Theme System
 
 Themes are defined using lipgloss styles. The TUI ships with `dark` and `light` themes.
 
@@ -1838,7 +2153,7 @@ tui:
         cursor-row-fg: "#C0CAF5"
 ```
 
-### 6.8 TUI Component Hierarchy (bubbletea models)
+### 7.8 TUI Component Hierarchy (bubbletea models)
 
 ```
 App (root model)
@@ -1874,9 +2189,9 @@ App (root model)
 
 ---
 
-## 7. Plugin System Specification
+## 8. Plugin System Specification
 
-### 7.1 Plugin Discovery
+### 8.1 Plugin Discovery
 
 Plugins are discovered by scanning for executables matching the pattern `akt-<name>` in:
 
@@ -1886,7 +2201,7 @@ Plugins are discovered by scanning for executables matching the pattern `akt-<na
 
 Discovery order determines precedence (first match wins). Plugins listed in `plugins.disabled` are skipped.
 
-### 7.2 Plugin Execution
+### 8.2 Plugin Execution
 
 When `akt <name> [args...]` is invoked and `<name>` does not match a built-in command:
 
@@ -1897,7 +2212,7 @@ When `akt <name> [args...]` is invoked and `<name>` does not match a built-in co
 5. Inherit stdin, stdout, stderr from the parent process.
 6. Exit with the plugin's exit code.
 
-### 7.3 Plugin Environment Variables
+### 8.3 Plugin Environment Variables
 
 The following environment variables are set for plugin processes:
 
@@ -1915,7 +2230,7 @@ The following environment variables are set for plugin processes:
 | `AKT_OUTPUT` | Output format |
 | `AKT_STORE_PATH` | Store database path |
 
-### 7.4 Plugin Manifest (Optional)
+### 8.4 Plugin Manifest (Optional)
 
 A `plugin.yaml` file placed next to the plugin binary provides metadata:
 
@@ -1935,7 +2250,7 @@ requires:
 min-akt-version: "0.1.0"
 ```
 
-### 7.5 Plugin Management Commands
+### 8.5 Plugin Management Commands
 
 #### `akt plugin list`
 
@@ -1966,7 +2281,7 @@ Remove an installed plugin.
 akt plugin remove sdl-lint
 ```
 
-### 7.6 Security Considerations
+### 8.6 Security Considerations
 
 - Plugins are unsigned executables. Users are responsible for trusting plugin sources.
 - The `akt plugin install` command warns about running untrusted code.
@@ -1975,9 +2290,9 @@ akt plugin remove sdl-lint
 
 ---
 
-## 8. Output Format Specification
+## 9. Output Format Specification
 
-### 8.1 JSON
+### 9.1 JSON
 
 Machine-readable format. Used when `--output json` or when stdout is not a TTY (piped).
 
@@ -2003,7 +2318,7 @@ Machine-readable format. Used when `--output json` or when stdout is not a TTY (
 }
 ```
 
-### 8.2 YAML
+### 9.2 YAML
 
 Human-readable structured format. Used when `--output yaml`.
 
@@ -2021,7 +2336,7 @@ pagination:
   total: "47"
 ```
 
-### 8.3 Table
+### 9.3 Table
 
 Human-friendly tabular format. Default when stdout is a TTY.
 
@@ -2039,9 +2354,9 @@ DSEQ       STATE     PROVIDER            PRICE/BLK   BALANCE     AGE
 
 ---
 
-## 9. Error Handling
+## 10. Error Handling
 
-### 9.1 Error Types
+### 10.1 Error Types
 
 All errors are structured with context:
 
@@ -2055,7 +2370,7 @@ type CLIError struct {
 }
 ```
 
-### 9.2 Exit Codes
+### 10.2 Exit Codes
 
 | Code | Meaning |
 |---|---|
@@ -2069,7 +2384,7 @@ type CLIError struct {
 | `7` | Store error (database corruption, migration failure) |
 | `127` | Plugin not found |
 
-### 9.3 User-Facing Error Messages
+### 10.3 User-Facing Error Messages
 
 Errors presented to users include:
 
@@ -2090,7 +2405,7 @@ Error: cannot connect to RPC endpoint
 
 ---
 
-## 10. Phased Implementation Plan
+## 11. Phased Implementation Plan
 
 ### Phase 1: Foundation
 
@@ -2103,18 +2418,21 @@ Error: cannot connect to RPC endpoint
 | # | Deliverable | Description | Acceptance Criteria |
 |---|---|---|---|
 | 1.1 | Project scaffold | Go module, Makefile, goreleaser, CI | `go build ./...` succeeds, `akt version` works |
-| 1.2 | Config system | YAML config read/write, XDG paths, env var loading | Config round-trips correctly, env vars override config |
-| 1.3 | Context manager | CRUD for contexts, switching, preset provisioning | All `akt context *` commands work, presets provision correctly |
-| 1.4 | Keyring integration | Multi-keyring support with per-context overrides | Keys can be created, listed, and used for signing across different keyrings |
-| 1.5 | Chain client | Full and light client with multi-endpoint failover | Successful tx broadcast and query with automatic failover when primary endpoint is down |
-| 1.6 | Transaction commands | All `tx` module commands (bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, slashing, vesting, upgrade, crisis, IBC) | Each command matches the behavioral output of the current `akash` binary |
-| 1.7 | Query commands | All `query` module commands | Each command matches the behavioral output of the current `akash` binary |
-| 1.8 | Key commands | All `keys` subcommands | Full key lifecycle works (create, export, import, delete, show, list) |
-| 1.9 | Auth utility commands | sign, sign-batch, multisign, validate-signatures, broadcast, encode, decode | Offline signing workflow works end-to-end |
-| 1.10 | Output formatting | JSON, YAML, and Table formatters | All three formats produce correct output for all commands |
-| 1.11 | Global flags + env | All global flags, env var mapping, override chain | Override chain works: flag > env > config > default |
-| 1.12 | Shell completion | bash, zsh, fish completion scripts | Tab completion works for commands, flags, and context names |
-| 1.13 | E2E test suite | Core test coverage for context, tx, query | Tests pass in CI against a local testnet |
+| 1.2 | Config system | YAML config read/write, XDG paths, env var loading, fsnotify watcher | Config round-trips correctly, env vars override config, live-reload works |
+| 1.3 | Network management | Shared network definitions, CRUD, templates (mainnet/testnet/sandbox) | `akt network *` commands work, templates provision correctly, sharing across contexts works |
+| 1.4 | Context manager | Context CRUD, switching, composition (network + keyring + store + log), fork/edit-parent for networks | All `akt context *` commands work, fork/edit-parent works, context propagation works |
+| 1.5 | Context live-reload | Config file watching, propagation of changes to running session | Config changes reflected in session; TUI overrides flags/env; CLI respects override chain |
+| 1.6 | Keyring integration | Shared multi-keyring support, keys visible to all contexts using the keyring | Keys can be created, listed, and used for signing; adding key to shared keyring visible in all contexts |
+| 1.7 | Action log | Append-only JSONL action log per context, log reading/filtering | All tx/query actions logged, `akt context log` shows entries, log rotation works |
+| 1.8 | Chain client | Full and light client with multi-endpoint failover | Successful tx broadcast and query with automatic failover when primary endpoint is down |
+| 1.9 | Transaction commands | All `tx` module commands (bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, slashing, vesting, upgrade, crisis, IBC) | Each command matches the behavioral output of the current `akash` binary |
+| 1.10 | Query commands | All `query` module commands | Each command matches the behavioral output of the current `akash` binary |
+| 1.11 | Key commands | All `keys` subcommands | Full key lifecycle works (create, export, import, delete, show, list) |
+| 1.12 | Auth utility commands | sign, sign-batch, multisign, validate-signatures, broadcast, encode, decode | Offline signing workflow works end-to-end |
+| 1.13 | Output formatting | JSON, YAML, and Table formatters | All three formats produce correct output for all commands |
+| 1.14 | Global flags + env | All global flags, env var mapping, override chain | Override chain works: flag > env > config > default |
+| 1.15 | Shell completion | bash, zsh, fish completion scripts | Tab completion works for commands, flags, and context/network names |
+| 1.16 | E2E test suite | Core test coverage for context, network, tx, query | Tests pass in CI against a local testnet |
 
 ### Phase 2: Store + Workflow Commands
 

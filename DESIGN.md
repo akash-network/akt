@@ -74,42 +74,90 @@
 
 ### 3.1 Context System
 
-The context system is the foundational concept of the new CLI. Every operation executes within a named context that defines the target environment.
+The context system is the foundational concept of the new CLI. Every operation executes within a named context. A context is a composition of four distinct objects, some shared and some unique:
 
 ```
-                    ┌──────────────────────────┐
-                    │    Context: "mainnet"     │
-                    ├──────────────────────────┤
-                    │  chain-id: akashnet-2     │
-                    │  endpoints:               │
-                    │    rpc: [rpc1, rpc2]      │
-                    │    api: [api1, api2]      │
-                    │    grpc: [grpc1]          │
-                    │  keyring: "default"       │
-                    │  default-account: "alice" │
-                    │  fee-defaults:            │
-                    │    gas: auto              │
-                    │    gas-prices: 0.025uakt  │
-                    │  store-path: stores/      │
-                    │              mainnet/     │
-                    └──────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                    Context: "prod"                               │
+│                                                                  │
+│  ┌─────────────────────────┐   ┌────────────────────────────┐  │
+│  │  Network: "mainnet"     │   │  Keyring: "default"        │  │
+│  │  (shared)               │   │  (shared)                  │  │
+│  │                         │   │                            │  │
+│  │  chain-id: akashnet-2   │   │  backend: os               │  │
+│  │  rpc: [rpc1, rpc2]     │   │  keys: [alice, bob, ...]   │  │
+│  │  api: [api1, api2]     │   │                            │  │
+│  │  grpc: [grpc1]         │   │  Also used by context:     │  │
+│  │  gas-prices: 0.025uakt │   │    "prod", "staging"       │  │
+│  │                         │   │                            │  │
+│  │  Also used by context:  │   └────────────────────────────┘  │
+│  │    "prod", "monitoring" │                                    │
+│  └─────────────────────────┘                                    │
+│                                                                  │
+│  ┌─────────────────────────┐   ┌────────────────────────────┐  │
+│  │  State Store            │   │  Action Log                │  │
+│  │  (unique to context)    │   │  (unique to context)       │  │
+│  │                         │   │                            │  │
+│  │  deployments.db         │   │  actions.log               │  │
+│  │  certs/                 │   │  [tx msg + response,       │  │
+│  │                         │   │   query results,           │  │
+│  └─────────────────────────┘   │   workflow steps, ...]     │  │
+│                                └────────────────────────────┘  │
+│  default-account: "alice"                                       │
+│  provider-defaults: { auth-type: jwt }                          │
+└─────────────────────────────────────────────────────────────────┘
 ```
 
-**Resolution order** (highest priority wins):
+#### 3.1.1 Context Components
 
-1. Command-line flags (`--context`, `--chain-id`, `--node`, `--from`, etc.)
-2. Environment variables (`AKT_CONTEXT`, `AKT_CHAIN_ID`, `AKT_NODE`, `AKT_FROM`, etc.)
-3. Active context in config file
-4. Built-in defaults
+**Network** (shared, templatable):
+- Defines chain connectivity: chain-id, RPC/API/gRPC endpoints, gas prices, gas adjustment.
+- Can be shared by multiple contexts (e.g., a "mainnet" network used by both "prod" and "monitoring" contexts).
+- Instantiatable from built-in templates (mainnet, testnet, sandbox).
+- When a shared network's config is edited within a context, two modes are offered:
+  - **Edit parent**: Modify the network definition. Change applies to all contexts using it.
+  - **Fork**: Create a copy of the network for this context only. The context switches to the forked copy.
 
-Contexts are independent and self-contained. A user can have `mainnet`, `testnet`, and `sandbox` contexts simultaneously, each with its own accounts, endpoints, and local deployment store.
+**Keyring** (shared):
+- Wallet storage. Contains private keys, mnemonics, hardware wallet references.
+- Can be shared between multiple contexts. Adding a key to a keyring makes it available to all contexts that reference it.
+- Each context selects a default account from its keyring.
+
+**State Store** (unique per context):
+- Deployment, lease, and bid records (bbolt database).
+- Certificate cache.
+- Sync state metadata.
+
+**Action Log** (unique per context):
+- Append-only log of all user actions within the context.
+- Each entry records what was done, when, and the result.
+- A transaction action consists of two parts: the tx message and the chain response.
+- Query actions, workflow steps, and errors are also logged.
+
+#### 3.1.2 Context Propagation
+
+The context is resolved once at application startup and propagated through the entire session:
+
+1. Resolve which context to use: `--context` flag > `AKT_CONTEXT` env > `current-context` in config.
+2. Load the context's network, keyring, store, and action log.
+3. Apply overrides: flags > env vars > network config > built-in defaults.
+4. Inject the resolved context into all services (client, provider gateway, sync engine, TUI).
+
+#### 3.1.3 Live Reload
+
+The context is **live-reloadable**. The config file is watched for changes (via fsnotify or polling):
+
+- **CLI mode**: If the config file changes mid-session (e.g., RPC endpoint updated), the change is picked up for subsequent commands in long-running operations. Flag and env overrides still take precedence.
+- **TUI mode**: Config changes are detected and applied immediately to all subsequent actions, **regardless of whether flags or env vars are set**. The TUI header updates to reflect the new state. Active WebSocket connections are re-established if endpoints change.
+
+This means a user can edit their config in another terminal and see the TUI react without restarting.
 
 ### 3.2 Dual-Mode Architecture
 
 ```
 User invocation
        │
-       ├── akt [no args or 'ui']  ───>  TUI Mode (bubbletea)
+       ├── akt [no subcommand]    ───>  TUI Mode (bubbletea)
        │                                     │
        │                                     ├── Resource Browser
        │                                     ├── Detail Views
@@ -132,25 +180,36 @@ Both modes share the same core services (context, keyring, client, store). The T
 
 ```
 ~/.config/akt/                          # XDG_CONFIG_HOME/akt
-├── config.yaml                         # Global config (contexts, keyrings, settings)
-├── keyrings/                           # Keyring backends
+├── config.yaml                         # Global config (contexts, networks, keyrings, settings)
+├── keyrings/                           # Keyring backends (shared across contexts)
 │   ├── default/                        # Default keyring (OS keyring backend)
 │   └── hardware/                       # Example: Ledger-backed keyring
-├── stores/                             # Per-context deployment stores
-│   ├── mainnet/
-│   │   ├── deployments.db              # bbolt database
-│   │   └── certs/                      # Local certificate cache
-│   ├── testnet/
-│   │   ├── deployments.db
-│   │   └── certs/
-│   └── sandbox/
-│       ├── deployments.db
-│       └── certs/
+├── contexts/                           # Per-context data
+│   ├── prod/
+│   │   ├── store/
+│   │   │   ├── deployments.db          # bbolt database (unique to context)
+│   │   │   └── certs/                  # Local certificate cache
+│   │   └── actions.log                 # Action log (unique to context)
+│   ├── staging/
+│   │   ├── store/
+│   │   │   ├── deployments.db
+│   │   │   └── certs/
+│   │   └── actions.log
+│   └── monitoring/
+│       ├── store/
+│       │   ├── deployments.db
+│       │   └── certs/
+│       └── actions.log
+├── cache/                              # Shared caches
+│   ├── providers.json                  # Provider fleet cache
+│   └── monikers.json                   # Validator moniker cache
 └── plugins/                            # Locally installed plugins
     └── akt-sdl-lint                    # Example plugin binary
 ```
 
 The config root defaults to `$XDG_CONFIG_HOME/akt` (typically `~/.config/akt`). This can be overridden with `$AKT_HOME` or `--home`.
+
+Key distinction: `keyrings/` and `networks` (in config.yaml) are **shared** resources referenced by name. `contexts/` directories contain data **unique** to each context (state store and action log).
 
 ### 3.4 Sync Engine
 
@@ -301,9 +360,16 @@ github.com/akash-network/akt/
 │   │       ├── providermon.go          # Provider scan progress messages
 │   │       └── navigation.go
 │   ├── context/                         # Context management core
-│   │   ├── manager.go                   # CRUD, switching, resolution
-│   │   ├── config.go                    # Config file I/O
-│   │   └── defaults.go                  # Built-in network presets
+│   │   ├── context.go                   # Context type: composes network, keyring, store, log
+│   │   ├── manager.go                   # CRUD, switching, resolution, live-reload
+│   │   ├── config.go                    # Config file I/O, fsnotify watcher
+│   │   ├── network.go                   # Network type: shared, fork/edit-parent logic
+│   │   ├── defaults.go                  # Built-in network templates
+│   │   └── propagation.go              # Session-wide context propagation, override chain
+│   ├── actionlog/                       # Action log (unique per context)
+│   │   ├── log.go                       # Append-only action logger
+│   │   ├── types.go                     # ActionEntry, TxAction, QueryAction, WorkflowAction
+│   │   └── reader.go                    # Log reading, filtering, export
 │   ├── keyring/                         # Keyring abstraction
 │   │   ├── manager.go                   # Multi-keyring management
 │   │   └── resolver.go                  # Context-aware keyring resolution
@@ -433,15 +499,18 @@ This replaces the MVP's manual backup-endpoint approach with transparent, automa
 
 **Goal**: A functional CLI that can replace basic `akash tx` and `akash query` operations.
 
-- Context system: config file I/O, context CRUD, switching, resolution chain
-- Keyring management with per-context overrides
+- Network management: shared network definitions, CRUD, built-in templates
+- Context system: context CRUD, composition (network + keyring + store + action log), switching, resolution chain, fork/edit-parent for networks
+- Config live-reload: fsnotify watcher, context propagation on config change
+- Keyring management: shared keyrings, keys visible to all referencing contexts
+- Action log: append-only JSONL log per context, reading/filtering
 - Chain client with multi-endpoint failover
 - Core tx commands: bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, slashing, vesting, upgrade, crisis, IBC
 - Core query commands: all matching modules
 - Key management commands
 - Output formatting (JSON/YAML/Table)
 - Global flags and environment variable support
-- Built-in network presets (mainnet, testnet, sandbox)
+- Built-in network templates (mainnet, testnet, sandbox)
 - Version command with build-time injection
 - Shell completion (bash, zsh, fish)
 - Basic e2e test suite
@@ -519,7 +588,7 @@ This replaces the MVP's manual backup-endpoint approach with transparent, automa
 | `akash keys *`                | `akt keys *`                | Identical behavior                 |
 | (none)                        | `akt context *`             | New context management             |
 | (none)                        | `akt deploy`                | New workflow command               |
-| (none)                        | `akt ui`                    | New TUI mode                       |
+| (none)                        | `akt` (no subcommand)       | Launches TUI mode by default       |
 | (none)                        | `akt store *`               | New store management               |
 | (none)                        | `akt plugin *`              | New plugin management              |
 
