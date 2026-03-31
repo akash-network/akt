@@ -1,0 +1,11 @@
+go 1.26.1
+
+toolchain go1.26.1
+
+use .
+
+replace (
+	pkg.akt.dev/go => ../chain-sdk/go
+	pkg.akt.dev/go/cli => ../chain-sdk/go/cli
+	pkg.akt.dev/go/sdl => ../chain-sdk/go/sdl
+)
