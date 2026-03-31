@@ -1,0 +1,568 @@
+// Package keys implements the `akt keys` CLI commands for managing
+// cryptographic keys within the context's keyring.
+package keys
+
+import (
+	"bufio"
+	"encoding/hex"
+	"fmt"
+	"os"
+	"strings"
+
+	"github.com/cosmos/cosmos-sdk/crypto/hd"
+	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
+	"github.com/cosmos/cosmos-sdk/crypto/keys/multisig"
+	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/bech32"
+	"github.com/spf13/cobra"
+
+	aktkeyring "pkg.akt.dev/akt/internal/keyring"
+	"pkg.akt.dev/akt/internal/output"
+)
+
+// Commands returns the "keys" command tree.
+func Commands(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "keys",
+		Short: "Manage keys in the current context's keyring",
+		Long:  "Add, delete, list, show, export, and import cryptographic keys used for signing transactions.",
+	}
+
+	cmd.AddCommand(
+		addCmd(getKeyring),
+		deleteCmd(getKeyring),
+		listCmd(getKeyring),
+		showCmd(getKeyring),
+		exportCmd(getKeyring),
+		importCmd(getKeyring),
+		renameCmd(getKeyring),
+		mnemonicCmd(),
+		parseCmd(),
+	)
+
+	return cmd
+}
+
+func addCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "add <name>",
+		Short: "Add a new key or recover an existing one",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			kr, err := getKeyring()
+			if err != nil {
+				return err
+			}
+
+			name := args[0]
+
+			// Check if key already exists.
+			if _, err := kr.Key(name); err == nil {
+				return fmt.Errorf("key %q already exists; delete it first or use a different name", name)
+			}
+
+			algo := aktkeyring.DefaultAlgo()
+
+			// Multisig key.
+			multisigKeys, _ := cmd.Flags().GetString("multisig")
+			if multisigKeys != "" {
+				threshold, _ := cmd.Flags().GetInt("multisig-threshold")
+				return addMultisig(kr, name, multisigKeys, threshold)
+			}
+
+			coinType, _ := cmd.Flags().GetUint32("coin-type")
+			account, _ := cmd.Flags().GetUint32("account")
+			index, _ := cmd.Flags().GetUint32("index")
+
+			// Resolve HD path.
+			path, _ := cmd.Flags().GetString("hd-path")
+			if path == "" {
+				path = hd.CreateHDPath(coinType, account, index).String()
+			}
+
+			// Ledger hardware wallet key.
+			useLedger, _ := cmd.Flags().GetBool("ledger")
+			if useLedger {
+				record, err := kr.SaveLedgerKey(name, algo, "cosmos", coinType, account, index)
+				if err != nil {
+					return fmt.Errorf("add ledger key: %w", err)
+				}
+
+				addr, err := record.GetAddress()
+				if err != nil {
+					return fmt.Errorf("get address: %w", err)
+				}
+
+				fmt.Printf("- name: %s\n", record.Name)
+				fmt.Printf("  address: %s\n", addr.String())
+				fmt.Printf("  type: ledger\n")
+
+				return nil
+			}
+
+			recover_, _ := cmd.Flags().GetBool("recover")
+			source, _ := cmd.Flags().GetString("source")
+
+			var mnemonic string
+
+			if source != "" {
+				data, err := os.ReadFile(source)
+				if err != nil {
+					return fmt.Errorf("read mnemonic source: %w", err)
+				}
+
+				mnemonic = strings.TrimSpace(string(data))
+			} else if recover_ {
+				fmt.Print("Enter your mnemonic: ")
+
+				reader := bufio.NewReader(os.Stdin)
+				mnemonic, _ = reader.ReadString('\n')
+				mnemonic = strings.TrimSpace(mnemonic)
+			} else {
+				// Generate new mnemonic.
+				var err error
+				mnemonic, err = generateMnemonic()
+				if err != nil {
+					return err
+				}
+			}
+
+			var bip39Passphrase string
+
+			interactive, _ := cmd.Flags().GetBool("interactive")
+			if interactive {
+				fmt.Print("Enter BIP39 passphrase (leave empty for none): ")
+
+				reader := bufio.NewReader(os.Stdin)
+				bip39Passphrase, _ = reader.ReadString('\n')
+				bip39Passphrase = strings.TrimSpace(bip39Passphrase)
+			}
+
+			record, err := kr.NewAccount(name, mnemonic, bip39Passphrase, path, algo)
+			if err != nil {
+				return fmt.Errorf("create key: %w", err)
+			}
+
+			addr, err := record.GetAddress()
+			if err != nil {
+				return fmt.Errorf("get address: %w", err)
+			}
+
+			keyType, _ := cmd.Flags().GetString("key-type")
+			noBackup, _ := cmd.Flags().GetBool("no-backup")
+
+			fmt.Printf("- name: %s\n", record.Name)
+			fmt.Printf("  address: %s\n", addr.String())
+			fmt.Printf("  type: %s\n", keyType)
+
+			if !noBackup && !recover_ && source == "" {
+				fmt.Println("")
+				fmt.Println("**Important** write this mnemonic phrase in a safe place.")
+				fmt.Println("It is the only way to recover your account if you ever forget your password.")
+				fmt.Println("")
+				fmt.Println(mnemonic)
+			}
+
+			return nil
+		},
+	}
+
+	cmd.Flags().Bool("recover", false, "Recover key from existing mnemonic")
+	cmd.Flags().Bool("no-backup", false, "Don't print mnemonic after creation")
+	cmd.Flags().BoolP("interactive", "i", false, "Interactive BIP39 passphrase prompt")
+	cmd.Flags().Bool("ledger", false, "Use Ledger hardware wallet")
+	cmd.Flags().Uint32("coin-type", 118, "BIP44 coin type")
+	cmd.Flags().Uint32("account", 0, "BIP44 account number")
+	cmd.Flags().Uint32("index", 0, "BIP44 address index")
+	cmd.Flags().String("hd-path", "", "Manual HD path override")
+	cmd.Flags().String("key-type", "secp256k1", "Signing algorithm")
+	cmd.Flags().String("multisig", "", "Comma-separated list of key names for multisig")
+	cmd.Flags().Int("multisig-threshold", 1, "K-of-N threshold for multisig")
+	cmd.Flags().String("source", "", "File path to read mnemonic from")
+
+	return cmd
+}
+
+func addMultisig(kr sdkkeyring.Keyring, name, keyNames string, threshold int) error {
+	names := strings.Split(keyNames, ",")
+	pks := make([]cryptotypes.PubKey, 0, len(names))
+
+	for _, n := range names {
+		n = strings.TrimSpace(n)
+		rec, err := kr.Key(n)
+		if err != nil {
+			return fmt.Errorf("key %q not found: %w", n, err)
+		}
+
+		pk, err := rec.GetPubKey()
+		if err != nil {
+			return fmt.Errorf("get pubkey for %q: %w", n, err)
+		}
+
+		pks = append(pks, pk)
+	}
+
+	pk := multisig.NewLegacyAminoPubKey(threshold, pks)
+
+	record, err := kr.SaveMultisig(name, pk)
+	if err != nil {
+		return fmt.Errorf("save multisig: %w", err)
+	}
+
+	addr, err := record.GetAddress()
+	if err != nil {
+		return fmt.Errorf("get address: %w", err)
+	}
+
+	fmt.Printf("- name: %s\n", record.Name)
+	fmt.Printf("  address: %s\n", addr.String())
+	fmt.Printf("  type: multi\n")
+	fmt.Printf("  threshold: %d\n", threshold)
+	fmt.Printf("  pubkeys: %d\n", len(pks))
+
+	return nil
+}
+
+func deleteCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "delete <name>",
+		Short: "Delete a key from the keyring",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			kr, err := getKeyring()
+			if err != nil {
+				return err
+			}
+
+			name := args[0]
+
+			if _, err := kr.Key(name); err != nil {
+				return fmt.Errorf("key %q not found", name)
+			}
+
+			yes, _ := cmd.Flags().GetBool("yes")
+			if !yes {
+				fmt.Printf("Delete key %q? [y/N]: ", name)
+
+				var answer string
+				fmt.Scanln(&answer)
+
+				if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
+					fmt.Println("Cancelled.")
+					return nil
+				}
+			}
+
+			return kr.Delete(name)
+		},
+	}
+
+	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation")
+
+	return cmd
+}
+
+func listCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
+	return &cobra.Command{
+		Use:   "list",
+		Short: "List all keys in the current keyring",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			kr, err := getKeyring()
+			if err != nil {
+				return err
+			}
+
+			records, err := kr.List()
+			if err != nil {
+				return err
+			}
+
+			if len(records) == 0 {
+				fmt.Println("No keys found. Add one with: akt keys add <name>")
+				return nil
+			}
+
+			type keyRow struct {
+				Name    string `json:"name"    yaml:"name"`
+				Type    string `json:"type"    yaml:"type"`
+				Address string `json:"address" yaml:"address"`
+				PubKey  string `json:"pubkey"  yaml:"pubkey"`
+			}
+
+			data := make([]keyRow, 0, len(records))
+			columns := []output.Column{
+				{Header: "NAME"},
+				{Header: "TYPE"},
+				{Header: "ADDRESS"},
+				{Header: "PUBKEY"},
+			}
+
+			rows := make([][]string, 0, len(records))
+			for _, rec := range records {
+				addr, err := rec.GetAddress()
+				if err != nil {
+					continue
+				}
+
+				pk, err := rec.GetPubKey()
+				if err != nil {
+					continue
+				}
+
+				pubkeyHex := hex.EncodeToString(pk.Bytes())
+				rows = append(rows, []string{
+					rec.Name,
+					rec.GetType().String(),
+					addr.String(),
+					pubkeyHex[:16] + "...",
+				})
+				data = append(data, keyRow{
+					Name:    rec.Name,
+					Type:    rec.GetType().String(),
+					Address: addr.String(),
+					PubKey:  pubkeyHex,
+				})
+			}
+
+			return output.PrintData(cmd, columns, rows, data)
+		},
+	}
+}
+
+func showCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "show <name|address>",
+		Short: "Show key details",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			kr, err := getKeyring()
+			if err != nil {
+				return err
+			}
+
+			rec, err := fetchKey(kr, args[0])
+			if err != nil {
+				return err
+			}
+
+			addr, err := rec.GetAddress()
+			if err != nil {
+				return fmt.Errorf("get address: %w", err)
+			}
+
+			addressOnly, _ := cmd.Flags().GetBool("address")
+			if addressOnly {
+				fmt.Println(addr.String())
+				return nil
+			}
+
+			pk, err := rec.GetPubKey()
+			if err != nil {
+				return fmt.Errorf("get pubkey: %w", err)
+			}
+
+			fmt.Printf("Name:      %s\n", rec.Name)
+			fmt.Printf("Type:      %s\n", rec.GetType().String())
+			fmt.Printf("Address:   %s\n", addr.String())
+			fmt.Printf("PubKey:    %s\n", hex.EncodeToString(pk.Bytes()))
+
+			return nil
+		},
+	}
+
+	cmd.Flags().BoolP("address", "a", false, "Print only the bech32 address")
+
+	return cmd
+}
+
+func exportCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
+	return &cobra.Command{
+		Use:   "export <name>",
+		Short: "Export a private key (encrypted armor)",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			kr, err := getKeyring()
+			if err != nil {
+				return err
+			}
+
+			name := args[0]
+
+			fmt.Print("Enter passphrase to encrypt the key: ")
+
+			reader := bufio.NewReader(os.Stdin)
+			passphrase, _ := reader.ReadString('\n')
+			passphrase = strings.TrimSpace(passphrase)
+
+			if passphrase == "" {
+				return fmt.Errorf("passphrase is required")
+			}
+
+			armor, err := kr.ExportPrivKeyArmor(name, passphrase)
+			if err != nil {
+				return fmt.Errorf("export key %q: %w", name, err)
+			}
+
+			fmt.Println(armor)
+
+			return nil
+		},
+	}
+}
+
+func importCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
+	return &cobra.Command{
+		Use:   "import <name> <keyfile>",
+		Short: "Import a private key from encrypted armor file",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			kr, err := getKeyring()
+			if err != nil {
+				return err
+			}
+
+			name := args[0]
+			file := args[1]
+
+			data, err := os.ReadFile(file)
+			if err != nil {
+				return fmt.Errorf("read key file: %w", err)
+			}
+
+			fmt.Print("Enter passphrase to decrypt the key: ")
+
+			reader := bufio.NewReader(os.Stdin)
+			passphrase, _ := reader.ReadString('\n')
+			passphrase = strings.TrimSpace(passphrase)
+
+			if err := kr.ImportPrivKey(name, string(data), passphrase); err != nil {
+				return fmt.Errorf("import key: %w", err)
+			}
+
+			fmt.Printf("Key %q imported successfully.\n", name)
+
+			return nil
+		},
+	}
+}
+
+func renameCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
+	return &cobra.Command{
+		Use:   "rename <old> <new>",
+		Short: "Rename a key",
+		Args:  cobra.ExactArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			kr, err := getKeyring()
+			if err != nil {
+				return err
+			}
+
+			if err := kr.Rename(args[0], args[1]); err != nil {
+				return fmt.Errorf("rename key: %w", err)
+			}
+
+			fmt.Printf("Key renamed from %q to %q.\n", args[0], args[1])
+
+			return nil
+		},
+	}
+}
+
+func mnemonicCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "mnemonic",
+		Short: "Generate a new BIP39 mnemonic",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			mnemonic, err := generateMnemonic()
+			if err != nil {
+				return err
+			}
+
+			fmt.Println(mnemonic)
+
+			return nil
+		},
+	}
+}
+
+func parseCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "parse <hex-or-bech32>",
+		Short: "Parse address between hex and bech32 formats",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			input := args[0]
+
+			// Try bech32 first.
+			hrp, bz, err := bech32.DecodeAndConvert(input)
+			if err == nil {
+				fmt.Printf("Format:  bech32\n")
+				fmt.Printf("HRP:     %s\n", hrp)
+				fmt.Printf("Hex:     %s\n", strings.ToUpper(hex.EncodeToString(bz)))
+
+				// Also show with common HRPs.
+				for _, prefix := range []string{"akash", "cosmos", "osmo"} {
+					encoded, err := bech32.ConvertAndEncode(prefix, bz)
+					if err == nil {
+						fmt.Printf("%-8s %s\n", prefix+":", encoded)
+					}
+				}
+
+				return nil
+			}
+
+			// Try hex.
+			bz, err = hex.DecodeString(strings.TrimPrefix(input, "0x"))
+			if err != nil {
+				return fmt.Errorf("cannot parse %q as bech32 or hex", input)
+			}
+
+			fmt.Printf("Format:  hex\n")
+			fmt.Printf("Hex:     %s\n", strings.ToUpper(hex.EncodeToString(bz)))
+
+			for _, prefix := range []string{"akash", "cosmos", "osmo"} {
+				encoded, err := bech32.ConvertAndEncode(prefix, bz)
+				if err == nil {
+					fmt.Printf("%-8s %s\n", prefix+":", encoded)
+				}
+			}
+
+			return nil
+		},
+	}
+}
+
+// fetchKey looks up a key by name or bech32 address.
+func fetchKey(kr sdkkeyring.Keyring, ref string) (*sdkkeyring.Record, error) {
+	// Try by name first.
+	rec, err := kr.Key(ref)
+	if err == nil {
+		return rec, nil
+	}
+
+	// Try as bech32 address.
+	addr, err := sdk.AccAddressFromBech32(ref)
+	if err != nil {
+		return nil, fmt.Errorf("key %q not found (also not a valid bech32 address)", ref)
+	}
+
+	rec, err = kr.KeyByAddress(addr)
+	if err != nil {
+		return nil, fmt.Errorf("no key found for address %s", ref)
+	}
+
+	return rec, nil
+}
+
+// generateMnemonic creates a new BIP39 mnemonic phrase.
+func generateMnemonic() (string, error) {
+	entropySeed, err := bip39Entropy()
+	if err != nil {
+		return "", err
+	}
+
+	return bip39Mnemonic(entropySeed)
+}

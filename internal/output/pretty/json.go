@@ -1,0 +1,108 @@
+package pretty
+
+import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"io"
+	"strings"
+)
+
+// WriteHighlightedJSON writes syntax-highlighted, indented JSON to w.
+// Keys are cyan, strings green, numbers yellow, booleans magenta, null gray.
+func WriteHighlightedJSON(w io.Writer, data []byte) error {
+	// Pretty-print with indentation first.
+	var buf bytes.Buffer
+	if err := json.Indent(&buf, data, "", "  "); err != nil {
+		// If we can't indent (not valid JSON), write as-is.
+		_, err := w.Write(data)
+		return err
+	}
+
+	// Tokenize and colorize.
+	dec := json.NewDecoder(bytes.NewReader(buf.Bytes()))
+	dec.UseNumber()
+
+	return highlightJSON(w, &buf)
+}
+
+// highlightJSON does a simple line-by-line colorization of indented JSON.
+// This is simpler and more reliable than token-based colorization.
+func highlightJSON(w io.Writer, buf *bytes.Buffer) error {
+	lines := strings.Split(buf.String(), "\n")
+	for _, line := range lines {
+		colored := colorizeJSONLine(line)
+		fmt.Fprintln(w, colored)
+	}
+	return nil
+}
+
+// colorizeJSONLine applies syntax highlighting to a single JSON line.
+func colorizeJSONLine(line string) string {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return line
+	}
+
+	indent := line[:len(line)-len(strings.TrimLeft(line, " "))]
+
+	// Handle lines that are just structural characters.
+	switch trimmed {
+	case "{", "}", "[", "]", "{}", "[]",
+		"},", "],":
+		return line
+	}
+
+	// Try to split on key: value.
+	if idx := strings.Index(trimmed, ":"); idx > 0 && trimmed[0] == '"' {
+		// Find the end of the key.
+		keyEnd := strings.Index(trimmed[1:], "\"")
+		if keyEnd >= 0 {
+			key := trimmed[:keyEnd+2] // includes quotes
+			rest := trimmed[keyEnd+2:]
+
+			coloredKey := StyleCyan.Render(key)
+			coloredVal := colorizeJSONValue(strings.TrimPrefix(rest, ": "))
+
+			return indent + coloredKey + ": " + coloredVal
+		}
+	}
+
+	// Otherwise, colorize as a value.
+	return indent + colorizeJSONValue(trimmed)
+}
+
+// colorizeJSONValue applies color to a JSON value string.
+func colorizeJSONValue(val string) string {
+	val = strings.TrimSuffix(strings.TrimSpace(val), ",")
+	trailing := ""
+	if strings.HasSuffix(strings.TrimSpace(val), ",") {
+		trailing = ","
+	}
+
+	// Re-check after trimming.
+	raw := strings.TrimSpace(val)
+	hasComma := strings.HasSuffix(strings.TrimSpace(strings.TrimSuffix(val, ",")+trailing), ",")
+	if hasComma {
+		trailing = ","
+	}
+
+	// Remove trailing comma for inspection.
+	clean := strings.TrimSuffix(raw, ",")
+	if strings.HasSuffix(raw, ",") {
+		trailing = ","
+	}
+
+	switch {
+	case clean == "null":
+		return StyleGray.Render(clean) + trailing
+	case clean == "true" || clean == "false":
+		return StyleMagenta.Render(clean) + trailing
+	case len(clean) > 0 && clean[0] == '"':
+		return StyleGreen.Render(clean) + trailing
+	case len(clean) > 0 && (clean[0] >= '0' && clean[0] <= '9' || clean[0] == '-'):
+		return StyleYellow.Render(clean) + trailing
+	default:
+		return val
+	}
+}
