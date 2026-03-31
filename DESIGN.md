@@ -2,7 +2,7 @@
 
 ## 1. Overview
 
-`akt` is the unified command-line interface and terminal user interface for the Akash Network. It replaces the CLI functionality currently spread across `akash-network/node`, `akash-network/provider`, and `akash-network/chain-sdk/go/cli` with a single, cohesive tool that supports both traditional CLI commands and an interactive k9s-style TUI.
+`akt` is the unified command-line interface and terminal user interface for the Akash Network. It replaces the CLI functionality currently spread across `akash-network/node`, `akash-network/provider`, and `akash-network/chain-sdk/go/cli` with a single, cohesive tool that supports both traditional CLI commands and an interactive TUI.
 
 ### 1.1 Goals
 
@@ -27,45 +27,50 @@
 | `akash-network/node`             | Blockchain node binary (`akash`). Imports chain-sdk CLI, adds server/genesis/testnet commands.           | **Keeps** only node-operator commands: `start`, `comet`, `export`, `prepare-genesis`, `testnet`, `testnetify`, `auth jwt`. Stops exporting user-facing CLI. |
 | `akash-network/provider`         | Provider binary (`provider-services`). Imports chain-sdk CLI, adds provider gateway + operator commands. | **Keeps** only provider-operator commands: `run`, `operator *`, `tools *`, `migrate`. Stops exporting user-facing CLI.                                      |
 | `ovrclk/akt`                     | MVP CLI prototype. Config system, account/network/deploy commands.                                       | Design reference. Concepts (profiles, git-like config) evolved into the context system.                                                                     |
-| `cloud-j-luna/aktop`             | Community TUI for monitoring Akash consensus state, validator voting, and provider operations.            | Design reference and prior art for TUI. Its consensus/validator/provider monitoring views inform the TUI design. Functionality to be subsumed by `akt` TUI.  |
+| `cloud-j-luna/aktop`             | Community TUI for monitoring Akash consensus state, validator voting, and provider operations.           | Design reference and prior art for TUI. Its consensus/validator/provider monitoring views inform the TUI design. Functionality to be subsumed by `akt` TUI. |
 | **`akash-network/akt`**          | **New.** This repository.                                                                                | The unified user CLI and TUI.                                                                                                                               |
 
 ---
 
 ## 2. High-Level Architecture
 
-```
-┌─────────────────────────────────────────────────────────────────────┐
-│                            akt binary                               │
-├──────────────┬────────────────────────────┬─────────────────────────┤
-│   CLI Mode   │        TUI Mode            │     Plugin Host         │
-│   (cobra)    │   (bubbletea + bubbles     │   (exec-based plugins)  │
-│              │    + lipgloss)              │                         │
-├──────────────┴────────────────────────────┴─────────────────────────┤
-│                        Command Layer                                │
-│   ┌───────────┐  ┌──────────────┐  ┌──────────────────────────┐    │
-│   │  tx/*     │  │  query/*     │  │  workflow/* (deploy,     │    │
-│   │  commands │  │  commands    │  │   lease-shell, etc.)     │    │
-│   └───────────┘  └──────────────┘  └──────────────────────────┘    │
-├─────────────────────────────────────────────────────────────────────┤
-│                        Core Services                                │
-│   ┌──────────┐ ┌──────────┐ ┌──────────┐ ┌───────────┐ ┌──────────┐│
-│   │ Context  │ │ Keyring  │ │ Client   │ │ Provider  │ │Consensus ││
-│   │ Manager  │ │ Manager  │ │ (chain)  │ │ Gateway   │ │ Monitor  ││
-│   └──────────┘ └──────────┘ └──────────┘ └───────────┘ └──────────┘│
-├─────────────────────────────────────────────────────────────────────┤
-│                        Storage Layer                                │
-│   ┌─────────────┐ ┌──────────────┐ ┌────────────┐ ┌─────────────┐ │
-│   │ Config      │ │ Deployment   │ │ Sync       │ │ Provider    │ │
-│   │ (YAML)      │ │ Store(bbolt) │ │ Engine     │ │ Cache       │ │
-│   └─────────────┘ └──────────────┘ └────────────┘ └─────────────┘ │
-├─────────────────────────────────────────────────────────────────────┤
-│                        Transport Layer                              │
-│   ┌────────────┐  ┌────────────┐  ┌────────────┐  ┌────────────┐  │
-│   │  RPC       │  │  gRPC      │  │  REST/API  │  │  Provider   │  │
-│   │  Client    │  │  Client    │  │  Client    │  │  gRPC/REST  │  │
-│   └────────────┘  └────────────┘  └────────────┘  └────────────┘  │
-└─────────────────────────────────────────────────────────────────────┘
+```mermaid
+block-beta
+  columns 1
+  block:binary["akt binary"]
+    columns 3
+    CLI["CLI Mode\n(cobra)"]
+    TUI["TUI Mode\n(bubbletea + lipgloss)"]
+    Plugin["Plugin Host\n(exec-based)"]
+  end
+  block:commands["Command Layer"]
+    columns 3
+    tx["tx/* commands"]
+    query["query/* commands"]
+    workflow["workflow/*\n(deploy, lease-shell)"]
+  end
+  block:services["Core Services"]
+    columns 5
+    ctx["Context\nManager"]
+    kr["Keyring\nManager"]
+    client["Client\n(chain)"]
+    provider["Provider\nGateway"]
+    consensus["Consensus\nMonitor"]
+  end
+  block:storage["Storage Layer"]
+    columns 4
+    config["Config\n(YAML)"]
+    store["Deployment\nStore (bbolt)"]
+    sync["Sync\nEngine"]
+    cache["Provider\nCache"]
+  end
+  block:transport["Transport Layer"]
+    columns 4
+    rpc["RPC Client"]
+    grpc["gRPC Client"]
+    rest["REST/API Client"]
+    provtransport["Provider\ngRPC/REST"]
+  end
 ```
 
 ---
@@ -76,36 +81,40 @@
 
 The context system is the foundational concept of the new CLI. Every operation executes within a named context. A context is a composition of four distinct objects, some shared and some unique:
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                    Context: "prod"                               │
-│                                                                  │
-│  ┌─────────────────────────┐   ┌────────────────────────────┐  │
-│  │  Network: "mainnet"     │   │  Keyring: "default"        │  │
-│  │  (shared)               │   │  (shared)                  │  │
-│  │                         │   │                            │  │
-│  │  chain-id: akashnet-2   │   │  backend: os               │  │
-│  │  rpc: [rpc1, rpc2]     │   │  keys: [alice, bob, ...]   │  │
-│  │  api: [api1, api2]     │   │                            │  │
-│  │  grpc: [grpc1]         │   │  Also used by context:     │  │
-│  │  gas-prices: 0.025uakt │   │    "prod", "staging"       │  │
-│  │                         │   │                            │  │
-│  │  Also used by context:  │   └────────────────────────────┘  │
-│  │    "prod", "monitoring" │                                    │
-│  └─────────────────────────┘                                    │
-│                                                                  │
-│  ┌─────────────────────────┐   ┌────────────────────────────┐  │
-│  │  State Store            │   │  Action Log                │  │
-│  │  (unique to context)    │   │  (unique to context)       │  │
-│  │                         │   │                            │  │
-│  │  deployments.db         │   │  actions.log               │  │
-│  │  certs/                 │   │  [tx msg + response,       │  │
-│  │                         │   │   query results,           │  │
-│  └─────────────────────────┘   │   workflow steps, ...]     │  │
-│                                └────────────────────────────┘  │
-│  default-account: "alice"                                       │
-│  provider-defaults: { auth-type: jwt }                          │
-└─────────────────────────────────────────────────────────────────┘
+```mermaid
+graph TB
+  subgraph Context ["Context: prod"]
+    direction TB
+    subgraph shared ["Shared Resources"]
+      direction LR
+      subgraph net ["Network: mainnet"]
+        n1["chain-id: akashnet-2"]
+        n2["rpc: rpc1, rpc2"]
+        n3["api: api1, api2"]
+        n4["gas-prices: 0.025uakt"]
+        n5["Also used by: prod, monitoring"]
+      end
+      subgraph kr ["Keyring: default"]
+        k1["backend: os"]
+        k2["keys: alice, bob, ..."]
+        k3["Also used by: prod, staging"]
+      end
+    end
+    subgraph unique ["Unique to Context"]
+      direction LR
+      subgraph ss ["State Store"]
+        s1["deployments.db"]
+        s2["certs/"]
+      end
+      subgraph al ["Action Log"]
+        a1["actions.log"]
+        a2["tx msg + response"]
+        a3["query results"]
+        a4["workflow steps"]
+      end
+    end
+    settings["default-account: alice\nprovider-defaults: auth-type: jwt"]
+  end
 ```
 
 #### 3.1.1 Context Components
@@ -138,7 +147,7 @@ The context system is the foundational concept of the new CLI. Every operation e
 
 The context is resolved once at application startup and propagated through the entire session:
 
-1. Resolve which context to use: `--context` flag > `AKT_CONTEXT` env > `current-context` in config.
+1. Resolve which context to use: `--context` flag > `AKT_CONTEXT` env var > `current-context` in config.
 2. Load the context's network, keyring, store, and action log.
 3. Apply overrides: flags > env vars > network config > built-in defaults.
 4. Inject the resolved context into all services (client, provider gateway, sync engine, TUI).
@@ -154,27 +163,29 @@ This means a user can edit their config in another terminal and see the TUI reac
 
 ### 3.2 Dual-Mode Architecture
 
-```
-User invocation
-       │
-       ├── akt [no subcommand]    ───>  TUI Mode (bubbletea)
-       │                                     │
-       │                                     ├── Resource Browser
-       │                                     ├── Detail Views
-       │                                     ├── Command Palette
-       │                                     └── Live Sync
-       │
-       └── akt <command> [args]   ───>  CLI Mode (cobra)
-                                             │
-                                             ├── tx / query (raw chain)
-                                             ├── workflow commands
-                                             ├── context management
-                                             └── piped output (JSON/YAML/table)
+```mermaid
+graph LR
+  user["User invocation"] --> nosubcmd["akt\n(no subcommand)"]
+  user --> subcmd["akt command args"]
+
+  nosubcmd --> TUI["TUI Mode\n(bubbletea)"]
+  TUI --> browser["Resource Browser"]
+  TUI --> detail["Detail Views"]
+  TUI --> palette["Command Palette"]
+  TUI --> livesync["Live Sync"]
+
+  subcmd --> CLI["CLI Mode\n(cobra)"]
+  CLI --> txq["tx / query"]
+  CLI --> wf["workflow commands"]
+  CLI --> ctxmgmt["context management"]
+  CLI --> piped["piped output\n(JSON/YAML/table)"]
 ```
 
 Both modes share the same core services (context, keyring, client, store). The TUI wraps these services in bubbletea models; the CLI wraps them in cobra command handlers.
 
 **Smart interactivity**: Commands auto-detect whether a TTY is attached. When interactive, they show prompts, spinners, and colored output. When piped, they output machine-readable formats silently. The `--interactive` and `--yes` flags override this behavior.
+
+**Font requirement**: All TUI and interactive UI elements require a **Nerd Font** (https://www.nerdfonts.com/). Glyphs from the Nerd Font extended character set (Font Awesome, Powerline, etc.) are used for icons, indicators, checkboxes, and decorative elements throughout the interface. When running in non-interactive / raw mode (`--raw`), output falls back to ASCII-safe equivalents for compatibility with pipes and `jq`.
 
 ### 3.3 Storage Architecture
 
@@ -207,7 +218,7 @@ Both modes share the same core services (context, keyring, client, store). The T
     └── akt-sdl-lint                    # Example plugin binary
 ```
 
-The config root defaults to `$XDG_CONFIG_HOME/akt` (typically `~/.config/akt`). This can be overridden with `$AKT_HOME` or `--home`.
+The config root is always `$XDG_CONFIG_HOME/akt` (typically `~/.config/akt`). The active context is selected via `AKT_CONTEXT` env var or `--context` flag.
 
 Key distinction: `keyrings/` and `networks` (in config.yaml) are **shared** resources referenced by name. `contexts/` directories contain data **unique** to each context (state store and action log).
 
@@ -215,31 +226,11 @@ Key distinction: `keyrings/` and `networks` (in config.yaml) are **shared** reso
 
 The sync engine runs as a background goroutine during active CLI/TUI sessions. It keeps the local deployment store in sync with on-chain state.
 
-```
-┌────────────────┐     subscribe        ┌──────────────────┐
-│  RPC WebSocket │ ──────────────────>  │   Event Router    │
-│  (NewBlock,    │                      │                   │
-│   Tx events)   │                      │   Filters by:     │
-└────────────────┘                      │   - owner addr    │
-                                        │   - dseq          │
-       ┌────────────────────────────────│   - event type    │
-       │                                └──────────────────┘
-       v                                         │
-┌──────────────┐                                 v
-│  Deployment  │<──── update ──────────  ┌───────────────────┐
-│  Store       │                         │  State Reconciler  │
-│  (bbolt)     │                         │  - new deployments │
-│              │                         │  - bid received    │
-│  Records:    │                         │  - lease created   │
-│   - dseq     │                         │  - lease active    │
-│   - state    │                         │  - deployment      │
-│   - bids     │                         │    closed          │
-│   - leases   │                         └───────────────────┘
-│   - provider │
-│   - cost     │
-│   - sdl hash │
-│   - metadata │
-└──────────────┘
+```mermaid
+graph LR
+  WS["RPC WebSocket\n(NewBlock, Tx events)"] -->|subscribe| ER["Event Router\n\nFilters by:\n- owner addr\n- dseq\n- event type"]
+  ER --> SR["State Reconciler\n\n- new deployments\n- bid received\n- lease created\n- lease active\n- deployment closed"]
+  SR -->|update| DS["Deployment Store\n(bbolt)\n\nRecords:\n- dseq, state\n- bids, leases\n- provider, cost\n- sdl hash\n- metadata"]
 ```
 
 **Startup behavior**: On first launch for a context, the sync engine performs a full reconciliation by querying all deployments owned by accounts in the context. Subsequent launches use incremental sync from the last known block height.
@@ -258,6 +249,7 @@ github.com/akash-network/akt/
 ├── internal/
 │   ├── cli/                             # CLI mode (cobra commands)
 │   │   ├── root.go                      # Root command, global flags, PersistentPreRunE
+│   │   ├── chain/                       # Clean-copied chain-sdk go/cli (tx/query)
 │   │   ├── tx/                          # Transaction commands (per-module files)
 │   │   │   ├── bank.go
 │   │   │   ├── deployment.go
@@ -281,10 +273,8 @@ github.com/akash-network/akt/
 │   │   │   └── ibc.go
 │   │   ├── query/                       # Query commands (per-module files)
 │   │   │   └── ... (mirrors tx/ modules + mint, params, evidence, module)
-│   │   ├── workflow/                    # High-level workflow commands
-│   │   │   ├── deploy.go               # Full deployment lifecycle
-│   │   │   ├── lease.go                # Lease management shortcuts
-│   │   │   └── manifest.go             # Manifest operations
+│   │   ├── workflow/                    # Workflow CLI wrappers (deploy, update, close)
+│   │   │   └── commands.go             # Auto-generates cobra commands from workflow YAML defs
 │   │   ├── context/                     # Context management commands
 │   │   │   ├── use.go
 │   │   │   ├── list.go
@@ -362,7 +352,7 @@ github.com/akash-network/akt/
 │   ├── context/                         # Context management core
 │   │   ├── context.go                   # Context type: composes network, keyring, store, log
 │   │   ├── manager.go                   # CRUD, switching, resolution, live-reload
-│   │   ├── config.go                    # Config file I/O, fsnotify watcher
+│   │   ├── config.go                    # Config file I/O via Viper, live-reload
 │   │   ├── network.go                   # Network type: shared, fork/edit-parent logic
 │   │   ├── defaults.go                  # Built-in network templates
 │   │   └── propagation.go              # Session-wide context propagation, override chain
@@ -370,6 +360,28 @@ github.com/akash-network/akt/
 │   │   ├── log.go                       # Append-only action logger
 │   │   ├── types.go                     # ActionEntry, TxAction, QueryAction, WorkflowAction
 │   │   └── reader.go                    # Log reading, filtering, export
+│   ├── workflow/                         # Declarative workflow engine
+│   │   ├── types.go                     # WorkflowDef, StepDef, ParamDef, StepResult, RunState
+│   │   ├── engine.go                    # Sequential step execution with retry, error handling
+│   │   ├── loader.go                    # Load from context dir > global dir > embedded
+│   │   ├── template.go                  # Go template evaluation for {{ }} expressions
+│   │   ├── steps/                       # Step type implementations
+│   │   │   ├── registry.go             # StepExecutor registry
+│   │   │   ├── tx.go                   # Broadcast transaction
+│   │   │   ├── query.go               # Chain query
+│   │   │   ├── wait.go                # Poll until condition met
+│   │   │   ├── prompt.go             # Interactive user input
+│   │   │   ├── provider.go           # Provider gateway calls
+│   │   │   ├── output.go             # Display formatted output
+│   │   │   ├── shell.go              # Run shell command
+│   │   │   └── check.go              # Assert condition
+│   │   └── builtin/                     # Embedded default workflow definitions
+│   │       ├── embed.go                # go:embed for YAML files
+│   │       ├── deploy.yaml             # Full deployment lifecycle
+│   │       ├── update.yaml             # Update deployment
+│   │       └── close.yaml              # Close deployment
+│   ├── codec/                           # Application-wide encoding config
+│   │   └── codec.go                     # EncodingConfig, Codec, module registration
 │   ├── keyring/                         # Keyring abstraction
 │   │   ├── manager.go                   # Multi-keyring management
 │   │   └── resolver.go                  # Context-aware keyring resolution
@@ -411,7 +423,7 @@ github.com/akash-network/akt/
 │   │   ├── executor.go                  # Exec-based plugin runner
 │   │   └── protocol.go                  # Plugin communication protocol
 │   ├── flags/                           # Shared flag definitions
-│   │   ├── global.go                    # --context, --output, --debug, --home
+│   │   ├── global.go                    # --context, --output, --debug
 │   │   ├── tx.go                        # Transaction flags
 │   │   ├── query.go                     # Query flags
 │   │   ├── pagination.go               # Pagination flags
@@ -451,7 +463,7 @@ Commands are copied from `akash-network/chain-sdk/go/cli` with the following cle
 - **Adapt to context system**: Replace direct flag reading (e.g., `--node`, `--chain-id`) with context-aware resolution that falls back through the override chain.
 - **Preserve behavior**: All tx/query operations produce the same on-chain results. Flag names remain the same where feasible.
 
-The `chain-sdk` CLI package (`pkg.akt.dev/go/cli`) will be deprecated and eventually removed once `akt` reaches full feature parity.
+The `chain-sdk` CLI package (`pkg.akt.dev/go/cli`) will be deprecated and eventually removed once `akt` reaches full feature parity. In the interim, the `go/cli` code is clean-copied into `internal/cli/chain` and adjusted to respect akt context defaults; all other chain-sdk packages are imported directly.
 
 ### 5.2 Cobra for CLI, Bubbletea for TUI
 
@@ -476,7 +488,7 @@ Following kubectl's proven plugin model:
 
 - Plugins are executables named `akt-<name>` found in `$PATH` or `~/.config/akt/plugins/`.
 - `akt <name> [args]` delegates to the plugin binary if no built-in command matches.
-- Plugins receive context information via environment variables (`AKT_CONTEXT`, `AKT_CHAIN_ID`, `AKT_NODE`, `AKT_FROM`, `AKT_HOME`, `AKT_OUTPUT`, etc.).
+- Plugins receive context information via environment variables (`AKT_CONTEXT`, `AKT_CHAIN_ID`, `AKT_NODE`, `AKT_FROM`, `AKT_OUTPUT`, etc.).
 - An optional plugin manifest (`plugin.yaml` next to the binary) declares metadata, required context fields, and help text.
 - Built-in management: `akt plugin install <url>`, `akt plugin list`, `akt plugin remove <name>`.
 
@@ -567,7 +579,7 @@ This replaces the MVP's manual backup-endpoint approach with transparent, automa
 ### 7.1 Command Mapping from `akash`
 
 | Current (`akash`)             | New (`akt`)                 | Notes                              |
-|-------------------------------|-----------------------------|------------------------------------|
+| ----------------------------- | --------------------------- | ---------------------------------- |
 | `akash tx bank send`          | `akt tx bank send`          | Identical behavior                 |
 | `akash tx deployment create`  | `akt tx deployment create`  | Identical behavior                 |
 | `akash tx deployment close`   | `akt tx deployment close`   | Identical behavior                 |
@@ -595,7 +607,7 @@ This replaces the MVP's manual backup-endpoint approach with transparent, automa
 ### 7.2 Command Mapping from `provider-services`
 
 | Current (`provider-services`)         | New (`akt`)                      | Notes              |
-|---------------------------------------|----------------------------------|--------------------|
+| ------------------------------------- | -------------------------------- | ------------------ |
 | `provider-services status`            | `akt provider status`            | Identical behavior |
 | `provider-services lease-status`      | `akt provider lease-status`      | Identical behavior |
 | `provider-services lease-logs`        | `akt provider lease-logs`        | Identical behavior |
@@ -629,5 +641,7 @@ These remain in their respective repositories:
 - `provider-services operator ip` -- IP/MetalLB operator
 - `provider-services operator inventory` -- inventory operator
 - `provider-services tools psutil *` -- hardware discovery tools
-- `provider-services migrate run` -- database migration runner
+- `provider-services migrate run` -- migration runner
+- `provider-services migrate-*` -- all migration commands
+- `provider-services sdl-to-manifest` -- SDL conversion utility (provider-internal)
 - `provider-services show-cluster-ns` -- Kubernetes namespace utility
