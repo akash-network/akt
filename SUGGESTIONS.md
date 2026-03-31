@@ -1,0 +1,1 @@
+- [ ] make JWT the default client auth so there is no need to use mTLS certs
