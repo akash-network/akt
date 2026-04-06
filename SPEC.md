@@ -12,36 +12,37 @@ This document is the detailed technical specification for the `akt` CLI. For arc
 4. [Store Specification](#4-store-specification)
 5. [Action Log Specification](#5-action-log-specification)
 6. [Sync Engine Specification](#6-sync-engine-specification)
-7. [TUI Specification](#7-tui-specification)
-8. [Plugin System Specification](#8-plugin-system-specification)
-9. [Output Format Specification](#9-output-format-specification)
-10. [Error Handling](#10-error-handling)
-11. [Phased Implementation Plan](#11-phased-implementation-plan)
+7. [Console API Specification](#7-console-api-specification)
+8. [TUI Specification](#8-tui-specification)
+9. [Plugin System Specification](#9-plugin-system-specification)
+10. [Output Format Specification](#10-output-format-specification)
+11. [Error Handling](#11-error-handling)
+12. [Phased Implementation Plan](#12-phased-implementation-plan)
 
 ---
 
 ## 1. Configuration
 
-### 1.1 Config File Location
+### 1.1 Home Directory
 
-The configuration root follows the XDG Base Directory Specification:
-
-```
-$AKT_HOME > $XDG_CONFIG_HOME/akt > ~/.config/akt
-```
+The akt home directory contains all configuration, contexts, keyrings, stores, and caches.
 
 Resolution order:
-1. `$AKT_HOME` environment variable (if set)
-2. `$XDG_CONFIG_HOME/akt` (if `XDG_CONFIG_HOME` is set)
-3. `~/.config/akt` (default)
+1. `--home` flag (highest priority)
+2. `AKT_HOME` env var
+3. `$XDG_CONFIG_HOME/akt` (if `XDG_CONFIG_HOME` is set)
+4. `~/.config/akt` (default)
 
-The `--home` flag overrides all of the above.
+The active context within the home is selected via `AKT_CONTEXT` env var or `--context` flag (by name, not path).
 
 ### 1.2 Config File Schema (`config.yaml`)
 
 A context is a composition of four objects: a **network** (shared), a **keyring** (shared), a **state store** (unique), and an **action log** (unique). Networks and keyrings are defined as top-level shared resources and referenced by name from contexts.
 
+All akt-generated YAML files include a document start line (`---`).
+
 ```yaml
+---
 # ~/.config/akt/config.yaml
 
 # Schema version for forward compatibility
@@ -143,6 +144,13 @@ contexts:
     provider-defaults:
       auth-type: jwt
 
+  - name: console                      # Console API context (managed wallet)
+    network: mainnet                    # network used for query commands
+    auth-method: console-api            # use Console managed wallet instead of keyring
+    console-api-url: ""                 # empty = default (https://console-api.akash.network)
+    # keyring, default-account, and provider-defaults are not used with console-api auth
+    # API key is supplied via AKT_CONSOLE_API_KEY env var or --console-api-key flag
+
 # TUI settings
 tui:
   theme: dark                           # dark | light
@@ -156,25 +164,26 @@ plugins:
     - ~/.local/bin
   disabled: []                          # list of plugin names to disable
 
-# Output defaults
+# Defaults
 defaults:
   output: table                         # table | json | yaml
   broadcast-mode: sync                  # sync | async | block
+  interactive: true                     # optional; allow TUI mode; false = CLI-only (override with -i)
 ```
 
 ### 1.3 Network Schema
 
 Networks define chain connectivity. They are shared resources -- a single network definition can be referenced by multiple contexts.
 
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `name` | string | yes | -- | Unique network identifier |
-| `chain-id` | string | yes | -- | Blockchain chain ID |
-| `endpoints.rpc` | []string | yes | -- | RPC endpoint URLs (ordered by priority, failover) |
-| `endpoints.api` | []string | no | [] | REST API endpoint URLs |
-| `endpoints.grpc` | []string | no | [] | gRPC endpoint URLs |
-| `gas-prices` | string | no | `"0.025uakt"` | Default gas price for transactions |
-| `gas-adjustment` | string | no | `"1.5"` | Gas estimation multiplier (when gas=auto) |
+| Field            | Type     | Required | Default       | Description                                       |
+| ---------------- | -------- | -------- | ------------- | ------------------------------------------------- |
+| `name`           | string   | yes      | --            | Unique network identifier                         |
+| `chain-id`       | string   | yes      | --            | Blockchain chain ID                               |
+| `endpoints.rpc`  | []string | yes      | --            | RPC endpoint URLs (ordered by priority, failover) |
+| `endpoints.api`  | []string | no       | []            | REST API endpoint URLs                            |
+| `endpoints.grpc` | []string | no       | []            | gRPC endpoint URLs                                |
+| `gas-prices`     | string   | no       | `"0.025uakt"` | Default gas price for transactions                |
+| `gas-adjustment` | string   | no       | `"1.5"`       | Gas estimation multiplier (when gas=auto)         |
 
 **Network sharing rules:**
 - Multiple contexts can reference the same network by name.
@@ -183,48 +192,65 @@ Networks define chain connectivity. They are shared resources -- a single networ
   - **Edit parent**: Modify the shared network definition. All contexts using it see the change.
   - **Fork**: Create a copy of the network with a new name (e.g., `mainnet` -> `mainnet-<context>`). The current context switches to the fork. Other contexts are unaffected.
 
-**Network templates**: Built-in templates for `mainnet`, `testnet`, and `sandbox` are available via `akt network create --template <name>`. Templates populate all fields with known-good defaults.
+**Network templates**: Built-in templates for `mainnet`, `testnet`, and `sandbox` are available via `akt context network create --template <name>`. Templates populate all fields with known-good defaults.
 
 ### 1.4 Context Schema
 
 Contexts compose a network, keyring, and context-specific settings. The state store and action log are implicitly created at `<config-root>/contexts/<name>/`.
 
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `name` | string | yes | -- | Unique context identifier |
-| `network` | string | yes | -- | Name of network definition to use |
-| `keyring` | string | no | `"default"` | Name of keyring definition to use |
-| `default-account` | string | no | `""` | Default `--from` value (account name or bech32 address) |
-| `gas` | string | no | `"auto"` | Gas limit or `"auto"` (overrides network gas settings per-context) |
-| `fees` | string | no | `""` | Fixed fees (overrides network gas-prices if set) |
-| `provider-defaults.auth-type` | string | no | `"jwt"` | Provider auth: `jwt` or `mtls` |
+| Field                         | Type   | Required | Default                                | Description                                                                  |
+| ----------------------------- | ------ | -------- | -------------------------------------- | ---------------------------------------------------------------------------- |
+| `name`                        | string | yes      | --                                     | Unique context identifier                                                    |
+| `network`                     | string | yes      | --                                     | Name of network definition to use                                            |
+| `auth-method`                 | string | no       | `"keyring"`                            | Authentication method: `keyring` or `console-api`                            |
+| `console-api-url`             | string | no       | `"https://console-api.akash.network"` | Console API base URL (only with `console-api` auth)                          |
+| `keyring`                     | string | no       | `"default"`                            | Keyring name for signing keys (only with `keyring` auth)                     |
+| `default-account`             | string | no       | `""`                                   | Default `--from` value (only with `keyring` auth)                            |
+| `gas`                         | string | no       | `"auto"`                               | Gas limit or `"auto"` (only with `keyring` auth)                             |
+| `fees`                        | string | no       | `""`                                   | Fixed fees (only with `keyring` auth)                                        |
+| `provider-defaults.auth-type` | string | no       | `"jwt"`                                | Provider gateway auth: `jwt` or `mtls` (only with `keyring` auth)            |
 
 ### 1.5 Keyring Schema
 
 Keyrings are shared wallet storage. Adding a key to a keyring makes it immediately available to all contexts that reference that keyring.
 
-| Field | Type | Required | Default | Description |
-|---|---|---|---|---|
-| `name` | string | yes | -- | Unique keyring identifier |
-| `backend` | string | no | `"os"` | Backend type: `os`, `file`, `test`, `kwallet`, `pass` |
-| `dir` | string | no | `""` | Keyring directory (default: `<root>/keyrings/<name>/`) |
+| Field     | Type   | Required | Default | Description                                            |
+| --------- | ------ | -------- | ------- | ------------------------------------------------------ |
+| `name`    | string | yes      | --      | Unique keyring identifier                              |
+| `backend` | string | no       | `"os"`  | Backend type: `os`, `file`, `test`, `kwallet`, `pass`  |
+| `dir`     | string | no       | `""`    | Keyring directory (default: `<root>/keyrings/<name>/`) |
 
-### 1.6 Context Propagation
+### 1.6 Config Management (Viper)
+
+Configuration is managed via [Viper](https://github.com/spf13/viper). Viper handles config file reading/writing, environment variable binding, flag binding, and live-reload (via fsnotify built into Viper).
+
+**Key principles:**
+- **No global variables.** All state is passed explicitly via function parameters or struct fields.
+- **No reading flags into Go variables.** Flags are bound to Viper keys; values are read from Viper or the cobra command at point of use.
+- **Viper provides the resolution order natively:** flags > env vars > config file > defaults.
+
+**Viper setup:**
+- Config file: `<home>/config.yaml` (YAML format, 2-space indent)
+- Env prefix: `AKT` (e.g., `AKT_CONTEXT` maps to `context`)
+- Flag binding: Global persistent flags (`--home`, `--context`, `--output`) are bound to Viper keys in the root command's `PersistentPreRunE`
+- Live-reload: `viper.WatchConfig()` with `viper.OnConfigChange()` callback
+
+### 1.7 Context Propagation
 
 The context is resolved once at application startup and propagated through the entire session as a single object that all services receive.
 
-**Resolution order** (highest priority wins):
+**Resolution order** (highest priority wins, provided natively by Viper):
 
 1. Command-line flags (`--context`, `--chain-id`, `--node`, `--from`, etc.)
-2. Environment variables (`AKT_CONTEXT`, `AKT_CHAIN_ID`, `AKT_NODE`, `AKT_FROM`, etc.)
+2. Environment variables (`AKT_CONTEXT`, `AKT_CHAIN_ID`, `AKT_NODE`, `AKT_FROM`, etc.) -- `AKT_CONTEXT` is the primary env var that selects the active context by name
 3. Context config (which references its network and keyring)
 4. Built-in defaults
 
 The resolved context is injected into every service: chain client, provider gateway, sync engine, store, action log, and TUI models.
 
-### 1.7 Live Reload
+### 1.8 Live Reload
 
-The config file (`config.yaml`) is watched for changes using filesystem notifications (fsnotify) with polling fallback.
+The config file (`config.yaml`) is watched for changes using Viper's built-in `WatchConfig()` which uses fsnotify.
 
 **CLI mode behavior:**
 - If the config changes during a long-running command (e.g., `akt deploy`), the change is picked up for subsequent operations within that command.
@@ -244,30 +270,31 @@ The config file (`config.yaml`) is watched for changes using filesystem notifica
 - Keyring changes are picked up on next key operation.
 - Context-level changes (default-account, gas, fees) apply to subsequent actions.
 
-### 1.8 Environment Variable Mapping
+### 1.9 Environment Variable Mapping
 
 All environment variables use the `AKT_` prefix. When set, they override the corresponding config value.
 
-| Environment Variable | Overrides | Example |
-|---|---|---|
-| `AKT_HOME` | Config root path | `/home/user/.akt` |
-| `AKT_CONTEXT` | `current-context` | `prod` |
-| `AKT_CHAIN_ID` | `networks[*].chain-id` (via context's network) | `akashnet-2` |
-| `AKT_NODE` | `networks[*].endpoints.rpc[0]` (via context's network) | `https://rpc.akashnet.net:443` |
-| `AKT_GRPC_ADDR` | `networks[*].endpoints.grpc[0]` (via context's network) | `grpc.akashnet.net:443` |
-| `AKT_FROM` | `contexts[*].default-account` | `alice` |
-| `AKT_KEYRING_BACKEND` | `keyrings[*].backend` (via context's keyring) | `os` |
-| `AKT_KEYRING_DIR` | `keyrings[*].dir` (via context's keyring) | `/path/to/keyring` |
-| `AKT_GAS` | `contexts[*].gas` | `auto` |
-| `AKT_GAS_PRICES` | `networks[*].gas-prices` (via context's network) | `0.025uakt` |
-| `AKT_GAS_ADJUSTMENT` | `networks[*].gas-adjustment` (via context's network) | `1.5` |
-| `AKT_FEES` | `contexts[*].fees` | `5000uakt` |
-| `AKT_BROADCAST_MODE` | `defaults.broadcast-mode` | `sync` |
-| `AKT_OUTPUT` | `defaults.output` | `json` |
+| Environment Variable  | Overrides                                               | Example                        |
+| --------------------- | ------------------------------------------------------- | ------------------------------ |
+| `AKT_HOME`            | Home directory (overrides XDG default)                  | `/path/to/.akt`                |
+| `AKT_CONTEXT`         | Active context name (overrides `current-context`)       | `prod`                         |
+| `AKT_CHAIN_ID`        | `networks[*].chain-id` (via context's network)          | `akashnet-2`                   |
+| `AKT_NODE`            | `networks[*].endpoints.rpc[0]` (via context's network)  | `https://rpc.akashnet.net:443` |
+| `AKT_GRPC_ADDR`       | `networks[*].endpoints.grpc[0]` (via context's network) | `grpc.akashnet.net:443`        |
+| `AKT_FROM`            | `contexts[*].default-account`                           | `alice`                        |
+| `AKT_KEYRING_BACKEND` | `keyrings[*].backend` (via context's keyring)           | `os`                           |
+| `AKT_KEYRING_DIR`     | `keyrings[*].dir` (via context's keyring)               | `/path/to/keyring`             |
+| `AKT_GAS`             | `contexts[*].gas`                                       | `auto`                         |
+| `AKT_GAS_PRICES`      | `networks[*].gas-prices` (via context's network)        | `0.025uakt`                    |
+| `AKT_GAS_ADJUSTMENT`  | `networks[*].gas-adjustment` (via context's network)    | `1.5`                          |
+| `AKT_FEES`            | `contexts[*].fees`                                      | `5000uakt`                     |
+| `AKT_BROADCAST_MODE`  | `defaults.broadcast-mode`                               | `sync`                         |
+| `AKT_OUTPUT`          | `defaults.output`                                       | `json`                         |
+| `AKT_CONSOLE_API_KEY` | Console API key (required for `console-api` auth method) | `akt_abc123...`                |
 
 ### 1.9 Built-in Network Templates
 
-The `akt network create --template <name>` command creates a network definition from a built-in template.
+The `akt context network create --template <name>` command creates a network definition from a built-in template.
 
 **Template: `mainnet`**
 ```yaml
@@ -316,9 +343,33 @@ gas-prices: "0.025uakt"
 gas-adjustment: "1.5"
 ```
 
+### 1.10 Terminal Requirements
+
+**Nerd Font**: TUI mode (`akt`, `akt monitor`) and pretty query output (`--output pretty`) require a [Nerd Font](https://www.nerdfonts.com/) configured in the terminal emulator. Nerd Fonts provide Powerline symbols, Font Awesome icons, and other extended glyphs used for visual indicators throughout the interface.
+
+**Detection**: On startup, `akt` probes the terminal by rendering test glyphs from the Powerline (U+E0B0) and Font Awesome (U+F005) Private Use Area ranges, measuring cursor advance via ANSI Device Status Report (`\033[6n`). The detection distinguishes three cases:
+
+| Powerline (U+E0B0) | Font Awesome (U+F005) | Result |
+|---|---|---|
+| 1 cell | 1 cell | Nerd Font present — proceed normally |
+| 1 cell | 0 or 2 cells | Powerline-only font — error with upgrade instructions |
+| 0 or 2 cells | 0 or 2 cells | No special font — error with install instructions |
+
+The check is skipped when stdout is not a terminal (piped/non-interactive) or when the terminal does not respond to DSR within 100ms (proceeds with a warning to stderr). The `--skip-font-check` flag bypasses the check entirely for terminals where detection produces false negatives.
+
+The check runs at most once per process. It is invoked:
+- Before launching the TUI (`akt` with no subcommand, `akt monitor`)
+- Before rendering pretty query output (`--output pretty`)
+
+| Flag | Type | Default | Description |
+|---|---|---|---|
+| `--skip-font-check` | bool | `false` | Skip Nerd Font detection on startup |
+
 ---
 
 ## 2. CLI Command Reference
+
+Implementation note: `tx` and `query` commands are clean-copied from `akash-network/chain-sdk/go/cli` into `internal/cli/chain`. Only CLI code is copied; all other chain-sdk packages are imported directly. Command flags default to the resolved akt context values unless explicitly overridden.
 
 ### 2.1 Command Tree Overview
 
@@ -329,26 +380,26 @@ akt
 │   ├── delete <name>                    # Delete a context
 │   ├── edit <name>                      # Edit context (fork/edit-parent for network)
 │   ├── list                             # List all contexts
-│   ├── current                          # Show active context with full details
+│   ├── show                             # Show active context with full details
 │   ├── use <name>                       # Switch active context
 │   ├── rename <old> <new>              # Rename a context
-│   └── log                              # View action log for current context
-├── network                              # Network management (shared resource)
-│   ├── create <name>                    # Create a new network
-│   ├── delete <name>                    # Delete a network (fails if in use)
-│   ├── edit <name>                      # Edit network definition
-│   ├── list                             # List all networks (show which contexts use each)
-│   └── show <name>                      # Show network details
-├── keys                                 # Key management
-│   ├── add <name>                       # Add key (mnemonic, ledger, or multisig)
-│   ├── delete <name>                    # Delete key
-│   ├── export <name>                    # Export private key (encrypted)
-│   ├── import <name> <keyfile>          # Import private key
-│   ├── list                             # List all keys
-│   ├── show <name|address>              # Show key details
-│   ├── rename <old> <new>              # Rename key
-│   ├── mnemonic                         # Generate mnemonic
-│   └── parse <hex-or-bech32>            # Parse address formats
+│   ├── log                              # View action log for current context
+│   ├── network                          # Network management (shared resource)
+│   │   ├── create <name>                # Create a new network
+│   │   ├── delete <name>                # Delete a network (fails if in use)
+│   │   ├── edit <name>                  # Edit network definition
+│   │   ├── list                         # List all networks (show which contexts use each)
+│   │   └── show <name>                  # Show network details
+│   └── keys                             # Key management
+│       ├── add <name>                   # Add key (mnemonic, ledger, or multisig)
+│       ├── delete <name>                # Delete key
+│       ├── export <name>                # Export private key (encrypted)
+│       ├── import <name> <keyfile>      # Import private key
+│       ├── list                         # List all keys
+│       ├── show <name|address>          # Show key details
+│       ├── rename <old> <new>          # Rename key
+│       ├── mnemonic                     # Generate mnemonic
+│       └── parse <hex-or-bech32>        # Parse address formats
 ├── tx                                   # Transaction commands
 │   ├── bank
 │   │   ├── send <from> <to> <amount>
@@ -450,33 +501,26 @@ akt
 │   ├── broadcast <file>
 │   ├── encode <file>
 │   └── decode <file>
-├── query (alias: q)                     # Query commands
+├── query (alias: q)                     # Query commands (see §3.8 for filter syntax)
 │   ├── bank
 │   │   ├── balances <address>
 │   │   ├── spendable-balances <address>
 │   │   ├── total
 │   │   ├── denom-metadata
 │   │   └── send-enabled [denom1...]
-│   ├── deployment
-│   │   ├── deployments [--owner] [--dseq] [--state]
-│   │   ├── group get
+│   ├── deployment [filter]              # [owner/]dseq; no arg → list; --state flag
+│   │   ├── group [filter]               # [owner/]dseq[/gseq]
 │   │   └── params
 │   ├── market
-│   │   ├── orders [--owner] [--dseq] [--gseq] [--oseq] [--state]
-│   │   ├── bids [--owner] [--dseq] [--gseq] [--oseq] [--provider] [--state]
-│   │   ├── leases [--owner] [--dseq] [--gseq] [--oseq] [--provider] [--state]
+│   │   ├── order [filter]               # [owner/]dseq[/gseq/oseq]; --state flag
+│   │   ├── bid [filter]                 # [owner/]dseq[/gseq/oseq[/prov]]; --by; --state
+│   │   ├── lease [filter]               # [owner/]dseq[/gseq/oseq[/prov]]; --by; --state
 │   │   └── params
-│   ├── provider
-│   │   ├── list
-│   │   └── get <address>
-│   ├── cert
-│   │   └── list
-│   ├── audit
-│   │   ├── list
-│   │   └── get [owner] [auditor]
-│   ├── escrow
-│   │   ├── accounts
-│   │   ├── payments
+│   ├── provider [address]               # List or get (address → single)
+│   ├── cert [owner]                     # Owner or default account; --state flag
+│   ├── audit [owner]                    # Owner or default account; --auditor flag
+│   ├── escrow [filter]                  # [owner[/dseq]]; --state flag
+│   │   ├── payment [filter]             # [owner[/dseq]]
 │   │   └── blocks-remaining
 │   ├── staking
 │   │   ├── validator <val-addr>
@@ -563,7 +607,6 @@ akt
 │   ├── get-manifest
 │   ├── migrate-hostnames
 │   └── migrate-endpoints
-├── sdl-to-manifest <sdl-file>           # SDL utility
 ├── store                                # Local store management
 │   ├── status
 │   ├── export
@@ -574,6 +617,11 @@ akt
 │   └── remove <name>
 ├── events                               # Live blockchain event streaming
 │                                        # (no subcommand launches TUI mode)
+├── monitor [rpc-endpoint]               # Real-time monitoring hub (network/provider/oracle-bme dashboards)
+│   ├── network [rpc-endpoint]           # Network: consensus, validators, governance
+│   ├── provider [rpc-endpoint]          # Provider fleet: versions, health, resources
+│   ├── oracle [rpc-endpoint]            # Oracle/BME dashboard (alias)
+│   └── bme [rpc-endpoint]              # Oracle/BME dashboard (alias)
 ├── version                              # Version information
 └── completion                           # Shell completion scripts
 ```
@@ -584,18 +632,20 @@ akt
 
 Create a new named context. A context references a network and keyring by name.
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--network` | string | `""` | Network name to use (required; must exist) |
-| `--keyring` | string | `"default"` | Keyring name to use |
-| `--default-account` | string | `""` | Default account name |
-| `--gas` | string | `"auto"` | Gas limit override |
-| `--fees` | string | `""` | Fixed fees override |
-| `--set-current` | bool | `false` | Set as current context after creation |
+| Flag                  | Type   | Default     | Description                                                      |
+| --------------------- | ------ | ----------- | ---------------------------------------------------------------- |
+| `--network`           | string | `""`        | Network name to use (required; must exist)                       |
+| `--auth-method`       | string | `"keyring"` | Authentication method: `keyring` or `console-api`                |
+| `--console-api-url`   | string | `""`        | Console API base URL (empty = default; only with `console-api`)  |
+| `--keyring`           | string | `"default"` | Keyring name (only with `keyring` auth)                          |
+| `--default-account`   | string | `""`        | Default account name (only with `keyring` auth)                  |
+| `--gas`               | string | `"auto"`    | Gas limit override (only with `keyring` auth)                    |
+| `--fees`              | string | `""`        | Fixed fees override (only with `keyring` auth)                   |
+| `--set-current`       | bool   | `false`     | Set as current context after creation                            |
 
 **Examples:**
 ```bash
-# Create context using an existing network
+# Create context using an existing network (keyring auth, default)
 akt context create prod --network mainnet --default-account alice --set-current
 
 # Create context for monitoring (no default account)
@@ -603,6 +653,10 @@ akt context create monitoring --network mainnet
 
 # Create context for testnet
 akt context create staging --network testnet --keyring test-keyring --default-account testaccount
+
+# Create context using Console API managed wallet
+# API key is supplied via AKT_CONSOLE_API_KEY env var at runtime
+akt context create console --network mainnet --auth-method console-api --set-current
 ```
 
 #### `akt context use <name>`
@@ -625,12 +679,12 @@ $ akt context list
   monitoring    mainnet     default                       akashnet-2
 ```
 
-#### `akt context current`
+#### `akt context show`
 
 Print the current context name and full details (resolved network, keyring, store path, action log path, and all effective settings).
 
 ```bash
-$ akt context current
+$ akt context show
 Context:         prod
 Network:         mainnet
   Chain ID:      akashnet-2
@@ -654,14 +708,14 @@ Edit context-level settings. For network-level changes (endpoints, gas-prices), 
 - **Edit parent network**: Modify the shared network. Changes apply to all contexts using it.
 - **Fork network**: Create a private copy of the network for this context only.
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--network` | string | `""` | Switch to a different network |
-| `--keyring` | string | `""` | Switch to a different keyring |
-| `--default-account` | string | `""` | Change default account |
-| `--gas` | string | `""` | Change gas setting |
-| `--fees` | string | `""` | Change fees setting |
-| `--fork-network` | bool | `false` | Force fork when editing network fields |
+| Flag                | Type   | Default | Description                            |
+| ------------------- | ------ | ------- | -------------------------------------- |
+| `--network`         | string | `""`    | Switch to a different network          |
+| `--keyring`         | string | `""`    | Switch to a different keyring          |
+| `--default-account` | string | `""`    | Change default account                 |
+| `--gas`             | string | `""`    | Change gas setting                     |
+| `--fees`            | string | `""`    | Change fees setting                    |
+| `--fork-network`    | bool   | `false` | Force fork when editing network fields |
 
 ```bash
 # Change default account
@@ -678,9 +732,9 @@ akt context edit prod --rpc https://my-private-rpc:443
 
 Delete a context. Prompts for confirmation unless `--yes` is passed. Cannot delete the current context (switch first). Removes the context's store and action log.
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--yes` | bool | `false` | Skip confirmation |
+| Flag          | Type | Default | Description                                                 |
+| ------------- | ---- | ------- | ----------------------------------------------------------- |
+| `--yes`       | bool | `false` | Skip confirmation                                           |
 | `--keep-data` | bool | `false` | Delete context config but keep store and action log on disk |
 
 #### `akt context rename <old> <new>`
@@ -691,12 +745,12 @@ Rename a context. Updates `current-context` if the renamed context was active. R
 
 View the action log for the current context.
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--context` | string | current | Context to view log for |
-| `--limit` | int | `50` | Number of entries to show |
-| `--type` | string | `""` | Filter by action type: `tx`, `query`, `workflow`, `error` |
-| `--since` | string | `""` | Show entries since timestamp or duration (e.g., `1h`, `2024-01-01`) |
+| Flag        | Type   | Default | Description                                                         |
+| ----------- | ------ | ------- | ------------------------------------------------------------------- |
+| `--context` | string | current | Context to view log for                                             |
+| `--limit`   | int    | `50`    | Number of entries to show                                           |
+| `--type`    | string | `""`    | Filter by action type: `tx`, `query`, `workflow`, `error`           |
+| `--since`   | string | `""`    | Show entries since timestamp or duration (e.g., `1h`, `2024-01-01`) |
 
 ```bash
 $ akt context log --limit 5
@@ -710,56 +764,56 @@ $ akt context log --limit 5
 
 ### 2.2.1 Network Commands
 
-#### `akt network create <name>`
+#### `akt context network create <name>`
 
 Create a new network definition.
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--template` | string | `""` | Use built-in template: `mainnet`, `testnet`, `sandbox` |
-| `--chain-id` | string | `""` | Chain ID (required if no template) |
-| `--rpc` | []string | `[]` | RPC endpoint URLs |
-| `--api` | []string | `[]` | REST API endpoint URLs |
-| `--grpc` | []string | `[]` | gRPC endpoint URLs |
-| `--gas-prices` | string | `"0.025uakt"` | Default gas prices |
-| `--gas-adjustment` | string | `"1.5"` | Gas estimation multiplier |
+| Flag               | Type     | Default       | Description                                            |
+| ------------------ | -------- | ------------- | ------------------------------------------------------ |
+| `--template`       | string   | `""`          | Use built-in template: `mainnet`, `testnet`, `sandbox` |
+| `--chain-id`       | string   | `""`          | Chain ID (required if no template)                     |
+| `--rpc`            | []string | `[]`          | RPC endpoint URLs                                      |
+| `--api`            | []string | `[]`          | REST API endpoint URLs                                 |
+| `--grpc`           | []string | `[]`          | gRPC endpoint URLs                                     |
+| `--gas-prices`     | string   | `"0.025uakt"` | Default gas prices                                     |
+| `--gas-adjustment` | string   | `"1.5"`       | Gas estimation multiplier                              |
 
 **Examples:**
 ```bash
 # Create from built-in template
-akt network create mainnet --template mainnet
+akt context network create mainnet --template mainnet
 
 # Create custom network
-akt network create local --chain-id localnet-1 --rpc http://localhost:26657
+akt context network create local --chain-id localnet-1 --rpc http://localhost:26657
 
 # Create all standard networks at once
-akt network create mainnet --template mainnet && \
-akt network create testnet --template testnet && \
-akt network create sandbox --template sandbox
+akt context network create mainnet --template mainnet && \
+akt context network create testnet --template testnet && \
+akt context network create sandbox --template sandbox
 ```
 
-#### `akt network edit <name>`
+#### `akt context network edit <name>`
 
 Edit a network definition. Changes apply to all contexts using this network.
 
 ```bash
 # Add a backup RPC endpoint
-akt network edit mainnet --rpc https://rpc.akashnet.net:443,https://my-backup-rpc:443
+akt context network edit mainnet --rpc https://rpc.akashnet.net:443,https://my-backup-rpc:443
 
 # Change gas prices
-akt network edit mainnet --gas-prices 0.04uakt
+akt context network edit mainnet --gas-prices 0.04uakt
 ```
 
-#### `akt network delete <name>`
+#### `akt context network delete <name>`
 
 Delete a network definition. Fails if any context references it. Use `--force` to delete anyway (affected contexts become invalid).
 
-#### `akt network list`
+#### `akt context network list`
 
 List all networks and which contexts reference each.
 
 ```bash
-$ akt network list
+$ akt context network list
   NAME              CHAIN-ID       RPC                          USED BY
   mainnet           akashnet-2     rpc.akashnet.net:443         prod, monitoring
   testnet           testnet-02     rpc.testnet-02.aksh.pw:443   staging
@@ -767,11 +821,225 @@ $ akt network list
   mainnet-custom    akashnet-2     my-private-rpc:443           (none)
 ```
 
-#### `akt network show <name>`
+#### `akt context network show <name>`
 
 Show full network details.
 
-### 2.3 Workflow Commands
+### 2.2.2 Keys Commands
+
+#### `akt context keys show <name|address>`
+
+Show key details. By default prints name, type, address, and public key. Use `--address` (short `-a`) to print only the bech32 address for scripting.
+
+| Flag         | Short | Type | Default | Description                         |
+| ------------ | ----- | ---- | ------- | ----------------------------------- |
+| `--address`  | `-a`  | bool | `false` | Print only the bech32 address       |
+
+**Examples:**
+```bash
+akt context keys show test1
+akt context keys show test1 --address
+akt context keys show test1 -a
+```
+
+### 2.3 Workflow Engine
+
+Workflow commands (`akt deploy`, `akt update`, `akt close`) are driven by a **declarative workflow engine**. Instead of hardcoded command logic, each workflow is a YAML definition that the engine interprets step by step. Users can override built-in workflows or create custom ones.
+
+#### 2.3.1 Workflow Definition Location
+
+Workflow definitions are resolved in order:
+1. **Per-context**: `<home>/contexts/<ctx>/workflows/<name>.yaml`
+2. **Global user**: `<home>/workflows/<name>.yaml`
+3. **Embedded built-in**: compiled into the binary
+
+Top-level commands (`akt deploy`, `akt update`, `akt close`) are thin wrappers that load and run the corresponding workflow. CLI flags are **auto-generated** from the workflow's declared `params` section.
+
+#### 2.3.2 Workflow Definition Format
+
+```yaml
+name: deploy
+description: Create a deployment, wait for bids, select provider, create lease, send manifest
+version: 1
+
+params:
+  sdl-file:
+    type: file
+    required: true
+    description: Path to SDL deployment file
+  deposit:
+    type: string
+    default: "5000000uakt"
+    description: Initial deposit amount
+  bid-timeout:
+    type: duration
+    default: "5m"
+    description: Maximum time to wait for bids
+  bid-select:
+    type: string
+    default: "interactive"
+    description: "Bid selection: interactive, cheapest, provider=<addr>"
+
+steps:
+  - name: create-deployment
+    type: tx
+    msg: deployment.MsgCreateDeployment
+    params:
+      sdl: "{{ index .Params \"sdl-file\" }}"
+      deposit: "{{ .Params.deposit }}"
+    output:
+      dseq: "{{ .Result.dseq }}"
+    on-error: abort
+
+  - name: wait-for-bids
+    type: wait
+    query: market.bids
+    params:
+      owner: "{{ .Account }}"
+      dseq: "{{ (index .Steps \"create-deployment\").dseq }}"
+    timeout: "{{ index .Params \"bid-timeout\" }}"
+    until: "{{ ge (len .Result.bids) 1 }}"
+    on-error: abort
+
+  - name: select-bid
+    type: prompt
+    mode: "{{ index .Params \"bid-select\" }}"
+    data: "{{ (index .Steps \"wait-for-bids\").bids }}"
+    display:
+      columns: [provider, price, audited]
+
+  - name: create-lease
+    type: tx
+    msg: market.MsgCreateLease
+    params:
+      bid-id: "{{ (index .Steps \"select-bid\").bid.id }}"
+    on-error: abort
+
+  - name: send-manifest
+    type: provider
+    action: send-manifest
+    params:
+      provider: "{{ (index .Steps \"select-bid\").bid.provider }}"
+      dseq: "{{ (index .Steps \"create-deployment\").dseq }}"
+      sdl: "{{ index .Params \"sdl-file\" }}"
+    retry:
+      max: 3
+      delay: "5s"
+    on-error: abort
+
+  - name: display-result
+    type: output
+    template: |
+      Deployment active!
+        DSEQ: {{ (index .Steps "create-deployment").dseq }}
+```
+
+#### 2.3.3 Step Types
+
+| Type       | Description                                    | Key fields                                    |
+|------------|------------------------------------------------|-----------------------------------------------|
+| `tx`       | Broadcast a transaction                        | `msg`, `params`, `output`, `on-error`         |
+| `query`    | Execute a chain query                          | `query`, `params`, `output`                   |
+| `wait`     | Poll a query until a condition is met          | `query`, `params`, `until`, `timeout`         |
+| `prompt`   | Interactive user input (bid selection, confirm) | `mode`, `data`, `display`, `output`          |
+| `provider` | Provider gateway call                          | `action`, `params`, `retry`                   |
+| `output`   | Display formatted output                       | `template`                                    |
+| `shell`    | Run a shell command (for custom workflows)     | `command`, `output`                           |
+| `check`    | Assert a condition, skip/abort if not met      | `condition`, `on-fail: skip\|abort`           |
+
+#### 2.3.4 Template Variables
+
+Steps use Go templates (`{{ }}`) with access to:
+
+| Variable            | Description                                    | Example                             |
+|---------------------|------------------------------------------------|-------------------------------------|
+| `.Account`          | Default account from context                   | `{{ .Account }}`                    |
+| `.Params.<name>`    | Workflow parameter value                       | `{{ .Params.deposit }}`             |
+| `.Steps.<name>.<key>` | Output from a previous step                 | `{{ (index .Steps "create").dseq }}` |
+| `.Result`           | Raw result of current step (in output/until)   | `{{ .Result.dseq }}`               |
+| `.WorkflowID`       | Unique ID for this workflow run                | `{{ .WorkflowID }}`                |
+
+#### 2.3.5 Error Handling
+
+Each step's `on-error` field controls behavior on failure:
+
+| Value      | Behavior                            |
+|------------|-------------------------------------|
+| `abort`    | Stop the workflow (default)         |
+| `continue` | Log error and proceed to next step  |
+| `skip`     | Skip silently                       |
+
+Steps can also define `retry` with `max` attempts and `delay` between retries.
+
+#### 2.3.6 Param Types
+
+| Type       | Description                       | Flag type      |
+|------------|-----------------------------------|----------------|
+| `string`   | Plain string                      | `--name value` |
+| `int`      | Integer                           | `--name 5`     |
+| `bool`     | Boolean                           | `--name`       |
+| `duration` | Go duration string                | `--name 5m`    |
+| `file`     | File path (positional if first)   | positional arg |
+
+#### 2.3.7 Execution Modes
+
+Workflows support two execution modes:
+
+**TUI mode** (default when TTY is attached):
+- Interactive bubbletea UI with progress display, spinners, and colored status output.
+- `prompt` steps render interactive selection tables (e.g., bid selection).
+- `output` steps render formatted text.
+- Errors are displayed inline with the step that failed.
+
+**JSONL mode** (`--output jsonl`, or auto-selected when no TTY is attached):
+- Emits one JSONL line to stdout per completed workflow step.
+- No interactive prompts -- `prompt` steps must be pre-resolved via flags (e.g., `--bid-select cheapest`). If an unresolvable prompt step is reached, the workflow aborts with an error line.
+- Each line is a self-contained JSON object:
+
+```jsonl
+{"workflow":"deploy","id":"wf_abc123","step":"create-deployment","result":"completed","errors":[],"txs":[{"hash":"ABCD1234...","height":12345,"gas_used":150000,"code":0}]}
+{"workflow":"deploy","id":"wf_abc123","step":"wait-for-bids","result":"completed","errors":[],"txs":[]}
+{"workflow":"deploy","id":"wf_abc123","step":"select-bid","result":"completed","errors":[],"txs":[]}
+{"workflow":"deploy","id":"wf_abc123","step":"create-lease","result":"completed","errors":[],"txs":[{"hash":"EFGH5678...","height":12350,"gas_used":120000,"code":0}]}
+{"workflow":"deploy","id":"wf_abc123","step":"send-manifest","result":"completed","errors":[],"txs":[]}
+{"workflow":"deploy","id":"wf_abc123","step":"display-result","result":"completed","errors":[],"txs":[]}
+```
+
+On error:
+```jsonl
+{"workflow":"deploy","id":"wf_abc123","step":"send-manifest","result":"error","errors":["provider gateway timeout after 3 retries"],"txs":[]}
+```
+
+**JSONL line schema:**
+
+| Field      | Type     | Description                                                     |
+| ---------- | -------- | --------------------------------------------------------------- |
+| `workflow` | string   | Workflow name (e.g., `deploy`, `update`, `close`)               |
+| `id`       | string   | Unique workflow run ID (generated at start, same for all steps) |
+| `step`     | string   | Step name from the workflow definition                          |
+| `result`   | string   | `completed` or `error`                                          |
+| `errors`   | []string | Array of error messages (empty when `result` is `completed`)    |
+| `txs`      | []object | Array of raw transaction results (empty for non-tx steps)       |
+
+**Transaction object schema (within `txs`):**
+
+| Field      | Type   | Description                                   |
+| ---------- | ------ | --------------------------------------------- |
+| `hash`     | string | Transaction hash                              |
+| `height`   | int64  | Block height where the tx was included        |
+| `gas_used` | int64  | Gas consumed                                  |
+| `code`     | uint32 | Response code (0 = success)                   |
+| `raw_log`  | string | Raw log output (present on error, omitted otherwise) |
+
+The `--output jsonl` and `--output json` values serve different purposes: `--output json` affects how individual command results are formatted (JSON serialization), while `--output jsonl` controls the workflow execution mode, emitting structured JSONL progress for the entire multi-step workflow.
+
+#### 2.3.8 Built-in Workflows
+
+Three workflows ship as embedded defaults:
+
+- **deploy**: Full deployment lifecycle (create deployment -> wait bids -> select -> lease -> manifest -> active)
+- **update**: Update deployment (update tx -> send manifest)
+- **close**: Close deployment (close tx)
 
 #### `akt deploy <sdl-file>`
 
@@ -785,24 +1053,25 @@ The flagship workflow command. Orchestrates the full deployment lifecycle:
 6. **Wait for deployment to become active** (provider acknowledges, containers start).
 7. **Display endpoint URLs** for the deployed services.
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--from` | string | context default | Account to deploy from |
-| `--deposit` | string | auto-detect | Initial deposit amount |
-| `--bid-timeout` | duration | `5m` | Maximum time to wait for bids |
-| `--min-bids` | int | `1` | Minimum bids before selection |
-| `--bid-select` | string | `"interactive"` | Bid selection: `interactive`, `cheapest`, `provider=<addr>` |
-| `--no-wait-bids` | bool | `false` | Exit after creating deployment (don't wait for bids) |
-| `--no-wait-lease` | bool | `false` | Exit after creating lease (don't send manifest) |
-| `--no-wait-active` | bool | `false` | Exit after sending manifest (don't wait for active) |
-| `--label` | string | `""` | User label for local store metadata |
-| `--note` | string | `""` | User note for local store metadata |
-| `--yes` | bool | `false` | Skip all confirmations |
-| `--dry-run` | bool | `false` | Print what would happen without executing |
+| Flag               | Type     | Default         | Description                                                 |
+| ------------------ | -------- | --------------- | ----------------------------------------------------------- |
+| `--from`           | string   | context default | Account to deploy from                                      |
+| `--deposit`        | string   | auto-detect     | Initial deposit amount                                      |
+| `--bid-timeout`    | duration | `5m`            | Maximum time to wait for bids                               |
+| `--min-bids`       | int      | `1`             | Minimum bids before selection                               |
+| `--bid-select`     | string   | `"interactive"` | Bid selection: `interactive`, `cheapest`, `provider=<addr>` |
+| `--no-wait-bids`   | bool     | `false`         | Exit after creating deployment (don't wait for bids)        |
+| `--no-wait-lease`  | bool     | `false`         | Exit after creating lease (don't send manifest)             |
+| `--no-wait-active` | bool     | `false`         | Exit after sending manifest (don't wait for active)         |
+| `--label`          | string   | `""`            | User label for local store metadata                         |
+| `--note`           | string   | `""`            | User note for local store metadata                          |
+| `--yes`            | bool     | `false`         | Skip all confirmations                                      |
+| `--dry-run`        | bool     | `false`         | Print what would happen without executing                   |
+| `--output`         | string   | `pretty`        | Output format: `pretty` (TUI), `jsonl` (JSONL step output, see 2.3.7), `json`, `yaml` |
 
 **Transaction flags** (inherited): `--gas`, `--gas-prices`, `--fees`, `--gas-adjustment`, `--broadcast-mode`
 
-**Interactive mode** (TTY detected):
+**TUI mode** (TTY detected, default):
 ```
 $ akt deploy deployment.yaml
 
@@ -833,9 +1102,20 @@ Deployment active!
   api          http://def456.provider1.akash.network:8080
 ```
 
-**Non-interactive mode** (piped):
+**JSONL mode** (for CI/CD, scripting, automation):
 ```bash
-akt deploy deployment.yaml --bid-select cheapest --yes --output json
+$ akt deploy deployment.yaml --bid-select cheapest --yes -o jsonl
+{"workflow":"deploy","id":"wf_a1b2c3","step":"create-deployment","result":"completed","errors":[],"txs":[{"hash":"ABCD1234...","height":12345,"gas_used":150000,"code":0}]}
+{"workflow":"deploy","id":"wf_a1b2c3","step":"wait-for-bids","result":"completed","errors":[],"txs":[]}
+{"workflow":"deploy","id":"wf_a1b2c3","step":"select-bid","result":"completed","errors":[],"txs":[]}
+{"workflow":"deploy","id":"wf_a1b2c3","step":"create-lease","result":"completed","errors":[],"txs":[{"hash":"EFGH5678...","height":12350,"gas_used":120000,"code":0}]}
+{"workflow":"deploy","id":"wf_a1b2c3","step":"send-manifest","result":"completed","errors":[],"txs":[]}
+{"workflow":"deploy","id":"wf_a1b2c3","step":"display-result","result":"completed","errors":[],"txs":[]}
+```
+
+Each line can be parsed independently with `jq`:
+```bash
+akt deploy deployment.yaml --bid-select cheapest --yes -o jsonl | jq -r 'select(.step == "create-deployment") | .txs[0].hash'
 ```
 
 ### 2.4 Provider Gateway Commands
@@ -844,39 +1124,39 @@ akt deploy deployment.yaml --bid-select cheapest --yes --output json
 
 Query provider status. If `provider-addr` is omitted, uses the provider from the active lease context.
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--provider` | string | `""` | Provider address |
+| Flag          | Type   | Default         | Description              |
+| ------------- | ------ | --------------- | ------------------------ |
+| `--provider`  | string | `""`            | Provider address         |
 | `--auth-type` | string | context default | Auth type: `jwt`, `mtls` |
 
 #### `akt provider lease-status`
 
 Query lease deployment status from the provider gateway.
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--dseq` | uint64 | required | Deployment sequence |
-| `--gseq` | uint32 | `1` | Group sequence |
-| `--oseq` | uint32 | `1` | Order sequence |
-| `--provider` | string | required | Provider address |
-| `--from` | string | context default | Owner account |
-| `--auth-type` | string | context default | Auth type |
+| Flag          | Type   | Default         | Description         |
+| ------------- | ------ | --------------- | ------------------- |
+| `--dseq`      | uint64 | required        | Deployment sequence |
+| `--gseq`      | uint32 | `1`             | Group sequence      |
+| `--oseq`      | uint32 | `1`             | Order sequence      |
+| `--provider`  | string | required        | Provider address    |
+| `--from`      | string | context default | Owner account       |
+| `--auth-type` | string | context default | Auth type           |
 
 #### `akt provider lease-logs`
 
 Stream container logs from a lease.
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--dseq` | uint64 | required | Deployment sequence |
-| `--gseq` | uint32 | `1` | Group sequence |
-| `--oseq` | uint32 | `1` | Order sequence |
-| `--provider` | string | required | Provider address |
-| `--from` | string | context default | Owner account |
-| `--service` | string | `""` | Filter by service name |
-| `--follow` | bool | `false` | Stream logs continuously |
-| `--tail` | int64 | `-1` | Lines from end (-1 = all) |
-| `--auth-type` | string | context default | Auth type |
+| Flag          | Type   | Default         | Description               |
+| ------------- | ------ | --------------- | ------------------------- |
+| `--dseq`      | uint64 | required        | Deployment sequence       |
+| `--gseq`      | uint32 | `1`             | Group sequence            |
+| `--oseq`      | uint32 | `1`             | Order sequence            |
+| `--provider`  | string | required        | Provider address          |
+| `--from`      | string | context default | Owner account             |
+| `--service`   | string | `""`            | Filter by service name    |
+| `--follow`    | bool   | `false`         | Stream logs continuously  |
+| `--tail`      | int64  | `-1`            | Lines from end (-1 = all) |
+| `--auth-type` | string | context default | Auth type                 |
 
 #### `akt provider lease-events`
 
@@ -888,17 +1168,17 @@ Same flags as `lease-logs` (minus `--service`, `--tail`), plus `--follow`.
 
 Open an interactive shell into a running container.
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--dseq` | uint64 | required | Deployment sequence |
-| `--gseq` | uint32 | `1` | Group sequence |
-| `--oseq` | uint32 | `1` | Order sequence |
-| `--provider` | string | required | Provider address |
-| `--from` | string | context default | Owner account |
-| `--service` | string | required | Service name |
-| `--tty` | bool | `true` | Allocate a TTY |
-| `--stdin` | bool | `true` | Attach stdin |
-| `--auth-type` | string | context default | Auth type |
+| Flag          | Type   | Default         | Description         |
+| ------------- | ------ | --------------- | ------------------- |
+| `--dseq`      | uint64 | required        | Deployment sequence |
+| `--gseq`      | uint32 | `1`             | Group sequence      |
+| `--oseq`      | uint32 | `1`             | Order sequence      |
+| `--provider`  | string | required        | Provider address    |
+| `--from`      | string | context default | Owner account       |
+| `--service`   | string | required        | Service name        |
+| `--tty`       | bool   | `true`          | Allocate a TTY      |
+| `--stdin`     | bool   | `true`          | Attach stdin        |
+| `--auth-type` | string | context default | Auth type           |
 
 Remaining arguments after `--` are passed as the shell command. Default: `/bin/sh`.
 
@@ -910,12 +1190,12 @@ akt provider lease-shell --dseq 12345 --provider akash1prov... --service web -- 
 
 Send an SDL manifest to provider(s) for an existing lease.
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--dseq` | uint64 | required | Deployment sequence |
-| `--from` | string | context default | Owner account |
-| `--provider` | string | `""` | Specific provider (default: all providers with active leases) |
-| `--auth-type` | string | context default | Auth type |
+| Flag          | Type   | Default         | Description                                                   |
+| ------------- | ------ | --------------- | ------------------------------------------------------------- |
+| `--dseq`      | uint64 | required        | Deployment sequence                                           |
+| `--from`      | string | context default | Owner account                                                 |
+| `--provider`  | string | `""`            | Specific provider (default: all providers with active leases) |
+| `--auth-type` | string | context default | Auth type                                                     |
 
 #### `akt provider get-manifest`
 
@@ -925,14 +1205,14 @@ Retrieve the current manifest from a provider.
 
 Migrate hostnames from one deployment to another on the same provider.
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--dseq` | uint64 | required | Source deployment sequence |
-| `--destination-dseq` | uint64 | required | Target deployment sequence |
-| `--from` | string | context default | Owner account |
-| `--provider` | string | required | Provider address |
-| `--hostnames` | []string | required | Hostnames to migrate |
-| `--auth-type` | string | context default | Auth type |
+| Flag                 | Type     | Default         | Description                |
+| -------------------- | -------- | --------------- | -------------------------- |
+| `--dseq`             | uint64   | required        | Source deployment sequence |
+| `--destination-dseq` | uint64   | required        | Target deployment sequence |
+| `--from`             | string   | context default | Owner account              |
+| `--provider`         | string   | required        | Provider address           |
+| `--hostnames`        | []string | required        | Hostnames to migrate       |
+| `--auth-type`        | string   | context default | Auth type                  |
 
 #### `akt provider migrate-endpoints`
 
@@ -966,21 +1246,108 @@ Sync State:
 
 Export the local store to YAML or JSON.
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--output` | string | `"yaml"` | Export format: `yaml`, `json` |
-| `--file` | string | `""` | Output file (default: stdout) |
-| `--filter-state` | string | `""` | Filter by state: `active`, `closed`, `all` |
+| Flag             | Type   | Default  | Description                                |
+| ---------------- | ------ | -------- | ------------------------------------------ |
+| `--output`       | string | `"yaml"` | Export format: `yaml`, `json`              |
+| `--file`         | string | `""`     | Output file (default: stdout)              |
+| `--filter-state` | string | `""`     | Filter by state: `active`, `closed`, `all` |
 
 #### `akt store import <file>`
 
 Import records from a previously exported file.
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--merge` | bool | `true` | Merge with existing records (default) |
-| `--replace` | bool | `false` | Replace entire store contents |
-| `--dry-run` | bool | `false` | Show what would be imported |
+| Flag        | Type | Default | Description                           |
+| ----------- | ---- | ------- | ------------------------------------- |
+| `--merge`   | bool | `true`  | Merge with existing records (default) |
+| `--replace` | bool | `false` | Replace entire store contents         |
+| `--dry-run` | bool | `false` | Show what would be imported           |
+
+### 2.6 Monitor Command
+
+#### `akt monitor [rpc-endpoint]`
+
+Hub-based real-time monitoring tool for network state, provider fleet health, oracle prices, and BME state. See [DESIGN.md section 1.4](DESIGN.md#14-the-monitor-command) for design goals and rationale.
+
+`akt monitor` launches a hub that defaults to the **Network** dashboard and allows switching between three dashboards via Tab/Shift-Tab:
+
+| Hub Tab | Dashboard | Content |
+|---------|-----------|---------|
+| **Network** (default) | Consensus, validators, governance | [§8.3.8](#838-consensus-monitor-view-from-aktop), [§8.3.9](#839-validator-voting-view-from-aktop), [§8.3.11](#8311-governance-parameters-view-from-aktop) |
+| **Provider** | Fleet health, versions, resources | [§8.3.10](#8310-provider-fleet-monitor-view) |
+| **Oracle/BME** | Prices, health, vault state, mint status, ledger | [§8.3.12](#8312-oraclebme-monitor-view) |
+
+Each dashboard is also directly accessible via its CLI subcommand. When launched via a subcommand, the hub starts on that dashboard but Tab/Shift-Tab still allows switching to other dashboards.
+
+`akt monitor` is especially critical during coordinated chain upgrades, when the network halts at a target block height and online block explorers become unreliable. It connects directly to the user's RPC endpoint to provide an authoritative view of upgrade progress: which round and step the chain is in, which validators have come back online and are voting, and whether 2/3+ voting power has reached precommit.
+
+**Endpoint resolution** (first match wins, shared by all subcommands):
+
+1. Positional argument: `akt monitor https://rpc.akashnet.net:443`
+2. `--rpc` flag: `akt monitor --rpc https://rpc.akashnet.net:443`
+3. Active context RPC endpoint (from `context → network → endpoints.rpc[0]`)
+
+If no endpoint can be resolved, the command exits with an error.
+
+**Shared flags** (apply to `akt monitor` and all subcommands):
+
+| Flag              | Type   | Default         | Description                                              |
+| ----------------- | ------ | --------------- | -------------------------------------------------------- |
+| `--rpc`           | string | context default | RPC endpoint (WebSocket-capable)                         |
+| `--rest`          | string | `""`            | REST API endpoint (for governance/oracle/BME queries)   |
+| `--insecure`      | bool   | `false`         | Skip TLS certificate verification                        |
+| `--clean-cache`   | bool   | `false`         | Clear the local cache before start                       |
+
+**Hub navigation:**
+
+| Key | Action |
+|-----|--------|
+| `Tab` | Switch to next dashboard (Network → Provider → Oracle/BME → Network) |
+| `Shift-Tab` | Switch to previous dashboard |
+| `1`/`2`/`3` | Switch sub-tab within the active dashboard (Network only) |
+
+**Standalone operation**: `akt monitor` (and all subcommands) requires only an RPC endpoint. It does not require a keyring, default account, or chain-id. A monitoring-only context (with no `default-account`) or a bare `--rpc` flag is sufficient, making it usable by anyone observing the network.
+
+#### `akt monitor network [rpc-endpoint]`
+
+Launches directly into the Network dashboard. This is the replacement for the former `akt top` command.
+
+The Network dashboard has three sub-tabs:
+
+| Key | Tab              | Description                                                                | Spec reference |
+| --- | ---------------- | -------------------------------------------------------------------------- | -------------- |
+| `1` | **Overview**     | Consensus state (height, round, step, elapsed, proposer), vote progress bars (prevote/precommit with power fractions), validator vote grid (`●`/`○`) | [§8.3.8](#838-consensus-monitor-view-from-aktop) |
+| `2` | **Validators**   | Scrollable validator list with moniker, voting power, prevote/precommit status, block signing history bar, proposer indicator | [§8.3.9](#839-validator-voting-view-from-aktop) |
+| `3` | **Governance**   | Module-by-module governance parameter browser with pretty-printed JSON | [§8.3.11](#8311-governance-parameters-view-from-aktop) |
+
+#### `akt monitor provider [rpc-endpoint]`
+
+Launches directly into the Provider dashboard. Displays real-time provider fleet monitoring:
+
+- **Scan progress**: Progress bar showing checked/total providers and online count.
+- **Version distribution**: Versions sorted newest-first (semver-aware, handles `-rc` suffixes). Dot visualization with `●` for selected version, `○` for others. h/l to select version filter.
+- **Provider list**: Scrollable table with URL, version, CPU, memory, GPU, location. Filtered by selected version.
+- **Provider detail**: Enter on a provider shows node-level breakdown with CPU, memory, GPU model + count.
+
+Data sources: on-chain provider list (ABCI query), per-provider health (gRPC port 8444 preferred, REST `/status` + `/version` fallback), active leases (REST, for priority scheduling).
+
+Cache: smart scheduling (online: 1m, recently offline: 5m, long-term offline: 6h), priority queue, max 10 concurrent checks, chain re-sync every 10m.
+
+#### `akt monitor oracle [rpc-endpoint]` / `akt monitor bme [rpc-endpoint]`
+
+Both commands are aliases that launch directly into the **Oracle/BME** dashboard. The combined dashboard displays:
+
+- **Aggregated prices section**: Per-denom aggregated price data with TWAP, median, min/max, source count, deviation (bps), and timestamp.
+- **Price health section**: Health status (color-coded: green=healthy, red=unhealthy), failure reasons (when unhealthy), minimum sources check, deviation check, total vs healthy source counts.
+- **Price history section**: Recent price feed entries table with asset denom, base denom, price, source, and timestamp.
+- **BME status section**: Fields in order: Status (color-coded: green=healthy, yellow=warning, red=halt CR/halt Oracle), Mints (Allowed/Halted), Refunds (Allowed/Halted), Collateral Ratio, Thresholds (nested: Warn, Halt).
+- **Vault section**: Balances, total burned, total minted, remint credits. All amounts formatted using `FormatCoin()`.
+- **Ledger section**: Recent ledger entries table with route, ID, status, burned, minted, spread, remint accrued, remint issued.
+
+Data sources:
+- Oracle: REST `/akash/oracle/v2/prices`, `/akash/oracle/v2/aggregated-price/{denom}` + real-time bus events
+- BME: REST `/akash/bme/v1/status`, `/akash/bme/v1/vault-state`, `/akash/bme/v1/ledger`
+
+Refresh intervals: oracle aggregated prices every 30s, BME status/vault every 30s, price history and ledger every 2m.
 
 ---
 
@@ -990,100 +1357,209 @@ Import records from a previously exported file.
 
 Applied to every command via the root command's `PersistentFlags()`.
 
-| Flag | Short | Type | Default | Description |
-|---|---|---|---|---|
-| `--context` | | string | config `current-context` | Context to use |
-| `--home` | | string | `~/.config/akt` | Config root directory |
-| `--output` | `-o` | string | `"table"` | Output format: `table`, `json`, `yaml` |
-| `--debug` | `-d` | bool | `false` | Enable debug logging |
+| Flag        | Short | Type   | Default                  | Description                                                      |
+| ----------- | ----- | ------ | ------------------------ | ---------------------------------------------------------------- |
+| `--home`    |       | string | `$AKT_HOME` or XDG default | Home directory for config, contexts, and keyrings             |
+| `--context` |       | string | config `current-context` | Active context name (overrides AKT_CONTEXT)                      |
+| `--output`  | `-o`  | string | `"pretty"`               | Output format: `pretty`, `json`, `yaml`. For workflows, also accepts `jsonl` (see 2.3.7). |
+| `--debug`   | `-d`  | bool   | `false`                  | Enable debug logging                                             |
 
 ### 3.2 Transaction Flags
 
 Added to all `tx` commands via `AddTxFlagsToCmd()`.
 
-| Flag | Short | Type | Default | Description |
-|---|---|---|---|---|
-| `--from` | | string | context default | Signing account (name or address) |
-| `--gas` | | string | context default or `"auto"` | Gas limit or `"auto"` |
-| `--gas-prices` | | string | context default | Gas prices (e.g., `0.025uakt`) |
-| `--gas-adjustment` | | string | context default or `"1.5"` | Gas estimation multiplier |
-| `--fees` | | string | `""` | Fixed fees (overrides gas-prices) |
-| `--broadcast-mode` | `-b` | string | `"sync"` | `sync`, `async`, or `block` |
-| `--sign-mode` | | string | `""` | Signing mode: `direct`, `amino-json`, `direct-aux`, `textual` |
-| `--keyring-backend` | | string | context default | Keyring backend override |
-| `--keyring-dir` | | string | context default | Keyring directory override |
-| `--note` | | string | `""` | Transaction memo/note |
-| `--timeout-height` | | uint64 | `0` | Block height timeout |
-| `--timeout-duration` | | duration | `0` | Time-based timeout |
-| `--sequence` | | uint64 | `0` | Account sequence (0 = auto) |
-| `--account-number` | | uint64 | `0` | Account number (0 = auto) |
-| `--fee-granter` | | string | `""` | Fee granter address |
-| `--fee-payer` | | string | `""` | Fee payer address |
-| `--generate-only` | | bool | `false` | Build but don't sign/broadcast |
-| `--offline` | | bool | `false` | Offline mode (no RPC queries) |
-| `--dry-run` | | bool | `false` | Simulate the transaction |
-| `--yes` | `-y` | bool | `false` | Skip confirmation prompts |
-| `--ledger` | | bool | `false` | Use Ledger hardware wallet |
-| `--unordered` | | bool | `false` | Unordered transaction |
+| Flag                 | Short | Type     | Default                     | Description                                                   |
+| -------------------- | ----- | -------- | --------------------------- | ------------------------------------------------------------- |
+| `--from`             |       | string   | context default             | Signing account (name or address)                             |
+| `--gas`              |       | string   | context default or `"auto"` | Gas limit or `"auto"`                                         |
+| `--gas-prices`       |       | string   | context default             | Gas prices (e.g., `0.025uakt`)                                |
+| `--gas-adjustment`   |       | string   | context default or `"1.5"`  | Gas estimation multiplier                                     |
+| `--fees`             |       | string   | `""`                        | Fixed fees (overrides gas-prices)                             |
+| `--broadcast-mode`   | `-b`  | string   | `"sync"`                    | `sync`, `async`, or `block`                                   |
+| `--sign-mode`        |       | string   | `""`                        | Signing mode: `direct`, `amino-json`, `direct-aux`, `textual` |
+| `--keyring-backend`  |       | string   | context default             | Keyring backend override                                      |
+| `--keyring-dir`      |       | string   | context default             | Keyring directory override                                    |
+| `--note`             |       | string   | `""`                        | Transaction memo/note                                         |
+| `--timeout-height`   |       | uint64   | `0`                         | Block height timeout                                          |
+| `--timeout-duration` |       | duration | `0`                         | Time-based timeout                                            |
+| `--sequence`         |       | uint64   | `0`                         | Account sequence (0 = auto)                                   |
+| `--account-number`   |       | uint64   | `0`                         | Account number (0 = auto)                                     |
+| `--fee-granter`      |       | string   | `""`                        | Fee granter address                                           |
+| `--fee-payer`        |       | string   | `""`                        | Fee payer address                                             |
+| `--generate-only`    |       | bool     | `false`                     | Build but don't sign/broadcast                                |
+| `--offline`          |       | bool     | `false`                     | Offline mode (no RPC queries)                                 |
+| `--dry-run`          |       | bool     | `false`                     | Simulate the transaction                                      |
+| `--yes`              | `-y`  | bool     | `false`                     | Skip confirmation prompts                                     |
+| `--ledger`           |       | bool     | `false`                     | Use Ledger hardware wallet                                    |
+| `--unordered`        |       | bool     | `false`                     | Unordered transaction                                         |
+
+**Pretty output for transaction results**: When `--output pretty` is active (the global default), transaction results are rendered in a two-section layout: a common transaction summary (hash, signer, height, gas, fee, status) followed by a message-specific detail section. See [§10.11](#1011-transaction-result-formatting) for the full specification.
 
 ### 3.3 Query Flags
 
 Added to all `query` commands via `AddQueryFlagsToCmd()`.
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--node` | string | context default | RPC endpoint override |
-| `--grpc-addr` | string | context default | gRPC endpoint override |
-| `--grpc-insecure` | bool | `false` | Use insecure gRPC connection |
-| `--height` | int64 | `0` | Query at specific block height (0 = latest) |
+| Flag              | Type   | Default         | Description                                 |
+| ----------------- | ------ | --------------- | ------------------------------------------- |
+| `--node`          | string | context default | RPC endpoint override                       |
+| `--grpc-addr`     | string | context default | gRPC endpoint override                      |
+| `--grpc-insecure` | bool   | `false`         | Use insecure gRPC connection                |
+| `--height`        | int64  | `0`             | Query at specific block height (0 = latest) |
 
 ### 3.4 Pagination Flags
 
 Added to list-type query commands via `AddPaginationFlagsToCmd()`.
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--page` | uint64 | `1` | Page number |
-| `--limit` | uint64 | `100` | Results per page |
-| `--offset` | uint64 | `0` | Result offset |
-| `--page-key` | string | `""` | Pagination key for next page |
-| `--count-total` | bool | `false` | Include total count in response |
-| `--reverse` | bool | `false` | Reverse result order |
+| Flag            | Type   | Default | Description                     |
+| --------------- | ------ | ------- | ------------------------------- |
+| `--page`        | uint64 | `1`     | Page number                     |
+| `--limit`       | uint64 | `100`   | Results per page                |
+| `--offset`      | uint64 | `0`     | Result offset                   |
+| `--page-key`    | string | `""`    | Pagination key for next page    |
+| `--count-total` | bool   | `false` | Include total count in response |
+| `--reverse`     | bool   | `false` | Reverse result order            |
 
 ### 3.5 Akash Resource ID Flags
 
-Used by deployment, market, and escrow commands. These compose hierarchically: LeaseID includes BidID includes OrderID includes GroupID includes DeploymentID.
+Used by `tx` commands and `provider` gateway commands for resource identification. These compose hierarchically: LeaseID includes BidID includes OrderID includes GroupID includes DeploymentID.
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--owner` | string | context `default-account` | Deployment owner address |
-| `--dseq` | uint64 | `0` | Deployment sequence number |
-| `--gseq` | uint32 | `1` | Group sequence number |
-| `--oseq` | uint32 | `1` | Order sequence number |
-| `--provider` | string | `""` | Provider address |
+> **Note:** For `query` commands, resource identity filtering is done via the positional filter argument instead of these flags. See [section 3.8](#38-resource-filter-argument) for the filter syntax. The flags below continue to be used by `tx` commands (e.g., `akt tx deployment close --dseq 12345`) and `provider` commands (e.g., `akt provider lease-logs --dseq 12345 --provider akash1...`) where the filter argument does not apply.
+
+| Flag         | Type   | Default                   | Description                |
+| ------------ | ------ | ------------------------- | -------------------------- |
+| `--owner`    | string | context `default-account` | Deployment owner address   |
+| `--dseq`     | uint64 | `0`                       | Deployment sequence number |
+| `--gseq`     | uint32 | `1`                       | Group sequence number      |
+| `--oseq`     | uint32 | `1`                       | Order sequence number      |
+| `--provider` | string | `""`                      | Provider address           |
 
 ### 3.6 Deployment Query Flags
 
-Used by `query deployment deployments`. When `--dseq` is provided, returns a single deployment (replaces the old `get` subcommand). When omitted, returns a filtered list (replaces the old `list` subcommand).
+Used by `query deployment`. Resource identity (owner, dseq) is supplied via the positional filter argument (see [section 3.8](#38-resource-filter-argument)). When enough components are provided to identify a single deployment, returns detail format; otherwise returns a filtered list.
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--owner` | string | context default | Filter by owner (defaults to current account if set) |
-| `--dseq` | uint64 | `0` | Get specific deployment by sequence (0 = list all matching) |
-| `--state` | string | `""` | Filter by state: `active`, `closed`, or empty for all |
+| Flag      | Type   | Default | Description                                           |
+| --------- | ------ | ------- | ----------------------------------------------------- |
+| `--state` | string | `""`    | Filter by state: `active`, `closed`, or empty for all |
 
 ### 3.7 Market Query Flags
 
-Used by `query market orders`, `query market bids`, and `query market leases`. When resource ID flags are fully specified (e.g., `--dseq` + `--gseq` + `--oseq` for an order), returns a single record. When partially specified or omitted, returns a filtered list.
+Used by `query market order`, `query market bid`, and `query market lease`. Resource identity is supplied via the positional filter argument (see [section 3.8](#38-resource-filter-argument)). When enough components are provided to uniquely identify a single resource, returns detail format; otherwise returns a filtered list.
 
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--owner` | string | `""` | Filter by deployment owner |
-| `--dseq` | uint64 | `0` | Filter by deployment sequence |
-| `--gseq` | uint32 | `0` | Filter by group sequence |
-| `--oseq` | uint32 | `0` | Filter by order sequence |
-| `--provider` | string | `""` | Filter by provider (bids and leases only) |
-| `--state` | string | `""` | Filter by state |
+| Flag      | Type   | Default   | Description                               |
+| --------- | ------ | --------- | ----------------------------------------- |
+| `--by`    | string | `"owner"` | Filter perspective: `owner` or `provider`. Controls how the filter argument is parsed. See [section 3.8](#38-resource-filter-argument). Only applies to `bid` and `lease` queries. |
+| `--state` | string | `""`      | Filter by state                           |
+
+### 3.8 Resource Filter Argument
+
+Akash `query` commands for deployment, market, certificate, audit, and escrow resources accept an optional positional **filter argument** that replaces flag-based identity filtering (the `--owner`, `--dseq`, `--gseq`, `--oseq`, `--provider` flags documented in section 3.5). This supports the [argument-driven filtering](DESIGN.md#11-goals) design goal.
+
+#### 3.8.1 General Format
+
+The filter is a single positional argument using `/` as the separator. Components are parsed **left to right** following the Akash resource hierarchy.
+
+**Owner perspective** (`--by owner`, the default):
+
+```
+[owner/]dseq[/gseq[/oseq[/provider]]]
+```
+
+**Provider perspective** (`--by provider`, bids and leases only):
+
+```
+[provider/]dseq[/gseq[/oseq[/owner]]]
+```
+
+When no filter argument is given, the command lists all matching resources for the context's default account (in owner mode) or requires an explicit provider address (in provider mode).
+
+#### 3.8.2 Smart Type Detection
+
+The first component is classified by its format:
+
+| Format                        | Detection                     | Example            |
+| ----------------------------- | ----------------------------- | ------------------ |
+| Bech32 address (`akash1...`)  | Leading address (owner or provider per `--by` mode) | `akash1abc...def` |
+| Unsigned integer              | `dseq` — the leading address defaults to the context's `default-account` (in `--by owner` mode) | `12345` |
+
+Subsequent `/`-separated components are parsed positionally: after the leading address comes `dseq` (uint64), then `gseq` (uint32), then `oseq` (uint32), then the trailing address (provider or owner, opposite of the leading address).
+
+#### 3.8.3 Get-vs-List Heuristic
+
+- If enough components are specified to **uniquely identify** a single resource, the command returns a single-item **detail** response.
+- Otherwise, the command returns a **filtered list** response.
+
+| Command                | Unique identity requires              |
+| ---------------------- | ------------------------------------- |
+| `query deployment`     | owner + dseq                          |
+| `query deployment group` | owner + dseq + gseq                 |
+| `query market order`   | owner + dseq + gseq + oseq           |
+| `query market bid`     | owner + dseq + gseq + oseq + provider |
+| `query market lease`   | owner + dseq + gseq + oseq + provider |
+| `query escrow`         | owner + dseq (scope + xid)           |
+
+#### 3.8.4 Defaults for Omitted Components
+
+| Component        | Default when omitted                                                         |
+| ---------------- | ---------------------------------------------------------------------------- |
+| Leading address  | Context `default-account` (in `--by owner` mode); **required** in `--by provider` mode |
+| `dseq`           | 0 — list all (no dseq filter)                                                |
+| `gseq`           | 0 in list context (no filter); 1 when needed for a unique get                |
+| `oseq`           | 0 in list context (no filter); 1 when needed for a unique get                |
+| Trailing address | Empty — no filter on the trailing identity component                         |
+
+#### 3.8.5 Per-Command Filter Scope
+
+| Command                  | Max filter depth                               | `--by` support |
+| ------------------------ | ---------------------------------------------- | -------------- |
+| `query deployment`       | `[owner/]dseq`                                 | no             |
+| `query deployment group` | `[owner/]dseq[/gseq]`                          | no             |
+| `query market order`     | `[owner/]dseq[/gseq/oseq]`                     | no             |
+| `query market bid`       | `[owner/]dseq[/gseq/oseq[/provider]]`          | yes            |
+| `query market lease`     | `[owner/]dseq[/gseq/oseq[/provider]]`          | yes            |
+| `query cert`             | `[owner]`                                       | no             |
+| `query audit`            | `[owner]`                                       | no             |
+| `query escrow`           | `[owner[/dseq]]`                                | no             |
+| `query escrow payment`   | `[owner[/dseq]]`                                | no             |
+
+#### 3.8.6 Examples
+
+**Deployment queries** (`akt query deployment`):
+
+```bash
+akt query deployment                           # List all deployments for default account
+akt query deployment 12345                     # Get deployment dseq 12345 (owner from context)
+akt query deployment akash1abc...              # List all deployments for that owner
+akt query deployment akash1abc.../12345        # Get specific deployment
+akt query deployment --state active            # List active deployments for default account
+akt query deployment 12345 --state active      # Get dseq 12345 (--state ignored on single get)
+```
+
+**Market lease queries — owner perspective** (default):
+
+```bash
+akt query market lease                         # List all leases for default account
+akt query market lease 12345                   # List leases for dseq 12345 (owner from context)
+akt query market lease 12345/1/1               # List leases for order 12345/1/1
+akt query market lease akash1abc.../12345/1/1/akash1prov...  # Get specific lease
+akt query market lease --state active          # List active leases for default account
+```
+
+**Market lease queries — provider perspective** (`--by provider`):
+
+```bash
+akt query market lease --by provider akash1prov...              # List all leases for that provider
+akt query market lease --by provider akash1prov.../12345        # List leases for provider + dseq
+akt query market lease --by provider akash1prov.../12345/1/1/akash1owner...  # Get specific lease
+```
+
+**Other queries:**
+
+```bash
+akt query cert                                 # List certs for default account
+akt query cert akash1abc...                    # List certs for that owner
+akt query escrow 12345                         # List escrow accounts for dseq 12345 (owner from context)
+akt query escrow akash1abc.../12345            # Specific escrow account
+```
 
 ---
 
@@ -1330,6 +1806,7 @@ meta/
 Exports include a header with metadata:
 
 ```yaml
+---
 # akt store export
 version: 1
 context: mainnet
@@ -1377,14 +1854,14 @@ Each context has its own action log at:
 
 ### 5.2 Action Types
 
-| Type | Description | Logged Fields |
-|---|---|---|
-| `tx` | A blockchain transaction | Msg type, msg body, tx hash, height, gas used, result code, error |
-| `query` | A chain query | Query path, parameters, result summary, duration |
-| `workflow` | A multi-step workflow (e.g., `akt deploy`) | Workflow name, step sequence, each step's type and result |
-| `provider` | A provider gateway operation | Operation (send-manifest, lease-logs, etc.), provider address, result |
-| `context` | A context management operation | Operation (switch, edit, etc.), old/new values |
-| `error` | A failed operation | Original action type, error message, context |
+| Type       | Description                                | Logged Fields                                                         |
+| ---------- | ------------------------------------------ | --------------------------------------------------------------------- |
+| `tx`       | A blockchain transaction                   | Msg type, msg body, tx hash, height, gas used, result code, error     |
+| `query`    | A chain query                              | Query path, parameters, result summary, duration                      |
+| `workflow` | A multi-step workflow (e.g., `akt deploy`) | Workflow name, step sequence, each step's type and result             |
+| `provider` | A provider gateway operation               | Operation (send-manifest, lease-logs, etc.), provider address, result |
+| `context`  | A context management operation             | Operation (switch, edit, etc.), old/new values                        |
+| `error`    | A failed operation                         | Original action type, error message, context                          |
 
 ### 5.3 Action Entry Format
 
@@ -1499,26 +1976,26 @@ tm.event='Tx' AND akash.market.v1beta4.EventLeaseCreated.owner='<owner-address>'
 
 Events are routed to the reconciler based on their type:
 
-| Chain Event | Store Action |
-|---|---|
-| `deployment.MsgCreateDeployment` | Create `DeploymentRecord` with state=`active` |
-| `deployment.MsgUpdateDeployment` | Update `DeploymentRecord` version and SDL hash |
-| `deployment.MsgCloseDeployment` | Set state=`closed`, set `closed_at` |
-| `deployment.MsgCloseGroup` | Update corresponding group records |
-| `market.EventBidCreated` | Create `BidRecord` with state=`open` |
-| `market.EventBidClosed` | Set bid state=`closed` |
-| `market.EventLeaseCreated` | Create `LeaseRecord` with state=`active`, update bid state=`matched` |
-| `market.EventLeaseClosed` | Set lease state=`closed` |
-| `escrow.EventAccountSettled` | Update `DeploymentRecord` escrow balance |
-| `escrow.EventPaymentCompleted` | Update transferred amount |
+| Chain Event                      | Store Action                                                         |
+| -------------------------------- | -------------------------------------------------------------------- |
+| `deployment.MsgCreateDeployment` | Create `DeploymentRecord` with state=`active`                        |
+| `deployment.MsgUpdateDeployment` | Update `DeploymentRecord` version and SDL hash                       |
+| `deployment.MsgCloseDeployment`  | Set state=`closed`, set `closed_at`                                  |
+| `deployment.MsgCloseGroup`       | Update corresponding group records                                   |
+| `market.EventBidCreated`         | Create `BidRecord` with state=`open`                                 |
+| `market.EventBidClosed`          | Set bid state=`closed`                                               |
+| `market.EventLeaseCreated`       | Create `LeaseRecord` with state=`active`, update bid state=`matched` |
+| `market.EventLeaseClosed`        | Set lease state=`closed`                                             |
+| `escrow.EventAccountSettled`     | Update `DeploymentRecord` escrow balance                             |
+| `escrow.EventPaymentCompleted`   | Update transferred amount                                            |
 
 ### 6.4 Startup Reconciliation
 
 On first launch for a context (no `SyncState` in store):
 
-1. Query all deployments for each tracked account: `query deployment deployments --owner <addr>`.
-2. For each deployment, query leases: `query market leases --owner <addr> --dseq <dseq>`.
-3. For each deployment, query bids: `query market bids --owner <addr> --dseq <dseq>`.
+1. Query all deployments for each tracked account: `query deployment --owner <addr>`.
+2. For each deployment, query leases: `query market lease --owner <addr> --dseq <dseq>`.
+3. For each deployment, query bids: `query market bid --owner <addr> --dseq <dseq>`.
 4. Store all records.
 5. Set `SyncState.LastBlockHeight` to the current chain height.
 
@@ -1530,15 +2007,15 @@ On subsequent launches (existing `SyncState`):
 
 ### 6.5 Reconnection Strategy
 
-| Attempt | Delay | Notes |
-|---|---|---|
-| 1 | 1s + jitter | |
-| 2 | 2s + jitter | |
-| 3 | 4s + jitter | |
-| 4 | 8s + jitter | |
-| 5 | 16s + jitter | |
-| 6 | 32s + jitter | |
-| 7+ | 60s + jitter | Cap at 60s |
+| Attempt | Delay        | Notes      |
+| ------- | ------------ | ---------- |
+| 1       | 1s + jitter  |            |
+| 2       | 2s + jitter  |            |
+| 3       | 4s + jitter  |            |
+| 4       | 8s + jitter  |            |
+| 5       | 16s + jitter |            |
+| 6       | 32s + jitter |            |
+| 7+      | 60s + jitter | Cap at 60s |
 
 Jitter: random value in `[0, 0.5 * delay)`.
 
@@ -1550,43 +2027,163 @@ The sync engine tracks all accounts present in the current context's keyring. Wh
 
 ---
 
-## 7. TUI Specification
+## 7. Console API Specification
+
+When a context's `auth-method` is `console-api`, deployment operations are routed through the [Akash Console Managed Wallet API](https://akash.network/docs/api-documentation/console-api/api-reference/) instead of signing and broadcasting transactions locally.
+
+### 7.1 Authentication
+
+All Console API requests require the `x-api-key` header. The API key is resolved in this order:
+
+1. `--console-api-key` flag (highest priority, session only)
+2. `AKT_CONSOLE_API_KEY` environment variable
+3. If neither is set, the command fails with an error instructing the user to set `AKT_CONSOLE_API_KEY`.
+
+The API key is **never** persisted in config.yaml or the keyring.
+
+API keys are created at [console.akash.network](https://console.akash.network) > Settings > API Keys.
+
+### 7.2 Base URL
+
+| Source              | Value                                  |
+| ------------------- | -------------------------------------- |
+| Default             | `https://console-api.akash.network`    |
+| Context override    | `console-api-url` field in config.yaml |
+| Flag override       | `--console-api-url`                    |
+
+### 7.3 Endpoints
+
+All requests include `Content-Type: application/json` and `x-api-key` headers.
+
+#### `POST /v1/deployments` -- Create Deployment
+
+| Field           | Type   | Required | Description                           |
+| --------------- | ------ | -------- | ------------------------------------- |
+| `data.sdl`      | string | yes      | SDL content as string                 |
+| `data.deposit`  | number | yes      | Deposit in USD (minimum $5)           |
+
+Returns `{ data: { dseq: string, manifest: string } }`.
+
+#### `GET /v1/deployments` -- List Deployments
+
+| Parameter | Type   | Required | Default | Description                  |
+| --------- | ------ | -------- | ------- | ---------------------------- |
+| `skip`    | number | no       | 0       | Number of deployments to skip |
+| `limit`   | number | no       | 10      | Max deployments to return     |
+
+Returns paginated list of deployments with leases and escrow state.
+
+#### `GET /v1/deployments/{dseq}` -- Get Deployment
+
+Path parameter: `dseq` (deployment sequence ID). Returns deployment details with leases and escrow.
+
+#### `PUT /v1/deployments/{dseq}` -- Update Deployment
+
+| Field      | Type   | Required | Description              |
+| ---------- | ------ | -------- | ------------------------ |
+| `data.sdl` | string | yes      | Updated SDL content      |
+
+Returns updated deployment with leases and escrow.
+
+#### `DELETE /v1/deployments/{dseq}` -- Close Deployment
+
+Returns `{ data: { success: boolean } }`.
+
+#### `GET /v1/bids?dseq={dseq}` -- Fetch Bids
+
+Query parameter: `dseq` (required). Returns array of bids with provider details, pricing, and resource offers.
+
+#### `POST /v1/leases` -- Create Lease
+
+| Field      | Type     | Required | Description                              |
+| ---------- | -------- | -------- | ---------------------------------------- |
+| `manifest` | string   | yes      | Manifest JSON from deployment creation   |
+| `leases`   | []object | yes      | Array of `{ dseq, gseq, oseq, provider }` |
+
+Returns deployment with created leases and escrow state.
+
+#### `POST /v1/deposit-deployment` -- Add Deposit
+
+| Field          | Type   | Required | Description        |
+| -------------- | ------ | -------- | ------------------ |
+| `data.deposit` | number | yes      | Amount in USD      |
+| `data.dseq`    | string | yes      | Deployment seq ID  |
+
+#### `GET /v2/deployment-settings/{dseq}` -- Get Deployment Settings
+
+Returns auto top-up configuration for a deployment. Settings are auto-created with auto top-up **enabled** by default.
+
+#### `POST /v2/deployment-settings` -- Create Deployment Settings
+
+| Field                    | Type    | Required | Description              |
+| ------------------------ | ------- | -------- | ------------------------ |
+| `data.dseq`              | string  | yes      | Deployment sequence ID   |
+| `data.autoTopUpEnabled`  | boolean | no       | Enable auto top-up       |
+
+### 7.4 Command Routing
+
+When a context uses `console-api` auth, the following commands are routed through the Console API instead of direct chain transactions:
+
+| CLI Command                          | Console API Endpoint                 | Notes                                    |
+| ------------------------------------ | ------------------------------------ | ---------------------------------------- |
+| `akt tx deployment create <sdl>`     | `POST /v1/deployments`               | `--deposit` flag in USD                  |
+| `akt tx deployment update <sdl>`     | `PUT /v1/deployments/{dseq}`         |                                          |
+| `akt tx deployment close`            | `DELETE /v1/deployments/{dseq}`      |                                          |
+| `akt query market bid --dseq`        | `GET /v1/bids?dseq=`                 |                                          |
+| `akt tx market lease create`         | `POST /v1/leases`                    | Requires manifest from deployment create |
+| `akt tx escrow deposit`              | `POST /v1/deposit-deployment`        | `--deposit` flag in USD                  |
+| `akt query deployment`               | `GET /v1/deployments`                | Paginated via `--skip`/`--limit`         |
+
+Commands **not** listed above (e.g., `akt query bank balances`, `akt query staking validators`, `akt tx gov vote`) are **not supported** with `console-api` auth. They require direct chain access via `keyring` auth. Running an unsupported command with `console-api` auth produces an error:
+
+```
+Error: command "tx gov vote" is not supported with console-api auth.
+Use a context with auth-method: keyring for this operation.
+```
+
+### 7.5 Error Handling
+
+| HTTP Status | Handling                                                          |
+| ----------- | ----------------------------------------------------------------- |
+| 401         | Invalid or expired API key. Prompt user to check `AKT_CONSOLE_API_KEY`. |
+| 402         | Insufficient funds in Console account.                            |
+| 404         | Deployment not found (dseq does not exist or not owned by user).  |
+| 429         | Rate limited. Retry with backoff.                                 |
+| 5xx         | Console API server error. Retry with backoff (max 3 attempts).    |
+
+### 7.6 Differences from Keyring Auth
+
+| Aspect             | `keyring` auth                      | `console-api` auth                        |
+| ------------------ | ----------------------------------- | ----------------------------------------- |
+| Key management     | Local (OS keyring, file, ledger)    | None (Console-managed)                    |
+| Transaction signing | Local                              | Console backend                           |
+| Deposit currency   | uakt                               | USD                                       |
+| Payment method     | On-chain AKT                       | Credit card via Console                   |
+| Supported commands | All tx + query                     | Deployment lifecycle + queries via chain  |
+| Provider auth      | JWT / mTLS                         | Not applicable                            |
+| Gas/fees           | Configurable per-context            | Managed by Console                        |
+
+---
+
+## 8. TUI Specification
 
 The TUI incorporates the real-time monitoring functionality of [`aktop`](https://github.com/cloud-j-luna/aktop) -- a community-built terminal UI for Akash consensus and provider monitoring. The consensus view, validator voting view, provider fleet monitor, and governance parameters view are derived from `aktop` and integrated as first-class views in the `akt` TUI.
 
-### 7.1 Application Shell Layout
+### 8.1 Application Shell Layout
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  akt  Context: mainnet (akashnet-2)  Account: alice  Block: 18234567  Synced │
-├──────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│                                                                              │
-│                           Main Content Area                                  │
-│                     (Resource List or Detail View)                            │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-├──────────────────────────────────────────────────────────────────────────────┤
-│  <1> Deployments  <2> Leases  <3> Providers  <:> Command  <?> Help  <q> Quit │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+The TUI uses a three-region layout that fills the terminal:
 
-**Header** (1 line): Application name, active context, chain-id, active account, current block height, sync status indicator.
+| Region | Height | Content |
+|--------|--------|---------|
+| **Header** | 1 line | App name, active context, chain-id, account, block height, sync status |
+| **Main area** | fills remaining | Active view (resource list or detail pane) |
+| **Status bar** | 1 line | Shortcut hints, command input, help |
 
-**Main Area** (fills remaining space): The active view -- either a resource list (table) or a resource detail pane.
+Header example: `akt  Context: mainnet (akashnet-2)  Account: alice  Block: 18234567  Synced`
 
-**Status Bar** (1 line): Quick-access shortcuts, command input area, help hint.
+Status bar example: `<1> Deployments  <2> Leases  <3> Providers  <:> Command  <?> Help  <q> Quit`
 
-### 7.2 Navigation Model
+### 8.2 Navigation Model
 
 Navigation uses a **stack-based** model:
 
@@ -1595,43 +2192,13 @@ Navigation uses a **stack-based** model:
 - **Back**: Press `Esc` to go back to the previous view (pops the navigation stack).
 - **Breadcrumb**: The header shows the current navigation path (e.g., `Deployments > 12345 > Leases`).
 
-```
-Navigation Stack Example:
+Navigation stack example: `Dashboard → Deployments List → Deployment #12345 → Lease Detail` (Esc pops each level).
 
-  [Dashboard] -> [Deployments List] -> [Deployment #12345 Detail] -> [Lease Detail]
-       Esc <-           Esc <-                Esc <-
-```
-
-### 7.3 Resource Views
+### 8.3 Resource Views
 
 #### 7.3.1 Deployments List View
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  akt  Context: mainnet  Account: alice  Block: 18234567  Synced              │
-├──────────────────────────────────────────────────────────────────────────────┤
-│  Deployments (12 active, 35 closed)                        Filter: active    │
-│──────────────────────────────────────────────────────────────────────────────│
-│  DSEQ       STATE     PROVIDER            PRICE/BLK   BALANCE     AGE       │
-│  12345      active    akash1prov1...xyz    12.5 uakt   4.2 AKT    3d        │
-│> 12344      active    akash1prov2...abc    15.0 uakt   2.1 AKT    5d        │
-│  12340      active    akash1prov1...xyz    10.0 uakt   8.7 AKT    7d        │
-│  12335      closed    akash1prov3...def    --          --          12d       │
-│  12330      closed    akash1prov1...xyz    --          --          15d       │
-│  ...                                                                         │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-│                                                                              │
-├──────────────────────────────────────────────────────────────────────────────┤
-│  <Enter> Detail  <d> Close  <u> Update  <l> Logs  </> Filter  <?> Help      │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
-
-**Columns**: DSEQ, State, Provider (truncated address), Price/Block, Escrow Balance, Age.
+**Columns**: DSEQ, State, Provider, Price/Block, Escrow Balance, Age.
 
 **Actions**:
 - `Enter` -- Open deployment detail view
@@ -1645,39 +2212,7 @@ Navigation Stack Example:
 
 #### 7.3.2 Deployment Detail View
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  akt  Context: mainnet > Deployments > 12345                                 │
-├──────────────────────────────────────────────────────────────────────────────┤
-│  Deployment #12345                                             State: active │
-│──────────────────────────────────────────────────────────────────────────────│
-│  Owner:           akash1abc123def456ghi789jkl012mno345pqr678stu              │
-│  Created:         2026-03-20 14:32:15 UTC (3 days ago)                       │
-│  Deposit:         5,000,000 uakt                                             │
-│  Escrow Balance:  4,200,000 uakt                                             │
-│  Transferred:     800,000 uakt                                               │
-│  Version:         abc123def456...                                            │
-│  SDL:             ~/deployments/web-app.yaml                                 │
-│  Labels:          env=production, team=backend                               │
-│  Notes:           Main web application deployment                            │
-│──────────────────────────────────────────────────────────────────────────────│
-│  Active Lease                                                                │
-│  Provider:        akash1prov1...xyz  (Equinix Dallas)                        │
-│  Price:           12.5 uakt/block                                            │
-│  GSeq/OSeq:       1/1                                                        │
-│  Endpoints:                                                                  │
-│    web:           http://abc123.provider1.akash.network                       │
-│    api:           http://def456.provider1.akash.network:8080                  │
-│──────────────────────────────────────────────────────────────────────────────│
-│  Bids (3)                                                                    │
-│  PROVIDER              PRICE       STATE     AUDITED                         │
-│  akash1prov1...xyz     12.5 uakt   matched   yes                            │
-│  akash1prov2...abc     15.0 uakt   lost      yes                            │
-│  akash1prov3...def     10.0 uakt   lost      no                             │
-├──────────────────────────────────────────────────────────────────────────────┤
-│  <Esc> Back  <d> Close  <u> Update  <l> Logs  <e> Events  <s> Shell  <y> YAML│
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+Shows deployment metadata (owner, created, deposit, escrow balance, version, SDL path, labels, notes), active lease details (provider, price, endpoints), and bid table (provider, price, state, audited).
 
 **Actions**:
 - `Esc` -- Back to deployments list
@@ -1690,40 +2225,15 @@ Navigation Stack Example:
 
 #### 7.3.3 Leases List View
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  akt  Context: mainnet > Leases                                              │
-├──────────────────────────────────────────────────────────────────────────────┤
-│  Leases (15 active, 40 closed)                             Filter: active    │
-│──────────────────────────────────────────────────────────────────────────────│
-│  DSEQ    GSEQ  OSEQ  PROVIDER            STATE    PRICE/BLK   AGE           │
-│  12345   1     1     akash1prov1...xyz    active   12.5 uakt   3d           │
-│> 12344   1     1     akash1prov2...abc    active   15.0 uakt   5d           │
-│  12340   1     1     akash1prov1...xyz    active   10.0 uakt   7d           │
-│  12335   1     1     akash1prov3...def    closed   --          12d          │
-│  ...                                                                         │
-├──────────────────────────────────────────────────────────────────────────────┤
-│  <Enter> Detail  <l> Logs  <e> Events  <s> Shell  <w> Withdraw  </> Filter  │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+**Columns**: DSEQ, GSeq, OSeq, Provider, State, Price/Block, Age.
+
+**Actions**: Enter detail, l logs, e events, s shell, w withdraw, / filter.
 
 #### 7.3.4 Providers List View
 
-```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  akt  Context: mainnet > Providers                                           │
-├──────────────────────────────────────────────────────────────────────────────┤
-│  Providers (247)                                                             │
-│──────────────────────────────────────────────────────────────────────────────│
-│  ADDRESS              HOST URI                    AUDITED  ACTIVE LEASES     │
-│  akash1prov1...xyz    provider1.akash.network     yes      142              │
-│> akash1prov2...abc    provider2.akash.network     yes      89               │
-│  akash1prov3...def    provider3.example.com       no       23               │
-│  ...                                                                         │
-├──────────────────────────────────────────────────────────────────────────────┤
-│  <Enter> Detail  <a> Attributes  </> Filter  <?> Help                       │
-└──────────────────────────────────────────────────────────────────────────────┘
-```
+**Columns**: Address, Host URI, Audited, Active Leases.
+
+**Actions**: Enter detail, a attributes, / filter.
 
 #### 7.3.5 Governance Proposals View
 
@@ -1825,7 +2335,7 @@ Real-time consensus state monitoring. Polls the RPC `/consensus_state` endpoint 
 **Displayed data**:
 - Height (with thousand separators), Round, Step (human-readable: NewHeight, NewRound, Propose, Prevote, PrevoteWait, Precommit, PrecommitWait, Commit)
 - Elapsed time since round start
-- Proposer address (truncated) and index
+- Proposer address and index
 - Prevote/Precommit progress bars: `█`/`░` (40 chars wide), percentage (green if >= 66.7%, yellow otherwise), power fraction
 - Validator vote grid: `●` (voted, green) / `○` (not voted, muted), line-wrapped to terminal width
 
@@ -1869,6 +2379,8 @@ Detailed validator list with real-time vote status.
 **Actions**: j/k scroll, g/G jump to top/bottom, r refresh.
 
 #### 7.3.10 Provider Fleet Monitor View (from aktop)
+
+> This view is available both in the main TUI (`akt` with no subcommand) and as the Provider dashboard in `akt monitor` / `akt monitor provider`. See [§2.6](#26-monitor-command).
 
 Real-time monitoring of all Akash providers -- version distribution, resource utilization, and health status.
 
@@ -1945,29 +2457,29 @@ Real-time monitoring of all Akash providers -- version distribution, resource ut
 
 #### 7.3.11 Governance Parameters View (from aktop)
 
-Module-by-module governance parameter browsing.
+Module-by-module governance parameter browsing. The right pane renders pretty-formatted key-value output (same `Render*Params()` functions as CLI `--output pretty`) instead of raw JSON. This follows the Pretty/TUI visual parity rule (§10.8).
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
 │  akt  Context: mainnet > Governance Params                                   │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│  Modules          │  Parameters: staking                                     │
-│                   │                                                          │
-│    gov            │  {                                                       │
-│    mint           │    "unbonding_time": "1814400s",                         │
-│  ▶ staking        │    "max_validators": 100,                               │
-│    slashing       │    "max_entries": 7,                                     │
-│    distribution   │    "historical_entries": 10000,                          │
-│    auth           │    "bond_denom": "uakt",                                │
-│    bank           │    "min_commission_rate": "0.000000000000000000"          │
-│    deployment     │  }                                                       │
-│    market         │                                                          │
-│    transfer       │                                                          │
-│    ibc            │                                                          │
-│    crisis         │                                                          │
+│  Modules          │ Staking Parameters                                       │
+│                   │   Unbonding Time:      21 days                           │
+│    Governance     │   Max Validators:      100                               │
+│    Minting        │   Max Entries:         7                                 │
+│  ▶ Staking        │   Historical Entries:  10,000                            │
+│    Slashing       │   Bond Denom:          uakt                              │
+│    Distribution   │   Min Commission:      0%                                │
+│    Auth           │                                                          │
+│    Bank           │                                                          │
+│    Deployment     │                                                          │
+│    Market         │                                                          │
+│    Transfer       │                                                          │
+│    IBC            │                                                          │
+│    Crisis         │                                                          │
 │                   │                                                          │
 ├──────────────────────────────────────────────────────────────────────────────┤
-│  <j/k> Module  <h/l> Scroll params  <r> Refresh  <?> Help                   │
+│  <j/k> Module  <h/l> Scroll params  <r> Refresh  <?> Help                    │
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -1979,7 +2491,45 @@ Module-by-module governance parameter browsing.
 
 **Refresh interval**: 5 minutes.
 
-#### 7.3.12 Additional Views
+#### 7.3.12 Oracle/BME Monitor View
+
+Combined oracle price and BME state monitoring. Available as the Oracle/BME dashboard in `akt monitor`, `akt monitor oracle`, or `akt monitor bme` (the latter two are aliases). The dashboard uses a two-column layout: Oracle data on the left, BME data (status, vault, ledger) on the right.
+
+```
+┌──────────────────────────────────────────────────────────────────────────────┐
+│  akt monitor - Akash Network  Network  Provider  [Oracle/BME]                │
+├──────────────────────────────────────┬───────────────────────────────────────┤
+│  Aggregated Prices                   │  BME Status                           │
+│                                      │                                       │
+│  DENOM   TWAP        SOURCES         │  Status:           Healthy            │
+│  uakt    0.003125    4               │  Mints:            Allowed            │
+│  uatom   6.850000    3               │  Refunds:          Allowed            │
+│                                      │  Collateral Ratio: 1.523              │
+│  Price Health                        │  Thresholds:                          │
+│    Healthy:     yes                  │      Warn:         1.100              │
+│    Min Sources: yes                  │      Halt:         1.050              │
+│                                      │                                       │
+│                                      │  Ledger                               │
+│                                      │  ROUTE  ID  STATUS  BURNED  ...       │
+├──────────────────────────────────────┴───────────────────────────────────────┤
+│  <Tab> Dashboard  <j/k> Scroll  <r> Refresh  <?> Help                        │
+└──────────────────────────────────────────────────────────────────────────────┘
+```
+
+**Data sources**:
+- `/akash/oracle/v2/aggregated-price/{denom}` — TWAP, median, min/max, source count, deviation, health
+- `/akash/oracle/v2/prices` — Price feed history with pagination
+- `/akash/bme/v1/status` — Mint status, collateral ratio, thresholds, mints/refunds allowed
+- `/akash/bme/v1/vault-state` — Balances, total burned, total minted, remint credits
+- `/akash/bme/v1/ledger` — Recent ledger entries
+
+**Refresh intervals**: Oracle aggregated prices every 30s, BME status/vault every 30s, price history and ledger every 2m.
+
+**Color coding**: Oracle health: Healthy (green), Unhealthy (red). BME status: healthy (green), warning (yellow), halt CR (red), halt Oracle (red). Mints/Refunds: Allowed (green), Halted (red).
+
+**Amount formatting**: All micro-denominated values scaled using `FormatCoin()` — same rules as pretty output (§10.7). Prices displayed with full decimal precision, trailing zeros stripped.
+
+#### 7.3.13 Additional Views
 
 The following views follow the same list/detail pattern as above:
 
@@ -1988,32 +2538,73 @@ The following views follow the same list/detail pattern as above:
 - **Orders**: List with DSEQ, GSeq, OSeq, State. Detail shows order spec and bids.
 - **Bids**: List with DSEQ, Provider, Price, State. Detail shows provider attributes.
 - **Wasm Contracts**: List with Address, Code ID, Label. Detail shows contract info, state queries.
-- **Oracle Prices**: Table of asset pairs with latest price, source, timestamp.
-- **BME State**: Vault state, mint status, recent ledger entries.
 - **IBC Channels**: List with Channel ID, Port, Counterparty, State.
 
-### 7.4 Command Palette
+### 8.4 Command Palette
 
-Activated with `:` (colon), the command palette provides fuzzy search across:
+Activated with `:` (colon) or `Ctrl+P`, the command palette is a centered floating overlay that provides case-insensitive substring search across all available commands. Both keybindings open the same palette.
 
-- Resource types (deployments, leases, providers, etc.)
-- Actions (create deployment, close deployment, vote on proposal, etc.)
-- Context switching (use mainnet, use testnet)
-- Navigation (go to deployment #12345)
+The palette is split into two parts:
+
+1. **Input line** (top): A single-line text input with `:` prompt. Typing filters the command list below in real time.
+2. **Command list** (bottom): A scrollable list of all registered commands, filtered by the input value. Each entry shows the command name (left-aligned) and a short description (right-aligned, dimmed). The currently selected entry is highlighted with a `>` cursor prefix and a contrasting background.
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│  :depl                                                                       │
-│──────────────────────────────────────────────────────────────────────────────│
-│  > Deployments           View all deployments                                │
-│    Deploy                Create new deployment                               │
-│    Deployment #12345     Go to specific deployment                           │
-│    Deployment Close      Close a deployment                                  │
-│                                                                              │
-└──────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│                                                                    │
+│         ┌──────────────────────────────────────────────┐           │
+│         │ :depl                                        │           │
+│         ├──────────────────────────────────────────────┤           │
+│         │ > Deployments      View all deployments      │           │
+│         │   Deploy           Create new deployment     │           │
+│         │   Deployment Close Close a deployment        │           │
+│         │                                              │           │
+│         └──────────────────────────────────────────────┘           │
+│                                                                    │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-### 7.5 Confirmation Dialog
+**Overlay sizing**: Width is ~60% of the terminal (minimum 50, maximum 80 columns). Height adapts to the number of visible filtered commands, capped at ~50% of the terminal height.
+
+**Filtering**: Case-insensitive substring match against the command name and any registered aliases. For example, typing `dep` matches both "Deployments" and "Deploy". When the input is empty, all commands are shown.
+
+**Keyboard handling while the palette is open**:
+
+| Key | Action |
+|-----|--------|
+| Any printable character | Appends to input, re-filters list, resets cursor to first match |
+| `Backspace` | Deletes last character, re-filters list |
+| `j` or `Down` | Moves cursor down in the filtered list (wraps to top) |
+| `k` or `Up` | Moves cursor up in the filtered list (wraps to bottom) |
+| `Enter` | Selects the highlighted command and closes the palette |
+| `Esc` | Closes the palette without action |
+
+**Registered commands** (initial set, extensible):
+
+| Category | Name | Description | Aliases |
+|-----------|------|-------------|---------|
+| navigation | Dashboard | Go to dashboard | home |
+| navigation | Deployments | View all deployments | dep |
+| navigation | Leases | View leases | |
+| navigation | Providers | View providers | prov |
+| navigation | Validators | View validators | val |
+| navigation | Governance | View governance proposals | gov |
+| navigation | Certificates | View certificates | cert |
+| navigation | Escrow | View escrow accounts | |
+| navigation | Orders | View orders | |
+| navigation | Bids | View bids | |
+| navigation | Monitor | Real-time network monitor | monitor, top, consensus |
+| navigation | Query | Query commands panel | |
+| navigation | Tx | Transaction commands panel | |
+| action | Deploy | Create new deployment | |
+| app | Quit | Quit application | q, exit |
+| app | Help | Show help | ? |
+
+**Command dispatch**: When a command is selected, the TUI dispatches the corresponding action (navigate to a view, open a workflow, quit the application, etc.). Commands targeting views that are not yet implemented navigate to the dashboard.
+
+**Keybinding configurability**: All palette navigation keys (`cursor-up`, `cursor-down`, `select`, `back`) are resolved through the configurable `KeyMap` (see section 8.6). When `tui.keybindings` is `custom`, the palette respects user overrides from `tui.custom-keybindings`. The palette receives its bindings via the `PaletteKeys` struct, which the root App populates from the global `KeyMap` at startup.
+
+### 8.5 Confirmation Dialog
 
 Transaction actions (close, update, delegate, vote, etc.) show a confirmation dialog:
 
@@ -2034,66 +2625,70 @@ Transaction actions (close, update, delegate, vote, etc.) show a confirmation di
 └──────────────────────────────────────────────┘
 ```
 
-### 7.6 Keybinding Specification
+### 8.6 Keybinding Specification
 
 #### Default Keybindings (vim-style)
 
 **Global**:
-| Key | Action |
-|---|---|
-| `q`, `Ctrl+c` | Quit application |
-| `:` | Open command palette |
-| `?` | Toggle help overlay |
-| `Esc` | Go back / close overlay / cancel |
-| `1`-`9` | Quick-switch to numbered resource views |
-| `Ctrl+r` | Force refresh current view |
-| `Tab` | Cycle between panes (if split view) |
+| Key           | Action                                  |
+| ------------- | --------------------------------------- |
+| `Ctrl+c`      | Quit application                        |
+| `q`           | Open query commands panel               |
+| `t`           | Open transaction commands panel         |
+| `Ctrl+p`      | Open command palette (same as `:`)      |
+| `:`           | Open command palette (same as `Ctrl+p`) |
+| `?`           | Toggle help overlay                     |
+| `Esc`         | Go back / close overlay / cancel        |
+| `1`-`9`       | Quick-switch to numbered resource views (or sub-tabs in monitor) |
+| `Ctrl+r`      | Force refresh current view              |
+| `Tab`         | Cycle between monitor dashboards (in monitor view) or panes (in split view) |
+| `Shift-Tab`   | Cycle to previous monitor dashboard     |
 
 **List Navigation**:
-| Key | Action |
-|---|---|
-| `j`, `Down` | Move cursor down |
-| `k`, `Up` | Move cursor up |
-| `g`, `Home` | Go to first item |
-| `G`, `End` | Go to last item |
-| `Ctrl+d` | Page down |
-| `Ctrl+u` | Page up |
-| `Enter` | Open detail view for selected item |
-| `/` | Open filter/search input |
-| `n` | Next search result |
-| `N` | Previous search result |
-| `s` | Open sort options |
-| `f` | Cycle state filter |
+| Key         | Action                             |
+| ----------- | ---------------------------------- |
+| `j`, `Down` | Move cursor down                   |
+| `k`, `Up`   | Move cursor up                     |
+| `g`, `Home` | Go to first item                   |
+| `G`, `End`  | Go to last item                    |
+| `Ctrl+d`    | Page down                          |
+| `Ctrl+u`    | Page up                            |
+| `Enter`     | Open detail view for selected item |
+| `/`         | Open filter/search input           |
+| `n`         | Next search result                 |
+| `N`         | Previous search result             |
+| `s`         | Open sort options                  |
+| `f`         | Cycle state filter                 |
 
 **Detail View**:
-| Key | Action |
-|---|---|
-| `j`, `Down` | Scroll down |
-| `k`, `Up` | Scroll up |
-| `y` | Toggle YAML/formatted view |
-| `Esc` | Back to list |
+| Key         | Action                     |
+| ----------- | -------------------------- |
+| `j`, `Down` | Scroll down                |
+| `k`, `Up`   | Scroll up                  |
+| `y`         | Toggle YAML/formatted view |
+| `Esc`       | Back to list               |
 
 **Resource-Specific Actions**:
-| Key | Context | Action |
-|---|---|---|
-| `d` | Deployment list/detail | Close deployment |
-| `u` | Deployment list/detail | Update deployment |
-| `l` | Deployment/Lease | View logs |
-| `e` | Deployment/Lease | View events |
-| `s` | Deployment/Lease | Open shell |
-| `w` | Lease detail | Withdraw from escrow |
-| `v` | Governance proposal | Vote |
-| `D` | Governance proposal | Deposit |
-| `d` | Validator detail | Delegate |
-| `u` | Validator detail | Undelegate |
-| `r` | Validator detail | Redelegate |
-| `h`, `Left` | Provider monitor | Select previous version |
-| `l`, `Right` | Provider monitor | Select next version |
-| `Enter` | Provider monitor list | Open provider detail (node list, GPU info) |
-| `Esc` | Provider monitor detail | Back to provider list |
-| `h`, `Left` | Governance params | Scroll params left/up |
-| `l`, `Right` | Governance params | Scroll params right/down |
-| `r` | Consensus/Validator/Provider monitor | Manual refresh |
+| Key          | Context                              | Action                                     |
+| ------------ | ------------------------------------ | ------------------------------------------ |
+| `d`          | Deployment list/detail               | Close deployment                           |
+| `u`          | Deployment list/detail               | Update deployment                          |
+| `l`          | Deployment/Lease                     | View logs                                  |
+| `e`          | Deployment/Lease                     | View events                                |
+| `s`          | Deployment/Lease                     | Open shell                                 |
+| `w`          | Lease detail                         | Withdraw from escrow                       |
+| `v`          | Governance proposal                  | Vote                                       |
+| `D`          | Governance proposal                  | Deposit                                    |
+| `d`          | Validator detail                     | Delegate                                   |
+| `u`          | Validator detail                     | Undelegate                                 |
+| `r`          | Validator detail                     | Redelegate                                 |
+| `h`, `Left`  | Provider monitor                     | Select previous version                    |
+| `l`, `Right` | Provider monitor                     | Select next version                        |
+| `Enter`      | Provider monitor list                | Open provider detail (node list, GPU info) |
+| `Esc`        | Provider monitor detail              | Back to provider list                      |
+| `h`, `Left`  | Governance params                    | Scroll params left/up                      |
+| `l`, `Right` | Governance params                    | Scroll params right/down                   |
+| `r`          | Monitor (all dashboards)         | Manual refresh                             |
 
 #### Keybinding Configuration
 
@@ -2125,7 +2720,7 @@ tui:
     action-delegate: ["D"]
 ```
 
-### 7.7 Theme System
+### 8.7 Theme System
 
 Themes are defined using lipgloss styles. The TUI ships with `dark` and `light` themes.
 
@@ -2153,7 +2748,7 @@ tui:
         cursor-row-fg: "#C0CAF5"
 ```
 
-### 7.8 TUI Component Hierarchy (bubbletea models)
+### 8.8 TUI Component Hierarchy (bubbletea models)
 
 ```
 App (root model)
@@ -2163,25 +2758,24 @@ App (root model)
 │   ├── ResourceView    (generic, parameterized by resource type)
 │   │   ├── ResourceTable     (bubbles/table with sort, filter, pagination)
 │   │   └── DetailPane        (bubbles/viewport with YAML/JSON toggle)
-│   ├── ConsensusView   (from aktop: real-time consensus state)
-│   │   ├── ConsensusHeader   (height, round, step, elapsed, proposer)
-│   │   ├── VoteProgress      (prevote/precommit progress bars with power fractions)
-│   │   └── VoteGrid          (● / ○ validator bit-array grid)
-│   ├── ValidatorVotingView  (from aktop: validator voting status)
-│   │   ├── ConsensusHeader   (compact)
-│   │   ├── VoteProgress      (compact)
-│   │   └── ValidatorTable    (scrollable: moniker, power, prevote/precommit status)
-│   ├── ProviderMonitorView  (from aktop: provider fleet health)
-│   │   ├── ScanProgress      (progress bar: X/Y checked, Z online)
-│   │   ├── VersionDist       (dot visualization per version, h/l to select)
-│   │   ├── ProviderTable     (scrollable: URL, version, CPU, memory, GPU)
-│   │   └── ProviderDetail    (sub-view: info + node list with GPU details)
-│   ├── GovernanceParamsView (from aktop: module parameter browser)
-│   │   ├── ModuleList        (left panel: selectable module list)
-│   │   └── ParamsPane        (right panel: scrollable pretty-printed JSON)
+│   ├── MonitorView      (hub: Tab/Shift-Tab cycles dashboards)
+│   │   ├── NetworkDashboard   (from aktop: consensus, validators, governance)
+│   │   │   ├── ConsensusView    (height, round, step, vote progress, vote grid)
+│   │   │   ├── ValidatorView    (scrollable list, moniker, power, signing history)
+│   │   │   └── GovernanceView   (module list + JSON params)
+│   │   ├── ProviderDashboard  (from aktop: provider fleet health)
+│   │   │   ├── ScanProgress     (progress bar: X/Y checked, Z online)
+│   │   │   ├── VersionDist      (dot visualization per version, h/l to select)
+│   │   │   ├── ProviderTable    (scrollable: URL, version, CPU, memory, GPU)
+│   │   │   └── ProviderDetail   (sub-view: info + node list with GPU details)
+│   │   └── OracleBMEDashboard (combined oracle prices + BME state)
+│   │       ├── AggregatedSection (per-denom TWAP, median, min/max, sources)
+│   │       ├── BMEStatusSection  (mint status, collateral ratio, thresholds)
+│   │       ├── VaultSection      (balances, burned, minted, remint credits)
+│   │       └── LedgerSection     (recent entries table)
 │   ├── LogViewer       (bubbles/viewport with auto-scroll, service filter)
 │   └── ...
-├── CommandPalette      (overlay: bubbles/textinput with fuzzy list)
+├── CommandPalette      (overlay: textinput + filtered command list, activated by : or Ctrl+P)
 ├── ConfirmDialog       (overlay: transaction confirmation)
 ├── HelpOverlay         (overlay: keybinding reference, bubbles/help)
 └── StatusBar           (component: shortcuts, last action, errors)
@@ -2189,9 +2783,9 @@ App (root model)
 
 ---
 
-## 8. Plugin System Specification
+## 9. Plugin System Specification
 
-### 8.1 Plugin Discovery
+### 9.1 Plugin Discovery
 
 Plugins are discovered by scanning for executables matching the pattern `akt-<name>` in:
 
@@ -2201,7 +2795,7 @@ Plugins are discovered by scanning for executables matching the pattern `akt-<na
 
 Discovery order determines precedence (first match wins). Plugins listed in `plugins.disabled` are skipped.
 
-### 8.2 Plugin Execution
+### 9.2 Plugin Execution
 
 When `akt <name> [args...]` is invoked and `<name>` does not match a built-in command:
 
@@ -2212,25 +2806,25 @@ When `akt <name> [args...]` is invoked and `<name>` does not match a built-in co
 5. Inherit stdin, stdout, stderr from the parent process.
 6. Exit with the plugin's exit code.
 
-### 8.3 Plugin Environment Variables
+### 9.3 Plugin Environment Variables
 
 The following environment variables are set for plugin processes:
 
-| Variable | Description |
-|---|---|
-| `AKT_PLUGIN` | Set to `1` to indicate plugin execution context |
-| `AKT_HOME` | Config root path |
-| `AKT_CONTEXT` | Current context name |
-| `AKT_CHAIN_ID` | Current chain ID |
-| `AKT_NODE` | Primary RPC endpoint |
-| `AKT_GRPC_ADDR` | Primary gRPC endpoint |
-| `AKT_FROM` | Default account |
-| `AKT_KEYRING_BACKEND` | Keyring backend |
-| `AKT_KEYRING_DIR` | Keyring directory |
-| `AKT_OUTPUT` | Output format |
-| `AKT_STORE_PATH` | Store database path |
+| Variable              | Description                                     |
+| --------------------- | ----------------------------------------------- |
+| `AKT_PLUGIN`          | Set to `1` to indicate plugin execution context |
+| `AKT_HOME`            | Home directory path                             |
+| `AKT_CONTEXT`         | Current context name                            |
+| `AKT_CHAIN_ID`        | Current chain ID                                |
+| `AKT_NODE`            | Primary RPC endpoint                            |
+| `AKT_GRPC_ADDR`       | Primary gRPC endpoint                           |
+| `AKT_FROM`            | Default account                                 |
+| `AKT_KEYRING_BACKEND` | Keyring backend                                 |
+| `AKT_KEYRING_DIR`     | Keyring directory                               |
+| `AKT_OUTPUT`          | Output format                                   |
+| `AKT_STORE_PATH`      | Store database path                             |
 
-### 8.4 Plugin Manifest (Optional)
+### 9.4 Plugin Manifest (Optional)
 
 A `plugin.yaml` file placed next to the plugin binary provides metadata:
 
@@ -2250,7 +2844,7 @@ requires:
 min-akt-version: "0.1.0"
 ```
 
-### 8.5 Plugin Management Commands
+### 9.5 Plugin Management Commands
 
 #### `akt plugin list`
 
@@ -2281,7 +2875,7 @@ Remove an installed plugin.
 akt plugin remove sdl-lint
 ```
 
-### 8.6 Security Considerations
+### 9.6 Security Considerations
 
 - Plugins are unsigned executables. Users are responsible for trusting plugin sources.
 - The `akt plugin install` command warns about running untrusted code.
@@ -2290,73 +2884,990 @@ akt plugin remove sdl-lint
 
 ---
 
-## 9. Output Format Specification
+## 10. Output Format Specification
 
-### 9.1 JSON
+Query commands use a **registry-based pretty output system** (`internal/output/pretty/`). Each protobuf response type has a registered formatter that controls how it is displayed. The `--output` (`-o`) flag controls the output format.
 
-Machine-readable format. Used when `--output json` or when stdout is not a TTY (piped).
+### 10.1 Output Behavior Matrix
 
-- Pretty-printed with 2-space indentation.
-- All field names use `snake_case`.
-- Protobuf messages are serialized using Cosmos SDK's JSON codec (respects `@type` annotations).
-- Lists are wrapped in a top-level object with a `data` array and optional `pagination` object.
+| `--output` (`-o`) | Behavior |
+|-------------------|----------|
+| `pretty` (default) | Pretty tables with lipgloss colors, state coding, sections |
+| `json`            | Machine-readable JSON (compact, no colors, no formatting) |
+| `yaml`            | Machine-readable YAML (no colors, no formatting) |
 
-```json
-{
-  "data": [
-    {
-      "dseq": 12345,
-      "owner": "akash1abc...",
-      "state": "active",
-      "version": "abc123..."
-    }
-  ],
-  "pagination": {
-    "next_key": "...",
-    "total": "47"
-  }
+When `--output pretty` (the default), output is styled using **lipgloss**. Colors are disabled automatically when stdout is not a TTY or when the `NO_COLOR` environment variable is set.
+
+### 10.2 Dispatch Architecture
+
+Every query command calls `pretty.PrintQueryResult(cmd, cctx, msg)`:
+
+1. Read `--output` flag from `cmd`.
+2. If `json` → delegate to `cctx.PrintProto(msg)` with JSON output format.
+3. If `yaml` → delegate to `cctx.PrintProto(msg)` with text/YAML output format.
+4. If `pretty` (default) → look up a `PrettyFormatter` for `msg` by its protobuf full name.
+   - Found → call `formatter.Format(w, cmd, cctx, msg)`.
+   - Not found → fall back to JSON output via `cctx.PrintProto(msg)`.
+
+This means unregistered protobuf types automatically get JSON output -- no regressions when new types are added.
+
+### 10.3 Pretty Table Format
+
+Default when `--output pretty` (or omitted).
+
+**List results** use tabwriter-aligned columns:
+
+- Headers in bold (lipgloss).
+- State columns color-coded (see 10.6).
+- Key identifiers (DSEQ, moniker, proposal ID) in bold.
+- Addresses always displayed in full. Never truncated -- addresses are machine-parseable identifiers and truncation risks ambiguity.
+- Micro-denominated amounts (`u`-prefixed denoms) are converted to the most readable unit: base (e.g., AKT), milli (mAKT), or micro (uAKT). Trailing zeros are always stripped. Applies to all `u`-prefixed denoms (uakt, uatom, uosmo, etc.).
+- `DecCoin` prices shown with denom suffix (e.g., `12.500000 uakt`).
+- Block heights formatted with comma grouping (e.g., `1,234,567`).
+
+```
+  DSEQ       OWNER                                          STATE    GROUPS  CREATED AT
+  12345      akash1abcdefghijklmnopqrstuvwxyz012345678901    active   2       1,234,567
+  12346      akash1abcdefghijklmnopqrstuvwxyz012345678901    closed   1       1,234,500
+```
+
+**Single-item results** use grouped key-value pairs with section headers:
+
+```
+Deployment
+  DSEQ:       12345
+  Owner:      akash1abcdef...full
+  State:      active
+  Hash:       A1B2C3...
+  Created At: 1,234,567
+
+Group 1: "web"
+  State:      open
+  Resources:
+    CPU:      0.5 units × 1
+    Memory:   512 Mi × 1
+    Storage:  512 Mi × 1
+    Price:    12.500000 uakt/block
+
+Escrow
+  State:      open
+  Balance:    5.000000 AKT
+  Spent:      0.500000 AKT
+```
+
+### 10.4 Pretty JSON Format
+
+Used when `--output json`. Output is machine-readable JSON via Cosmos SDK `clientCtx.PrintProto()` (no colors, no syntax highlighting):
+
+| Element | Color |
+|---------|-------|
+| Keys | Cyan |
+| Strings | Green |
+| Numbers | Yellow |
+| Booleans | Magenta |
+| Null | Dim/gray |
+| Braces/brackets | Default |
+
+Field names use `snake_case`. Protobuf messages are serialized using the Cosmos SDK JSON codec.
+
+### 10.5 Pretty YAML Format
+
+Used when `--output yaml`. Output is machine-readable YAML via Cosmos SDK `clientCtx.PrintProto()` (no colors, no syntax highlighting):
+
+| Element | Color |
+|---------|-------|
+| Keys | Cyan |
+| Strings | Green |
+| Numbers | Yellow |
+| Booleans | Magenta |
+| Null | Dim/gray |
+| Document markers (`---`) | Dim/gray |
+
+Same field naming as JSON (`snake_case`).
+
+### 10.6 State Color Mapping
+
+All state fields across Akash and Cosmos SDK types use a consistent color scheme:
+
+| Color  | States |
+|--------|--------|
+| Green  | `active`, `open`, `bonded`, `passed`, `valid` |
+| Yellow | `paused`, `insufficient_funds`, `overdrawn`, `unbonding`, `voting_period`, `deposit_period` |
+| Red    | `closed`, `lost`, `unbonded`, `rejected`, `failed`, `jailed`, `revoked` |
+| Gray   | `invalid`, `unspecified` |
+
+### 10.7 Amount Formatting
+
+| Input | Display |
+|-------|---------|
+| `5000000uakt` | `5.000000 AKT` |
+| `DecCoin{Amount: 12.5, Denom: "uakt"}` | `12.500000 uakt` (price context) |
+| `[]Coin` (multiple denoms) | One row per denom |
+| Zero amounts | `0 AKT` (not omitted) |
+
+Any `u`-prefixed denom (the standard Cosmos micro-denomination convention) is automatically scaled to the most readable unit. Thresholds: >= 1,000,000 micro → base denom (e.g., `5.3 AKT`); >= 1,000 micro → milli denom (e.g., `3 mAKT`); < 1,000 micro → micro denom (e.g., `500 uAKT`). Trailing zeros are always stripped. Non-micro denoms and IBC denoms (`ibc/...`) are shown as-is.
+
+### 10.8 Pretty/TUI Visual Parity
+
+The pretty-printed output of a single-shot CLI command (e.g. `akt q bme status`) and the corresponding section in the TUI or `akt monitor` dashboard **must be visually identical**. Both code paths must call the same shared `Render*` functions from `internal/output/pretty/`.
+
+This rule applies to every resource type that appears in both contexts: BME status, BME ledger, oracle prices, and any future query result displayed in the monitor dashboards. The `Render*` functions return strings and take only the protobuf response type as input — no `*cobra.Command` or `sdkclient.Context` dependency — so they are callable from both the CLI formatter layer and the TUI view layer.
+
+**Never duplicate formatting logic in the TUI.** If a pretty formatter exists for a query result, the TUI must delegate to it.
+
+### 10.9 Address Formatting
+
+Addresses are **always displayed in full**. Never truncated or shortened by default. Addresses are machine-parseable identifiers; truncation risks ambiguity and breaks copy-paste workflows. Users who need shorter output can pipe through `cut` or `jq`.
+
+| Context | Format | Example |
+|---------|--------|---------|
+| Table column | Full | `akash1abcdefghijklmnopqrstuvwxyz012345678901` |
+| Detail view | Full | `akash1abcdefghijklmnopqrstuvwxyz012345678901` |
+| Validator operator | Full | `akashvaloper1abcdefghijklmnopqrstuvwxyz0123456` |
+
+### 10.10 Per-Module Formatter Specification
+
+#### Deployment
+
+**`QueryDeploymentsResponse`** (list):
+| Column | Source | Format |
+|--------|--------|--------|
+| DSEQ | `Deployment.ID.DSeq` | Bold |
+| OWNER | `Deployment.ID.Owner` | Full address |
+| STATE | `Deployment.State` | Color-coded |
+| GROUPS | `len(Groups)` | Count |
+| CREATED AT | `Deployment.CreatedAt` | Comma-grouped height |
+
+**`QueryDeploymentResponse`** (detail): Sections for Deployment (DSEQ, owner, state, hash, created), each Group (name, state, resources with CPU/memory/storage/price), and Escrow (state, balance, spent).
+
+#### Market -- Bids
+
+**`QueryBidsResponse`** (list):
+| Column | Source | Format |
+|--------|--------|--------|
+| PROVIDER | `Bid.ID.Provider` | Full address |
+| DSEQ | `Bid.ID.DSeq` | Bold |
+| GSEQ | `Bid.ID.GSeq` | |
+| OSEQ | `Bid.ID.OSeq` | |
+| PRICE/BLOCK | `Bid.Price` | Bold DecCoin |
+| STATE | `Bid.State` | Color-coded |
+
+#### Market -- Leases
+
+**`QueryLeasesResponse`** (list):
+| Column | Source | Format |
+|--------|--------|--------|
+| DSEQ | `Lease.ID.DSeq` | Bold |
+| PROVIDER | `Lease.ID.Provider` | Full address |
+| GSEQ | `Lease.ID.GSeq` | |
+| OSEQ | `Lease.ID.OSeq` | |
+| PRICE/BLOCK | `Lease.Price` | DecCoin |
+| STATE | `Lease.State` | Color-coded |
+| CLOSED REASON | `Lease.Reason` | Shown only when closed, otherwise `-` |
+
+#### Market -- Orders
+
+**`QueryOrdersResponse`** (list):
+| Column | Source | Format |
+|--------|--------|--------|
+| DSEQ | `Order.ID.DSeq` | Bold |
+| GSEQ | `Order.ID.GSeq` | |
+| OSEQ | `Order.ID.OSeq` | |
+| STATE | `Order.State` | Color-coded |
+| CREATED AT | `Order.CreatedAt` | Comma-grouped height |
+
+#### Bank
+
+**`QueryAllBalancesResponse`** (list):
+| Column | Source | Format |
+|--------|--------|--------|
+| DENOM | `Balance.Denom` | `uakt` row bolded |
+| AMOUNT | `Balance.Amount` | With AKT conversion for uakt |
+
+**`QuerySpendableBalancesResponse`**: Same format as all balances.
+
+#### Provider
+
+**`QueryProvidersResponse`** (list):
+| Column | Source | Format |
+|--------|--------|--------|
+| OWNER | `Provider.Owner` | Full address |
+| HOST URI | `Provider.HostURI` | |
+| EMAIL | `Provider.Info.EMail` | |
+| WEBSITE | `Provider.Info.Website` | |
+
+**`QueryProviderResponse`** (detail): Sections for Provider (owner, host, email, website) and Attributes (key-value list).
+
+#### Staking
+
+**`QueryValidatorsResponse`** (list):
+| Column | Source | Format |
+|--------|--------|--------|
+| MONIKER | `Validator.Description.Moniker` | Bold |
+| OPERATOR | `Validator.OperatorAddress` | Full address |
+| STATUS | `Validator.Status` | Color-coded (bonded/unbonding/unbonded) |
+| VOTING POWER | `Validator.Tokens` | AKT conversion, comma-grouped |
+| COMMISSION | `Validator.Commission.Rate` | Percentage (e.g., `5.00%`) |
+
+**Single validator** (detail): Sections for Identity (moniker, operator, consensus pubkey, jailed), Staking (status, tokens, delegator shares), Commission (rate, max rate, max change rate), and Description (details, website, security contact).
+
+#### Governance
+
+**`QueryProposalsResponse`** (list):
+| Column | Source | Format |
+|--------|--------|--------|
+| ID | `Proposal.Id` | Bold |
+| TITLE | `Proposal.Title` | Full text |
+| STATUS | `Proposal.Status` | Color-coded |
+| SUBMIT TIME | `Proposal.SubmitTime` | ISO date |
+| VOTING END | `Proposal.VotingEndTime` | ISO date |
+
+**Single proposal** (detail): Sections for Proposal (ID, title, status, type, description), Timeline (submit, deposit end, voting start, voting end), and Tally (yes/no/abstain/no_with_veto with percentages).
+
+#### Escrow
+
+**`QueryAccountsResponse`** (list):
+| Column | Source | Format |
+|--------|--------|--------|
+| SCOPE | `Account.ID.Scope` | |
+| XID | `Account.ID.XID` | |
+| OWNER | `AccountState.Owner` | Full address |
+| STATE | `AccountState.State` | Color-coded |
+| BALANCE | `AccountState.Funds` | AKT conversion |
+| SPENT | `AccountState.Transferred` | AKT conversion |
+
+#### Certificate
+
+**`QueryCertificatesResponse`** (list):
+| Column | Source | Format |
+|--------|--------|--------|
+| OWNER | Certificate owner | Full address |
+| SERIAL | Certificate serial | |
+| STATE | Certificate state | Color-coded |
+
+#### Audit
+
+**Audit list**: Table with AUDITOR, PROVIDER, and ATTRIBUTES columns.
+
+#### Distribution
+
+**Rewards**: Per-validator table with VALIDATOR, REWARD columns. Total rewards row at the bottom.
+**Commission**: Key-value with amounts.
+**Community pool**: Table of DENOM, AMOUNT.
+
+#### Auth
+
+**Account** (detail): Key-value with address, pub key type, account number, sequence.
+**Accounts** (list): Table with ADDRESS, TYPE, ACCOUNT #, SEQUENCE.
+
+#### Feegrant
+
+**Grants** (list): Table with GRANTER, GRANTEE, ALLOWANCE TYPE, EXPIRATION.
+
+#### WASM
+
+**Code list**: Table with CODE ID, CREATOR, CHECKSUM.
+**Contract** (detail): Key-value with address, code ID, admin, label, created.
+**Contract state smart**: Pretty-printed JSON (results are arbitrary user-defined JSON).
+
+#### Oracle
+
+**Prices**: Table with ASSET, BASE, PRICE, TIMESTAMP.
+
+#### BME
+
+**Status/Vault**: Key-value sections with amounts.
+**Ledger**: Table of entries.
+
+#### Miscellaneous
+
+**Slashing signing info**: Table with VALIDATOR, MISSED BLOCKS, JAILED UNTIL.
+**Upgrade plan**: Key-value with name, height, info.
+**Module address**: Simple `Module: <address>` output.
+
+#### Module Parameters (all modules)
+
+Every module's params query (`akt query <module> params`) has a registered pretty formatter. Durations are displayed human-readable (e.g., "21 days"), percentages as "33.4%", coins via `FormatCoins()`, booleans as color-coded "Yes"/"No". Each module's `Render<Module>Params()` function is public (exported) so the TUI governance tab can call the same renderers for visual parity (§10.8). A `RenderModuleParamsFromJSON(module, rawJSON)` bridge function unmarshals REST JSON for the TUI path.
+
+**Staking** — `*staking.Params`:
+| Field | Source | Format |
+|-------|--------|--------|
+| Unbonding Time | `UnbondingTime` | `FormatDuration()` (e.g., "21 days") |
+| Max Validators | `MaxValidators` | Integer |
+| Max Entries | `MaxEntries` | Integer |
+| Historical Entries | `HistoricalEntries` | Comma-grouped via `FormatHeight()` |
+| Bond Denom | `BondDenom` | Raw string |
+| Min Commission | `MinCommissionRate` | Percentage (e.g., "0%") |
+
+**Governance** — `*gov/v1.QueryParamsResponse`:
+| Field | Source | Format |
+|-------|--------|--------|
+| Voting Period | `Params.VotingPeriod` | `FormatDuration()` |
+| Min Deposit | `Params.MinDeposit` | `FormatCoins()` |
+| Max Deposit Period | `Params.MaxDepositPeriod` | `FormatDuration()` |
+| Quorum | `Params.Quorum` | Percentage |
+| Threshold | `Params.Threshold` | Percentage |
+| Veto Threshold | `Params.VetoThreshold` | Percentage |
+| Expedited Voting Period | `Params.ExpeditedVotingPeriod` | `FormatDuration()` |
+| Expedited Threshold | `Params.ExpeditedThreshold` | Percentage |
+| Expedited Min Deposit | `Params.ExpeditedMinDeposit` | `FormatCoins()` |
+| Burn Vote Quorum | `Params.BurnVoteQuorum` | `FormatBool()` |
+| Burn Proposal Deposit | `Params.BurnProposalDepositPrevote` | `FormatBool()` |
+| Burn Vote Veto | `Params.BurnVoteVeto` | `FormatBool()` |
+
+**Minting** — `*mint.Params`:
+| Field | Source | Format |
+|-------|--------|--------|
+| Mint Denom | `MintDenom` | Raw string |
+| Inflation Rate Change | `InflationRateChange` | Percentage |
+| Inflation Max | `InflationMax` | Percentage |
+| Inflation Min | `InflationMin` | Percentage |
+| Goal Bonded | `GoalBonded` | Percentage |
+| Blocks Per Year | `BlocksPerYear` | Comma-grouped |
+
+**Slashing** — `*slashing.Params`:
+| Field | Source | Format |
+|-------|--------|--------|
+| Signed Blocks Window | `SignedBlocksWindow` | Comma-grouped |
+| Min Signed Per Window | `MinSignedPerWindow` | Percentage |
+| Downtime Jail Duration | `DowntimeJailDuration` | `FormatDuration()` |
+| Slash Double Sign | `SlashFractionDoubleSign` | Percentage |
+| Slash Downtime | `SlashFractionDowntime` | Percentage |
+
+**Distribution** — `*distribution.Params`:
+| Field | Source | Format |
+|-------|--------|--------|
+| Community Tax | `CommunityTax` | Percentage |
+| Withdraw Addr Enabled | `WithdrawAddrEnabled` | `FormatBool()` |
+
+**Auth** — `*auth.Params`:
+| Field | Source | Format |
+|-------|--------|--------|
+| Max Memo Characters | `MaxMemoCharacters` | Comma-grouped |
+| Tx Sig Limit | `TxSigLimit` | Integer |
+| Tx Size Cost/Byte | `TxSizeCostPerByte` | Integer |
+| Sig Verify ED25519 | `SigVerifyCostED25519` | Integer |
+| Sig Verify Secp256k1 | `SigVerifyCostSecp256k1` | Integer |
+
+**Deployment** — `*deployment/v1beta4.QueryParamsResponse`:
+| Field | Source | Format |
+|-------|--------|--------|
+| Min Deposits | `Params.MinDeposits` | `FormatCoins()` |
+
+**Market** — `*market/v1beta5.QueryParamsResponse`:
+| Field | Source | Format |
+|-------|--------|--------|
+| Order Max Bids | `Params.OrderMaxBids` | Integer |
+| Bid Min Deposits | `Params.BidMinDeposits` | `FormatCoins()` |
+
+**Wasm** — `*wasm.Params`:
+| Field | Source | Format |
+|-------|--------|--------|
+| Code Upload Access | `CodeUploadAccess.Permission` | Permission label |
+| Upload Addresses | `CodeUploadAccess.Addresses` | Comma-joined or "any" |
+| Instantiate Default | `InstantiateDefaultPermission` | Permission label |
+
+**Oracle** — `*oracle/v2.QueryParamsResponse`:
+| Field | Source | Format |
+|-------|--------|--------|
+| Sources | `Params.Sources` | Comma-joined list |
+| Min Price Sources | `Params.MinPriceSources` | Integer |
+| Max Staleness | `Params.MaxPriceStalenessPeriod` | `FormatDuration()` |
+| TWAP Window | `Params.TwapWindow` | `FormatDuration()` |
+| Max Deviation | `Params.MaxPriceDeviationBps` | Integer + " bps" |
+| Price Retention | `Params.PriceRetention` | `FormatDuration()` |
+| Prune Epoch | `Params.PruneEpoch` | Raw string |
+| Max Prune/Epoch | `Params.MaxPrunePerEpoch` | Comma-grouped |
+
+### 10.11 Transaction Result Formatting
+
+Transaction commands use the same registry-based pretty output system as query commands. The `--output` flag defaults to `pretty` for both `tx` and `query` commands, providing a consistent user experience.
+
+#### 10.11.1 Output Modes
+
+| `--output` | Behavior |
+|---|---|
+| `pretty` (default) | Two-section layout: common summary + message-specific detail |
+| `json` | Raw `TxResponse` JSON via `cctx.PrintProto()` |
+| `yaml` | Raw `TxResponse` YAML via `cctx.PrintProto()` |
+
+#### 10.11.2 Two-Section Layout
+
+Every transaction result in pretty mode renders two sections separated by a blank line.
+
+**Section 1: Transaction Summary**
+
+Common to all transactions. Uses the same `Section()` + `KV()` formatting as query detail views.
+
+| Field | Source | Format |
+|---|---|---|
+| Hash | `TxResponse.TxHash` | Full hex string, bold |
+| Signer | First entry from `tx.AuthInfo.SignerInfos`, resolved to bech32 | Full address |
+| Height | `TxResponse.Height` | Comma-grouped via `FormatHeight()` |
+| Gas Used | `TxResponse.GasUsed` / `TxResponse.GasWanted` | `used / wanted`, both comma-grouped |
+| Fee | `tx.AuthInfo.Fee.Amount` | `FormatCoins()` (micro-denom scaling) |
+| Status | `TxResponse.Code` | Green "success" if code=0; Red "failed: `<RawLog>`" otherwise |
+
+The section header is `Transaction`, rendered with `Section()` (bold + underline).
+
+**Section 2: Message Detail**
+
+Each message in the transaction body (`tx.Body.Messages`) is rendered using a registered `TxPrettyFormatter` for that message's protobuf type URL.
+
+**Single-message transactions** (1 message): The message detail section renders directly with a descriptive section header (e.g., "Send", "Deployment Created", "Delegate").
+
+**Multi-message transactions** (2+ messages): Each message renders as a numbered sub-section with prefix: "Message N: \<title\>" (e.g., "Message 1: Withdraw Rewards", "Message 2: Delegate").
+
+**Unregistered message types**: If no `TxPrettyFormatter` is registered for a message type, the message is rendered as syntax-highlighted JSON of the decoded message body (using `WriteHighlightedJSON`).
+
+**Failed transactions**: When `TxResponse.Code != 0`, the message detail section still renders (showing what was attempted), but the section header appends " (failed)" in red for multi-message transactions: "Message 1: Send (failed)". For single-message transactions, the failure is already visible in the Status field of section 1.
+
+#### 10.11.3 TxPrettyFormatter Interface
+
+```go
+// TxPrettyFormatter formats a transaction message for pretty output.
+// It receives the decoded message, the full TxResponse (for events/logs),
+// and the message index within the transaction.
+type TxPrettyFormatter interface {
+    // FormatTx renders the message-specific detail section.
+    // The common transaction summary (section 1) is rendered by the caller.
+    FormatTx(w io.Writer, cmd *cobra.Command, cctx client.Context, msg sdk.Msg, resp *sdk.TxResponse, msgIndex int) error
+
+    // Title returns the human-readable section header for this message type.
+    // Examples: "Send", "Deployment Created", "Delegate", "Vote"
+    Title() string
 }
 ```
 
-### 9.2 YAML
+Registration follows the same pattern as query formatters:
 
-Human-readable structured format. Used when `--output yaml`.
-
-- Standard YAML marshaling with Cosmos SDK types.
-- Same field naming as JSON (`snake_case`).
-
-```yaml
-data:
-  - dseq: 12345
-    owner: akash1abc...
-    state: active
-    version: abc123...
-pagination:
-  next_key: "..."
-  total: "47"
+```go
+func RegisterTx(msg sdk.Msg, formatter TxPrettyFormatter)
+func LookupTx(msg sdk.Msg) (TxPrettyFormatter, bool)
 ```
 
-### 9.3 Table
+A convenience adapter is provided for simple cases:
 
-Human-friendly tabular format. Default when stdout is a TTY.
-
-- Column-aligned headers in bold (when TTY supports it).
-- Long values truncated with `...` to fit terminal width.
-- Address fields show first 10 and last 3 characters with `...` in between.
-- Colors used for state indicators: green for active/passed, red for closed/failed, yellow for pending.
-- Colors disabled automatically when not a TTY or when `NO_COLOR` env is set.
-
+```go
+type TxPrettyFormatterFunc struct {
+    TitleStr  string
+    FormatFn  func(w io.Writer, cmd *cobra.Command, cctx client.Context, msg sdk.Msg, resp *sdk.TxResponse, msgIndex int) error
+}
 ```
-DSEQ       STATE     PROVIDER            PRICE/BLK   BALANCE     AGE
-12345      active    akash1prov1...xyz    12.5 uakt   4.2 AKT    3d
-12344      active    akash1prov2...abc    15.0 uakt   2.1 AKT    5d
-```
+
+#### 10.11.4 Dispatch Flow
+
+`PrintTxResult(cmd, cctx, txResponse)` is called by all `tx` commands after broadcast:
+
+1. Read `--output` flag.
+2. If `json` → `cctx.PrintProto(txResponse)`.
+3. If `yaml` → `cctx.PrintProto(txResponse)` with YAML format.
+4. If `pretty`:
+   a. Render Section 1 (common summary) from `TxResponse` fields.
+   b. Decode `TxResponse.Tx` to extract messages.
+   c. For each message, look up `TxPrettyFormatter` by proto type.
+   d. Render Section 2 for each message (registered formatter or JSON fallback).
+
+#### 10.11.5 Per-Module Message Formatter Specification
+
+##### Bank
+
+**`MsgSend`** — Title: "Send"
+
+| Field | Source | Format |
+|---|---|---|
+| From | `MsgSend.FromAddress` | Full address |
+| To | `MsgSend.ToAddress` | Full address |
+| Amount | `MsgSend.Amount` | `FormatCoins()` |
+
+**`MsgMultiSend`** — Title: "Multi Send"
+
+| Field | Source | Format |
+|---|---|---|
+| Inputs | `MsgMultiSend.Inputs` | One row per input: address + `FormatCoins()` |
+| Outputs | `MsgMultiSend.Outputs` | One row per output: address + `FormatCoins()` |
+
+##### Deployment
+
+**`MsgCreateDeployment`** — Title: "Deployment Created"
+
+| Field | Source | Format |
+|---|---|---|
+| Owner | Message + events | Full address |
+| DSEQ | Events (`akash.deployment.*.EventDeploymentCreated`) | Bold |
+| Deposit | `MsgCreateDeployment.Deposit` | `FormatCoin()` |
+| Groups | `len(MsgCreateDeployment.Groups)` | Count |
+
+**`MsgUpdateDeployment`** — Title: "Deployment Updated"
+
+| Field | Source | Format |
+|---|---|---|
+| Owner | Message | Full address |
+| DSEQ | `MsgUpdateDeployment.ID.DSeq` | Bold |
+
+**`MsgCloseDeployment`** — Title: "Deployment Closed"
+
+| Field | Source | Format |
+|---|---|---|
+| Owner | Message | Full address |
+| DSEQ | `MsgCloseDeployment.ID.DSeq` | Bold |
+
+**`MsgCloseGroup`** — Title: "Group Closed"
+
+| Field | Source | Format |
+|---|---|---|
+| Owner | Message | Full address |
+| DSEQ | Message | Bold |
+| GSEQ | Message | |
+
+**`MsgPauseGroup`** — Title: "Group Paused"
+
+Same fields as MsgCloseGroup.
+
+**`MsgStartGroup`** — Title: "Group Started"
+
+Same fields as MsgCloseGroup.
+
+##### Market
+
+**`MsgCreateBid`** — Title: "Bid Created"
+
+| Field | Source | Format |
+|---|---|---|
+| Provider | Message | Full address |
+| DSEQ | Message | Bold |
+| GSEQ | Message | |
+| OSEQ | Message | |
+| Price | `MsgCreateBid.Price` | `FormatDecCoin()` |
+
+**`MsgCloseBid`** — Title: "Bid Closed"
+
+| Field | Source | Format |
+|---|---|---|
+| Provider | Message | Full address |
+| DSEQ | Message | Bold |
+| GSEQ | Message | |
+| OSEQ | Message | |
+
+**`MsgCreateLease`** — Title: "Lease Created"
+
+| Field | Source | Format |
+|---|---|---|
+| Owner | Message | Full address |
+| DSEQ | Message | Bold |
+| GSEQ | Message | |
+| OSEQ | Message | |
+| Provider | Message | Full address |
+
+**`MsgWithdrawLease`** — Title: "Lease Withdrawn"
+
+Same fields as MsgCreateLease.
+
+**`MsgCloseLease`** — Title: "Lease Closed"
+
+Same fields as MsgCreateLease.
+
+##### Provider
+
+**`MsgCreateProvider`** — Title: "Provider Created"
+
+| Field | Source | Format |
+|---|---|---|
+| Owner | Message | Full address |
+| Host URI | Message | |
+| Attributes | Message | Key-value list |
+
+**`MsgUpdateProvider`** — Title: "Provider Updated"
+
+Same fields as MsgCreateProvider.
+
+##### Certificate
+
+**`MsgCreateCertificate`** — Title: "Certificate Published"
+
+| Field | Source | Format |
+|---|---|---|
+| Owner | Message | Full address |
+| Serial | Events | |
+
+**`MsgRevokeCertificate`** — Title: "Certificate Revoked"
+
+| Field | Source | Format |
+|---|---|---|
+| Owner | Message | Full address |
+| Serial | Message | |
+
+##### Audit
+
+**`MsgSignProviderAttributes`** — Title: "Attributes Signed"
+
+| Field | Source | Format |
+|---|---|---|
+| Auditor | Message | Full address |
+| Provider | Message | Full address |
+| Attributes | Message | Key-value list |
+
+**`MsgDeleteProviderAttributes`** — Title: "Attributes Deleted"
+
+| Field | Source | Format |
+|---|---|---|
+| Auditor | Message | Full address |
+| Provider | Message | Full address |
+| Keys | Message | Comma-separated list |
+
+##### Staking
+
+**`MsgDelegate`** — Title: "Delegate"
+
+| Field | Source | Format |
+|---|---|---|
+| Delegator | Message | Full address |
+| Validator | Message | Full address |
+| Amount | Message | `FormatCoin()` |
+
+**`MsgBeginRedelegate`** — Title: "Redelegate"
+
+| Field | Source | Format |
+|---|---|---|
+| Delegator | Message | Full address |
+| From | `SrcValidatorAddress` | Full address |
+| To | `DstValidatorAddress` | Full address |
+| Amount | Message | `FormatCoin()` |
+| Completion | Events | ISO timestamp |
+
+**`MsgUndelegate`** — Title: "Undelegate"
+
+| Field | Source | Format |
+|---|---|---|
+| Delegator | Message | Full address |
+| Validator | Message | Full address |
+| Amount | Message | `FormatCoin()` |
+| Completion | Events | ISO timestamp |
+
+**`MsgCancelUnbondingDelegation`** — Title: "Cancel Unbonding"
+
+| Field | Source | Format |
+|---|---|---|
+| Delegator | Message | Full address |
+| Validator | Message | Full address |
+| Amount | Message | `FormatCoin()` |
+
+**`MsgCreateValidator`** — Title: "Validator Created"
+
+| Field | Source | Format |
+|---|---|---|
+| Operator | Message | Full operator address |
+| Moniker | Message | |
+| Self-Delegation | Message | `FormatCoin()` |
+| Commission | Message | Percentage |
+
+**`MsgEditValidator`** — Title: "Validator Edited"
+
+| Field | Source | Format |
+|---|---|---|
+| Operator | Message | Full operator address |
+| Moniker | Message | Shown if changed |
+| Commission | Message | Percentage, shown if changed |
+
+##### Distribution
+
+**`MsgWithdrawDelegatorReward`** — Title: "Withdraw Rewards"
+
+| Field | Source | Format |
+|---|---|---|
+| Delegator | Message | Full address |
+| Validator | Message | Full address |
+| Rewards | Events (`withdraw_rewards.amount`) | `FormatCoins()` |
+
+**`MsgWithdrawValidatorCommission`** — Title: "Withdraw Commission"
+
+| Field | Source | Format |
+|---|---|---|
+| Validator | Message | Full address |
+| Commission | Events | `FormatCoins()` |
+
+**`MsgSetWithdrawAddress`** — Title: "Set Withdraw Address"
+
+| Field | Source | Format |
+|---|---|---|
+| Delegator | Message | Full address |
+| Withdraw Address | Message | Full address |
+
+**`MsgFundCommunityPool`** — Title: "Fund Community Pool"
+
+| Field | Source | Format |
+|---|---|---|
+| Depositor | Message | Full address |
+| Amount | Message | `FormatCoins()` |
+
+**`MsgFundValidatorRewardsPool`** — Title: "Fund Validator Rewards"
+
+| Field | Source | Format |
+|---|---|---|
+| Depositor | Message | Full address |
+| Validator | Message | Full address |
+| Amount | Message | `FormatCoins()` |
+
+##### Governance
+
+**`MsgSubmitProposal`** — Title: "Proposal Submitted"
+
+| Field | Source | Format |
+|---|---|---|
+| Proposer | Message | Full address |
+| Proposal ID | Events (`submit_proposal.proposal_id`) | Bold |
+| Title | Message | |
+| Deposit | Message | `FormatCoins()` |
+
+**`MsgDeposit`** — Title: "Proposal Deposit"
+
+| Field | Source | Format |
+|---|---|---|
+| Depositor | Message | Full address |
+| Proposal ID | Message | Bold |
+| Amount | Message | `FormatCoins()` |
+
+**`MsgVote`** — Title: "Vote"
+
+| Field | Source | Format |
+|---|---|---|
+| Voter | Message | Full address |
+| Proposal ID | Message | Bold |
+| Option | Message | Human-readable (Yes/No/Abstain/NoWithVeto) |
+
+**`MsgVoteWeighted`** — Title: "Weighted Vote"
+
+| Field | Source | Format |
+|---|---|---|
+| Voter | Message | Full address |
+| Proposal ID | Message | Bold |
+| Options | Message | List of option=weight pairs |
+
+##### Authz
+
+**`MsgGrant`** — Title: "Authorization Granted"
+
+| Field | Source | Format |
+|---|---|---|
+| Granter | Message | Full address |
+| Grantee | Message | Full address |
+| Type | Authorization type URL | Short type name |
+| Expiration | Message | ISO timestamp |
+
+**`MsgRevoke`** — Title: "Authorization Revoked"
+
+| Field | Source | Format |
+|---|---|---|
+| Granter | Message | Full address |
+| Grantee | Message | Full address |
+| Msg Type | Message | Short type name |
+
+**`MsgExec`** — Title: "Authz Exec"
+
+Renders inner messages using their own registered formatters (recursive). Each inner message is shown as a sub-item.
+
+##### Feegrant
+
+**`MsgGrantAllowance`** — Title: "Fee Allowance Granted"
+
+| Field | Source | Format |
+|---|---|---|
+| Granter | Message | Full address |
+| Grantee | Message | Full address |
+| Type | Allowance type | Short type name |
+| Expiration | Allowance | ISO timestamp (if set) |
+
+**`MsgRevokeAllowance`** — Title: "Fee Allowance Revoked"
+
+| Field | Source | Format |
+|---|---|---|
+| Granter | Message | Full address |
+| Grantee | Message | Full address |
+
+##### Escrow
+
+**Deposit** — Title: "Escrow Deposit"
+
+| Field | Source | Format |
+|---|---|---|
+| Owner | Message | Full address |
+| DSEQ | Message | Bold |
+| Amount | Message | `FormatCoin()` |
+
+##### Slashing
+
+**`MsgUnjail`** — Title: "Unjail"
+
+| Field | Source | Format |
+|---|---|---|
+| Validator | Message | Full address |
+
+##### Vesting
+
+**`MsgCreateVestingAccount`** — Title: "Vesting Account Created"
+
+| Field | Source | Format |
+|---|---|---|
+| From | Message | Full address |
+| To | Message | Full address |
+| Amount | Message | `FormatCoins()` |
+| End Time | Message | ISO timestamp |
+
+**`MsgCreatePermanentLockedAccount`** — Title: "Permanent Locked Account Created"
+
+| Field | Source | Format |
+|---|---|---|
+| From | Message | Full address |
+| To | Message | Full address |
+| Amount | Message | `FormatCoins()` |
+
+**`MsgCreatePeriodicVestingAccount`** — Title: "Periodic Vesting Account Created"
+
+| Field | Source | Format |
+|---|---|---|
+| From | Message | Full address |
+| To | Message | Full address |
+| Periods | Message | Count + total amount |
+
+##### Upgrade
+
+**`MsgSoftwareUpgrade`** — Title: "Software Upgrade"
+
+| Field | Source | Format |
+|---|---|---|
+| Authority | Message | Full address |
+| Name | Plan | |
+| Height | Plan | Comma-grouped |
+
+**`MsgCancelUpgrade`** — Title: "Upgrade Cancelled"
+
+| Field | Source | Format |
+|---|---|---|
+| Authority | Message | Full address |
+
+##### Crisis
+
+**`MsgVerifyInvariant`** — Title: "Verify Invariant"
+
+| Field | Source | Format |
+|---|---|---|
+| Sender | Message | Full address |
+| Module | Message | |
+| Route | Message | |
+
+##### WASM
+
+**`MsgStoreCode`** — Title: "Code Stored"
+
+| Field | Source | Format |
+|---|---|---|
+| Sender | Message | Full address |
+| Code ID | Events (`store_code.code_id`) | Bold |
+
+**`MsgInstantiateContract`** — Title: "Contract Instantiated"
+
+| Field | Source | Format |
+|---|---|---|
+| Sender | Message | Full address |
+| Code ID | Message | |
+| Contract | Events (`instantiate.contract_address`) | Full address, bold |
+| Label | Message | |
+| Admin | Message | Full address (or "none") |
+
+**`MsgInstantiateContract2`** — Title: "Contract Instantiated"
+
+Same fields as MsgInstantiateContract, plus:
+
+| Field | Source | Format |
+|---|---|---|
+| Salt | Message | Hex string |
+
+**`MsgExecuteContract`** — Title: "Contract Executed"
+
+| Field | Source | Format |
+|---|---|---|
+| Sender | Message | Full address |
+| Contract | Message | Full address |
+| Funds | Message | `FormatCoins()` (if any) |
+
+**`MsgMigrateContract`** — Title: "Contract Migrated"
+
+| Field | Source | Format |
+|---|---|---|
+| Sender | Message | Full address |
+| Contract | Message | Full address |
+| New Code ID | Message | |
+
+**`MsgUpdateAdmin`** — Title: "Contract Admin Updated"
+
+| Field | Source | Format |
+|---|---|---|
+| Sender | Message | Full address |
+| Contract | Message | Full address |
+| New Admin | Message | Full address |
+
+**`MsgClearAdmin`** — Title: "Contract Admin Cleared"
+
+| Field | Source | Format |
+|---|---|---|
+| Sender | Message | Full address |
+| Contract | Message | Full address |
+
+**`MsgUpdateInstantiateConfig`** — Title: "Instantiate Config Updated"
+
+| Field | Source | Format |
+|---|---|---|
+| Sender | Message | Full address |
+| Code ID | Message | |
+
+**`MsgSetContractLabel`** — Title: "Contract Label Set"
+
+| Field | Source | Format |
+|---|---|---|
+| Sender | Message | Full address |
+| Contract | Message | Full address |
+| Label | Message | |
+
+##### Oracle
+
+**`MsgFeed`** — Title: "Price Feed"
+
+| Field | Source | Format |
+|---|---|---|
+| Sender | Message | Full address |
+| Asset | Message | |
+| Base | Message | |
+| Price | Message | |
+
+##### BME
+
+**`MsgBurnMint`** — Title: "Burn Mint"
+
+| Field | Source | Format |
+|---|---|---|
+| Sender | Message | Full address |
+| Burned | Message | `FormatCoins()` |
+| Minted Denom | Message | |
+
+**`MsgMintACT`** — Title: "Mint ACT"
+
+| Field | Source | Format |
+|---|---|---|
+| Sender | Message | Full address |
+| Burned | Message | `FormatCoins()` |
+
+**`MsgBurnACT`** — Title: "Burn ACT"
+
+| Field | Source | Format |
+|---|---|---|
+| Sender | Message | Full address |
+| Burned | Message | `FormatCoins()` |
 
 ---
 
-## 10. Error Handling
+## 11. Error Handling
 
-### 10.1 Error Types
+### 11.1 Error Types
 
 All errors are structured with context:
 
@@ -2370,21 +3881,21 @@ type CLIError struct {
 }
 ```
 
-### 10.2 Exit Codes
+### 11.2 Exit Codes
 
-| Code | Meaning |
-|---|---|
-| `0` | Success |
-| `1` | General error |
-| `2` | Usage error (invalid flags, missing arguments) |
-| `3` | Configuration error (invalid config, missing context) |
-| `4` | Connection error (cannot reach RPC/gRPC endpoint) |
-| `5` | Transaction error (broadcast failure, out of gas, insufficient funds) |
-| `6` | Authentication error (keyring access failure, signing error) |
-| `7` | Store error (database corruption, migration failure) |
-| `127` | Plugin not found |
+| Code  | Meaning                                                               |
+| ----- | --------------------------------------------------------------------- |
+| `0`   | Success                                                               |
+| `1`   | General error                                                         |
+| `2`   | Usage error (invalid flags, missing arguments)                        |
+| `3`   | Configuration error (invalid config, missing context)                 |
+| `4`   | Connection error (cannot reach RPC/gRPC endpoint)                     |
+| `5`   | Transaction error (broadcast failure, out of gas, insufficient funds) |
+| `6`   | Authentication error (keyring access failure, signing error)          |
+| `7`   | Store error (database corruption, migration failure)                  |
+| `127` | Plugin not found                                                      |
 
-### 10.3 User-Facing Error Messages
+### 11.3 User-Facing Error Messages
 
 Errors presented to users include:
 
@@ -2405,7 +3916,7 @@ Error: cannot connect to RPC endpoint
 
 ---
 
-## 11. Phased Implementation Plan
+## 12. Phased Implementation Plan
 
 ### Phase 1: Foundation
 
@@ -2415,24 +3926,24 @@ Error: cannot connect to RPC endpoint
 
 #### Deliverables
 
-| # | Deliverable | Description | Acceptance Criteria |
-|---|---|---|---|
-| 1.1 | Project scaffold | Go module, Makefile, goreleaser, CI | `go build ./...` succeeds, `akt version` works |
-| 1.2 | Config system | YAML config read/write, XDG paths, env var loading, fsnotify watcher | Config round-trips correctly, env vars override config, live-reload works |
-| 1.3 | Network management | Shared network definitions, CRUD, templates (mainnet/testnet/sandbox) | `akt network *` commands work, templates provision correctly, sharing across contexts works |
-| 1.4 | Context manager | Context CRUD, switching, composition (network + keyring + store + log), fork/edit-parent for networks | All `akt context *` commands work, fork/edit-parent works, context propagation works |
-| 1.5 | Context live-reload | Config file watching, propagation of changes to running session | Config changes reflected in session; TUI overrides flags/env; CLI respects override chain |
-| 1.6 | Keyring integration | Shared multi-keyring support, keys visible to all contexts using the keyring | Keys can be created, listed, and used for signing; adding key to shared keyring visible in all contexts |
-| 1.7 | Action log | Append-only JSONL action log per context, log reading/filtering | All tx/query actions logged, `akt context log` shows entries, log rotation works |
-| 1.8 | Chain client | Full and light client with multi-endpoint failover | Successful tx broadcast and query with automatic failover when primary endpoint is down |
-| 1.9 | Transaction commands | All `tx` module commands (bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, slashing, vesting, upgrade, crisis, IBC) | Each command matches the behavioral output of the current `akash` binary |
-| 1.10 | Query commands | All `query` module commands | Each command matches the behavioral output of the current `akash` binary |
-| 1.11 | Key commands | All `keys` subcommands | Full key lifecycle works (create, export, import, delete, show, list) |
-| 1.12 | Auth utility commands | sign, sign-batch, multisign, validate-signatures, broadcast, encode, decode | Offline signing workflow works end-to-end |
-| 1.13 | Output formatting | JSON, YAML, and Table formatters | All three formats produce correct output for all commands |
-| 1.14 | Global flags + env | All global flags, env var mapping, override chain | Override chain works: flag > env > config > default |
-| 1.15 | Shell completion | bash, zsh, fish completion scripts | Tab completion works for commands, flags, and context/network names |
-| 1.16 | E2E test suite | Core test coverage for context, network, tx, query | Tests pass in CI against a local testnet |
+| #    | Deliverable           | Description                                                                                                                                                                                 | Acceptance Criteria                                                                                     |
+| ---- | --------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| 1.1  | Project scaffold      | Go module, Makefile, goreleaser, CI                                                                                                                                                         | `go build ./...` succeeds, `akt version` works                                                          |
+| 1.2  | Config system         | YAML config read/write, XDG paths, env var loading, fsnotify watcher                                                                                                                        | Config round-trips correctly, env vars override config, live-reload works                               |
+| 1.3  | Network management    | Shared network definitions, CRUD, templates (mainnet/testnet/sandbox)                                                                                                                       | `akt context network *` commands work, templates provision correctly, sharing across contexts works     |
+| 1.4  | Context manager       | Context CRUD, switching, composition (network + keyring + store + log), fork/edit-parent for networks                                                                                       | All `akt context *` commands work, fork/edit-parent works, context propagation works                    |
+| 1.5  | Context live-reload   | Config file watching, propagation of changes to running session                                                                                                                             | Config changes reflected in session; TUI overrides flags/env; CLI respects override chain               |
+| 1.6  | Keyring integration   | Shared multi-keyring support, keys visible to all contexts using the keyring                                                                                                                | Keys can be created, listed, and used for signing; adding key to shared keyring visible in all contexts |
+| 1.7  | Action log            | Append-only JSONL action log per context, log reading/filtering                                                                                                                             | All tx/query actions logged, `akt context log` shows entries, log rotation works                        |
+| 1.8  | Chain client          | Full and light client with multi-endpoint failover                                                                                                                                          | Successful tx broadcast and query with automatic failover when primary endpoint is down                 |
+| 1.9  | Transaction commands  | All `tx` module commands (bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, slashing, vesting, upgrade, crisis, IBC) | Each command matches the behavioral output of the current `akash` binary                                |
+| 1.10 | Query commands        | All `query` module commands                                                                                                                                                                 | Each command matches the behavioral output of the current `akash` binary                                |
+| 1.11 | Key commands          | All `keys` subcommands                                                                                                                                                                      | Full key lifecycle works (create, export, import, delete, show, list)                                   |
+| 1.12 | Auth utility commands | sign, sign-batch, multisign, validate-signatures, broadcast, encode, decode                                                                                                                 | Offline signing workflow works end-to-end                                                               |
+| 1.13 | Output formatting     | Pretty output registry with per-type formatters for all query results. `--output pretty` (default) renders lipgloss-styled tables/sections. `--output json\|yaml` produces machine-readable output. See section 10. | All query results render pretty tables (list) or sectioned key-value (detail) by default. `--output json` or `--output yaml` produces machine-readable output. |
+| 1.14 | Global flags + env    | All global flags, env var mapping, override chain                                                                                                                                           | Override chain works: flag > env > config > default                                                     |
+| 1.15 | Shell completion      | bash, zsh, fish completion scripts                                                                                                                                                          | Tab completion works for commands, flags, and context/network names                                     |
+| 1.16 | E2E test suite        | Core test coverage for context, network, tx, query                                                                                                                                          | Tests pass in CI against a local testnet                                                                |
 
 ### Phase 2: Store + Workflow Commands
 
@@ -2442,19 +3953,19 @@ Error: cannot connect to RPC endpoint
 
 #### Deliverables
 
-| # | Deliverable | Description | Acceptance Criteria |
-|---|---|---|---|
-| 2.1 | Store interface | Go interface definition + bbolt implementation | All CRUD operations work, concurrent access is safe |
-| 2.2 | Schema migrations | Versioned schema with forward migration | Migration from v1 to vN applies correctly |
-| 2.3 | Sync engine | WebSocket subscription, event routing, reconciliation | Store updates within 2 seconds of on-chain state change |
-| 2.4 | Startup reconciliation | Full reconciliation on first launch, incremental on subsequent | All user deployments appear in store after first sync |
-| 2.5 | `akt deploy` workflow | Full lifecycle: create -> bids -> select -> lease -> manifest -> active | Interactive and non-interactive modes both complete successfully |
-| 2.6 | Provider gateway client | Auth (JWT/mTLS), status, lease-status, logs, events, shell | All provider commands work against a running provider |
-| 2.7 | Provider commands | status, lease-status, lease-logs, lease-events, lease-shell, send-manifest, get-manifest, migrate-hostnames, migrate-endpoints | Each command matches the behavioral output of current `provider-services` |
-| 2.8 | `akt sdl-to-manifest` | SDL to manifest conversion | Output matches current `provider-services sdl-to-manifest` |
-| 2.9 | Store export/import | YAML and JSON export, import with merge/replace | Round-trip: export then import produces identical store state |
-| 2.10 | Store status command | Display store info, sync state, record counts | Accurate reporting of store contents |
-| 2.11 | Events command | Live blockchain event streaming | `akt events` shows real-time events |
+| #    | Deliverable             | Description                                                                                                                    | Acceptance Criteria                                                       |
+| ---- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------- |
+| 2.1  | Store interface         | Go interface definition + bbolt implementation                                                                                 | All CRUD operations work, concurrent access is safe                       |
+| 2.2  | Schema migrations       | Versioned schema with forward migration                                                                                        | Migration from v1 to vN applies correctly                                 |
+| 2.3  | Sync engine             | WebSocket subscription, event routing, reconciliation                                                                          | Store updates within 2 seconds of on-chain state change                   |
+| 2.4  | Startup reconciliation  | Full reconciliation on first launch, incremental on subsequent                                                                 | All user deployments appear in store after first sync                     |
+| 2.5  | `akt deploy` workflow   | Full lifecycle: create -> bids -> select -> lease -> manifest -> active                                                        | Interactive and non-interactive modes both complete successfully          |
+| 2.6  | Provider gateway client | Auth (JWT/mTLS), status, lease-status, logs, events, shell                                                                     | All provider commands work against a running provider                     |
+| 2.7  | Provider commands       | status, lease-status, lease-logs, lease-events, lease-shell, send-manifest, get-manifest, migrate-hostnames, migrate-endpoints | Each command matches the behavioral output of current `provider-services` |
+| 2.8  | Store export/import     | YAML and JSON export, import with merge/replace                                                                                | Round-trip: export then import produces identical store state             |
+| 2.9  | Store status command    | Display store info, sync state, record counts                                                                                  | Accurate reporting of store contents                                      |
+| 2.10 | Events command          | Live blockchain event streaming                                                                                                | `akt events` shows real-time events                                       |
+| 2.11 | Console API client      | `auth-method: console-api` support, API key via env var, deployment CRUD via Console managed wallet API                        | Create, update, close deployments; list bids; create leases via Console API with `AKT_CONSOLE_API_KEY` |
 
 ### Phase 3: TUI Mode
 
@@ -2464,27 +3975,27 @@ Error: cannot connect to RPC endpoint
 
 #### Deliverables
 
-| # | Deliverable | Description | Acceptance Criteria |
-|---|---|---|---|
-| 3.1 | Application shell | Header, main area, status bar using bubbletea + lipgloss | Shell renders correctly, resizes gracefully |
-| 3.2 | Navigation system | Stack-based navigation, breadcrumbs, back/forward | User can navigate between views without state loss |
-| 3.3 | Resource table component | Generic sortable, filterable table with pagination | Sort, filter, and pagination work for all resource types |
-| 3.4 | Detail pane component | Scrollable viewport with YAML/JSON toggle | Detail view renders correctly for all resource types |
-| 3.5 | Deployments view | List + detail views with actions | User can browse, inspect, and act on deployments |
-| 3.6 | Leases view | List + detail views with actions | User can browse and manage leases |
-| 3.7 | Providers view | List + detail views | User can browse providers and their attributes |
-| 3.8 | Log viewer | Streaming viewport with service filter and search | Logs stream in real-time, search works |
-| 3.9 | Consensus monitor (from aktop) | Real-time consensus state: height/round/step, vote progress bars, validator vote grid | Consensus state updates at configurable interval, vote percentages match chain state |
-| 3.10 | Validator voting view (from aktop) | Scrollable validator list with moniker resolution, prevote/precommit status, proposer indicator | All validators shown with correct vote status, monikers resolved and cached |
-| 3.11 | Provider fleet monitor (from aktop) | Version distribution visualization, provider health scanning with priority scheduling, per-provider detail with node-level CPU/memory/GPU | Providers scanned with smart scheduling, version distribution accurate, GPU models shown via gRPC |
-| 3.12 | Provider cache | Smart-scheduled provider cache with disk persistence | Cache persists across sessions, scheduling intervals respected (1m/5m/6h) |
-| 3.13 | Governance params view (from aktop) | Module-by-module parameter browser with pretty-printed JSON | All 12 modules' params displayed correctly |
-| 3.14 | Command palette | Fuzzy search across resources and actions | User can quickly navigate to any resource or action |
-| 3.15 | Confirmation dialog | Transaction confirmation with fee preview | All destructive actions require confirmation |
-| 3.16 | Help overlay | Keybinding reference panel | Help shows all available actions for current view |
-| 3.17 | Live sync integration | Store updates trigger TUI re-renders | View updates within 2 seconds of chain state change |
-| 3.18 | Configurable keybindings | Config-driven key mapping | Custom keybindings work correctly |
-| 3.19 | Theme system | Dark/light themes, custom color config | Both built-in themes render correctly |
+| #    | Deliverable                         | Description                                                                                                                               | Acceptance Criteria                                                                               |
+| ---- | ----------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------- |
+| 3.1  | Application shell                   | Header, main area, status bar using bubbletea + lipgloss                                                                                  | Shell renders correctly, resizes gracefully                                                       |
+| 3.2  | Navigation system                   | Stack-based navigation, breadcrumbs, back/forward                                                                                         | User can navigate between views without state loss                                                |
+| 3.3  | Resource table component            | Generic sortable, filterable table with pagination                                                                                        | Sort, filter, and pagination work for all resource types                                          |
+| 3.4  | Detail pane component               | Scrollable viewport with YAML/JSON toggle                                                                                                 | Detail view renders correctly for all resource types                                              |
+| 3.5  | Deployments view                    | List + detail views with actions                                                                                                          | User can browse, inspect, and act on deployments                                                  |
+| 3.6  | Leases view                         | List + detail views with actions                                                                                                          | User can browse and manage leases                                                                 |
+| 3.7  | Providers view                      | List + detail views                                                                                                                       | User can browse providers and their attributes                                                    |
+| 3.8  | Log viewer                          | Streaming viewport with service filter and search                                                                                         | Logs stream in real-time, search works                                                            |
+| 3.9  | Monitor hub (`akt monitor`)         | Hub-based monitoring with Tab/Shift-Tab navigation between Network, Provider, and Oracle/BME dashboards. Subcommands: `monitor network`, `monitor provider`, `monitor oracle`/`monitor bme`. | Hub launches, Tab/Shift-Tab cycles dashboards, subcommands open correct dashboard |
+| 3.10 | Network dashboard (from aktop)      | Consensus state (height/round/step, vote progress bars, vote grid), validator voting view (scrollable list, moniker resolution, signing history), governance params   | Consensus updates via WebSocket, validator monikers resolved and cached, governance params for all 12 modules |
+| 3.11 | Provider dashboard (from aktop)     | Version distribution visualization, provider health scanning with priority scheduling, per-provider detail with node-level CPU/memory/GPU | Providers scanned with smart scheduling, version distribution accurate, GPU models shown via gRPC |
+| 3.12 | Provider cache                      | Smart-scheduled provider cache with disk persistence                                                                                      | Cache persists across sessions, scheduling intervals respected (1m/5m/6h)                         |
+| 3.13 | Oracle/BME dashboard                | Combined oracle prices (TWAP, median, health) and BME state (mint status, vault, ledger). REST-based polling + real-time bus events.        | Oracle prices and BME state displayed, color-coded, amounts formatted correctly                    |
+| 3.14 | Command palette                     | Fuzzy search across resources and actions                                                                                                 | User can quickly navigate to any resource or action                                               |
+| 3.15 | Confirmation dialog                 | Transaction confirmation with fee preview                                                                                                 | All destructive actions require confirmation                                                      |
+| 3.16 | Help overlay                        | Keybinding reference panel                                                                                                                | Help shows all available actions for current view                                                 |
+| 3.17 | Live sync integration               | Store updates trigger TUI re-renders                                                                                                      | View updates within 2 seconds of chain state change                                               |
+| 3.18 | Configurable keybindings            | Config-driven key mapping                                                                                                                 | Custom keybindings work correctly                                                                 |
+| 3.19 | Theme system                        | Dark/light themes, custom color config                                                                                                    | Both built-in themes render correctly                                                             |
 
 ### Phase 4: Extended Features
 
@@ -2494,20 +4005,18 @@ Error: cannot connect to RPC endpoint
 
 #### Deliverables
 
-| # | Deliverable | Description | Acceptance Criteria |
-|---|---|---|---|
-| 4.1 | Plugin discovery | Scan PATH and plugin dir for `akt-*` binaries | `akt plugin list` shows discovered plugins |
-| 4.2 | Plugin execution | Fork/exec with AKT_* env vars | Plugin receives correct context, stdin/stdout work |
-| 4.3 | Plugin management | install, list, remove commands | Full plugin lifecycle works |
-| 4.4 | Plugin manifest | Optional plugin.yaml parsing | Manifest info shown in `akt plugin list` and help |
-| 4.5 | Certificates view (TUI) | List and detail for certificates | Certificate management in TUI |
-| 4.6 | Governance view (TUI) | Proposals with voting actions | User can browse proposals and vote from TUI |
-| 4.7 | Validators view (TUI) | Validator list with delegation actions | User can delegate/undelegate from TUI |
-| 4.8 | Escrow view (TUI) | Escrow account list and detail | Escrow state visible in TUI |
-| 4.9 | Wasm view (TUI) | Contract list, info, state queries | Wasm contract browsing in TUI |
-| 4.10 | Oracle view (TUI) | Price table with history | Oracle prices visible in TUI |
-| 4.11 | BME view (TUI) | Vault state, status, ledger | BME state visible in TUI |
-| 4.12 | IBC view (TUI) | Channel list with state | IBC channels visible in TUI |
-| 4.13 | TUI transaction actions | Create deployment, fund escrow, etc. from TUI | Full transaction workflow in TUI |
-| 4.14 | Performance optimization | Lazy loading, virtual scrolling | Lists with >10,000 items render smoothly |
-| 4.15 | Comprehensive E2E tests | Full coverage of all commands and TUI interactions | CI passes with >80% coverage |
+| #    | Deliverable              | Description                                        | Acceptance Criteria                                |
+| ---- | ------------------------ | -------------------------------------------------- | -------------------------------------------------- |
+| 4.1  | Plugin discovery         | Scan PATH and plugin dir for `akt-*` binaries      | `akt plugin list` shows discovered plugins         |
+| 4.2  | Plugin execution         | Fork/exec with AKT_* env vars                      | Plugin receives correct context, stdin/stdout work |
+| 4.3  | Plugin management        | install, list, remove commands                     | Full plugin lifecycle works                        |
+| 4.4  | Plugin manifest          | Optional plugin.yaml parsing                       | Manifest info shown in `akt plugin list` and help  |
+| 4.5  | Certificates view (TUI)  | List and detail for certificates                   | Certificate management in TUI                      |
+| 4.6  | Governance view (TUI)    | Proposals with voting actions                      | User can browse proposals and vote from TUI        |
+| 4.7  | Validators view (TUI)    | Validator list with delegation actions             | User can delegate/undelegate from TUI              |
+| 4.8  | Escrow view (TUI)        | Escrow account list and detail                     | Escrow state visible in TUI                        |
+| 4.9  | Wasm view (TUI)          | Contract list, info, state queries                 | Wasm contract browsing in TUI                      |
+| 4.10 | IBC view (TUI)           | Channel list with state                            | IBC channels visible in TUI                        |
+| 4.11 | TUI transaction actions  | Create deployment, fund escrow, etc. from TUI      | Full transaction workflow in TUI                   |
+| 4.12 | Performance optimization | Lazy loading, virtual scrolling                    | Lists with >10,000 items render smoothly           |
+| 4.13 | Comprehensive E2E tests  | Full coverage of all commands and TUI interactions | CI passes with >80% coverage                       |

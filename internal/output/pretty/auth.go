@@ -1,0 +1,135 @@
+package pretty
+
+import (
+	"fmt"
+	"io"
+
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/x/auth/types"
+	"github.com/cosmos/gogoproto/proto"
+	"github.com/spf13/cobra"
+)
+
+func init() {
+	Register((*types.QueryAccountResponse)(nil), PrettyFormatterFunc(formatAccountResponse))
+	Register((*types.QueryAccountsResponse)(nil), PrettyFormatterFunc(formatAccountsResponse))
+	Register((*types.QueryModuleAccountsResponse)(nil), PrettyFormatterFunc(formatModuleAccountsResponse))
+}
+
+func formatAccountResponse(w io.Writer, _ *cobra.Command, cctx sdkclient.Context, msg proto.Message) error {
+	res := msg.(*types.QueryAccountResponse)
+	if res.Account == nil {
+		fmt.Fprintln(w, Dim("(no account)"))
+		return nil
+	}
+
+	acct, err := unpackAccount(cctx.InterfaceRegistry, res.Account)
+	if err != nil {
+		// Can't unpack — show type URL as fallback.
+		fmt.Fprintln(w, Section("Account"))
+		KV(w, "Type", res.Account.TypeUrl)
+		return nil
+	}
+
+	fmt.Fprintln(w, Section("Account"))
+	KV(w, "Address", acct.GetAddress().String())
+	KV(w, "Account #", fmt.Sprintf("%d", acct.GetAccountNumber()))
+	KV(w, "Sequence", fmt.Sprintf("%d", acct.GetSequence()))
+	pk := acct.GetPubKey()
+	if pk != nil {
+		KV(w, "Pub Key Type", fmt.Sprintf("%T", pk))
+	}
+
+	// Show module name for module accounts.
+	if ma, ok := acct.(*types.ModuleAccount); ok {
+		KV(w, "Name", Bold(ma.Name))
+		if len(ma.Permissions) > 0 {
+			KV(w, "Permissions", fmt.Sprintf("%v", ma.Permissions))
+		}
+	}
+
+	return nil
+}
+
+func formatAccountsResponse(w io.Writer, _ *cobra.Command, cctx sdkclient.Context, msg proto.Message) error {
+	res := msg.(*types.QueryAccountsResponse)
+	if len(res.Accounts) == 0 {
+		fmt.Fprintln(w, Dim("(no accounts)"))
+		return nil
+	}
+
+	headers := []string{"ADDRESS", "TYPE", "ACCOUNT #", "SEQUENCE"}
+	rows := make([][]string, 0, len(res.Accounts))
+
+	for _, any := range res.Accounts {
+		acct, err := unpackAccount(cctx.InterfaceRegistry, any)
+		if err != nil {
+			rows = append(rows, []string{"?", shortTypeName(any.TypeUrl), "-", "-"})
+			continue
+		}
+
+		rows = append(rows, []string{
+			acct.GetAddress().String(),
+			shortTypeName(any.TypeUrl),
+			fmt.Sprintf("%d", acct.GetAccountNumber()),
+			fmt.Sprintf("%d", acct.GetSequence()),
+		})
+	}
+
+	WriteTable(w, headers, rows)
+	return nil
+}
+
+func formatModuleAccountsResponse(w io.Writer, _ *cobra.Command, cctx sdkclient.Context, msg proto.Message) error {
+	res := msg.(*types.QueryModuleAccountsResponse)
+	if len(res.Accounts) == 0 {
+		fmt.Fprintln(w, Dim("(no module accounts)"))
+		return nil
+	}
+
+	headers := []string{"NAME", "ADDRESS", "PERMISSIONS"}
+	rows := make([][]string, 0, len(res.Accounts))
+
+	for _, any := range res.Accounts {
+		acct, err := unpackAccount(cctx.InterfaceRegistry, any)
+		if err != nil {
+			rows = append(rows, []string{"-", shortTypeName(any.TypeUrl), "-"})
+			continue
+		}
+
+		name := "-"
+		perms := "-"
+		if ma, ok := acct.(*types.ModuleAccount); ok {
+			name = Bold(ma.Name)
+			if len(ma.Permissions) > 0 {
+				perms = fmt.Sprintf("%v", ma.Permissions)
+			}
+		}
+
+		rows = append(rows, []string{
+			name,
+			acct.GetAddress().String(),
+			perms,
+		})
+	}
+
+	WriteTable(w, headers, rows)
+	return nil
+}
+
+// unpackAccount unpacks a codectypes.Any into an AccountI using the interface
+// registry from the client context.
+func unpackAccount(registry codectypes.InterfaceRegistry, any *codectypes.Any) (sdk.AccountI, error) {
+	if registry == nil {
+		return nil, fmt.Errorf("no interface registry available")
+	}
+
+	var acct sdk.AccountI
+	if err := registry.UnpackAny(any, &acct); err != nil {
+		return nil, err
+	}
+
+	return acct, nil
+}
