@@ -1,8 +1,0 @@
-source_up .envrc
-
-AKT_RUN_NAME=$(basename "$(pwd)")
-AKT_RUN_DIR="${AKT_RUN}/${AKT_RUN_NAME}"
-
-export AKT_HOME="${AKT_RUN_DIR}/.akt"
-export AKT_RUN_NAME
-export AKT_RUN_DIR
