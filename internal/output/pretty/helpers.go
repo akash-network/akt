@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -15,9 +14,6 @@ import (
 
 	"cosmossdk.io/math"
 )
-
-// ansiRe matches ANSI escape sequences for stripping when calculating display width.
-var ansiRe = regexp.MustCompile(`\x1b\[[0-9;]*m`)
 
 // Styles used throughout pretty output. Colors are automatically disabled
 // when stdout is not a TTY or when NO_COLOR is set (lipgloss handles this).
@@ -328,12 +324,12 @@ func FormatCPU(val math.Int) string {
 	return fmt.Sprintf("%.1f", float64(m)/1000.0)
 }
 
-// displayWidth returns the visible width of a string, stripping ANSI escape
-// codes and counting runes (not bytes) so that multi-byte UTF-8 characters
-// like "→" are measured correctly.
+// displayWidth returns the visible display width of a string in terminal
+// columns, correctly handling ANSI escape sequences (SGR, CSI, OSC) and
+// multi-width Unicode characters (e.g., East Asian fullwidth). Delegates to
+// lipgloss.Width which uses charmbracelet/x/ansi and go-runewidth internally.
 func displayWidth(s string) int {
-	clean := ansiRe.ReplaceAllString(s, "")
-	return len([]rune(clean))
+	return lipgloss.Width(s)
 }
 
 // AlignLeft is the default column alignment (pad right).

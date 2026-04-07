@@ -21,6 +21,7 @@ import (
 	aktclient "pkg.akt.dev/akt/internal/client"
 	aktcodec "pkg.akt.dev/akt/internal/codec"
 	aktctx "pkg.akt.dev/akt/internal/context"
+	"pkg.akt.dev/akt/internal/glyphs"
 	aktkeyring "pkg.akt.dev/akt/internal/keyring"
 	akttui "pkg.akt.dev/akt/internal/tui"
 )
@@ -115,6 +116,7 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			_ = v.BindPFlag("output", cmd.Flags().Lookup("output"))
 			_ = v.BindPFlag("interactive", cmd.Flags().Lookup("interactive"))
 			_ = v.BindPFlag("skip-font-check", cmd.Flags().Lookup("skip-font-check"))
+			_ = v.BindPFlag("glyph-mode", cmd.Flags().Lookup("glyph-mode"))
 
 			cfgRoot, err := aktctx.ConfigHome(v.GetString("home"))
 			if err != nil {
@@ -125,6 +127,10 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			// fetch networks from github.com/akash-network/net.
 			cfgPath := aktctx.ConfigPath(cfgRoot)
 			if _, statErr := os.Stat(cfgPath); os.IsNotExist(statErr) {
+				// Initialize glyphs before bootstrap (config not yet
+				// available — uses flag/env/auto-detect only).
+				initGlyphs(v)
+
 				if err := bootstrap.Run(cfgRoot); err != nil {
 					return err
 				}
@@ -136,6 +142,10 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			v.SetConfigType("yaml")
 			v.AddConfigPath(cfgRoot)
 			_ = v.ReadInConfig() // ok if file doesn't exist
+
+			// Initialize glyphs (no-op if already done during bootstrap).
+			// Now the full resolution chain is available: flag > env > config > auto.
+			initGlyphs(v)
 
 			mgr, err = aktctx.NewManager(cfgRoot)
 			if err != nil {
@@ -187,7 +197,8 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	root.PersistentFlags().String("context", "", "Active context name (overrides current-context in config)")
 	root.PersistentFlags().StringP("output", "o", "table", "Output format: table, json, yaml")
 	root.PersistentFlags().BoolP("interactive", "i", false, "Force interactive (TUI) mode even if disabled in config")
-	root.PersistentFlags().Bool("skip-font-check", false, "Skip Nerd Font detection on startup")
+	root.PersistentFlags().Bool("skip-font-check", false, "Deprecated: use --glyph-mode ascii instead")
+	root.PersistentFlags().String("glyph-mode", "", "Glyph rendering mode: auto (default), nerd, ascii")
 
 	// Context management (includes network and keys subcommands).
 	root.AddCommand(clicontext.Commands(mgrFn, getKeyring))
@@ -441,6 +452,30 @@ the same dashboard as "akt monitor oracle".`,
 	addMonitorFlags(cmd)
 
 	return cmd
+}
+
+// initGlyphs resolves the glyph mode from viper (flag > env > config > default)
+// and initialises the glyphs package. Safe to call multiple times — [glyphs.Init]
+// uses sync.Once internally.
+func initGlyphs(v *viper.Viper) {
+	// Flag/env key (bound as "glyph-mode").
+	modeStr := v.GetString("glyph-mode")
+	if modeStr == "" {
+		// Config fallback.
+		modeStr = v.GetString("defaults.glyph-mode")
+	}
+
+	// Honour legacy --skip-font-check as equivalent to --glyph-mode ascii.
+	if modeStr == "" && v.GetBool("skip-font-check") {
+		modeStr = "ascii"
+	}
+
+	mode, err := glyphs.ParseMode(modeStr)
+	if err != nil {
+		mode = glyphs.ModeAuto
+	}
+
+	glyphs.Init(mode)
 }
 
 func versionCmd(bi BuildInfo) *cobra.Command {

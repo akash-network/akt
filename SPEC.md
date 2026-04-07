@@ -169,6 +169,7 @@ defaults:
   output: table                         # table | json | yaml
   broadcast-mode: sync                  # sync | async | block
   interactive: true                     # optional; allow TUI mode; false = CLI-only (override with -i)
+  glyph-mode: auto                      # auto | nerd | ascii (see §1.10)
 ```
 
 ### 1.3 Network Schema
@@ -290,6 +291,7 @@ All environment variables use the `AKT_` prefix. When set, they override the cor
 | `AKT_FEES`            | `contexts[*].fees`                                      | `5000uakt`                     |
 | `AKT_BROADCAST_MODE`  | `defaults.broadcast-mode`                               | `sync`                         |
 | `AKT_OUTPUT`          | `defaults.output`                                       | `json`                         |
+| `AKT_GLYPH_MODE`     | `defaults.glyph-mode` (see [§1.10](#110-terminal-requirements-and-glyph-modes)) | `ascii`                |
 | `AKT_CONSOLE_API_KEY` | Console API key (required for `console-api` auth method) | `akt_abc123...`                |
 
 ### 1.9 Built-in Network Templates
@@ -343,27 +345,47 @@ gas-prices: "0.025uakt"
 gas-adjustment: "1.5"
 ```
 
-### 1.10 Terminal Requirements
+### 1.10 Terminal Requirements and Glyph Modes
 
-**Nerd Font**: TUI mode (`akt`, `akt monitor`) and pretty query output (`--output pretty`) require a [Nerd Font](https://www.nerdfonts.com/) configured in the terminal emulator. Nerd Fonts provide Powerline symbols, Font Awesome icons, and other extended glyphs used for visual indicators throughout the interface.
+**Glyph modes**: `akt` supports two glyph rendering modes to ensure the interface works in any terminal, with or without special fonts installed:
 
-**Detection**: On startup, `akt` probes the terminal by rendering test glyphs from the Powerline (U+E0B0) and Font Awesome (U+F005) Private Use Area ranges, measuring cursor advance via ANSI Device Status Report (`\033[6n`). The detection distinguishes three cases:
-
-| Powerline (U+E0B0) | Font Awesome (U+F005) | Result |
+| Mode | Requires | Description |
 |---|---|---|
-| 1 cell | 1 cell | Nerd Font present — proceed normally |
-| 1 cell | 0 or 2 cells | Powerline-only font — error with upgrade instructions |
-| 0 or 2 cells | 0 or 2 cells | No special font — error with install instructions |
+| `nerd` | [Nerd Font](https://www.nerdfonts.com/) | Uses Font Awesome PUA-range glyphs for icons, checkboxes, indicators, and decorative elements. Best visual experience. |
+| `ascii` | Any terminal font | Uses pure ASCII fallbacks (`[x]`/`[ ]` for checkboxes, `>`/`+`/`-`/`*`/`o` for indicators). Works everywhere. |
 
-The check is skipped when stdout is not a terminal (piped/non-interactive) or when the terminal does not respond to DSR within 100ms (proceeds with a warning to stderr). The `--skip-font-check` flag bypasses the check entirely for terminals where detection produces false negatives.
+The active mode is controlled by the `--glyph-mode` flag (or `AKT_GLYPH_MODE` env var, or `defaults.glyph-mode` in config):
 
-The check runs at most once per process. It is invoked:
-- Before launching the TUI (`akt` with no subcommand, `akt monitor`)
-- Before rendering pretty query output (`--output pretty`)
+| Value | Behavior |
+|---|---|
+| `auto` (default) | Detect Nerd Font at startup; use `nerd` if detected, `ascii` otherwise. Non-TTY always uses `ascii`. |
+| `nerd` | Force Nerd Font glyphs. Use when auto-detection produces false negatives. |
+| `ascii` | Force ASCII-safe glyphs. Use when Nerd Fonts are not installed or not desired. |
+
+Standard Unicode characters (block drawing `█░▀`, arrows `←↑→↓`, box drawing `─`, circles `●`) are used in both modes since they render correctly in virtually all terminal fonts.
+
+**Glyph registry**: All Nerd Font (PUA range) glyphs are defined in a centralized registry (`internal/glyphs/`) with both nerd and ascii variants. Rendering code references glyphs via the registry, never as inline string literals. The registry provides semantic glyph names (e.g., `CheckboxOn`, `VoteYes`, `Cursor`) so each context gets the appropriate ASCII fallback for its use case.
+
+**ASCII glyph mapping**:
+
+| Semantic Name | Nerd Font | ASCII | Usage |
+|---|---|---|---|
+| `CheckboxOn` | `\uf00c` (nf-fa-check) | `[x]` | Multiselect checked item |
+| `CheckboxOff` | `\uf10c` (nf-fa-circle_o) | `[ ]` | Multiselect unchecked item |
+| `Cursor` | `\uf0da` (nf-fa-caret_right) | `>` | Row selection indicator |
+| `SelectAll` | `\uf0c8` (nf-fa-th_large) | `#` | Select-all icon |
+| `VoteYes` | `\uf00c` (nf-fa-check) | `+` | Vote grid / prevote confirmed |
+| `VoteNo` | `\uf00d` (nf-fa-times) | `-` | Vote grid / prevote missing |
+| `Star` | `\uf005` (nf-fa-star) | `*` | Block proposer indicator |
+| `DotFilled` | `\uf111` (nf-fa-circle) | `*` | Selected version dot |
+| `DotOpen` | `\uf10c` (nf-fa-circle_o) | `o` | Unselected version dot |
+
+**Font detection** (used by `auto` mode): `akt` probes the terminal by rendering test glyphs from the Powerline (U+E0B0) and Font Awesome (U+F005) Private Use Area ranges, measuring cursor advance via ANSI Device Status Report (`\033[6n`). If both render at 1 cell width, `nerd` mode is selected. Otherwise, `ascii` mode is selected. The check is skipped when stdout is not a TTY or when `--glyph-mode` is explicitly set to `nerd` or `ascii`. The check runs at most once per process.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
-| `--skip-font-check` | bool | `false` | Skip Nerd Font detection on startup |
+| `--glyph-mode` | string | `"auto"` | Glyph rendering mode: `auto`, `nerd`, `ascii` |
+| `--skip-font-check` | bool | `false` | **Deprecated.** Use `--glyph-mode ascii` instead. |
 
 ---
 
@@ -1362,6 +1384,7 @@ Applied to every command via the root command's `PersistentFlags()`.
 | `--home`    |       | string | `$AKT_HOME` or XDG default | Home directory for config, contexts, and keyrings             |
 | `--context` |       | string | config `current-context` | Active context name (overrides AKT_CONTEXT)                      |
 | `--output`  | `-o`  | string | `"pretty"`               | Output format: `pretty`, `json`, `yaml`. For workflows, also accepts `jsonl` (see 2.3.7). |
+| `--glyph-mode` |    | string | `"auto"`                 | Glyph rendering mode: `auto`, `nerd`, `ascii` (see [§1.10](#110-terminal-requirements-and-glyph-modes)) |
 | `--debug`   | `-d`  | bool   | `false`                  | Enable debug logging                                             |
 
 ### 3.2 Transaction Flags

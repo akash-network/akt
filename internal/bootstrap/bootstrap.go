@@ -15,6 +15,7 @@ import (
 	"golang.org/x/term"
 
 	aktctx "pkg.akt.dev/akt/internal/context"
+	"pkg.akt.dev/akt/internal/glyphs"
 )
 
 const (
@@ -128,12 +129,6 @@ const (
 	ansiYellow = "\033[33m"
 	ansiCyan   = "\033[36m"
 	ansiBgSel  = "\033[48;5;236m" // subtle dark bg for selected row
-
-	// Nerd Font glyphs.
-	nfCheck     = "\uf00c" // nf-fa-check
-	nfCircleO   = "\uf10c" // nf-fa-circle_o (empty)
-	nfCaret     = "\uf0da" // nf-fa-caret_right
-	nfSelectAll = "\uf0c8" // nf-fa-th_large
 )
 
 // multiSelect presents an interactive multi-select for networks.
@@ -155,6 +150,7 @@ func multiSelect(networks []aktctx.Network) []aktctx.Network {
 	defer term.Restore(int(os.Stdin.Fd()), oldState)
 
 	render := func() {
+		g := glyphs.G()
 		var b strings.Builder
 
 		b.WriteString(ansiBold + "Select networks" + ansiReset + ansiDim + "  ↑↓ move  space toggle  enter confirm" + ansiReset + "\r\n")
@@ -163,37 +159,37 @@ func multiSelect(networks []aktctx.Network) []aktctx.Network {
 		// "Select all" row — index 0.
 		{
 			allOn := allSelected(checked)
-			icon := ansiDim + nfCircleO + ansiReset
+			icon := ansiDim + g.CheckboxOff + ansiReset
 			if allOn {
-				icon = ansiGreen + nfCheck + ansiReset
+				icon = ansiGreen + g.CheckboxOn + ansiReset
 			}
 			prefix := "  "
 			rowStart := ""
 			rowEnd := ""
 			if cursor == 0 {
-				prefix = ansiYellow + nfCaret + " " + ansiReset
+				prefix = ansiYellow + g.Cursor + " " + ansiReset
 				rowStart = ansiBgSel
 				rowEnd = ansiReset
 			}
 			b.WriteString(fmt.Sprintf("  %s%s %s  %s%s%s\r\n",
-				rowStart, prefix, icon, ansiBold+nfSelectAll+" Select all"+ansiReset, "", rowEnd))
+				rowStart, prefix, icon, ansiBold+g.SelectAll+" Select all"+ansiReset, "", rowEnd))
 		}
 
 		b.WriteString("\r\n")
 
 		// Network rows — indices 1..n.
 		for i, net := range networks {
-			icon := ansiDim + nfCircleO + ansiReset
+			icon := ansiDim + g.CheckboxOff + ansiReset
 			nameStyle := ansiDim
 			if checked[i] {
-				icon = ansiGreen + nfCheck + ansiReset
+				icon = ansiGreen + g.CheckboxOn + ansiReset
 				nameStyle = ansiReset
 			}
 			prefix := "  "
 			rowStart := ""
 			rowEnd := ""
 			if cursor == i+1 {
-				prefix = ansiYellow + nfCaret + " " + ansiReset
+				prefix = ansiYellow + g.Cursor + " " + ansiReset
 				rowStart = ansiBgSel
 				rowEnd = ansiReset
 			}
