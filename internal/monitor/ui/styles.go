@@ -4,6 +4,8 @@ import (
 	"fmt"
 
 	"github.com/charmbracelet/lipgloss"
+
+	"pkg.akt.dev/akt/internal/glyphs"
 )
 
 var (
@@ -293,15 +295,16 @@ func FormatVoteGrid(pattern string, width int) string {
 		return mutedStyle.Render("No vote data")
 	}
 
+	g := glyphs.G()
 	var result string
 	for i, char := range pattern {
 		if i > 0 && i%width == 0 {
 			result += "\n"
 		}
 		if char == 'x' {
-			result += gridVotedStyle.Render("\uf00c") // nf-fa-check
+			result += gridVotedStyle.Render(g.VoteYes)
 		} else {
-			result += gridNotVotedStyle.Render("\uf00d") // nf-fa-times
+			result += gridNotVotedStyle.Render(g.VoteNo)
 		}
 	}
 	return result

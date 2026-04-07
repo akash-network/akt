@@ -4,6 +4,14 @@
 
 ### Added
 
+- **Glyph mode system (`internal/glyphs/`)**: Added a centralized glyph registry that defines all Nerd Font (PUA range) glyphs with ASCII fallbacks. The app now works without Nerd Fonts installed — when a Nerd Font is not detected, it silently falls back to ASCII-safe glyphs (`[x]`/`[ ]` for checkboxes, `>`/`+`/`-`/`*`/`o` for indicators). Three modes are supported via `--glyph-mode` flag, `AKT_GLYPH_MODE` env var, or `defaults.glyph-mode` config: `auto` (default, detects font and falls back), `nerd` (force Nerd Font glyphs), `ascii` (force ASCII). The `--skip-font-check` flag is deprecated in favour of `--glyph-mode ascii`. All 23 inline PUA glyph literals across `internal/bootstrap/bootstrap.go`, `internal/monitor/ui/view.go`, and `internal/monitor/ui/styles.go` now reference the registry. The font detection probe logic was moved from `internal/terminal/nerdfonts.go` into `internal/glyphs/probe.go`; the terminal package's `CheckNerdFont()` is retained as a deprecated wrapper. Updated DESIGN.md §3.2, SPEC.md §1.10, §3.1, and the config schema/env var tables.
+
+### Fixed
+
+- **Pretty output alignment (`internal/output/pretty/helpers.go`)**: Replaced the custom `displayWidth()` function (which used a regex to strip only SGR escape sequences and counted runes) with `lipgloss.Width()` which handles all ANSI sequence types (SGR, CSI, OSC) and uses `go-runewidth` for proper Unicode column-width measurement. This fixes cascading indentation in KV-formatted output (e.g., `akt q bme status`) caused by unstripped ANSI sequences inflating the measured width, leading `padRight` to produce incorrect padding.
+
+### Added
+
 - **Pretty output for all module params queries**: Registered `PrettyFormatter`s for all 10 module params types (staking, governance, minting, slashing, distribution, auth, deployment, market, wasm, oracle). CLI commands (`akt query <module> params`) now render human-readable key-value output instead of falling back to raw JSON when `--output pretty` is active. Each module has a public `Render<Module>Params()` function in `internal/output/pretty/params.go` for Pretty/TUI visual parity (SPEC §10.8). Added `FormatDuration()`, `FormatDurationString()`, `FormatPercent()`, `FormatPercentDec()`, and `FormatBool()` helpers to `helpers.go`. Updated the TUI governance tab (`akt monitor` > Network > Governance) to call `pretty.RenderModuleParamsFromJSON()` instead of rendering raw `json.MarshalIndent` output, producing the same KV layout as the CLI. Added `RenderModuleParamsFromJSON()` bridge function that unmarshals REST JSON for all 12 modules (including bank, transfer, ibc, crisis which are TUI-only) and delegates to the shared formatting helpers. Updated SPEC.md §10.10 with per-module params formatter field tables and §8.3.11 with a pretty-output governance tab wireframe.
 
 ### Changed

@@ -245,9 +245,15 @@ Both modes share the same core services (context, keyring, client, store). The T
 - **TUI mode** (default when TTY is attached): Interactive bubbletea UI with progress display, bid selection tables, spinners, and colored status output.
 - **JSONL mode** (`--output jsonl`): Emits one JSONL line per completed step to stdout. Each line is a self-contained JSON object with workflow name, unique run ID, step name, result status, errors, and transaction results. Designed for CI/CD pipelines, scripts, and programmatic consumption.
 
-**Font requirement**: All TUI and interactive UI elements require a **Nerd Font** (https://www.nerdfonts.com/). Glyphs from the Nerd Font extended character set (Font Awesome, Powerline, etc.) are used for icons, indicators, checkboxes, and decorative elements throughout the interface. When running in non-interactive / JSONL mode (`--output jsonl`), output falls back to ASCII-safe equivalents for compatibility with pipes and `jq`.
+**Glyph modes**: The interface supports two glyph rendering modes: **nerd** (Nerd Font glyphs from the Font Awesome PUA range) and **ascii** (pure ASCII fallbacks that work in any terminal font). The `--glyph-mode` flag controls which mode is used:
 
-**Font detection**: On startup, `akt` probes the terminal to verify that a Nerd Font is active. It renders test glyphs from the Powerline (U+E0B0) and Font Awesome (U+F005) PUA ranges and measures cursor advance via ANSI Device Status Report (`\033[6n`). If the Font Awesome glyph is missing but the Powerline glyph renders, a tailored "upgrade from Powerline to Nerd Font" error is shown. If neither renders, a general "install Nerd Font" error is shown. The check is skipped when stdout is not a TTY (piped output) or when `--skip-font-check` is passed. The check runs at most once per process.
+- **`auto`** (default): Probes the terminal to detect whether a Nerd Font is active. If detected, uses `nerd` mode; otherwise falls back to `ascii` mode silently. When stdout is not a TTY (piped output), always uses `ascii`.
+- **`nerd`**: Forces Nerd Font glyphs. Use when auto-detection produces false negatives.
+- **`ascii`**: Forces ASCII-safe glyphs. Use when Nerd Fonts are not installed or not desired.
+
+All Nerd Font (PUA range) glyphs are defined in a centralized registry (`internal/glyphs/`) with both nerd and ascii variants. Standard Unicode characters (block drawing `█░▀`, arrows `←↑→↓`, box drawing `─`, circles `●`) are used in both modes since they render correctly in virtually all terminal fonts.
+
+**Font detection** (used by `auto` mode): On startup, `akt` probes the terminal by rendering test glyphs from the Powerline (U+E0B0) and Font Awesome (U+F005) PUA ranges and measuring cursor advance via ANSI Device Status Report (`\033[6n`). If both render at 1 cell width, `nerd` mode is selected. Otherwise, `ascii` mode is selected. The check is skipped when stdout is not a TTY or when `--glyph-mode` is explicitly set. The check runs at most once per process.
 
 ### 3.3 Storage Architecture
 

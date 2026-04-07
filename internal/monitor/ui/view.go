@@ -9,6 +9,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 
+	"pkg.akt.dev/akt/internal/glyphs"
 	"pkg.akt.dev/akt/internal/output/pretty"
 
 	"pkg.akt.dev/akt/internal/monitor/consensus"
@@ -585,13 +586,14 @@ func renderExpandedValidators(votes []BlockValidatorVote, monikers map[string]st
 			name = name[:nameW-3] + "..."
 		}
 
-		pvIcon := voteNoStyle.Render("\uf00d") // nf-fa-times
+		g := glyphs.G()
+		pvIcon := voteNoStyle.Render(g.VoteNo)
 		if v.Prevoted {
-			pvIcon = voteYesStyle.Render("\uf00c") // nf-fa-check
+			pvIcon = voteYesStyle.Render(g.VoteYes)
 		}
-		pcIcon := voteNoStyle.Render("\uf00d")
+		pcIcon := voteNoStyle.Render(g.VoteNo)
 		if v.Precommited {
-			pcIcon = voteYesStyle.Render("\uf00c")
+			pcIcon = voteYesStyle.Render(g.VoteYes)
 		}
 
 		power := formatPower(v.VotingPower)
@@ -672,11 +674,12 @@ func renderBlockRow(d blockRowData) string {
 		}
 	}
 
+	g := glyphs.G()
 	marker := "  "
 	if d.isSelected {
-		marker = proposerStyle.Render("\uf0da ") // nf-fa-caret_right
+		marker = proposerStyle.Render(g.Cursor + " ")
 	} else if d.isCurrent {
-		marker = valueStyle.Render("\uf111 ") // nf-fa-circle
+		marker = valueStyle.Render(g.DotFilled + " ")
 	}
 
 	return fmt.Sprintf("%s%s  %s  %s  %s  %s",
@@ -714,8 +717,8 @@ func renderGridSection(state *consensus.State, termWidth int) string {
 	grid := FormatVoteGrid(state.PrevoteBitArray, gridWidth)
 
 	legend := fmt.Sprintf("%s voted  %s not voted",
-		gridVotedStyle.Render("\uf00c"),    // nf-fa-check
-		gridNotVotedStyle.Render("\uf00d")) // nf-fa-times
+		gridVotedStyle.Render(glyphs.G().VoteYes),
+		gridNotVotedStyle.Render(glyphs.G().VoteNo))
 
 	return header + "\n" + grid + "\n\n" + mutedStyle.Render(legend)
 }
@@ -750,7 +753,7 @@ func renderValidatorRowWithBlocks(v consensus.ValidatorStatus, monikers map[stri
 
 	leadCol := fmt.Sprintf("%-2s", "")
 	if isSelected {
-		leadCol = proposerStyle.Render(fmt.Sprintf("%-2s", "\uf0da")) // nf-fa-caret_right
+		leadCol = proposerStyle.Render(fmt.Sprintf("%-2s", glyphs.G().Cursor))
 	}
 
 	// Build the block signing bar (newest on left).
@@ -806,13 +809,14 @@ func renderValidatorDetailPanel(v consensus.ValidatorStatus, monikers map[string
 		mutedStyle.Render(pct)))
 
 	// Current block status
-	pvIcon := voteNoStyle.Render("\uf00d")
+	g := glyphs.G()
+	pvIcon := voteNoStyle.Render(g.VoteNo)
 	if v.Prevoted {
-		pvIcon = voteYesStyle.Render("\uf00c")
+		pvIcon = voteYesStyle.Render(g.VoteYes)
 	}
-	pcIcon := voteNoStyle.Render("\uf00d")
+	pcIcon := voteNoStyle.Render(g.VoteNo)
 	if v.Precommited {
-		pcIcon = voteYesStyle.Render("\uf00c")
+		pcIcon = voteYesStyle.Render(g.VoteYes)
 	}
 	b.WriteString(fmt.Sprintf("  %s prevote %s  precommit %s\n",
 		labelStyle.Render("Current:"),
@@ -841,7 +845,7 @@ func renderValidatorDetailPanel(v consensus.ValidatorStatus, monikers map[string
 	if v.IsProposer {
 		b.WriteString(fmt.Sprintf("  %s %s\n",
 			labelStyle.Render("Role:"),
-			proposerStyle.Render("Current Proposer \uf005")))
+			proposerStyle.Render("Current Proposer "+glyphs.G().Star)))
 	}
 
 	b.WriteString(mutedStyle.Render("  Esc: collapse"))
@@ -954,10 +958,11 @@ func stripEmojis(s string) string {
 }
 
 func voteIndicator(voted bool) string {
+	g := glyphs.G()
 	if voted {
-		return voteYesStyle.Render("\uf00c") // nf-fa-check
+		return voteYesStyle.Render(g.VoteYes)
 	}
-	return voteNoStyle.Render("\uf00d") // nf-fa-times
+	return voteNoStyle.Render(g.VoteNo)
 }
 
 func scrollRange(scrollPos, visibleRows, totalItems int) (start, end int) {
@@ -1021,14 +1026,15 @@ func countByVersion(providers []rpc.Provider) map[string]int {
 func renderVersionLine(version string, count, total int, selectedVersion string) string {
 	percentage := float64(count) / float64(total) * 100
 	numDots := min(count, 50)
+	g := glyphs.G()
 
 	var dots string
 	marker := "  "
 	if version == selectedVersion {
-		dots = gridVotedStyle.Render(repeatChar('\uf111', numDots)) // nf-fa-circle
-		marker = proposerStyle.Render("\uf0da ")                    // nf-fa-caret_right
+		dots = gridVotedStyle.Render(strings.Repeat(g.DotFilled, numDots))
+		marker = proposerStyle.Render(g.Cursor + " ")
 	} else {
-		dots = mutedStyle.Render(repeatChar('\uf10c', numDots)) // nf-fa-circle_o
+		dots = mutedStyle.Render(strings.Repeat(g.DotOpen, numDots))
 	}
 
 	return fmt.Sprintf("%s%-12s %s %3d (%5.1f%%)", marker, version, dots, count, percentage)
@@ -1118,7 +1124,7 @@ func renderProviderRow(p rpc.Provider, index int, selectedVersion string, isRowS
 	// Selection cursor
 	cursor := "  "
 	if isRowSelected {
-		cursor = proposerStyle.Render("\uf0da ") // nf-fa-caret_right
+		cursor = proposerStyle.Render(glyphs.G().Cursor + " ")
 	}
 
 	indexStr := fmt.Sprintf("%-*d", colWidthIndex, index)
@@ -1204,10 +1210,11 @@ func formatVersionDisplay(version string, isSelected bool) string {
 }
 
 func versionMarker(isSelected bool) string {
+	g := glyphs.G()
 	if isSelected {
-		return gridVotedStyle.Render("\uf111 ") // nf-fa-circle
+		return gridVotedStyle.Render(g.DotFilled + " ")
 	}
-	return gridNotVotedStyle.Render("\uf10c ") // nf-fa-circle_o
+	return gridNotVotedStyle.Render(g.DotOpen + " ")
 }
 
 // renderProviderDetailView renders the provider detail view with node list
@@ -1541,7 +1548,7 @@ func renderGovernanceTab(params *governance.AllParams, height int, selectedModul
 			modParams := params.Modules[module]
 
 			if moduleIdx == selectedModule {
-				leftCol = "\uf0da " + displayName // nf-fa-caret_right
+				leftCol = glyphs.G().Cursor + " " + displayName
 			} else {
 				leftCol = "  " + displayName
 			}
@@ -1551,7 +1558,7 @@ func renderGovernanceTab(params *governance.AllParams, height int, selectedModul
 			}
 
 			// Pad to column width (use rune count, not byte length,
-			// because the Nerd Font caret \uf0da is 3 bytes but 1 column).
+			// because the cursor glyph may differ in byte/rune count vs display width).
 			if runeLen := len([]rune(leftCol)); runeLen < moduleColWidth {
 				leftCol += strings.Repeat(" ", moduleColWidth-runeLen)
 			}
