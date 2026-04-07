@@ -24,6 +24,8 @@ import (
 	"pkg.akt.dev/akt/internal/glyphs"
 	aktkeyring "pkg.akt.dev/akt/internal/keyring"
 	akttui "pkg.akt.dev/akt/internal/tui"
+
+	arpcclient "pkg.akt.dev/go/node/client"
 )
 
 // BuildInfo holds build-time metadata injected via ldflags.
@@ -304,6 +306,11 @@ func monitorRunE(v *viper.Viper, dashboard string) func(*cobra.Command, []string
 		if rpcEndpoint == "" {
 			return fmt.Errorf("no RPC endpoint; provide one via --rpc flag, positional argument, or configure an akt context")
 		}
+
+		// Ensure endpoints carry explicit ports (inferred from scheme
+		// when omitted) so downstream CometBFT clients can connect.
+		rpcEndpoint = arpcclient.NormalizeEndpoint(rpcEndpoint)
+		restEndpoint = arpcclient.NormalizeEndpoint(restEndpoint)
 
 		// Resolve store path for the bbolt cache.
 		cfgRoot, err := aktctx.ConfigHome("")

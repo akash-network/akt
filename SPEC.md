@@ -186,6 +186,8 @@ Networks define chain connectivity. They are shared resources -- a single networ
 | `gas-prices`     | string   | no       | `"0.025uakt"` | Default gas price for transactions                |
 | `gas-adjustment` | string   | no       | `"1.5"`       | Gas estimation multiplier (when gas=auto)         |
 
+**Endpoint port inference:** Ports are optional in RPC and API endpoint URLs. When a port is not explicitly specified, it is inferred from the URL scheme: `http` → 80, `https` → 443 (likewise `ws` → 80, `wss` → 443). The underlying cosmos-sdk and CometBFT libraries require an explicit port in the host string, so `akt` normalizes endpoints at startup by appending the scheme-default port when one is absent. For example, `https://rpc.akashnet.net` is equivalent to `https://rpc.akashnet.net:443`. The `tcp` scheme (used internally by the cosmos-sdk `--node` flag) defaults to port 80 since it is treated as an alias for `http`.
+
 **Network sharing rules:**
 - Multiple contexts can reference the same network by name.
 - Editing a network (e.g., changing an RPC endpoint) affects all contexts that reference it.
