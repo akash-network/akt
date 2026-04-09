@@ -11,12 +11,10 @@ import (
 
 // ProviderList holds the state for the provider list view.
 type ProviderList struct {
-	Items       []rpc.Provider
-	Versions    []string // unique versions, sorted latest first
-	Version     string   // currently selected version filter
-	VersionIdx  int      // index in Versions
-	ScrollPos   int      // scroll position for provider list
-	SelectedIdx int      // currently highlighted provider in list
+	Items      []rpc.Provider
+	Versions   []string // unique versions, sorted latest first
+	Version    string   // currently selected version filter
+	VersionIdx int      // index in Versions
 }
 
 // ProviderLoader holds the state for background provider loading/checking.
@@ -35,12 +33,11 @@ type ProviderLoader struct {
 
 // ProviderDetail holds the state for the provider detail view.
 type ProviderDetail struct {
-	Showing   bool
-	Provider  *rpc.Provider
-	Nodes     []rpc.ProviderNodeWithGPU
-	Loading   bool
-	Error     error
-	ScrollPos int
+	Showing  bool
+	Provider *rpc.Provider
+	Nodes    []rpc.ProviderNodeWithGPU
+	Loading  bool
+	Error    error
 }
 
 // OracleState holds live oracle and BME data for the Oracle/BME dashboard.

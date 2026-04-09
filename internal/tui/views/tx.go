@@ -1,7 +1,7 @@
 package views
 
 import (
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 )
 
 // TxView is a placeholder for the transaction commands panel.

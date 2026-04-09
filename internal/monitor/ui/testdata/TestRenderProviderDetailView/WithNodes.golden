@@ -1,0 +1,10 @@
+[1;38;5;1mProvider Details[m
+
+[38;5;8mName:[m      [38;5;7mProvider 0[m
+[38;5;8mURL:[m       [38;5;7mprovider0.example.com[m
+[38;5;8mVersion:[m   [38;5;2m0.6.4[m
+[38;5;8mLocation:[m  [38;5;7mUS[m
+[38;5;8mTotal:[m     CPU [38;5;7m8/16[m | Memory [38;5;7m16Gi/32Gi[m
+
+[1;38;5;1mNodes (3 total, 6/12 GPUs avail)[m
+[38;5;8mNode                [m[38;5;8mCPU           [m[38;5;8mMemory          [m[38;5;8mGPU                           [m

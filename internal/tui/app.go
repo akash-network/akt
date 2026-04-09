@@ -7,9 +7,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	cmthttp "github.com/cometbft/cometbft/rpc/client/http"
 	"github.com/spf13/viper"
 
@@ -136,7 +136,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// of which view is active or whether the palette is open.  If these
 	// messages are swallowed, the tick/WS chains break permanently.
 
-	if _, isKey := msg.(tea.KeyMsg); !isKey && a.monitorModel != nil {
+	if _, isKey := msg.(tea.KeyPressMsg); !isKey && a.monitorModel != nil {
 		var topCmd tea.Cmd
 		a.monitorModel, topCmd = a.monitorModel.Update(msg)
 		appCmds = append(appCmds, topCmd)
@@ -147,7 +147,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// palette or view switching. Only Ctrl+C is intercepted.
 
 	if a.standalone {
-		if kmsg, ok := msg.(tea.KeyMsg); ok {
+		if kmsg, ok := msg.(tea.KeyPressMsg); ok {
 			if key.Matches(kmsg, a.keys.Quit) {
 				return a, tea.Quit
 			}
@@ -163,7 +163,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// ── Palette takes priority for key messages when active ──────────
 
 	if a.palette.Active() {
-		if kmsg, ok := msg.(tea.KeyMsg); ok {
+		if kmsg, ok := msg.(tea.KeyPressMsg); ok {
 			if key.Matches(kmsg, a.keys.Quit) {
 				return a, tea.Quit
 			}
@@ -175,7 +175,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// ── Key handling ─────────────────────────────────────────────────
 
-	if kmsg, ok := msg.(tea.KeyMsg); ok {
+	if kmsg, ok := msg.(tea.KeyPressMsg); ok {
 		// Ctrl+C always quits regardless of active view.
 		if key.Matches(kmsg, a.keys.Quit) {
 			return a, tea.Quit
@@ -217,7 +217,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // View implements tea.Model.
-func (a App) View() string {
+func (a App) View() tea.View {
 	status := a.renderStatusBar()
 
 	// Height available for content above the status bar.
@@ -235,7 +235,11 @@ func (a App) View() string {
 	// title/tab chrome. It already accounts for the reduced height
 	// (terminal - statusBarHeight). Append the unified status bar.
 	if a.view == viewMonitor && a.monitorModel != nil && !a.palette.Active() {
-		return pin.Render(a.monitorModel.View()) + "\n" + status
+		monView := a.monitorModel.View()
+		content := pin.Render(monView.Content) + "\n" + status
+		v := tea.NewView(content)
+		v.AltScreen = true
+		return v
 	}
 
 	header := a.renderHeader()
@@ -263,7 +267,9 @@ func (a App) View() string {
 		status = a.renderPaletteStatusBar()
 	}
 
-	return pin.Render(header+"\n"+main) + "\n" + status
+	v := tea.NewView(pin.Render(header+"\n"+main) + "\n" + status)
+	v.AltScreen = true
+	return v
 }
 
 // ─── Status bar (3 lines, always at bottom) ──────────────────────────
@@ -443,7 +449,7 @@ func Run(cfg Config) error {
 	}
 
 	app := newApp(cfg, model)
-	p := tea.NewProgram(app, tea.WithAltScreen())
+	p := tea.NewProgram(app)
 	_, err := p.Run()
 	return err
 }
@@ -459,7 +465,7 @@ func RunMonitor(cfg Config) error {
 
 	app := newApp(cfg, model)
 	app.view = viewMonitor
-	p := tea.NewProgram(app, tea.WithAltScreen())
+	p := tea.NewProgram(app)
 	_, err := p.Run()
 	return err
 }

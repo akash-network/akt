@@ -18,6 +18,7 @@ import (
 	aktctx "pkg.akt.dev/akt/internal/context"
 	aktkeyring "pkg.akt.dev/akt/internal/keyring"
 
+	arpcclient "pkg.akt.dev/go/node/client"
 	"pkg.akt.dev/go/sdkutil"
 )
 
@@ -49,8 +50,10 @@ func BuildClientContext(
 	cctx = cctx.WithBroadcastMode("sync")
 
 	// Set node URI from the first RPC endpoint.
+	// NormalizeEndpoint ensures a port is present (inferred from scheme when
+	// omitted) so that downstream CometBFT/cosmos-sdk clients can connect.
 	if len(rc.Network.Endpoints.RPC) > 0 {
-		cctx = cctx.WithNodeURI(rc.Network.Endpoints.RPC[0])
+		cctx = cctx.WithNodeURI(arpcclient.NormalizeEndpoint(rc.Network.Endpoints.RPC[0]))
 	}
 
 	// Set output format.
@@ -81,7 +84,7 @@ func InitClientContext(
 	// PersistentPreRunE hooks (QueryPersistentPreRunE, TxPersistentPreRunE)
 	// can discover the endpoint via GetRPCURIFromContext.
 	if len(rc.Network.Endpoints.RPC) > 0 {
-		ctx = context.WithValue(ctx, chaincli.ContextTypeRPCURI, rc.Network.Endpoints.RPC[0])
+		ctx = context.WithValue(ctx, chaincli.ContextTypeRPCURI, arpcclient.NormalizeEndpoint(rc.Network.Endpoints.RPC[0]))
 	}
 
 	// The SDK expects a *client.Context pointer so it can be mutated by

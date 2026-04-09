@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/key"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/key"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"pkg.akt.dev/akt/internal/tui/commands"
 )
@@ -46,7 +46,9 @@ func NewCommandPalette(reg *commands.Registry, keys PaletteKeys) CommandPalette 
 	ti := textinput.New()
 	ti.Prompt = ":"
 	ti.CharLimit = 128
-	ti.PlaceholderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	s := ti.Styles()
+	s.Focused.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	ti.SetStyles(s)
 
 	return CommandPalette{
 		keys:     keys,
@@ -85,7 +87,7 @@ func (p *CommandPalette) SetSize(w, h int) {
 // Update handles input events for the palette. All navigation keys are
 // resolved through the configurable PaletteKeys bindings.
 func (p *CommandPalette) Update(msg tea.Msg) tea.Cmd {
-	if kmsg, ok := msg.(tea.KeyMsg); ok {
+	if kmsg, ok := msg.(tea.KeyPressMsg); ok {
 		switch {
 		case key.Matches(kmsg, p.keys.Select):
 			name := p.selectedName()
@@ -164,7 +166,7 @@ func (p CommandPalette) View() string {
 	}
 
 	// Build the input section.
-	p.input.Width = innerW - 1 // account for prompt character
+	p.input.SetWidth(innerW - 1) // account for prompt character
 	inputLine := p.input.View()
 
 	separator := lipgloss.NewStyle().

@@ -1,0 +1,10 @@
+                                              [1;38;5;9makt monitor - Akash Network[m                                               
+                                                                                                                        
+[48;5;1m [m[1;38;5;15;48;5;1mNetwork[m[48;5;1m [m   [38;5;8mProvider[m    [38;5;8mOracle/BME[m                                                                                      
+ [38;5;8m 1: Overview                           [m  [38;5;8m 2: Validators                         [m [48;5;1m [m[1;38;5;15;48;5;1m 3: Governance                         [m[48;5;1m [m
+
+[1;38;5;9mLoading governance parameters...[m
+                                                                                                                        
+[38;5;8mq: quit | r: refresh params | Tab/1-3: switch tabs[m                                                                      
+                                                                                                                        
+[38;5;8mRPC: https://rpc.akashnet.net:443 [WS][m                                                                                  

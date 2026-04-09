@@ -24,6 +24,8 @@ import (
 	"pkg.akt.dev/akt/internal/glyphs"
 	aktkeyring "pkg.akt.dev/akt/internal/keyring"
 	akttui "pkg.akt.dev/akt/internal/tui"
+
+	arpcclient "pkg.akt.dev/go/node/client"
 )
 
 // BuildInfo holds build-time metadata injected via ldflags.
@@ -197,7 +199,7 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	root.PersistentFlags().String("context", "", "Active context name (overrides current-context in config)")
 	root.PersistentFlags().StringP("output", "o", "table", "Output format: table, json, yaml")
 	root.PersistentFlags().BoolP("interactive", "i", false, "Force interactive (TUI) mode even if disabled in config")
-	root.PersistentFlags().Bool("skip-font-check", false, "Deprecated: use --glyph-mode ascii instead")
+	root.PersistentFlags().Bool("skip-font-check", true, "Deprecated: use --glyph-mode ascii instead")
 	root.PersistentFlags().String("glyph-mode", "", "Glyph rendering mode: auto (default), nerd, ascii")
 
 	// Context management (includes network and keys subcommands).
@@ -304,6 +306,11 @@ func monitorRunE(v *viper.Viper, dashboard string) func(*cobra.Command, []string
 		if rpcEndpoint == "" {
 			return fmt.Errorf("no RPC endpoint; provide one via --rpc flag, positional argument, or configure an akt context")
 		}
+
+		// Ensure endpoints carry explicit ports (inferred from scheme
+		// when omitted) so downstream CometBFT clients can connect.
+		rpcEndpoint = arpcclient.NormalizeEndpoint(rpcEndpoint)
+		restEndpoint = arpcclient.NormalizeEndpoint(restEndpoint)
 
 		// Resolve store path for the bbolt cache.
 		cfgRoot, err := aktctx.ConfigHome("")

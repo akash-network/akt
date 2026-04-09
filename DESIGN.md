@@ -247,13 +247,11 @@ Both modes share the same core services (context, keyring, client, store). The T
 
 **Glyph modes**: The interface supports two glyph rendering modes: **nerd** (Nerd Font glyphs from the Font Awesome PUA range) and **ascii** (pure ASCII fallbacks that work in any terminal font). The `--glyph-mode` flag controls which mode is used:
 
-- **`auto`** (default): Probes the terminal to detect whether a Nerd Font is active. If detected, uses `nerd` mode; otherwise falls back to `ascii` mode silently. When stdout is not a TTY (piped output), always uses `ascii`.
-- **`nerd`**: Forces Nerd Font glyphs. Use when auto-detection produces false negatives.
-- **`ascii`**: Forces ASCII-safe glyphs. Use when Nerd Fonts are not installed or not desired.
+- **`auto`** (default): Uses ASCII glyphs. Font detection is disabled because the DSR terminal probe put the terminal in raw mode and leaked goroutines that consumed keystrokes.
+- **`nerd`**: Forces Nerd Font glyphs. Use when a Nerd Font is installed and configured in the terminal.
+- **`ascii`**: Forces ASCII-safe glyphs. Equivalent to `auto`.
 
 All Nerd Font (PUA range) glyphs are defined in a centralized registry (`internal/glyphs/`) with both nerd and ascii variants. Standard Unicode characters (block drawing `█░▀`, arrows `←↑→↓`, box drawing `─`, circles `●`) are used in both modes since they render correctly in virtually all terminal fonts.
-
-**Font detection** (used by `auto` mode): On startup, `akt` probes the terminal by rendering test glyphs from the Powerline (U+E0B0) and Font Awesome (U+F005) PUA ranges and measuring cursor advance via ANSI Device Status Report (`\033[6n`). If both render at 1 cell width, `nerd` mode is selected. Otherwise, `ascii` mode is selected. The check is skipped when stdout is not a TTY or when `--glyph-mode` is explicitly set. The check runs at most once per process.
 
 ### 3.3 Storage Architecture
 
@@ -380,6 +378,24 @@ The `chain-sdk` CLI package (`pkg.akt.dev/go/cli`) will be deprecated and eventu
 - **Bubbletea v2** (Elm Architecture: Model-Update-View) handles the interactive TUI. Its functional design isolates state management and rendering.
 - **Lipgloss v2** provides CSS-like styling for terminal output in both modes -- table formatting in CLI, full layout composition in TUI.
 - **Bubbles v2** provides battle-tested components: table, viewport, text input, spinner, help, key bindings, list, progress bar, paginator.
+
+**Bubbles v2 component usage by UI element:**
+
+| UI Element | Bubbles Component | Location |
+|---|---|---|
+| Provider list, validator list, block history, node list | `table` | `internal/monitor/ui/` |
+| Scan progress bar, prevote/precommit vote progress bars | `progress` | `internal/monitor/ui/` |
+| Governance module selector, command palette command list | `list` | `internal/monitor/ui/`, `internal/tui/views/` |
+| Governance parameter display, scrollable detail panes | `viewport` | `internal/monitor/ui/` |
+| Command palette search input | `textinput` | `internal/tui/views/` |
+| Keybinding definitions and matching | `key` | `internal/tui/`, `internal/monitor/ui/` |
+| Status bar keybinding help | `help` | `internal/tui/` |
+| Loading indicators (provider scan, data fetch) | `spinner` | `internal/monitor/ui/` |
+
+Custom visualizations without bubbles equivalents remain hand-rolled:
+- Vote grid (`FormatVoteGrid()`) — colored ●/○ bit array
+- Signing history bar (`renderSigningBar()`) — per-validator colored dot sequence
+- Version distribution dot chart — ●/○ dot visualization per provider version
 
 ### 5.3 Store Interface for Multiple Backends
 

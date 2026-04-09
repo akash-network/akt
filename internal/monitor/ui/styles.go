@@ -3,7 +3,8 @@ package ui
 import (
 	"fmt"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/progress"
+	"charm.land/lipgloss/v2"
 
 	"pkg.akt.dev/akt/internal/glyphs"
 )
@@ -47,18 +48,8 @@ var (
 			Bold(true).
 			Foreground(brightText)
 
-	// Progress bar styles
-	progressBarWidth = 40
-
-	progressFullStyle = lipgloss.NewStyle().
-				Foreground(primaryColor)
-
-	progressEmptyStyle = lipgloss.NewStyle().
-				Foreground(mutedColor)
-
-	// Double progress bar colors (half-block ▀: top = prevotes, bottom = precommits)
-	precommitBarColor = lipgloss.ANSIColor(6) // Cyan — precommits (bottom half)
-	barEmptyBgColor   = lipgloss.ANSIColor(0) // Black — empty track
+	// Double progress bar color
+	precommitBarColor = lipgloss.ANSIColor(6) // Cyan — precommits
 
 	// Percentage styles based on threshold
 	percentLowStyle = lipgloss.NewStyle().
@@ -139,34 +130,20 @@ var (
 			Foreground(errorColor)
 )
 
-// ProgressBar renders a progress bar with the given percentage (0-1)
+// ProgressBar renders a progress bar with the given percentage (0-1) using bubbles/progress.
 func ProgressBar(percent float64, width int) string {
+	p := progress.New(
+		progress.WithColors(primaryColor),
+		progress.WithoutPercentage(),
+	)
+	p.SetWidth(width)
 	if percent < 0 {
 		percent = 0
 	}
 	if percent > 1 {
 		percent = 1
 	}
-
-	filled := int(float64(width) * percent)
-	empty := width - filled
-
-	bar := progressFullStyle.Render(repeatChar('█', filled)) +
-		progressEmptyStyle.Render(repeatChar('░', empty))
-
-	return bar
-}
-
-// repeatChar repeats a character n times
-func repeatChar(char rune, n int) string {
-	if n <= 0 {
-		return ""
-	}
-	result := make([]rune, n)
-	for i := range result {
-		result[i] = char
-	}
-	return string(result)
+	return p.ViewAs(percent)
 }
 
 // FormatPercent formats a percentage with color based on threshold
@@ -181,10 +158,7 @@ func FormatPercent(percent float64) string {
 	return percentLowStyle.Render(pctStr)
 }
 
-// ProgressBarWithLabel renders a fixed-width progress bar with a text label
-// centred inside it. The filled portion uses the "full" style and the empty
-// portion uses the "empty" style. The label text is overlaid at the centre,
-// inheriting the style of whichever region it falls in.
+// ProgressBarWithLabel renders a progress bar with a text label centered inside it.
 func ProgressBarWithLabel(percent float64, width int, label string) string {
 	if percent < 0 {
 		percent = 0
@@ -193,41 +167,33 @@ func ProgressBarWithLabel(percent float64, width int, label string) string {
 		percent = 1
 	}
 
-	filled := int(float64(width) * percent)
-	if filled > width {
-		filled = width
-	}
+	p := progress.New(
+		progress.WithColors(primaryColor),
+		progress.WithoutPercentage(),
+	)
+	p.SetWidth(width)
+	bar := p.ViewAs(percent)
 
-	// Centre the label within the bar.
-	labelStart := (width - len(label)) / 2
-	if labelStart < 0 {
-		labelStart = 0
-	}
-
-	var bar string
-	for i := 0; i < width; i++ {
-		var ch string
-		if i >= labelStart && i < labelStart+len(label) {
-			ch = string(label[i-labelStart])
-		} else if i < filled {
-			ch = "█"
-		} else {
-			ch = "░"
+	// Overlay centered label on top of the bar
+	if len(label) > 0 && len(label) < width {
+		labelStart := (width - len(label)) / 2
+		// Build the overlaid version character by character
+		barRunes := []rune(bar)
+		labelRunes := []rune(label)
+		for i, r := range labelRunes {
+			pos := labelStart + i
+			if pos < len(barRunes) {
+				barRunes[pos] = r
+			}
 		}
-
-		if i < filled {
-			bar += progressFullStyle.Render(ch)
-		} else {
-			bar += progressEmptyStyle.Render(ch)
-		}
+		return string(barRunes)
 	}
 	return bar
 }
 
-// DoubleProgressBar renders a single-line dual progress bar using the
-// upper-half-block character (▀ U+2580). The top half of each cell
-// represents prevote progress (green) and the bottom half represents
-// precommit progress (cyan). Empty portions use a dark background.
+// DoubleProgressBar renders two stacked progress bars: top for prevotes (green),
+// bottom for precommits (cyan). This replaces the previous half-block (▀) design
+// with standard bubbles/progress components.
 func DoubleProgressBar(prevotePct, precommitPct float64, width int) string {
 	clamp := func(v float64) float64 {
 		if v < 0 {
@@ -241,52 +207,19 @@ func DoubleProgressBar(prevotePct, precommitPct float64, width int) string {
 	prevotePct = clamp(prevotePct)
 	precommitPct = clamp(precommitPct)
 
-	pvFilled := int(float64(width) * prevotePct)
-	pcFilled := int(float64(width) * precommitPct)
-	if pvFilled > width {
-		pvFilled = width
-	}
-	if pcFilled > width {
-		pcFilled = width
-	}
+	pvBar := progress.New(
+		progress.WithColors(successColor),
+		progress.WithoutPercentage(),
+	)
+	pvBar.SetWidth(width)
 
-	// Build the bar by grouping consecutive cells with the same fg/bg
-	// into a single Render call for efficiency.
-	type cellStyle struct {
-		fg lipgloss.TerminalColor
-		bg lipgloss.TerminalColor
-	}
+	pcBar := progress.New(
+		progress.WithColors(precommitBarColor),
+		progress.WithoutPercentage(),
+	)
+	pcBar.SetWidth(width)
 
-	styleFor := func(i int) cellStyle {
-		var fg, bg lipgloss.TerminalColor
-		if i < pvFilled {
-			fg = successColor // green — prevotes (top half)
-		} else {
-			fg = barEmptyBgColor
-		}
-		if i < pcFilled {
-			bg = precommitBarColor // cyan — precommits (bottom half)
-		} else {
-			bg = barEmptyBgColor
-		}
-		return cellStyle{fg, bg}
-	}
-
-	var bar string
-	i := 0
-	for i < width {
-		cs := styleFor(i)
-		// Count consecutive cells with the same style.
-		j := i + 1
-		for j < width && styleFor(j) == cs {
-			j++
-		}
-		segment := repeatChar('▀', j-i)
-		bar += lipgloss.NewStyle().Foreground(cs.fg).Background(cs.bg).Render(segment)
-		i = j
-	}
-
-	return bar
+	return pvBar.ViewAs(prevotePct) + "\n" + pcBar.ViewAs(precommitPct)
 }
 
 // FormatVoteGrid formats the bit array pattern into a colored grid

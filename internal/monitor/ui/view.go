@@ -7,7 +7,10 @@ import (
 	"time"
 	"unicode"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/table"
+	"charm.land/bubbles/v2/viewport"
+	"charm.land/lipgloss/v2"
 
 	"pkg.akt.dev/akt/internal/glyphs"
 	"pkg.akt.dev/akt/internal/output/pretty"
@@ -45,13 +48,11 @@ const (
 
 // ProviderDetailState holds the state for provider detail view
 type ProviderDetailState struct {
-	Showing     bool
-	Provider    *rpc.Provider
-	Nodes       []rpc.ProviderNodeWithGPU
-	Loading     bool
-	Error       error
-	ScrollPos   int
-	SelectedIdx int
+	Showing  bool
+	Provider *rpc.Provider
+	Nodes    []rpc.ProviderNodeWithGPU
+	Loading  bool
+	Error    error
 }
 
 // ProviderViewState holds the state for the providers tab
@@ -59,7 +60,6 @@ type ProviderViewState struct {
 	Providers []rpc.Provider
 	Versions  []string
 	Selected  string
-	ScrollPos int
 	Loading   bool
 	Loaded    int
 	Total     int
@@ -76,24 +76,26 @@ type ViewContext struct {
 	ActiveTab          Tab
 	Embedded           bool // when true, skip the bottom help/status lines
 	Monikers           map[string]string
-	ScrollPos          int
 	Providers          ProviderViewState
 	GovernanceParams   *governance.AllParams
-	GovernanceSelected int
-	GovernanceScroll   int
 	BlockHistory       []BlockRecord
-	OverviewScroll     int
-	SelectedBlock      int
 	ExpandedBlock      int // -1=none, 0=current, 1+=history index
 	ExpandedScroll     int
 	ExpandedValidators []BlockValidatorVote // frozen snapshot
-	ValidatorSelected  int                  // highlighted validator row
 	ExpandedValidator  int                  // expanded validator (-1=none)
 	ValSignHistory     map[int][]bool       // per-validator signing history
 	ProposerHistory    []int                // proposer index per historical block (newest first)
 	CurrentProposer    int                  // current block's proposer index (-1=unknown)
 	WSConnected        bool
 	Oracle             OracleState
+
+	// Bubbles component models
+	ProviderTable  table.Model
+	NodeTable      table.Model
+	ValidatorTable table.Model
+	BlockTable     table.Model
+	GovModuleList  list.Model
+	GovParamView   viewport.Model
 }
 
 // RenderView renders the complete view
@@ -165,7 +167,7 @@ func renderNetworkDashboard(ctx ViewContext) string {
 	case TabValidators:
 		b.WriteString(renderValidatorsTab(ctx))
 	case TabGovernance:
-		b.WriteString(renderGovernanceTab(ctx.GovernanceParams, ctx.Height, ctx.GovernanceSelected, ctx.GovernanceScroll))
+		b.WriteString(renderGovernanceTab(ctx))
 	}
 
 	return b.String()
@@ -174,9 +176,9 @@ func renderNetworkDashboard(ctx ViewContext) string {
 // renderProviderDashboard renders the Provider hub dashboard content.
 func renderProviderDashboard(ctx ViewContext) string {
 	if ctx.Providers.Detail.Showing {
-		return renderProviderDetailView(ctx.Providers.Detail, ctx.Height)
+		return renderProviderDetailView(ctx)
 	}
-	return renderProvidersTab(ctx.Providers, ctx.Height)
+	return renderProvidersTab(ctx)
 }
 
 // renderOracleBMEDashboard renders the combined Oracle/BME dashboard as a
@@ -298,68 +300,43 @@ func renderValidatorsTab(ctx ViewContext) string {
 		return mutedStyle.Render("Loading validators...")
 	}
 
-	w := ctx.Width
-	termHeight := ctx.Height
-	scrollPos := ctx.ScrollPos
-	monikers := ctx.Monikers
-	signHistory := ctx.ValSignHistory
-	selected := ctx.ValidatorSelected
-	expanded := ctx.ExpandedValidator
-
-	// Column widths: proposer(2) + #(5) + name(fixed max 28) + power(18) + blocks(rest)
-	// Name column has a max width; blocks column gets all remaining space.
-	// Power column is 18 chars wide to fit "5.0M 12.3%".
-	// A 3-space gap separates power from blocks for visual clarity.
-	nameW := 28
-	powerW := 18
-	fixedCols := 2 + 5 + nameW + powerW + 7 // proposer + # + name + power + gaps(4 spaces + 3 gap)
-	blocksW := w - fixedCols
-	if blocksW < 20 {
-		blocksW = 20
+	// If a validator is expanded, show overlay detail panel instead of the table.
+	if ctx.ExpandedValidator >= 0 && ctx.ExpandedValidator < len(state.Validators) {
+		return renderValidatorDetailOverlay(ctx)
 	}
 
+	w := ctx.Width
 	header := headerStyle.Width(w).Render(
 		fmt.Sprintf("Validators (%d) — Block Signing History", len(state.Validators)))
-
-	colHeader := fmt.Sprintf("%s %s %s %s   %s",
-		mutedStyle.Render(fmt.Sprintf("%-2s", "")),
-		mutedStyle.Render(fmt.Sprintf("%-5s", "#")),
-		mutedStyle.Render(fmt.Sprintf("%-*s", nameW, "Validator")),
-		mutedStyle.Render(fmt.Sprintf("%*s", powerW, "Power")),
-		mutedStyle.Render(fmt.Sprintf("%-*s", blocksW, "Blocks (newest \u2190)")))
-
-	// Overhead: title(1) + tabs(1) + blank(1) + section header(3) + margin(1) +
-	// col header(1) + scroll indicator(1) + help/status(4) + newline(1) = 14
-	visibleRows := max(termHeight-14, 5)
-	if expanded >= 0 {
-		// Reserve space for expanded detail panel.
-		visibleRows = max(visibleRows/2, 3)
-	}
-	startIdx, endIdx := scrollRange(scrollPos, visibleRows, len(state.Validators))
 
 	var b strings.Builder
 	b.WriteString(header)
 	b.WriteString("\n")
-	b.WriteString(colHeader)
+	b.WriteString(ctx.ValidatorTable.View())
 	b.WriteString("\n")
 
-	for i := startIdx; i < endIdx; i++ {
-		v := state.Validators[i]
-		isSelected := i == selected
-		b.WriteString(renderValidatorRowWithSelection(v, monikers, signHistory, ctx.ProposerHistory, state.TotalVotingPower, nameW, blocksW, isSelected))
-		b.WriteString("\n")
-	}
+	return b.String()
+}
 
-	if len(state.Validators) > visibleRows {
-		b.WriteString(mutedStyle.Render(fmt.Sprintf(
-			"  Showing %d-%d of %d (j/k to scroll, Enter to expand)", startIdx+1, endIdx, len(state.Validators))))
-	}
+// renderValidatorDetailOverlay renders a full overlay panel for the
+// selected validator, replacing the validator table.
+func renderValidatorDetailOverlay(ctx ViewContext) string {
+	state := ctx.State
+	v := state.Validators[ctx.ExpandedValidator]
+	w := ctx.Width
 
-	// Render expanded validator detail panel.
-	if expanded >= 0 && expanded < len(state.Validators) {
-		b.WriteString("\n")
-		b.WriteString(renderValidatorDetailPanel(state.Validators[expanded], monikers, signHistory, state.TotalVotingPower, w))
-	}
+	var b strings.Builder
+
+	name := getValidatorDisplayName(v, ctx.Monikers)
+	title := fmt.Sprintf("Validator: %s", name)
+	b.WriteString(headerStyle.Width(w).Render(title))
+	b.WriteString("\n")
+
+	b.WriteString(renderValidatorDetailPanel(v, ctx.Monikers, ctx.ValSignHistory, state.TotalVotingPower, w))
+	b.WriteString("\n")
+
+	b.WriteString(mutedStyle.Render("  esc/h/\u2190: back"))
+	b.WriteString("\n")
 
 	return b.String()
 }
@@ -403,10 +380,10 @@ func truncateAddress(addr string, maxLen int) string {
 const consensusThreshold = 0.667
 
 // overviewOverhead is the number of lines consumed by title, tabs, header,
-// progress bar, column header, pinned current block, scroll indicator, help/status, and newline.
-// title(1) + tabs(1) + blank(1) + section header(3) + margin(1) +
-// double bar(1) + blank(1) + col header(1) + current block(1) + scroll indicator(1) + newline(1) = 13
-const overviewOverhead = 13
+// progress bars, and margins above the block table.
+// title(1) + hub tabs(1) + sub tabs(1) + blank(1) + section header(3) +
+// progress bars(2) + blank(1) = 10
+const overviewOverhead = 10
 
 // Fixed column widths for the block table.
 const (
@@ -418,21 +395,15 @@ const (
 )
 
 func renderBlockProgress(ctx ViewContext) string {
+	// If a block is expanded, show overlay detail panel instead of the table.
+	if ctx.ExpandedBlock >= 0 && len(ctx.ExpandedValidators) > 0 {
+		return renderBlockDetailOverlay(ctx)
+	}
+
 	state := ctx.State
-	history := ctx.BlockHistory
-	scrollPos := ctx.OverviewScroll
 	termWidth := ctx.Width
-	termHeight := ctx.Height
 
 	header := headerStyle.Width(termWidth).Render("Block Progress")
-
-	// Column header — pad raw text first, then style.
-	colHeader := fmt.Sprintf("  %s  %s  %s  %s  %s",
-		mutedStyle.Render(fmt.Sprintf("%-*s", colHeight, "Height")),
-		mutedStyle.Render(fmt.Sprintf("%*s", colPV, "PV")),
-		mutedStyle.Render(fmt.Sprintf("%*s", colPC, "PC")),
-		mutedStyle.Render(fmt.Sprintf("%-*s", colElapsed, "Elapsed")),
-		mutedStyle.Render(fmt.Sprintf("%-*s", colRS, "R/S")))
 
 	var b strings.Builder
 	b.WriteString(header)
@@ -449,85 +420,88 @@ func renderBlockProgress(ctx ViewContext) string {
 			barW = 20
 		}
 
-		bar := DoubleProgressBar(state.PrevotePercent, state.PrecommitPercent, barW)
+		bars := strings.SplitN(DoubleProgressBar(state.PrevotePercent, state.PrecommitPercent, barW), "\n", 2)
 		pvLabel := FormatPercent(state.PrevotePercent)
 		pcLabel := FormatPercent(state.PrecommitPercent)
-		b.WriteString(fmt.Sprintf("  %s  PV%s  PC%s", bar, pvLabel, pcLabel))
+		b.WriteString(fmt.Sprintf("  %s  PV%s", bars[0], pvLabel))
 		b.WriteString("\n")
+		if len(bars) > 1 {
+			b.WriteString(fmt.Sprintf("  %s  PC%s", bars[1], pcLabel))
+			b.WriteString("\n")
+		}
 	}
 
 	b.WriteString("\n")
-	b.WriteString(colHeader)
+
+	// Block table — includes the current block as the first row.
+	if state == nil || state.Height == 0 {
+		b.WriteString(mutedStyle.Render("  Waiting for block data..."))
+	} else {
+		b.WriteString(ctx.BlockTable.View())
+	}
 	b.WriteString("\n")
 
-	// Current (live) block — always pinned at the top.
-	if state != nil && state.Height > 0 {
-		elapsed := state.Elapsed
+	return b.String()
+}
+
+// renderBlockDetailOverlay renders a full overlay panel showing the
+// validator vote list for the expanded block, replacing the block table.
+func renderBlockDetailOverlay(ctx ViewContext) string {
+	termWidth := ctx.Width
+	termHeight := ctx.Height
+
+	var b strings.Builder
+
+	// Determine block info based on expanded index.
+	var height int64
+	var pvPct, pcPct float64
+	var elapsed time.Duration
+	var round, step int
+
+	if ctx.ExpandedBlock == 0 && ctx.State != nil {
+		height = ctx.State.Height
+		pvPct = ctx.State.PrevotePercent
+		pcPct = ctx.State.PrecommitPercent
+		elapsed = ctx.State.Elapsed
 		if elapsed < 0 {
 			elapsed = 0
 		}
-		isSelected := ctx.SelectedBlock == 0
-		b.WriteString(renderBlockRow(blockRowData{
-			height:     state.Height,
-			prevotePct: state.PrevotePercent,
-			precommPct: state.PrecommitPercent,
-			elapsed:    elapsed,
-			round:      state.Round,
-			step:       state.Step,
-			isCurrent:  true,
-			isSelected: isSelected,
-			heightW:    colHeight,
-		}))
-		b.WriteString("\n")
-
-		// Render expanded validator list for current block.
-		if ctx.ExpandedBlock == 0 && len(ctx.ExpandedValidators) > 0 {
-			b.WriteString(renderExpandedValidators(ctx.ExpandedValidators, ctx.Monikers, termHeight-overviewOverhead, ctx.ExpandedScroll, termWidth))
+		round = ctx.State.Round
+		step = ctx.State.Step
+	} else if ctx.ExpandedBlock > 0 {
+		histIdx := ctx.ExpandedBlock - 1
+		if histIdx < len(ctx.BlockHistory) {
+			rec := ctx.BlockHistory[histIdx]
+			height = rec.Height
+			pvPct = rec.PrevotePercent
+			pcPct = rec.PrecommitPercent
+			elapsed = rec.Elapsed
+			round = rec.Round
+			step = rec.Step
 		}
 	}
 
-	if len(history) == 0 {
-		b.WriteString(mutedStyle.Render("  Waiting for completed blocks..."))
-		return b.String()
-	}
+	// Header
+	title := fmt.Sprintf("Block %s — Validator Votes", formatNumber(height))
+	b.WriteString(headerStyle.Width(termWidth).Render(title))
+	b.WriteString("\n")
 
-	// How many history rows fit below the pinned current block.
-	visibleRows := max(termHeight-overviewOverhead, 3)
-	if ctx.ExpandedBlock >= 0 {
-		// When a block is expanded, reduce visible block rows.
-		visibleRows = max(visibleRows/3, 2)
-	}
+	// Block stats
+	b.WriteString(fmt.Sprintf("  %s %s  %s %s  %s %s  %s %s\n",
+		labelStyle.Render("PV:"), colorVotePercent(pvPct),
+		labelStyle.Render("PC:"), colorVotePercent(pcPct),
+		labelStyle.Render("Elapsed:"), valueStyle.Render(formatDuration(elapsed)),
+		labelStyle.Render("R/S:"), valueStyle.Render(fmt.Sprintf("%d/%d", round, step))))
 
-	startIdx, endIdx := scrollRange(scrollPos, visibleRows, len(history))
+	b.WriteString("\n")
 
-	for i := startIdx; i < endIdx; i++ {
-		rec := history[i]
-		// selectedBlock: 0=current, 1+=history. History index i maps to selectedBlock i+1.
-		isSelected := ctx.SelectedBlock == i+1
-		b.WriteString(renderBlockRow(blockRowData{
-			height:     rec.Height,
-			prevotePct: rec.PrevotePercent,
-			precommPct: rec.PrecommitPercent,
-			elapsed:    rec.Elapsed,
-			round:      rec.Round,
-			step:       rec.Step,
-			isCurrent:  false,
-			isSelected: isSelected,
-			heightW:    colHeight,
-		}))
-		b.WriteString("\n")
+	// Validator vote list — use most of the terminal height.
+	maxRows := termHeight - 6
+	b.WriteString(renderExpandedValidators(ctx.ExpandedValidators, ctx.Monikers, maxRows, ctx.ExpandedScroll, termWidth))
 
-		// Render expanded validator list for this history block.
-		if ctx.ExpandedBlock == i+1 && len(ctx.ExpandedValidators) > 0 {
-			b.WriteString(renderExpandedValidators(ctx.ExpandedValidators, ctx.Monikers, termHeight-overviewOverhead, ctx.ExpandedScroll, termWidth))
-		}
-	}
-
-	// Scroll indicator when there are more blocks than visible.
-	if len(history) > visibleRows {
-		b.WriteString(mutedStyle.Render(fmt.Sprintf(
-			"  Showing %d-%d of %d blocks (j/k to scroll, Enter to expand)", startIdx+1, endIdx, len(history))))
-	}
+	// Help text
+	b.WriteString(mutedStyle.Render("  esc/h/\u2190: back"))
+	b.WriteString("\n")
 
 	return b.String()
 }
@@ -571,7 +545,11 @@ func renderExpandedValidators(votes []BlockValidatorVote, monikers map[string]st
 	b.WriteString("\n")
 
 	visibleRows := max(maxRows-4, 5)
-	startIdx, endIdx := scrollRange(scrollPos, visibleRows, len(sorted))
+	startIdx := scrollPos
+	endIdx := scrollPos + visibleRows
+	if endIdx > len(sorted) {
+		endIdx = len(sorted)
+	}
 
 	for i := startIdx; i < endIdx; i++ {
 		v := sorted[i]
@@ -704,7 +682,7 @@ func renderVoteSection(state *consensus.State) string {
 }
 
 func renderVoteLine(label string, percent float64, power, totalPower int64) string {
-	bar := ProgressBar(percent, progressBarWidth)
+	bar := ProgressBar(percent, 40)
 	pct := FormatPercent(percent)
 	powerStr := fmt.Sprintf("(%s / %s)", formatPower(power), formatPower(totalPower))
 	return fmt.Sprintf("%s %s %s %s", labelStyle.Render(label), bar, pct, mutedStyle.Render(powerStr))
@@ -965,16 +943,8 @@ func voteIndicator(voted bool) string {
 	return voteNoStyle.Render(g.VoteNo)
 }
 
-func scrollRange(scrollPos, visibleRows, totalItems int) (start, end int) {
-	start = scrollPos
-	end = scrollPos + visibleRows
-	if end > totalItems {
-		end = totalItems
-	}
-	return
-}
-
-func renderProvidersTab(pv ProviderViewState, termHeight int) string {
+func renderProvidersTab(ctx ViewContext) string {
+	pv := ctx.Providers
 	var b strings.Builder
 
 	if pv.Loading && pv.Total > 0 {
@@ -987,7 +957,18 @@ func renderProvidersTab(pv ProviderViewState, termHeight int) string {
 
 	b.WriteString(renderVersionDistribution(pv.Providers, pv.Versions, pv.Selected))
 	b.WriteString("\n\n")
-	b.WriteString(renderProviderList(pv.Providers, pv.Selected, termHeight, pv.ScrollPos, pv.Detail.SelectedIdx))
+
+	filtered := filterNonLocalProviders(pv.Providers)
+	if len(filtered) == 0 {
+		b.WriteString(mutedStyle.Render("No providers found"))
+		return b.String()
+	}
+
+	matchCount := countVersionMatches(filtered, pv.Selected)
+	header := headerStyle.Render(fmt.Sprintf("Providers (%d total, %d on %s)", len(filtered), matchCount, pv.Selected))
+	b.WriteString(header)
+	b.WriteString("\n")
+	b.WriteString(ctx.ProviderTable.View())
 
 	return b.String()
 }
@@ -1052,47 +1033,6 @@ func filterNonLocalProviders(providers []rpc.Provider) []rpc.Provider {
 		}
 	}
 	return filtered
-}
-
-func renderProviderList(providers []rpc.Provider, selectedVersion string, termHeight, scrollPos, selectedIdx int) string {
-	filtered := filterNonLocalProviders(providers)
-	if len(filtered) == 0 {
-		return mutedStyle.Render("No providers found")
-	}
-
-	visibleRows := max(termHeight-providerListOverhead, 5)
-	if len(filtered) > visibleRows {
-		visibleRows -= 2
-	}
-
-	matchCount := countVersionMatches(filtered, selectedVersion)
-	header := headerStyle.Render(fmt.Sprintf("Providers (%d total, %d on %s)", len(filtered), matchCount, selectedVersion))
-
-	colHeader := fmt.Sprintf("    %s  %s  %s  %s  %s  %s  %s",
-		mutedStyle.Render(fmt.Sprintf("%-*s", colWidthIndex, "#")),
-		mutedStyle.Render(fmt.Sprintf("%-*s", colWidthProvider, "Provider")),
-		mutedStyle.Render(fmt.Sprintf("%-*s", colWidthVersion, "Version")),
-		mutedStyle.Render(fmt.Sprintf("%*s", colWidthCPU, "CPU")),
-		mutedStyle.Render(fmt.Sprintf("%*s", colWidthMem, "Memory")),
-		mutedStyle.Render(fmt.Sprintf("%-*s", colWidthGPU, "GPU")),
-		mutedStyle.Render(fmt.Sprintf("%-*s", colWidthCountry, "Loc")))
-
-	var lines []string
-	lines = append(lines, colHeader)
-
-	startIdx, endIdx := scrollRange(scrollPos, visibleRows, len(filtered))
-
-	for i := startIdx; i < endIdx; i++ {
-		isRowSelected := i == selectedIdx
-		lines = append(lines, renderProviderRow(filtered[i], i+1, selectedVersion, isRowSelected))
-	}
-
-	if len(filtered) > visibleRows {
-		lines = append(lines, "", mutedStyle.Render(fmt.Sprintf(
-			"Showing %d-%d of %d (↑/↓ or j/k to scroll, Enter for details)", startIdx+1, endIdx, len(filtered))))
-	}
-
-	return header + "\n" + strings.Join(lines, "\n")
 }
 
 func countVersionMatches(providers []rpc.Provider, version string) int {
@@ -1218,7 +1158,8 @@ func versionMarker(isSelected bool) string {
 }
 
 // renderProviderDetailView renders the provider detail view with node list
-func renderProviderDetailView(state ProviderDetailState, termHeight int) string {
+func renderProviderDetailView(ctx ViewContext) string {
+	state := ctx.Providers.Detail
 	var b strings.Builder
 
 	if state.Provider == nil {
@@ -1280,52 +1221,7 @@ func renderProviderDetailView(state ProviderDetailState, termHeight int) string 
 	}
 	b.WriteString(detailHeaderStyle.Render(nodeHeaderText))
 	b.WriteString("\n")
-
-	// Node table header
-	nodeHeader := fmt.Sprintf("  %s  %s  %s  %s",
-		mutedStyle.Render(fmt.Sprintf("%-20s", "Name")),
-		mutedStyle.Render(fmt.Sprintf("%14s", "CPU")),
-		mutedStyle.Render(fmt.Sprintf("%16s", "Memory")),
-		mutedStyle.Render(fmt.Sprintf("%-30s", "GPU")))
-	b.WriteString(nodeHeader)
-	b.WriteString("\n")
-
-	// Calculate visible rows for nodes
-	visibleRows := max(termHeight-nodeListOverhead, minVisibleNodes)
-
-	startIdx := state.ScrollPos
-	endIdx := min(startIdx+visibleRows, len(state.Nodes))
-
-	for i := startIdx; i < endIdx; i++ {
-		node := state.Nodes[i]
-		cpuNodeStr := formatResourceRatio(node.CPUAvailable/1000, node.CPUAllocatable/1000)
-		memNodeStr := formatMemoryRatio(node.MemAvailable, node.MemAllocatable)
-
-		nodeName := node.Name
-		if nodeName == "" {
-			nodeName = fmt.Sprintf("node-%d", i+1)
-		}
-		if len(nodeName) > colWidthNodeName {
-			nodeName = nodeName[:colWidthNodeName-3] + "..."
-		}
-
-		// Format GPU info
-		gpuStr := formatNodeGPU(node)
-
-		line := fmt.Sprintf("  %s  %s  %s  %s",
-			monikerStyle.Render(fmt.Sprintf("%-*s", colWidthNodeName, nodeName)),
-			detailValueStyle.Render(fmt.Sprintf("%14s", cpuNodeStr)),
-			detailValueStyle.Render(fmt.Sprintf("%16s", memNodeStr)),
-			formatGPUDisplay(gpuStr, node.GPUAllocatable > 0))
-		b.WriteString(line)
-		b.WriteString("\n")
-	}
-
-	// Scroll indicator
-	if len(state.Nodes) > visibleRows {
-		b.WriteString("\n")
-		b.WriteString(mutedStyle.Render(fmt.Sprintf("Showing %d-%d of %d nodes", startIdx+1, endIdx, len(state.Nodes))))
-	}
+	b.WriteString(ctx.NodeTable.View())
 
 	return b.String()
 }
@@ -1486,110 +1382,25 @@ func formatBytes(bytes uint64) string {
 	return fmt.Sprintf("%dMi", bytes/Mi)
 }
 
-func renderGovernanceTab(params *governance.AllParams, height int, selectedModule int, scrollPos int) string {
-	var b strings.Builder
-
+func renderGovernanceTab(ctx ViewContext) string {
+	params := ctx.GovernanceParams
 	if params == nil {
-		b.WriteString(errorStyle.Render("Loading governance parameters..."))
-		return b.String()
+		return errorStyle.Render("Loading governance parameters...")
 	}
 
+	var b strings.Builder
 	b.WriteString(headerStyle.Render("Governance Parameters") + "\n")
 	b.WriteString(mutedStyle.Render("j/k: select module, h/l: scroll params") + "\n\n")
 
-	moduleList := governance.ModuleOrder
-	moduleColWidth := 20
-	visibleRows := height - 3
-	if visibleRows < 5 {
-		visibleRows = 5
-	}
+	// Two-column layout: module list on left, params on right.
+	leftCol := ctx.GovModuleList.View()
+	rightCol := ctx.GovParamView.View()
 
-	// Calculate which modules are visible (center selection)
-	startModule := 0
-	if len(moduleList) > visibleRows-1 {
-		startModule = selectedModule - (visibleRows-1)/2
-		if startModule < 0 {
-			startModule = 0
-		}
-		if startModule+(visibleRows-1) > len(moduleList) {
-			startModule = len(moduleList) - (visibleRows - 1)
-		}
-	}
+	moduleColWidth := 22
+	leftStyled := lipgloss.NewStyle().Width(moduleColWidth).Render(leftCol)
+	rightStyled := lipgloss.NewStyle().Width(ctx.Width - moduleColWidth).Render(rightCol)
 
-	// Get parameters for selected module — rendered via pretty formatters
-	// for visual parity with CLI `--output pretty` (SPEC §10.8).
-	var paramLines []string
-	if selectedModule >= 0 && selectedModule < len(moduleList) {
-		module := moduleList[selectedModule]
-		modParams := params.Modules[module]
-		if modParams != nil && modParams.Error == nil {
-			rendered := pretty.RenderModuleParamsFromJSON(module, modParams.RawJSON)
-			paramLines = strings.Split(rendered, "\n")
-		}
-	}
-
-	// Apply scroll to parameters
-	if scrollPos < 0 {
-		scrollPos = 0
-	}
-	if len(paramLines) > 0 && scrollPos >= len(paramLines) {
-		scrollPos = len(paramLines) - 1
-	}
-
-	// Render each row
-	for row := 0; row < visibleRows; row++ {
-		moduleIdx := startModule + row
-		leftCol := ""
-
-		// Left column - module list
-		if moduleIdx < len(moduleList) {
-			module := moduleList[moduleIdx]
-			displayName := governance.GetModuleDisplayName(module)
-			modParams := params.Modules[module]
-
-			if moduleIdx == selectedModule {
-				leftCol = glyphs.G().Cursor + " " + displayName
-			} else {
-				leftCol = "  " + displayName
-			}
-
-			if modParams != nil && modParams.Error != nil {
-				leftCol += " (err)"
-			}
-
-			// Pad to column width (use rune count, not byte length,
-			// because the cursor glyph may differ in byte/rune count vs display width).
-			if runeLen := len([]rune(leftCol)); runeLen < moduleColWidth {
-				leftCol += strings.Repeat(" ", moduleColWidth-runeLen)
-			}
-		} else {
-			leftCol = strings.Repeat(" ", moduleColWidth)
-		}
-
-		// Right column - ALL parameters (scrolled from top)
-		rightCol := ""
-		paramLineIdx := row + scrollPos
-
-		if selectedModule >= 0 && selectedModule < len(moduleList) {
-			modParams := params.Modules[moduleList[selectedModule]]
-
-			if modParams == nil {
-				rightCol = "(no data)"
-			} else if modParams.Error != nil {
-				rightCol = fmt.Sprintf("Error: %v", modParams.Error)
-			} else if paramLineIdx >= 0 && paramLineIdx < len(paramLines) {
-				rightCol = paramLines[paramLineIdx]
-			}
-		}
-
-		b.WriteString(leftCol + rightCol + "\n")
-	}
-
-	// Add scroll indicator only when params don't fit and user has scrolled
-	if len(paramLines) > visibleRows-3 && scrollPos > 0 {
-		b.WriteString(strings.Repeat(" ", moduleColWidth))
-		b.WriteString(fmt.Sprintf("[%d/%d lines]", scrollPos+visibleRows-2, len(paramLines)))
-	}
+	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, leftStyled, rightStyled))
 
 	return b.String()
 }

@@ -4,12 +4,17 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	"charm.land/bubbles/v2/list"
+	"charm.land/bubbles/v2/table"
+	"charm.land/bubbles/v2/viewport"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/cosmos/gogoproto/jsonpb"
 
 	"pkg.akt.dev/akt/internal/monitor/cache"
@@ -172,13 +177,11 @@ type Model struct {
 	height             int
 	hubTab             HubTab               // active hub dashboard (Network, Provider, BME)
 	activeTab          Tab                  // sub-tab within the Network dashboard
-	scrollPos          int                  // for scrolling validator list
-	overviewScroll     int                  // for scrolling block history in overview tab
+	overviewScroll     int                  // scroll position for block history in overview tab
 	selectedBlock      int                  // highlighted block row (0=current, 1+=history index)
 	expandedBlock      int                  // which block is expanded (-1=none, 0=current, 1+=history)
 	expandedScroll     int                  // scroll within the expanded validator list
 	expandedValidators []BlockValidatorVote // frozen snapshot of validators for expanded block
-	validatorSelected  int                  // highlighted validator row in validators tab
 	expandedValidator  int                  // which validator is expanded (-1=none)
 	quitting           bool
 
@@ -188,9 +191,15 @@ type Model struct {
 	detail    ProviderDetail
 
 	// Governance state
-	governanceParams   *governance.AllParams
-	governanceSelected int
-	governanceScroll   int
+	governanceParams *governance.AllParams
+
+	// Bubbles component models for tables/lists/viewports
+	providerTable  table.Model
+	nodeTable      table.Model
+	validatorTable table.Model
+	blockTable     table.Model
+	govModuleList  list.Model
+	govParamView   viewport.Model
 
 	// Event bus — shared across the application; carries all typed ABCI
 	// events.  Individual dashboards subscribe and filter by type.
@@ -306,6 +315,16 @@ type ModelConfig struct {
 	Bus                pubsub.Bus // shared event bus; may be nil
 }
 
+// govModuleItem implements list.Item and list.DefaultItem for governance module names.
+type govModuleItem struct {
+	name        string
+	displayName string
+}
+
+func (i govModuleItem) Title() string       { return i.displayName }
+func (i govModuleItem) Description() string { return "" }
+func (i govModuleItem) FilterValue() string { return i.name }
+
 // NewModel creates a new UI model
 func NewModel(cfg ModelConfig) Model {
 	monikers := cfg.MonikerCache.Get()
@@ -347,6 +366,67 @@ func NewModel(cfg ModelConfig) Model {
 		},
 	}
 
+	// Initialize bubbles table components.
+	providerCols := []table.Column{
+		{Title: "#", Width: colWidthIndex},
+		{Title: "Provider", Width: colWidthProvider},
+		{Title: "Version", Width: colWidthVersion},
+		{Title: "CPU", Width: colWidthCPU},
+		{Title: "Memory", Width: colWidthMem},
+		{Title: "GPU", Width: colWidthGPU},
+		{Title: "Loc", Width: colWidthCountry},
+	}
+	m.providerTable = table.New(table.WithColumns(providerCols), table.WithFocused(true))
+
+	validatorCols := []table.Column{
+		{Title: "#", Width: 5},
+		{Title: "Validator", Width: 28},
+		{Title: "Power", Width: 18},
+		{Title: "Blocks (newest \u2190)", Width: 40},
+	}
+	m.validatorTable = table.New(table.WithColumns(validatorCols), table.WithFocused(true))
+
+	blockCols := []table.Column{
+		{Title: "Height", Width: colHeight},
+		{Title: "PV", Width: colPV},
+		{Title: "PC", Width: colPC},
+		{Title: "Elapsed", Width: colElapsed},
+		{Title: "R/S", Width: colRS},
+	}
+	m.blockTable = table.New(table.WithColumns(blockCols), table.WithFocused(true))
+
+	nodeCols := []table.Column{
+		{Title: "Node", Width: colWidthNodeName},
+		{Title: "CPU", Width: 14},
+		{Title: "Memory", Width: 16},
+		{Title: "GPU", Width: 30},
+	}
+	m.nodeTable = table.New(table.WithColumns(nodeCols), table.WithFocused(true))
+
+	// Configure table styles: transparent cell style so pre-styled
+	// strings in rows pass through; header uses muted style.
+	ts := table.DefaultStyles()
+	ts.Header = mutedStyle
+	ts.Cell = lipgloss.NewStyle()
+	ts.Selected = highlightStyle
+	m.providerTable.SetStyles(ts)
+	m.validatorTable.SetStyles(ts)
+	m.blockTable.SetStyles(ts)
+	m.nodeTable.SetStyles(ts)
+
+	// Initialize governance module list.
+	govItems := make([]list.Item, len(governance.ModuleOrder))
+	for i, mod := range governance.ModuleOrder {
+		govItems[i] = govModuleItem{name: mod, displayName: governance.GetModuleDisplayName(mod)}
+	}
+	m.govModuleList = list.New(govItems, list.NewDefaultDelegate(), 20, 20)
+	m.govModuleList.SetShowTitle(false)
+	m.govModuleList.SetShowStatusBar(false)
+	m.govModuleList.SetShowFilter(false)
+	m.govModuleList.SetShowHelp(false)
+
+	m.govParamView = viewport.New(viewport.WithWidth(60), viewport.WithHeight(20))
+
 	// Subscribe to the shared event bus if available.
 	if cfg.Bus != nil {
 		sub, err := cfg.Bus.Subscribe()
@@ -354,6 +434,8 @@ func NewModel(cfg ModelConfig) Model {
 			m.subscriber = sub
 		}
 	}
+
+	m.resizeComponents()
 
 	return m
 }
@@ -757,6 +839,8 @@ func (m *Model) rebuildProviderList() {
 		m.providers.Version = m.providers.Versions[0]
 		m.providers.VersionIdx = 0
 	}
+
+	m.rebuildProviderTableRows()
 }
 
 // sortProviders re-sorts the provider list based on selected version
@@ -777,6 +861,193 @@ func (m *Model) sortProviders() {
 		}
 		return m.providers.Items[i].HostURI < m.providers.Items[j].HostURI
 	})
+}
+
+// rebuildProviderTableRows rebuilds the provider table rows from current data.
+func (m *Model) rebuildProviderTableRows() {
+	filtered := filterNonLocalProviders(m.providers.Items)
+	rows := make([]table.Row, len(filtered))
+	for i, p := range filtered {
+		country := p.Country
+		if country == "" {
+			country = "--"
+		}
+		rows[i] = table.Row{
+			fmt.Sprintf("%d", i+1),
+			formatProviderURL(p.HostURI, colWidthProvider-2),
+			p.AkashVersion,
+			formatResourceRatio(p.CPUAvailable/1000, p.CPUTotal/1000),
+			formatMemoryRatio(p.MemAvailable, p.MemTotal),
+			formatProviderGPU(p),
+			country,
+		}
+	}
+	m.providerTable.SetRows(rows)
+	m.providerTable.UpdateViewport()
+}
+
+// rebuildValidatorTableRows rebuilds the validator table rows from current state.
+func (m *Model) rebuildValidatorTableRows() {
+	if m.state == nil || len(m.state.Validators) == 0 {
+		m.validatorTable.SetRows(nil)
+		m.validatorTable.UpdateViewport()
+		return
+	}
+	nameW := 28
+	blocksW := max(m.width-5-nameW-18-7, 20)
+	rows := make([]table.Row, len(m.state.Validators))
+	for i, v := range m.state.Validators {
+		displayName := getValidatorDisplayName(v, m.monikers)
+		if len(displayName) > nameW {
+			displayName = displayName[:nameW-3] + "..."
+		}
+		power := formatPower(v.VotingPower)
+		pct := ""
+		if m.state.TotalVotingPower > 0 {
+			pct = fmt.Sprintf("%.1f%%", float64(v.VotingPower)/float64(m.state.TotalVotingPower)*100)
+		}
+		powerCell := fmt.Sprintf("%s %s", power, pct)
+		hist := m.valSignHistory[v.Index]
+		bar := renderSigningBar(hist, v.Index, m.proposerHistory, -1, blocksW)
+
+		rows[i] = table.Row{
+			fmt.Sprintf("%d", v.Index),
+			displayName,
+			powerCell,
+			bar,
+		}
+	}
+	m.validatorTable.SetRows(rows)
+	m.validatorTable.UpdateViewport()
+}
+
+// blockRowForTable holds data for a single block row in the table.
+type blockRowForTable struct {
+	height    int64
+	pvPct     float64
+	pcPct     float64
+	elapsed   time.Duration
+	round     int
+	step      int
+	isCurrent bool
+}
+
+// rebuildBlockTableRows rebuilds the block table rows, with the current
+// (live) block as the first row followed by completed history blocks.
+func (m *Model) rebuildBlockTableRows() {
+	var allBlocks []blockRowForTable
+
+	// Current live block is always the first row.
+	if m.state != nil && m.state.Height > 0 {
+		elapsed := m.state.Elapsed
+		if elapsed < 0 {
+			elapsed = 0
+		}
+		allBlocks = append(allBlocks, blockRowForTable{
+			height:    m.state.Height,
+			pvPct:     m.state.PrevotePercent,
+			pcPct:     m.state.PrecommitPercent,
+			elapsed:   elapsed,
+			round:     m.state.Round,
+			step:      m.state.Step,
+			isCurrent: true,
+		})
+	}
+
+	// History blocks follow.
+	for _, rec := range m.blockHistory {
+		allBlocks = append(allBlocks, blockRowForTable{
+			height:    rec.Height,
+			pvPct:     rec.PrevotePercent,
+			pcPct:     rec.PrecommitPercent,
+			elapsed:   rec.Elapsed,
+			round:     rec.Round,
+			step:      rec.Step,
+			isCurrent: false,
+		})
+	}
+
+	if len(allBlocks) == 0 {
+		m.blockTable.SetRows(nil)
+		m.blockTable.UpdateViewport()
+		return
+	}
+
+	rows := make([]table.Row, len(allBlocks))
+	for i, blk := range allBlocks {
+		marker := "  "
+		if blk.isCurrent {
+			marker = "* "
+		}
+		var elapsedStr string
+		if blk.elapsed > 0 || blk.isCurrent {
+			elapsedStr = formatDuration(blk.elapsed)
+		} else {
+			elapsedStr = "-"
+		}
+		rows[i] = table.Row{
+			marker + formatNumber(blk.height),
+			fmt.Sprintf("%.1f%%", blk.pvPct*100),
+			fmt.Sprintf("%.1f%%", blk.pcPct*100),
+			elapsedStr,
+			fmt.Sprintf("%d/%d", blk.round, blk.step),
+		}
+	}
+	m.blockTable.SetRows(rows)
+	m.blockTable.UpdateViewport()
+}
+
+// rebuildNodeTableRows rebuilds the node table rows for provider detail.
+func (m *Model) rebuildNodeTableRows() {
+	if len(m.detail.Nodes) == 0 {
+		m.nodeTable.SetRows(nil)
+		m.nodeTable.UpdateViewport()
+		return
+	}
+	rows := make([]table.Row, len(m.detail.Nodes))
+	for i, node := range m.detail.Nodes {
+		nodeName := node.Name
+		if nodeName == "" {
+			nodeName = fmt.Sprintf("node-%d", i+1)
+		}
+		if len(nodeName) > colWidthNodeName {
+			nodeName = nodeName[:colWidthNodeName-3] + "..."
+		}
+		cpuStr := formatResourceRatio(node.CPUAvailable/1000, node.CPUAllocatable/1000)
+		memStr := formatMemoryRatio(node.MemAvailable, node.MemAllocatable)
+		gpuStr := formatNodeGPU(node)
+
+		rows[i] = table.Row{
+			nodeName,
+			cpuStr,
+			memStr,
+			gpuStr,
+		}
+	}
+	m.nodeTable.SetRows(rows)
+	m.nodeTable.UpdateViewport()
+}
+
+// updateGovParamView updates the governance parameter viewport content
+// based on the currently selected module in govModuleList.
+func (m *Model) updateGovParamView() {
+	idx := m.govModuleList.Index()
+	if idx < 0 || idx >= len(governance.ModuleOrder) || m.governanceParams == nil {
+		m.govParamView.SetContent("")
+		return
+	}
+	module := governance.ModuleOrder[idx]
+	modParams := m.governanceParams.Modules[module]
+	if modParams == nil {
+		m.govParamView.SetContent("(no data)")
+		return
+	}
+	if modParams.Error != nil {
+		m.govParamView.SetContent(fmt.Sprintf("Error: %v", modParams.Error))
+		return
+	}
+	rendered := pretty.RenderModuleParamsFromJSON(module, modParams.RawJSON)
+	m.govParamView.SetContent(rendered)
 }
 
 // buildProviderQueue builds the queue of providers to check based on priority
@@ -812,11 +1083,12 @@ func (m *Model) buildProviderQueue(activeLeaseProviders map[string]bool) {
 // Update handles messages and updates the model
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		return m.handleKeyMsg(msg)
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		m.resizeComponents()
 		return m, nil
 
 	// Render throttle: apply pending consensus state at fixed intervals.
@@ -870,6 +1142,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case monikersMsg:
 		if msg.err == nil {
 			m.monikers = msg.monikers
+			m.rebuildValidatorTableRows()
 		}
 		return m, nil
 	case initialSigningMsg:
@@ -990,7 +1263,7 @@ func (m *Model) prependOracleEvent(typ, denom, detail string, ts time.Time) {
 	}
 }
 
-func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleKeyMsg(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	// Handle detail view keys first
 	if m.detail.Showing {
 		return m.handleDetailViewKeys(msg)
@@ -1020,7 +1293,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "2":
 		if m.hubTab == HubNetwork {
 			m.activeTab = TabValidators
-			m.scrollPos = 0
+			m.validatorTable.SetCursor(0)
 			m.expandedValidator = -1
 		}
 	case "3":
@@ -1034,77 +1307,116 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.hubTab = (m.hubTab - 1 + HubTab(hubTabCount)) % HubTab(hubTabCount)
 		m.resetScrollForTab()
 	case "up", "k":
-		if m.activeTab == TabGovernance {
-			if m.governanceSelected > 0 {
-				m.governanceSelected--
-				m.governanceScroll = 0
+		var cmd tea.Cmd
+		switch {
+		case m.hubTab == HubProvider:
+			m.providerTable, cmd = m.providerTable.Update(msg)
+		case m.hubTab == HubNetwork && m.activeTab == TabGovernance:
+			oldIdx := m.govModuleList.Index()
+			m.govModuleList, cmd = m.govModuleList.Update(msg)
+			if m.govModuleList.Index() != oldIdx {
+				m.updateGovParamView()
 			}
-		} else {
-			m.scrollUp()
+		case m.hubTab == HubNetwork && m.activeTab == TabOverview:
+			if m.expandedBlock >= 0 {
+				if m.expandedScroll > 0 {
+					m.expandedScroll--
+				}
+			} else {
+				m.blockTable, cmd = m.blockTable.Update(msg)
+			}
+		case m.hubTab == HubNetwork && m.activeTab == TabValidators:
+			if m.expandedValidator < 0 {
+				m.validatorTable, cmd = m.validatorTable.Update(msg)
+			}
 		}
+		return m, cmd
 	case "down", "j":
-		if m.activeTab == TabGovernance {
-			if m.governanceSelected < len(governance.ModuleOrder)-1 {
-				m.governanceSelected++
-				m.governanceScroll = 0
+		var cmd tea.Cmd
+		switch {
+		case m.hubTab == HubProvider:
+			m.providerTable, cmd = m.providerTable.Update(msg)
+		case m.hubTab == HubNetwork && m.activeTab == TabGovernance:
+			oldIdx := m.govModuleList.Index()
+			m.govModuleList, cmd = m.govModuleList.Update(msg)
+			if m.govModuleList.Index() != oldIdx {
+				m.updateGovParamView()
 			}
-		} else {
-			m.scrollDown()
+		case m.hubTab == HubNetwork && m.activeTab == TabOverview:
+			if m.expandedBlock >= 0 {
+				m.expandedScroll++
+			} else {
+				m.blockTable, cmd = m.blockTable.Update(msg)
+			}
+		case m.hubTab == HubNetwork && m.activeTab == TabValidators:
+			if m.expandedValidator < 0 {
+				m.validatorTable, cmd = m.validatorTable.Update(msg)
+			}
 		}
+		return m, cmd
 	case "home", "g":
-		m.scrollPos = 0
-		m.overviewScroll = 0
-		m.validatorSelected = 0
-		m.providers.ScrollPos = 0
-		m.providers.SelectedIdx = 0
-		if m.activeTab == TabGovernance {
-			m.governanceSelected = 0
-			m.governanceScroll = 0
+		var cmd tea.Cmd
+		switch {
+		case m.hubTab == HubProvider:
+			m.providerTable, cmd = m.providerTable.Update(msg)
+		case m.hubTab == HubNetwork && m.activeTab == TabGovernance:
+			m.govModuleList, cmd = m.govModuleList.Update(msg)
+			m.updateGovParamView()
+		case m.hubTab == HubNetwork && m.activeTab == TabOverview:
+			m.blockTable.SetCursor(0)
+		case m.hubTab == HubNetwork && m.activeTab == TabValidators:
+			m.validatorTable, cmd = m.validatorTable.Update(msg)
 		}
+		return m, cmd
 	case "end", "G":
-		m.scrollToEnd()
-		if m.activeTab == TabGovernance {
-			m.governanceSelected = len(governance.ModuleOrder) - 1
-			m.governanceScroll = 0
+		var cmd tea.Cmd
+		switch {
+		case m.hubTab == HubProvider:
+			m.providerTable, cmd = m.providerTable.Update(msg)
+		case m.hubTab == HubNetwork && m.activeTab == TabGovernance:
+			m.govModuleList, cmd = m.govModuleList.Update(msg)
+			m.updateGovParamView()
+		case m.hubTab == HubNetwork && m.activeTab == TabOverview:
+			m.blockTable, cmd = m.blockTable.Update(msg)
+		case m.hubTab == HubNetwork && m.activeTab == TabValidators:
+			m.validatorTable, cmd = m.validatorTable.Update(msg)
 		}
+		return m, cmd
 	case "left", "h":
-		if m.activeTab == TabOverview && m.expandedBlock >= 0 {
+		if m.hubTab == HubNetwork && m.activeTab == TabOverview && m.expandedBlock >= 0 {
 			m.expandedBlock = -1
 			m.expandedScroll = 0
 			m.expandedValidators = nil
-		} else if m.activeTab == TabGovernance {
-			if m.governanceScroll > 0 {
-				m.governanceScroll--
+			return m, nil
+		} else if m.hubTab == HubNetwork && m.activeTab == TabValidators && m.expandedValidator >= 0 {
+			m.expandedValidator = -1
+			return m, nil
+		} else if m.hubTab == HubNetwork && m.activeTab == TabGovernance {
+			if m.govParamView.YOffset() > 0 {
+				m.govParamView.SetYOffset(m.govParamView.YOffset() - 1)
 			}
 		}
 	case "right", "l":
-		if m.activeTab == TabGovernance {
-			// Only allow scrolling if params don't fit in window
-			if m.governanceParams != nil && m.governanceSelected < len(governance.ModuleOrder) {
-				module := governance.ModuleOrder[m.governanceSelected]
-				if modParams, ok := m.governanceParams.Modules[module]; ok && modParams != nil && modParams.Error == nil {
-					rendered := pretty.RenderModuleParamsFromJSON(module, modParams.RawJSON)
-					paramLines := len(strings.Split(rendered, "\n"))
-					maxVisible := m.height - 6
-					if paramLines > maxVisible {
-						m.governanceScroll++
-					}
-				}
-			}
+		if m.hubTab == HubNetwork && m.activeTab == TabGovernance {
+			m.govParamView.SetYOffset(m.govParamView.YOffset() + 1)
 		}
 	case "enter":
-		if m.activeTab == TabOverview {
+		if m.hubTab == HubProvider {
+			return m.enterProviderDetail()
+		} else if m.hubTab == HubNetwork && m.activeTab == TabOverview {
 			m.toggleBlockExpansion()
-		} else if m.activeTab == TabValidators {
+		} else if m.hubTab == HubNetwork && m.activeTab == TabValidators {
 			m.toggleValidatorExpansion()
 		}
 	case "esc", "backspace":
-		if m.activeTab == TabOverview && m.expandedBlock >= 0 {
+		if m.hubTab == HubNetwork && m.activeTab == TabOverview && m.expandedBlock >= 0 {
 			m.expandedBlock = -1
 			m.expandedScroll = 0
 			m.expandedValidators = nil
-		} else if m.activeTab == TabValidators && m.expandedValidator >= 0 {
+			return m, nil
+		} else if m.hubTab == HubNetwork && m.activeTab == TabValidators && m.expandedValidator >= 0 {
 			m.expandedValidator = -1
+			return m, nil
 		} else if m.embedded {
 			return m, func() tea.Msg { return BackMsg{} }
 		}
@@ -1112,7 +1424,7 @@ func (m *Model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *Model) handleDetailViewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *Model) handleDetailViewKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		m.quitting = true
@@ -1131,17 +1443,9 @@ func (m *Model) handleDetailViewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.detail.Provider = nil
 		m.detail.Error = nil
 		m.detail.Loading = false
-		m.detail.ScrollPos = 0
-	case "up", "k":
-		if m.detail.ScrollPos > 0 {
-			m.detail.ScrollPos--
-		}
-	case "down", "j":
-		m.scrollDetailDown()
-	case "home", "g":
-		m.detail.ScrollPos = 0
-	case "end", "G":
-		m.scrollDetailToEnd()
+		m.nodeTable.SetCursor(0)
+	case "up", "k", "down", "j", "home", "g", "end", "G":
+		m.nodeTable, _ = m.nodeTable.Update(msg)
 	case "1", "2", "3", "4", "tab":
 		// Exit detail view and switch tabs
 		m.detail.Showing = false
@@ -1149,7 +1453,7 @@ func (m *Model) handleDetailViewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.detail.Provider = nil
 		m.detail.Error = nil
 		m.detail.Loading = false
-		m.detail.ScrollPos = 0
+		m.nodeTable.SetCursor(0)
 		// Re-handle the key for tab switching
 		return m.handleKeyMsg(msg)
 	}
@@ -1157,87 +1461,8 @@ func (m *Model) handleDetailViewKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *Model) resetScrollForTab() {
-	if m.activeTab == TabValidators {
-		m.scrollPos = 0
-	}
-}
-
-func (m *Model) scrollUp() {
-	switch m.activeTab {
-	case TabOverview:
-		if m.expandedBlock >= 0 {
-			// Scroll within expanded validator list.
-			if m.expandedScroll > 0 {
-				m.expandedScroll--
-			}
-		} else {
-			// Move block selection up.
-			if m.selectedBlock > 0 {
-				m.selectedBlock--
-				m.ensureBlockVisible()
-			}
-		}
-	case TabValidators:
-		if m.expandedValidator >= 0 {
-			// Nothing to scroll within expanded detail for now.
-		} else if m.validatorSelected > 0 {
-			m.validatorSelected--
-			m.ensureValidatorVisible()
-		}
-	}
-}
-
-func (m *Model) scrollDown() {
-	switch m.activeTab {
-	case TabOverview:
-		if m.expandedBlock >= 0 {
-			// Scroll within expanded validator list.
-			m.expandedScroll++
-		} else {
-			// Move block selection down.
-			maxBlock := len(m.blockHistory) // 0=current, 1..N=history
-			if m.selectedBlock < maxBlock {
-				m.selectedBlock++
-				m.ensureBlockVisible()
-			}
-		}
-	case TabValidators:
-		if m.expandedValidator >= 0 {
-			// Nothing to scroll within expanded detail for now.
-		} else if m.state != nil && m.validatorSelected < len(m.state.Validators)-1 {
-			m.validatorSelected++
-			m.ensureValidatorVisible()
-		}
-	}
-}
-
-func (m *Model) moveProviderSelection(delta int) {
-	filtered := m.getFilteredProviders()
-	if len(filtered) == 0 {
-		return
-	}
-
-	m.providers.SelectedIdx += delta
-	if m.providers.SelectedIdx < 0 {
-		m.providers.SelectedIdx = 0
-	} else if m.providers.SelectedIdx >= len(filtered) {
-		m.providers.SelectedIdx = len(filtered) - 1
-	}
-
-	m.ensureSelectionVisible()
-}
-
-func (m *Model) ensureSelectionVisible() {
-	visibleRows := max(m.height-providerListOverhead, 5)
-	if len(m.getFilteredProviders()) > visibleRows {
-		visibleRows -= 2
-	}
-
-	if m.providers.SelectedIdx < m.providers.ScrollPos {
-		m.providers.ScrollPos = m.providers.SelectedIdx
-	} else if m.providers.SelectedIdx >= m.providers.ScrollPos+visibleRows {
-		m.providers.ScrollPos = m.providers.SelectedIdx - visibleRows + 1
-	}
+	m.validatorTable.SetCursor(0)
+	m.blockTable.SetCursor(0)
 }
 
 func (m *Model) getFilteredProviders() []rpc.Provider {
@@ -1245,18 +1470,18 @@ func (m *Model) getFilteredProviders() []rpc.Provider {
 }
 
 func (m *Model) toggleBlockExpansion() {
-	if m.expandedBlock == m.selectedBlock {
+	cursor := m.blockTable.Cursor()
+	if m.expandedBlock == cursor {
 		// Collapse.
 		m.expandedBlock = -1
 		m.expandedScroll = 0
 		m.expandedValidators = nil
 	} else {
-		// Expand — freeze a snapshot of the validator votes.
-		m.expandedBlock = m.selectedBlock
+		// Expand.
+		m.expandedBlock = cursor
 		m.expandedScroll = 0
-
-		if m.selectedBlock == 0 && m.state != nil {
-			// Current live block — snapshot from state.
+		if cursor == 0 && m.state != nil {
+			// Current block — snapshot live validators.
 			m.expandedValidators = make([]BlockValidatorVote, len(m.state.Validators))
 			for i, v := range m.state.Validators {
 				m.expandedValidators[i] = BlockValidatorVote{
@@ -1268,63 +1493,24 @@ func (m *Model) toggleBlockExpansion() {
 					Precommited: v.Precommited,
 				}
 			}
-		} else if m.selectedBlock > 0 && m.selectedBlock-1 < len(m.blockHistory) {
-			// History block — copy from record.
-			m.expandedValidators = m.blockHistory[m.selectedBlock-1].Validators
+		} else if cursor > 0 {
+			histIdx := cursor - 1
+			if histIdx < len(m.blockHistory) {
+				m.expandedValidators = m.blockHistory[histIdx].Validators
+			}
 		}
 	}
+	m.resizeComponents()
 }
 
 func (m *Model) toggleValidatorExpansion() {
-	if m.expandedValidator == m.validatorSelected {
+	cursor := m.validatorTable.Cursor()
+	if m.expandedValidator == cursor {
 		m.expandedValidator = -1
 	} else {
-		m.expandedValidator = m.validatorSelected
+		m.expandedValidator = cursor
 	}
-}
-
-func (m *Model) ensureBlockVisible() {
-	// selectedBlock 0 = current (always visible, pinned).
-	// selectedBlock 1+ maps to history index (selectedBlock-1).
-	if m.selectedBlock == 0 {
-		return
-	}
-	histIdx := m.selectedBlock - 1
-	visibleRows := max(m.height-overviewOverhead, 3)
-	if m.expandedBlock >= 0 {
-		visibleRows = max(visibleRows/3, 2)
-	}
-
-	if histIdx < m.overviewScroll {
-		m.overviewScroll = histIdx
-	} else if histIdx >= m.overviewScroll+visibleRows {
-		m.overviewScroll = histIdx - visibleRows + 1
-	}
-}
-
-func (m *Model) ensureValidatorVisible() {
-	if m.state == nil {
-		return
-	}
-	visibleRows := max(m.height-14, 5)
-	if m.validatorSelected < m.scrollPos {
-		m.scrollPos = m.validatorSelected
-	} else if m.validatorSelected >= m.scrollPos+visibleRows {
-		m.scrollPos = m.validatorSelected - visibleRows + 1
-	}
-}
-
-func (m *Model) scrollToEnd() {
-	switch m.activeTab {
-	case TabOverview:
-		m.selectedBlock = len(m.blockHistory)
-		m.ensureBlockVisible()
-	case TabValidators:
-		if m.state != nil {
-			m.validatorSelected = len(m.state.Validators) - 1
-			m.ensureValidatorVisible()
-		}
-	}
+	m.resizeComponents()
 }
 
 func (m *Model) selectPreviousVersion() {
@@ -1336,9 +1522,9 @@ func (m *Model) selectPreviousVersion() {
 		m.providers.VersionIdx = len(m.providers.Versions) - 1
 	}
 	m.providers.Version = m.providers.Versions[m.providers.VersionIdx]
-	m.providers.ScrollPos = 0
-	m.providers.SelectedIdx = 0
+	m.providerTable.SetCursor(0)
 	m.sortProviders()
+	m.rebuildProviderTableRows()
 }
 
 func (m *Model) selectNextVersion() {
@@ -1347,24 +1533,24 @@ func (m *Model) selectNextVersion() {
 	}
 	m.providers.VersionIdx = (m.providers.VersionIdx + 1) % len(m.providers.Versions)
 	m.providers.Version = m.providers.Versions[m.providers.VersionIdx]
-	m.providers.ScrollPos = 0
-	m.providers.SelectedIdx = 0
+	m.providerTable.SetCursor(0)
 	m.sortProviders()
+	m.rebuildProviderTableRows()
 }
 
 func (m *Model) enterProviderDetail() (tea.Model, tea.Cmd) {
 	filtered := m.getFilteredProviders()
-	if len(filtered) == 0 || m.providers.SelectedIdx >= len(filtered) {
+	idx := m.providerTable.Cursor()
+	if len(filtered) == 0 || idx >= len(filtered) {
 		return m, nil
 	}
 
-	provider := filtered[m.providers.SelectedIdx]
+	provider := filtered[idx]
 	m.detail.Provider = &provider
 	m.detail.Loading = true
 	m.detail.Error = nil
 	m.detail.Nodes = nil
 	m.detail.Showing = true
-	m.detail.ScrollPos = 0
 
 	return m, m.fetchProviderDetail(provider.HostURI)
 }
@@ -1380,25 +1566,13 @@ func (m *Model) fetchProviderDetail(hostURI string) tea.Cmd {
 	}
 }
 
-func (m *Model) scrollDetailDown() {
-	visibleRows := max(m.height-nodeListOverhead, minVisibleNodes)
-	maxScroll := max(len(m.detail.Nodes)-visibleRows, 0)
-	if m.detail.ScrollPos < maxScroll {
-		m.detail.ScrollPos++
-	}
-}
-
-func (m *Model) scrollDetailToEnd() {
-	visibleRows := max(m.height-nodeListOverhead, minVisibleNodes)
-	m.detail.ScrollPos = max(len(m.detail.Nodes)-visibleRows, 0)
-}
-
 func (m *Model) handleProviderDetailMsg(msg providerDetailMsg) (tea.Model, tea.Cmd) {
 	m.detail.Loading = false
 	if msg.err != nil {
 		m.detail.Error = msg.err
 	} else {
 		m.detail.Nodes = msg.nodes
+		m.rebuildNodeTableRows()
 	}
 	return m, nil
 }
@@ -1406,6 +1580,7 @@ func (m *Model) handleProviderDetailMsg(msg providerDetailMsg) (tea.Model, tea.C
 func (m *Model) handleGovernanceParamsMsg(msg governanceParamsMsg) (tea.Model, tea.Cmd) {
 	if msg.err == nil {
 		m.governanceParams = msg.params
+		m.updateGovParamView()
 	}
 	return m, nil
 }
@@ -1634,6 +1809,8 @@ func (m *Model) handleStateMsg(msg stateMsg) (tea.Model, tea.Cmd) {
 
 	m.state = newState
 	m.applyProposerToState()
+	m.rebuildValidatorTableRows()
+	m.rebuildBlockTableRows()
 	return m, nil
 }
 
@@ -1683,11 +1860,55 @@ func (m *Model) removeFromQueue(owner string) {
 	}
 }
 
-// View renders the UI
-func (m Model) View() string {
-	if m.quitting {
-		return "Goodbye!\n"
+// resizeComponents updates all bubbles component dimensions based on
+// the current terminal size. Must be called from Update (pointer receiver)
+// whenever the terminal size changes or the layout state changes (e.g.
+// expanded panels toggling).
+func (m *Model) resizeComponents() {
+	validatorRows := max(m.height-14, 5)
+	if m.expandedValidator >= 0 {
+		validatorRows = max(validatorRows/2, 3)
 	}
+	m.validatorTable.SetHeight(validatorRows)
+	m.validatorTable.SetWidth(m.width)
+	m.validatorTable.UpdateViewport()
+
+	blockRows := max(m.height-overviewOverhead, 3)
+	if m.expandedBlock >= 0 {
+		blockRows = max(blockRows/3, 2)
+	}
+	m.blockTable.SetHeight(blockRows)
+	m.blockTable.SetWidth(m.width)
+	m.blockTable.UpdateViewport()
+
+	providerRows := max(m.height-providerListOverhead, minVisibleProviders)
+	m.providerTable.SetHeight(providerRows)
+	m.providerTable.SetWidth(m.width)
+	m.providerTable.UpdateViewport()
+
+	nodeRows := max(m.height-nodeListOverhead, minVisibleNodes)
+	m.nodeTable.SetHeight(nodeRows)
+	m.nodeTable.SetWidth(m.width)
+	m.nodeTable.UpdateViewport()
+
+	govHeight := m.height - 6
+	if govHeight < 5 {
+		govHeight = 5
+	}
+	m.govModuleList.SetHeight(govHeight)
+	m.govParamView.SetHeight(govHeight)
+	m.govParamView.SetWidth(m.width - 22)
+}
+
+// View renders the UI
+func (m Model) View() tea.View {
+	if m.quitting {
+		return tea.NewView("Goodbye!\n")
+	}
+
+	// Component heights are set in resizeComponents() called from Update().
+	// Table rows are rebuilt in Update() handlers; do not rebuild here
+	// because View() is a value-receiver and mutations would be lost.
 
 	ctx := ViewContext{
 		State:              m.state,
@@ -1698,42 +1919,39 @@ func (m Model) View() string {
 		ActiveTab:          m.activeTab,
 		Embedded:           m.embedded,
 		Monikers:           m.monikers,
-		ScrollPos:          m.scrollPos,
 		GovernanceParams:   m.governanceParams,
-		GovernanceSelected: m.governanceSelected,
-		GovernanceScroll:   m.governanceScroll,
 		BlockHistory:       m.blockHistory,
-		OverviewScroll:     m.overviewScroll,
-		SelectedBlock:      m.selectedBlock,
 		ExpandedBlock:      m.expandedBlock,
 		ExpandedScroll:     m.expandedScroll,
 		ExpandedValidators: m.expandedValidators,
-		ValidatorSelected:  m.validatorSelected,
 		ExpandedValidator:  m.expandedValidator,
 		ValSignHistory:     m.valSignHistory,
 		ProposerHistory:    m.proposerHistory,
 		CurrentProposer:    m.knownProposerIndex,
 		WSConnected:        m.wsConnected,
 		Oracle:             m.oracle,
+		ProviderTable:      m.providerTable,
+		NodeTable:          m.nodeTable,
+		ValidatorTable:     m.validatorTable,
+		BlockTable:         m.blockTable,
+		GovModuleList:      m.govModuleList,
+		GovParamView:       m.govParamView,
 		Providers: ProviderViewState{
 			Providers: m.providers.Items,
 			Versions:  m.providers.Versions,
 			Selected:  m.providers.Version,
-			ScrollPos: m.providers.ScrollPos,
 			Loading:   m.loader.Loading,
 			Loaded:    m.loader.Checked,
 			Total:     m.loader.Total,
 			Detail: ProviderDetailState{
-				Showing:     m.detail.Showing,
-				Provider:    m.detail.Provider,
-				Nodes:       m.detail.Nodes,
-				Loading:     m.detail.Loading,
-				Error:       m.detail.Error,
-				ScrollPos:   m.detail.ScrollPos,
-				SelectedIdx: m.providers.SelectedIdx,
+				Showing:  m.detail.Showing,
+				Provider: m.detail.Provider,
+				Nodes:    m.detail.Nodes,
+				Loading:  m.detail.Loading,
+				Error:    m.detail.Error,
 			},
 		},
 	}
 
-	return RenderView(ctx)
+	return tea.NewView(RenderView(ctx))
 }

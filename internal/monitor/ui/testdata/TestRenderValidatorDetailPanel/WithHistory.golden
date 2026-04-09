@@ -1,0 +1,9 @@
+[38;5;8m────────────────────────────────────────────────────────────[m
+  [38;5;8mValidator:[m   [1;38;5;15mCosmostation[m
+  [38;5;8mAddress:[m     [38;5;8mABCDEF0000[m
+  [38;5;8mPubKey:[m      [38;5;8mpubkey0000[m
+  [38;5;8mPower:[m       [1;38;5;15m10.0K[m[38;5;8m (18.18%)[m
+  [38;5;8mCurrent:[m     prevote [38;5;2m+[m  precommit [38;5;2m+[m
+  [38;5;8mHistory:[m     [38;5;2m16[m signed, [1;38;5;9m4[m missed out of 20 blocks (80.0%)
+  [38;5;8mRole:[m        [1;38;5;3mCurrent Proposer *[m
+[38;5;8m  Esc: collapse[m
