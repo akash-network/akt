@@ -199,7 +199,7 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	root.PersistentFlags().String("context", "", "Active context name (overrides current-context in config)")
 	root.PersistentFlags().StringP("output", "o", "table", "Output format: table, json, yaml")
 	root.PersistentFlags().BoolP("interactive", "i", false, "Force interactive (TUI) mode even if disabled in config")
-	root.PersistentFlags().Bool("skip-font-check", false, "Deprecated: use --glyph-mode ascii instead")
+	root.PersistentFlags().Bool("skip-font-check", true, "Deprecated: use --glyph-mode ascii instead")
 	root.PersistentFlags().String("glyph-mode", "", "Glyph rendering mode: auto (default), nerd, ascii")
 
 	// Context management (includes network and keys subcommands).

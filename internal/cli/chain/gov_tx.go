@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/manifoldco/promptui"
+	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"golang.org/x/term"
@@ -513,12 +513,12 @@ func GetTxGovDraftProposalCmd() *cobra.Command {
 			}
 
 			// prompt proposal type
-			proposalTypesPrompt := promptui.Select{
-				Label: "Select proposal type",
-				Items: getProposalSuggestions(),
-			}
-
-			_, selectedProposalType, err := proposalTypesPrompt.Run()
+			var selectedProposalType string
+			err = huh.NewSelect[string]().
+				Title("Select proposal type").
+				Options(huh.NewOptions(getProposalSuggestions()...)...).
+				Value(&selectedProposalType).
+				Run()
 			if err != nil {
 				return fmt.Errorf("failed to prompt proposal types: %w", err)
 			}
@@ -534,16 +534,15 @@ func GetTxGovDraftProposalCmd() *cobra.Command {
 			// create any proposal type
 			if proposal.Name == proposalOther {
 				// prompt proposal type
-				msgPrompt := promptui.Select{
-					Label: "Select proposal message type:",
-					Items: func() []string {
-						msgs := cctx.InterfaceRegistry.ListImplementations(sdk.MsgInterfaceProtoName)
-						sort.Strings(msgs)
-						return msgs
-					}(),
-				}
+				msgTypes := cctx.InterfaceRegistry.ListImplementations(sdk.MsgInterfaceProtoName)
+				sort.Strings(msgTypes)
 
-				_, result, err := msgPrompt.Run()
+				var result string
+				err = huh.NewSelect[string]().
+					Title("Select proposal message type:").
+					Options(huh.NewOptions(msgTypes...)...).
+					Value(&result).
+					Run()
 				if err != nil {
 					return fmt.Errorf("failed to prompt proposal types: %w", err)
 				}
@@ -1496,11 +1495,13 @@ func (p *proposalType) Prompt(cdc codec.Codec, skipMetadata bool) (*ProposalMsg,
 	}
 
 	// set deposit
-	depositPrompt := promptui.Prompt{
-		Label:    "Enter proposal deposit",
-		Validate: client.ValidatePromptCoins,
-	}
-	proposal.Deposit, err = depositPrompt.Run()
+	err = huh.NewInput().
+		Title("Enter proposal deposit").
+		Value(&proposal.Deposit).
+		Validate(func(s string) error {
+			return client.ValidatePromptCoins(s)
+		}).
+		Run()
 	if err != nil {
 		return nil, metadata, fmt.Errorf("failed to set proposal deposit: %w", err)
 	}
@@ -1549,17 +1550,20 @@ func Prompt[T any](data T, namePrefix string) (T, error) {
 		}
 
 		// create prompts
-		prompt := promptui.Prompt{
-			Label:    fmt.Sprintf("Enter %s %s", namePrefix, strings.ToLower(client.CamelCaseToString(v.Type().Field(i).Name))),
-			Validate: client.ValidatePromptNotEmpty,
+		fieldName := strings.ToLower(v.Type().Field(i).Name)
+		label := fmt.Sprintf("Enter %s %s", namePrefix, strings.ToLower(client.CamelCaseToString(v.Type().Field(i).Name)))
+		validateFn := func(s string) error {
+			return client.ValidatePromptNotEmpty(s)
 		}
 
-		fieldName := strings.ToLower(v.Type().Field(i).Name)
+		var result string
 
 		if strings.EqualFold(fieldName, "authority") {
 			// pre-fill with gov address
-			prompt.Default = authtypes.NewModuleAddress(types.ModuleName).String()
-			prompt.Validate = client.ValidatePromptAddress
+			result = authtypes.NewModuleAddress(types.ModuleName).String()
+			validateFn = func(s string) error {
+				return client.ValidatePromptAddress(s)
+			}
 		}
 
 		// TODO(@julienrbrt) use scalar annotation instead of dumb string name matching
@@ -1570,10 +1574,16 @@ func Prompt[T any](data T, namePrefix string) (T, error) {
 			strings.Contains(fieldName, "granter") ||
 			strings.Contains(fieldName, "grantee") ||
 			strings.Contains(fieldName, "recipient") {
-			prompt.Validate = client.ValidatePromptAddress
+			validateFn = func(s string) error {
+				return client.ValidatePromptAddress(s)
+			}
 		}
 
-		result, err := prompt.Run()
+		err := huh.NewInput().
+			Title(label).
+			Value(&result).
+			Validate(validateFn).
+			Run()
 		if err != nil {
 			return data, fmt.Errorf("failed to prompt for %s: %w", fieldName, err)
 		}
@@ -1626,22 +1636,26 @@ func PromptMetadata(skip bool) (types.ProposalMetadata, error) {
 	}
 
 	// prompt for title and summary
-	titlePrompt := promptui.Prompt{
-		Label:    "Enter proposal title",
-		Validate: client.ValidatePromptNotEmpty,
-	}
-
-	title, err := titlePrompt.Run()
+	var title string
+	err := huh.NewInput().
+		Title("Enter proposal title").
+		Value(&title).
+		Validate(func(s string) error {
+			return client.ValidatePromptNotEmpty(s)
+		}).
+		Run()
 	if err != nil {
 		return types.ProposalMetadata{}, fmt.Errorf("failed to set proposal title: %w", err)
 	}
 
-	summaryPrompt := promptui.Prompt{
-		Label:    "Enter proposal summary",
-		Validate: client.ValidatePromptNotEmpty,
-	}
-
-	summary, err := summaryPrompt.Run()
+	var summary string
+	err = huh.NewInput().
+		Title("Enter proposal summary").
+		Value(&summary).
+		Validate(func(s string) error {
+			return client.ValidatePromptNotEmpty(s)
+		}).
+		Run()
 	if err != nil {
 		return types.ProposalMetadata{}, fmt.Errorf("failed to set proposal summary: %w", err)
 	}

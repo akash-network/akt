@@ -360,9 +360,9 @@ The active mode is controlled by the `--glyph-mode` flag (or `AKT_GLYPH_MODE` en
 
 | Value | Behavior |
 |---|---|
-| `auto` (default) | Detect Nerd Font at startup; use `nerd` if detected, `ascii` otherwise. Non-TTY always uses `ascii`. |
-| `nerd` | Force Nerd Font glyphs. Use when auto-detection produces false negatives. |
-| `ascii` | Force ASCII-safe glyphs. Use when Nerd Fonts are not installed or not desired. |
+| `auto` (default) | Uses ASCII glyphs. Font detection is disabled (see note below). |
+| `nerd` | Force Nerd Font glyphs. Use when a Nerd Font is installed and configured in the terminal. |
+| `ascii` | Force ASCII-safe glyphs. Equivalent to `auto`. |
 
 Standard Unicode characters (block drawing `█░▀`, arrows `←↑→↓`, box drawing `─`, circles `●`) are used in both modes since they render correctly in virtually all terminal fonts.
 
@@ -382,12 +382,12 @@ Standard Unicode characters (block drawing `█░▀`, arrows `←↑→↓`, b
 | `DotFilled` | `\uf111` (nf-fa-circle) | `*` | Selected version dot |
 | `DotOpen` | `\uf10c` (nf-fa-circle_o) | `o` | Unselected version dot |
 
-**Font detection** (used by `auto` mode): `akt` probes the terminal by rendering test glyphs from the Powerline (U+E0B0) and Font Awesome (U+F005) Private Use Area ranges, measuring cursor advance via ANSI Device Status Report (`\033[6n`). If both render at 1 cell width, `nerd` mode is selected. Otherwise, `ascii` mode is selected. The check is skipped when stdout is not a TTY or when `--glyph-mode` is explicitly set to `nerd` or `ascii`. The check runs at most once per process.
+**Font detection**: Disabled. The previous DSR-based terminal probe (which rendered test glyphs and measured cursor advance via `\033[6n`) put the terminal in raw mode and leaked goroutines that consumed subsequent keystrokes, breaking all interactive input. The `auto` mode now resolves to `ascii` without any terminal probing. Users who have a Nerd Font installed opt in explicitly with `--glyph-mode nerd`.
 
 | Flag | Type | Default | Description |
 |---|---|---|---|
 | `--glyph-mode` | string | `"auto"` | Glyph rendering mode: `auto`, `nerd`, `ascii` |
-| `--skip-font-check` | bool | `false` | **Deprecated.** Use `--glyph-mode ascii` instead. |
+| `--skip-font-check` | bool | `true` | **Deprecated.** No-op (font detection is disabled). Use `--glyph-mode` instead. |
 
 ---
 
@@ -2366,6 +2366,8 @@ Real-time consensus state monitoring. Polls the RPC `/consensus_state` endpoint 
 
 **Refresh interval**: Configurable, default 1s. Supports fast mode (250ms).
 
+**Components:** bubbles/progress (vote progress bars), custom (vote grid, consensus state display).
+
 #### 7.3.9 Validator Voting View (from aktop)
 
 Detailed validator list with real-time vote status.
@@ -2402,6 +2404,8 @@ Detailed validator list with real-time vote status.
 - Precommit: `✓` (green) or `✗` (red)
 
 **Actions**: j/k scroll, g/G jump to top/bottom, r refresh.
+
+**Components:** bubbles/table (validator list with selection), custom (signing history bar, proposer indicator).
 
 #### 7.3.10 Provider Fleet Monitor View (from aktop)
 
@@ -2480,6 +2484,8 @@ Real-time monitoring of all Akash providers -- version distribution, resource ut
 
 **Resource display**: CPU in cores (millicores/1000), Memory in Mi/Gi/Ti (binary units), GPU with model name and count.
 
+**Components:** bubbles/progress (scan progress bar), bubbles/table (provider list, node detail table), custom (version dot chart).
+
 #### 7.3.11 Governance Parameters View (from aktop)
 
 Module-by-module governance parameter browsing. The right pane renders pretty-formatted key-value output (same `Render*Params()` functions as CLI `--output pretty`) instead of raw JSON. This follows the Pretty/TUI visual parity rule (§10.8).
@@ -2515,6 +2521,8 @@ Module-by-module governance parameter browsing. The right pane renders pretty-fo
 **Modules displayed**: gov, mint, staking, slashing, distribution, auth, bank, deployment, market, transfer, ibc, crisis.
 
 **Refresh interval**: 5 minutes.
+
+**Components:** bubbles/list (module selector), bubbles/viewport (parameter display).
 
 #### 7.3.12 Oracle/BME Monitor View
 
@@ -2553,6 +2561,8 @@ Combined oracle price and BME state monitoring. Available as the Oracle/BME dash
 **Color coding**: Oracle health: Healthy (green), Unhealthy (red). BME status: healthy (green), warning (yellow), halt CR (red), halt Oracle (red). Mints/Refunds: Allowed (green), Halted (red).
 
 **Amount formatting**: All micro-denominated values scaled using `FormatCoin()` — same rules as pretty output (§10.7). Prices displayed with full decimal precision, trailing zeros stripped.
+
+**Components:** bubbles/viewport (scrollable content panels), shared pretty.Render* functions for CLI/TUI parity.
 
 #### 7.3.13 Additional Views
 
@@ -2777,33 +2787,33 @@ tui:
 
 ```
 App (root model)
-├── Header              (component: context info, sync status, block height)
+├── Header              (lipgloss styled string)
 ├── Navigation          (manages view stack, breadcrumbs)
 │   ├── Dashboard       (home view)
 │   ├── ResourceView    (generic, parameterized by resource type)
-│   │   ├── ResourceTable     (bubbles/table with sort, filter, pagination)
+│   │   ├── ResourceTable     (bubbles/table with custom cell renderers)
 │   │   └── DetailPane        (bubbles/viewport with YAML/JSON toggle)
 │   ├── MonitorView      (hub: Tab/Shift-Tab cycles dashboards)
 │   │   ├── NetworkDashboard   (from aktop: consensus, validators, governance)
-│   │   │   ├── ConsensusView    (height, round, step, vote progress, vote grid)
-│   │   │   ├── ValidatorView    (scrollable list, moniker, power, signing history)
-│   │   │   └── GovernanceView   (module list + JSON params)
+│   │   │   ├── ConsensusView    (bubbles/progress for vote bars, custom vote grid)
+│   │   │   ├── ValidatorView    (bubbles/table, custom signing history bar)
+│   │   │   └── GovernanceView   (bubbles/list for modules, bubbles/viewport for params)
 │   │   ├── ProviderDashboard  (from aktop: provider fleet health)
-│   │   │   ├── ScanProgress     (progress bar: X/Y checked, Z online)
-│   │   │   ├── VersionDist      (dot visualization per version, h/l to select)
-│   │   │   ├── ProviderTable    (scrollable: URL, version, CPU, memory, GPU)
-│   │   │   └── ProviderDetail   (sub-view: info + node list with GPU details)
+│   │   │   ├── ScanProgress     (bubbles/progress)
+│   │   │   ├── VersionDist      (custom dot visualization)
+│   │   │   ├── ProviderTable    (bubbles/table)
+│   │   │   └── ProviderDetail   (info + bubbles/table for nodes)
 │   │   └── OracleBMEDashboard (combined oracle prices + BME state)
-│   │       ├── AggregatedSection (per-denom TWAP, median, min/max, sources)
-│   │       ├── BMEStatusSection  (mint status, collateral ratio, thresholds)
-│   │       ├── VaultSection      (balances, burned, minted, remint credits)
-│   │       └── LedgerSection     (recent entries table)
+│   │       ├── AggregatedSection (bubbles/viewport for scrollable content)
+│   │       ├── BMEStatusSection  (pretty.RenderBMEStatus — shared with CLI)
+│   │       ├── VaultSection      (pretty.RenderBMEVault — shared with CLI)
+│   │       └── LedgerSection     (pretty.RenderBMELedger — shared with CLI)
 │   ├── LogViewer       (bubbles/viewport with auto-scroll, service filter)
 │   └── ...
-├── CommandPalette      (overlay: textinput + filtered command list, activated by : or Ctrl+P)
+├── CommandPalette      (overlay: bubbles/textinput + bubbles/list, activated by : or Ctrl+P)
 ├── ConfirmDialog       (overlay: transaction confirmation)
-├── HelpOverlay         (overlay: keybinding reference, bubbles/help)
-└── StatusBar           (component: shortcuts, last action, errors)
+├── HelpOverlay         (overlay: bubbles/help keybinding reference)
+└── StatusBar           (lipgloss styled string)
 ```
 
 ---

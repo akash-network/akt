@@ -9,19 +9,16 @@ package glyphs
 
 import (
 	"fmt"
-	"os"
 	"strings"
 	"sync"
-
-	"golang.org/x/term"
 )
 
 // Mode controls which glyph variant is used for rendering.
 type Mode string
 
 const (
-	// ModeAuto probes the terminal for Nerd Font support and selects nerd or
-	// ascii accordingly. Non-TTY always resolves to ascii.
+	// ModeAuto selects ascii glyphs (font detection is disabled).
+	// Users who have a Nerd Font can opt in with ModeNerd.
 	ModeAuto Mode = "auto"
 	// ModeNerd forces Nerd Font (PUA range) glyphs.
 	ModeNerd Mode = "nerd"
@@ -97,10 +94,8 @@ var (
 // lifetime of the process. It must be called once during startup (typically
 // in root command PersistentPreRunE). Subsequent calls are no-ops.
 //
-// When mode is [ModeAuto]:
-//   - If stdout is not a TTY, ascii is used.
-//   - Otherwise, the terminal is probed for Nerd Font support via
-//     [DetectMode] (which uses ANSI DSR glyph-width measurement).
+// When mode is [ModeAuto], ascii is used (font detection is disabled).
+// Users who have a Nerd Font can opt in with --glyph-mode=nerd.
 func Init(mode Mode) {
 	initOnce.Do(func() {
 		resolved := resolve(mode)
@@ -123,6 +118,9 @@ func G() *Set {
 }
 
 // resolve determines the final mode from the requested mode.
+// ModeAuto resolves to ModeASCII (font detection is disabled — it put the
+// terminal in raw mode and leaked goroutines that consumed keystrokes).
+// Users who have a Nerd Font can opt in with --glyph-mode=nerd.
 func resolve(mode Mode) Mode {
 	switch mode {
 	case ModeNerd:
@@ -130,38 +128,10 @@ func resolve(mode Mode) Mode {
 	case ModeASCII:
 		return ModeASCII
 	case ModeAuto:
-		return DetectMode()
+		return ModeASCII
 	default:
 		return ModeASCII
 	}
-}
-
-// DetectMode probes the terminal for Nerd Font support. Returns [ModeNerd] if
-// a Nerd Font is detected, [ModeASCII] otherwise. Non-TTY always returns
-// [ModeASCII].
-func DetectMode() Mode {
-	outFd := int(os.Stderr.Fd())
-	inFd := int(os.Stdin.Fd())
-
-	if !term.IsTerminal(outFd) || !term.IsTerminal(inFd) {
-		return ModeASCII
-	}
-
-	// Probe Powerline (U+E0B0) and Font Awesome (U+F005) glyphs.
-	plWidth, plErr := probeGlyphWidth(inFd, "\ue0b0")
-	faWidth, faErr := probeGlyphWidth(inFd, "\uf005")
-
-	// If both probes failed (terminal doesn't support DSR), fall back to ascii.
-	if plErr != nil && faErr != nil {
-		return ModeASCII
-	}
-
-	// Both glyphs render at 1 cell — full Nerd Font detected.
-	if plWidth == 1 && faWidth == 1 {
-		return ModeNerd
-	}
-
-	return ModeASCII
 }
 
 // ParseMode converts a user-supplied string to a [Mode]. Returns an error for

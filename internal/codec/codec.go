@@ -32,7 +32,8 @@ import (
 	depltypes "pkg.akt.dev/go/node/deployment/v1beta4"
 	escrowtypes "pkg.akt.dev/go/node/escrow/v1"
 	markettypes "pkg.akt.dev/go/node/market/v1beta5"
-	oracletypes "pkg.akt.dev/go/node/oracle/v1"
+	ov1 "pkg.akt.dev/go/node/oracle/v1"
+	ov2 "pkg.akt.dev/go/node/oracle/v2"
 	providertypes "pkg.akt.dev/go/node/provider/v1beta4"
 	"pkg.akt.dev/go/sdkutil"
 )
@@ -49,7 +50,9 @@ func MakeEncodingConfig() sdkutil.EncodingConfig {
 	depltypes.RegisterInterfaces(encCfg.InterfaceRegistry)
 	escrowtypes.RegisterInterfaces(encCfg.InterfaceRegistry)
 	markettypes.RegisterInterfaces(encCfg.InterfaceRegistry)
-	oracletypes.RegisterInterfaces(encCfg.InterfaceRegistry)
+	ov1.RegisterInterfaces(encCfg.InterfaceRegistry)
+	ov2.RegisterInterfaces(encCfg.InterfaceRegistry)
+
 	providertypes.RegisterInterfaces(encCfg.InterfaceRegistry)
 
 	// cosmos sdk modules
