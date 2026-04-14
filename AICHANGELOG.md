@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Added
+
+- **MCP server (`akt mcp`)**: Integrated MCP (Model Context Protocol) server into akt as a new `akt mcp` command. The server exposes 25 Akash Network tools over stdio transport for AI assistant integration (e.g., Claude Desktop). Uses chain-sdk's `v1beta3.LightClient`/`v1beta3.Client` directly — no custom client wrapper. By default, only 21 read-only query tools are registered (node status, balances, deployments, orders, bids, leases, providers, audited attributes, certificates). 4 write tools (close deployment, create lease, close lease, submit manifest) require explicit opt-in via `--enable-writes` flag to prevent AI agents from sending unapproved transactions. Config is resolved from the active akt context. Added `github.com/mark3labs/mcp-go` dependency. New packages: `internal/mcp/` (server), `internal/mcp/marshal/` (parameter helpers), `internal/mcp/tools/{node,bank,deployment,market,provider,audit,cert}/` (tool definitions). Updated DESIGN.md §4 package structure and SPEC.md §2.1 command tree + §2.8 MCP command documentation.
+
 ### Changed
 
 - **RPC endpoint port inference from scheme**: Endpoint URLs no longer require an explicit port. When the port is omitted, it is inferred from the URL scheme (`http`/`ws`/`tcp` → 80, `https`/`wss` → 443). The underlying cosmos-sdk and CometBFT libraries require an explicit `host:port` for dialing, so endpoints are normalized at every entry point: chain-sdk `NewClient` and `newParsedURL` (covers the RPC dialer, CometBFT HTTP client, and JSON-RPC client), chain-sdk `queryClientInfo` (covers the discovery fallback path), akt `BuildClientContext`/`InitClientContext` (covers context-resolved endpoints stored in `cctx.NodeURI`), and akt `monitorRunE` (covers TUI/monitor CometBFT and WebSocket clients). Added exported `NormalizeEndpoint()` to `chain-sdk/go/node/client/url.go`. Updated SPEC.md §1.3 to document port inference.

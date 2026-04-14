@@ -210,6 +210,7 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	root.AddCommand(chaincli.QueryCmd())
 
 	root.AddCommand(monitorCmd(v))
+	root.AddCommand(mcpCmd())
 	root.AddCommand(versionCmd(bi))
 
 	return root

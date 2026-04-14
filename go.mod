@@ -203,6 +203,7 @@ require (
 	github.com/linxGnu/grocksdb v1.9.8 // indirect
 	github.com/lucasb-eyer/go-colorful v1.3.0 // indirect
 	github.com/manifoldco/promptui v0.9.0 // indirect
+	github.com/mark3labs/mcp-go v0.48.0 // indirect
 	github.com/mattn/go-colorable v0.1.14 // indirect
 	github.com/mattn/go-isatty v0.0.20 // indirect
 	github.com/mattn/go-localereader v0.0.1 // indirect
