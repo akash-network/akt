@@ -347,6 +347,16 @@ github.com/akash-network/akt/
 │   │   ├── governance/                  # Governance parameter types
 │   │   ├── rpc/                         # RPC/WebSocket/gRPC clients
 │   │   └── cache/                       # Persistent cache (bbolt)
+│   ├── mcp/                             # MCP server (akt mcp)
+│   │   ├── marshal/                     # Parameter extraction and result helpers
+│   │   └── tools/                       # MCP tool definitions and handlers
+│   │       ├── node/                    # Node status, block height
+│   │       ├── bank/                    # Account balances
+│   │       ├── deployment/              # Deployment queries and close tx
+│   │       ├── market/                  # Orders, bids, leases queries and txs
+│   │       ├── provider/                # Provider queries and REST tools
+│   │       ├── audit/                   # Audited provider queries
+│   │       └── cert/                    # Certificate queries
 │   ├── plugin/                          # Plugin system
 │   ├── filter/                          # Resource filter argument parsing (§3.8)
 │   ├── flags/                           # Shared flag definitions

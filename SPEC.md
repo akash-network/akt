@@ -646,6 +646,7 @@ akt
 │   ├── provider [rpc-endpoint]          # Provider fleet: versions, health, resources
 │   ├── oracle [rpc-endpoint]            # Oracle/BME dashboard (alias)
 │   └── bme [rpc-endpoint]              # Oracle/BME dashboard (alias)
+├── mcp                                  # MCP server for AI assistant integration (stdio)
 ├── version                              # Version information
 └── completion                           # Shell completion scripts
 ```
@@ -1372,6 +1373,95 @@ Data sources:
 - BME: REST `/akash/bme/v1/status`, `/akash/bme/v1/vault-state`, `/akash/bme/v1/ledger`
 
 Refresh intervals: oracle aggregated prices every 30s, BME status/vault every 30s, price history and ledger every 2m.
+
+### 2.8 MCP Command
+
+#### `akt mcp`
+
+Start an MCP (Model Context Protocol) server over stdio transport for AI assistant integration. The server exposes Akash Network tools that AI assistants can invoke to query chain state, check provider status, and (with explicit permission) perform mutating operations.
+
+Configuration is resolved from the active akt context (network, keyring, default account). No additional environment variables are required beyond a configured context.
+
+| Flag               | Type | Default | Description                                                                       |
+| ------------------ | ---- | ------- | --------------------------------------------------------------------------------- |
+| `--enable-writes`  | bool | `false` | Enable write tools (on-chain transactions and provider mutations). Without this flag, only read-only query tools are available. |
+
+**Permission model:**
+
+By default, only read-only query tools are registered. This prevents AI agents from sending unapproved transactions or performing mutating operations. The `--enable-writes` flag must be explicitly passed to enable write tools. This flag covers both on-chain transactions (which require keyring signing) and mutating provider REST API calls (e.g., submitting manifests).
+
+**Read-only tools (always available, 21 tools):**
+
+| Tool Name                      | Description                                                                |
+| ------------------------------ | -------------------------------------------------------------------------- |
+| `akash_node_status`            | Node sync status (block height, hash, catching up)                         |
+| `akash_block_height`           | Current block height                                                       |
+| `akash_account_balance`        | Token balances for an account                                              |
+| `akash_list_deployments`       | List deployments with optional filters                                     |
+| `akash_get_deployment`         | Get deployment details by owner/dseq                                       |
+| `akash_get_group`              | Get deployment group details                                               |
+| `akash_list_orders`            | List market orders with optional filters                                   |
+| `akash_get_order`              | Get order details                                                          |
+| `akash_list_bids`              | List bids with optional filters                                            |
+| `akash_get_bid`                | Get bid details                                                            |
+| `akash_list_leases`            | List leases with optional filters                                          |
+| `akash_get_lease`              | Get lease details                                                          |
+| `akash_list_providers`         | List registered providers                                                  |
+| `akash_get_provider`           | Get provider details by address                                            |
+| `akash_provider_status`        | Live provider status via REST API                                          |
+| `akash_lease_status`           | Live lease status from provider                                            |
+| `akash_service_status`         | Service status within a lease                                              |
+| `akash_list_audited_providers` | List audited provider attributes                                           |
+| `akash_list_certificates`      | List on-chain certificates                                                 |
+
+**Write tools (only with `--enable-writes`, 4 tools):**
+
+| Tool Name                      | Description                                                                |
+| ------------------------------ | -------------------------------------------------------------------------- |
+| `akash_close_deployment`       | Close a deployment (on-chain transaction)                                  |
+| `akash_create_lease`           | Create a lease from a bid (on-chain transaction)                           |
+| `akash_close_lease`            | Close an active lease (on-chain transaction)                               |
+| `akash_submit_manifest`        | Submit manifest to provider (provider REST mutation)                       |
+
+**Transport:** stdio (JSON-RPC over stdin/stdout). Designed for use with MCP-compatible AI assistants (e.g., Claude Desktop).
+
+**Client implementation:** Uses `v1beta3.LightClient` from chain-sdk for read-only mode, `v1beta3.Client` for write mode.
+
+**Examples:**
+
+```bash
+# Read-only mode (default, safe for AI agents)
+akt mcp
+
+# With write tools enabled (explicit user consent)
+akt mcp --enable-writes
+```
+
+**Claude Desktop configuration (`~/.claude/claude_desktop_config.json`):**
+
+```json
+{
+  "mcpServers": {
+    "akash": {
+      "command": "akt",
+      "args": ["mcp"]
+    }
+  }
+}
+```
+
+With write tools:
+
+```json
+{
+  "mcpServers": {
+    "akash": {
+      "command": "akt",
+      "args": ["mcp", "--enable-writes"]
+    }
+  }
+}
+```
 
 ---
 
