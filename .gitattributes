@@ -1,0 +1,2 @@
+# Golden test files — binary-like, no line-ending conversion, no diff.
+*.golden  -text -diff linguist-generated
