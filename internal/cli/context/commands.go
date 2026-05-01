@@ -45,6 +45,14 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		Use:   "create <name>",
 		Short: "Create a new context",
 		Args:  cobra.ExactArgs(1),
+		Example: `  # Create a context using an existing network
+  akt context create prod --network mainnet --default-account alice --set-current
+
+  # Create a monitoring-only context (no default account)
+  akt context create monitoring --network mainnet
+
+  # Create a testnet context with a specific keyring
+  akt context create staging --network testnet --keyring test-keyring --default-account testaccount`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			m := mgr()
 			name := args[0]
@@ -93,6 +101,7 @@ func useCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		Use:   "use <name>",
 		Short: "Switch the active context",
 		Args:  cobra.ExactArgs(1),
+		Example: `  akt context use staging`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return mgr().UseContext(args[0])
 		},
@@ -104,6 +113,7 @@ func listCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		Use:   "list",
 		Short: "List all contexts",
 		Args:  cobra.NoArgs,
+		Example: `  akt context list`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			m := mgr()
 			ctxs := m.ListContexts()
@@ -167,6 +177,7 @@ func currentCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		Use:   "show",
 		Short: "Show the active context with full details",
 		Args:  cobra.NoArgs,
+		Example: `  akt context show`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			m := mgr()
 
@@ -186,6 +197,11 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		Use:   "edit <name>",
 		Short: "Edit a context",
 		Args:  cobra.ExactArgs(1),
+		Example: `  # Change default account
+  akt context edit prod --default-account bob
+
+  # Switch to a different network
+  akt context edit staging --network sandbox`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			m := mgr()
 			name := args[0]
@@ -238,6 +254,11 @@ func deleteCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		Use:   "delete <name>",
 		Short: "Delete a context",
 		Args:  cobra.ExactArgs(1),
+		Example: `  # Delete with confirmation prompt
+  akt context delete staging
+
+  # Skip confirmation
+  akt context delete staging --yes`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 
@@ -271,6 +292,7 @@ func renameCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		Use:   "rename <old> <new>",
 		Short: "Rename a context",
 		Args:  cobra.ExactArgs(2),
+		Example: `  akt context rename staging testnet-staging`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return mgr().RenameContext(args[0], args[1])
 		},
@@ -282,6 +304,14 @@ func logCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		Use:   "log",
 		Short: "View the action log for the current context",
 		Args:  cobra.NoArgs,
+		Example: `  # Show last 50 entries (default)
+  akt context log
+
+  # Show only transaction entries from the last hour
+  akt context log --type tx --since 1h
+
+  # Show last 10 entries
+  akt context log --limit 10`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			m := mgr()
 

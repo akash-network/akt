@@ -49,6 +49,14 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 		Use:   "add <name>",
 		Short: "Add a new key or recover an existing one",
 		Args:  cobra.ExactArgs(1),
+		Example: `  # Generate a new key
+  akt context keys add alice
+
+  # Recover from mnemonic
+  akt context keys add alice --recover
+
+  # Add a Ledger key
+  akt context keys add alice --ledger`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			kr, err := getKeyring()
 			if err != nil {
@@ -229,6 +237,7 @@ func deleteCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 		Use:   "delete <name>",
 		Short: "Delete a key from the keyring",
 		Args:  cobra.ExactArgs(1),
+		Example: `  akt context keys delete alice`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			kr, err := getKeyring()
 			if err != nil {
@@ -268,6 +277,7 @@ func listCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 		Use:   "list",
 		Short: "List all keys in the current keyring",
 		Args:  cobra.NoArgs,
+		Example: `  akt context keys list`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			kr, err := getKeyring()
 			if err != nil {
@@ -336,6 +346,11 @@ func showCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 		Use:   "show <name|address>",
 		Short: "Show key details",
 		Args:  cobra.ExactArgs(1),
+		Example: `  # Show full key details
+  akt context keys show alice
+
+  # Print only the bech32 address
+  akt context keys show alice -a`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			kr, err := getKeyring()
 			if err != nil {
@@ -382,6 +397,7 @@ func exportCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 		Use:   "export <name>",
 		Short: "Export a private key (encrypted armor)",
 		Args:  cobra.ExactArgs(1),
+		Example: `  akt context keys export alice`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			kr, err := getKeyring()
 			if err != nil {
@@ -417,6 +433,7 @@ func importCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 		Use:   "import <name> <keyfile>",
 		Short: "Import a private key from encrypted armor file",
 		Args:  cobra.ExactArgs(2),
+		Example: `  akt context keys import alice ./alice-key.armor`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			kr, err := getKeyring()
 			if err != nil {
@@ -453,6 +470,7 @@ func renameCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 		Use:   "rename <old> <new>",
 		Short: "Rename a key",
 		Args:  cobra.ExactArgs(2),
+		Example: `  akt context keys rename alice alice-main`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			kr, err := getKeyring()
 			if err != nil {
@@ -475,6 +493,7 @@ func mnemonicCmd() *cobra.Command {
 		Use:   "mnemonic",
 		Short: "Generate a new BIP39 mnemonic",
 		Args:  cobra.NoArgs,
+		Example: `  akt context keys mnemonic`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mnemonic, err := generateMnemonic()
 			if err != nil {
@@ -493,6 +512,11 @@ func parseCmd() *cobra.Command {
 		Use:   "parse <hex-or-bech32>",
 		Short: "Parse address between hex and bech32 formats",
 		Args:  cobra.ExactArgs(1),
+		Example: `  # Parse a bech32 address
+  akt context keys parse akash1abc...
+
+  # Parse a hex address
+  akt context keys parse 0ABC1DEF...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			input := args[0]
 

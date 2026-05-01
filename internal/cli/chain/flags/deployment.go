@@ -198,69 +198,108 @@ func DepFiltersIsID(f dv1beta.DeploymentFilters) bool {
 	return f.Owner != "" && f.DSeq != 0
 }
 
-// DepFiltersFromArg parses a partial deployment path (owner[/dseq])
-// into DeploymentFilters. Only the parts present in the input are populated.
-func DepFiltersFromArg(arg string) (dv1beta.DeploymentFilters, error) {
+// DepFiltersFromArg parses a partial deployment path into DeploymentFilters.
+//
+// Smart type detection (SPEC §3.8.2):
+//   - If the first component is a bech32 address, it is the owner.
+//   - If the first component is a number, it is the dseq and defaultOwner is used.
+//   - When the arg is a bare bech32 address with no "/", it lists all deployments for that owner.
+//
+// Format: [owner/]dseq  or  owner
+func DepFiltersFromArg(arg string, defaultOwner string) (dv1beta.DeploymentFilters, error) {
 	parts := strings.Split(arg, "/")
 	var f dv1beta.DeploymentFilters
 
 	if len(parts) < 1 || parts[0] == "" {
-		return f, fmt.Errorf("deployment filter: owner is required")
+		return f, fmt.Errorf("deployment filter: argument is required")
 	}
 
-	if _, err := sdk.AccAddressFromBech32(parts[0]); err != nil {
-		return f, fmt.Errorf("deployment filter: invalid owner address: %w", err)
-	}
-	f.Owner = parts[0]
+	// Smart type detection on the first component.
+	if _, err := sdk.AccAddressFromBech32(parts[0]); err == nil {
+		// First component is a bech32 address.
+		f.Owner = parts[0]
 
-	if len(parts) >= 2 {
-		dseq, err := strconv.ParseUint(parts[1], 10, 64)
-		if err != nil {
-			return f, fmt.Errorf("deployment filter: invalid dseq: %w", err)
+		if len(parts) >= 2 {
+			dseq, err := strconv.ParseUint(parts[1], 10, 64)
+			if err != nil {
+				return f, fmt.Errorf("deployment filter: invalid dseq %q: %w", parts[1], err)
+			}
+			f.DSeq = dseq
 		}
-		f.DSeq = dseq
-	}
 
-	if len(parts) > 2 {
-		return f, fmt.Errorf("deployment filter: too many parts in %q, expected owner[/dseq]", arg)
+		if len(parts) > 2 {
+			return f, fmt.Errorf("deployment filter: too many parts in %q, expected owner[/dseq]", arg)
+		}
+	} else if dseq, err := strconv.ParseUint(parts[0], 10, 64); err == nil {
+		// First component is a number — treat as dseq, use default owner.
+		if defaultOwner == "" {
+			return f, fmt.Errorf("deployment filter: no default account set; provide owner address or configure default-account")
+		}
+		f.Owner = defaultOwner
+		f.DSeq = dseq
+
+		if len(parts) > 1 {
+			return f, fmt.Errorf("deployment filter: too many parts in %q when using dseq shorthand", arg)
+		}
+	} else {
+		return f, fmt.Errorf("deployment filter: %q is not a valid address or dseq number", parts[0])
 	}
 
 	return f, nil
 }
 
-// GroupIDFromArg parses a group path (owner/dseq[/gseq]) into a GroupID.
+// GroupIDFromArg parses a group path into a GroupID with smart type detection.
+//
+// Formats:
+//   - owner/dseq[/gseq]  (explicit owner)
+//   - dseq[/gseq]        (owner defaults to defaultOwner)
+//
 // When gseq is omitted it defaults to 0 (caller should treat as unset).
-func GroupIDFromArg(arg string) (dv1.GroupID, bool, error) {
+func GroupIDFromArg(arg string, defaultOwner string) (dv1.GroupID, bool, error) {
 	parts := strings.Split(arg, "/")
 	var id dv1.GroupID
 
-	if len(parts) < 2 {
-		return id, false, fmt.Errorf("group ID: expected at least owner/dseq, got %q", arg)
+	if len(parts) < 1 || parts[0] == "" {
+		return id, false, fmt.Errorf("group ID: argument is required")
 	}
 
-	if _, err := sdk.AccAddressFromBech32(parts[0]); err != nil {
-		return id, false, fmt.Errorf("group ID: invalid owner address: %w", err)
-	}
-	id.Owner = parts[0]
+	idx := 0
 
-	dseq, err := strconv.ParseUint(parts[1], 10, 64)
+	// Smart type detection on the first component.
+	if _, err := sdk.AccAddressFromBech32(parts[0]); err == nil {
+		id.Owner = parts[0]
+		idx = 1
+		if len(parts) < 2 {
+			return id, false, fmt.Errorf("group ID: expected at least owner/dseq, got %q", arg)
+		}
+	} else {
+		// First component is not a bech32 — must be dseq with default owner.
+		if defaultOwner == "" {
+			return id, false, fmt.Errorf("group ID: no default account set; provide owner address or configure default-account")
+		}
+		id.Owner = defaultOwner
+	}
+
+	dseq, err := strconv.ParseUint(parts[idx], 10, 64)
 	if err != nil {
-		return id, false, fmt.Errorf("group ID: invalid dseq: %w", err)
+		return id, false, fmt.Errorf("group ID: invalid dseq %q: %w", parts[idx], err)
 	}
 	id.DSeq = dseq
+	idx++
 
 	fullySpecified := false
-	if len(parts) >= 3 {
-		gseq, err := strconv.ParseUint(parts[2], 10, 32)
+	if idx < len(parts) {
+		gseq, err := strconv.ParseUint(parts[idx], 10, 32)
 		if err != nil {
-			return id, false, fmt.Errorf("group ID: invalid gseq: %w", err)
+			return id, false, fmt.Errorf("group ID: invalid gseq %q: %w", parts[idx], err)
 		}
 		id.GSeq = uint32(gseq)
 		fullySpecified = true
+		idx++
 	}
 
-	if len(parts) > 3 {
-		return id, false, fmt.Errorf("group ID: too many parts in %q, expected owner/dseq[/gseq]", arg)
+	if idx < len(parts) {
+		return id, false, fmt.Errorf("group ID: too many parts in %q", arg)
 	}
 
 	return id, fullySpecified, nil

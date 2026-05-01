@@ -14,11 +14,13 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"pkg.akt.dev/akt/internal/actionlog"
 	"pkg.akt.dev/akt/internal/bootstrap"
 	chaincli "pkg.akt.dev/akt/internal/cli/chain"
 
 	clicontext "pkg.akt.dev/akt/internal/cli/context"
 	aktclient "pkg.akt.dev/akt/internal/client"
+	"pkg.akt.dev/akt/internal/cliutil"
 	aktcodec "pkg.akt.dev/akt/internal/codec"
 	aktctx "pkg.akt.dev/akt/internal/context"
 	"pkg.akt.dev/akt/internal/glyphs"
@@ -117,8 +119,13 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			_ = v.BindPFlag("context", cmd.Flags().Lookup("context"))
 			_ = v.BindPFlag("output", cmd.Flags().Lookup("output"))
 			_ = v.BindPFlag("interactive", cmd.Flags().Lookup("interactive"))
-			_ = v.BindPFlag("skip-font-check", cmd.Flags().Lookup("skip-font-check"))
-			_ = v.BindPFlag("glyph-mode", cmd.Flags().Lookup("glyph-mode"))
+			_ = v.BindPFlag("verbose", cmd.Flags().Lookup("verbose"))
+			_ = v.BindPFlag("quiet", cmd.Flags().Lookup("quiet"))
+
+			// Verbosity validation: -q and -v are mutually exclusive.
+			if v.GetBool("quiet") && v.GetInt("verbose") > 0 {
+				return fmt.Errorf("--quiet and --verbose are mutually exclusive")
+			}
 
 			cfgRoot, err := aktctx.ConfigHome(v.GetString("home"))
 			if err != nil {
@@ -171,6 +178,16 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 				return noContextError(mgr)
 			}
 
+			// 5. Open the action log for the current context (if any).
+			if current := mgr.CurrentContext(); current != "" {
+				logPath := aktctx.ActionLogPath(cfgRoot, current)
+				logger, logErr := actionlog.Open(logPath)
+				if logErr == nil {
+					ctx := cliutil.WithActionLog(cmd.Context(), logger)
+					cmd.SetContext(ctx)
+				}
+			}
+
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -197,10 +214,10 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	// not captured into Go variables.
 	root.PersistentFlags().String("home", "", "Home directory for config, contexts, and keyrings (default: $AKT_HOME or ~/.config/akt)")
 	root.PersistentFlags().String("context", "", "Active context name (overrides current-context in config)")
-	root.PersistentFlags().StringP("output", "o", "table", "Output format: table, json, yaml")
+	root.PersistentFlags().StringP("output", "o", "pretty", "Output format: pretty, json, yaml")
 	root.PersistentFlags().BoolP("interactive", "i", false, "Force interactive (TUI) mode even if disabled in config")
-	root.PersistentFlags().Bool("skip-font-check", true, "Deprecated: use --glyph-mode ascii instead")
-	root.PersistentFlags().String("glyph-mode", "", "Glyph rendering mode: auto (default), nerd, ascii")
+	root.PersistentFlags().CountP("verbose", "v", "Increase output verbosity (-v verbose, -vv debug)")
+	root.PersistentFlags().BoolP("quiet", "q", false, "Suppress all output except errors")
 
 	// Context management (includes network and keys subcommands).
 	root.AddCommand(clicontext.Commands(mgrFn, getKeyring))
@@ -374,6 +391,14 @@ The RPC endpoint must support WebSocket connections.
 If --rpc is not specified, the endpoint is resolved from the active akt
 context. A positional argument overrides the --rpc flag.`,
 		Args: cobra.MaximumNArgs(1),
+		Example: `  # Launch the monitor hub (defaults to Network dashboard)
+  akt monitor
+
+  # Connect to a specific RPC endpoint
+  akt monitor https://rpc.akashnet.net:443
+
+  # Launch directly into the Provider dashboard
+  akt monitor provider`,
 		RunE: monitorRunE(v, ""),
 	}
 
@@ -399,8 +424,9 @@ voting progress, and governance parameters. Sub-tabs:
   1  Overview    Consensus state, vote progress bars, vote grid
   2  Validators  Scrollable validator list with signing history
   3  Governance  Module-by-module parameter browser`,
-		Args: cobra.MaximumNArgs(1),
-		RunE: monitorRunE(v, "network"),
+		Args:    cobra.MaximumNArgs(1),
+		Example: `  akt monitor network https://rpc.akashnet.net:443`,
+		RunE:    monitorRunE(v, "network"),
 	}
 
 	addMonitorFlags(cmd)
@@ -417,8 +443,9 @@ func monitorProviderCmd(v *viper.Viper) *cobra.Command {
 Displays real-time provider fleet health: version distribution with dot
 visualization, provider health scanning with priority-based scheduling,
 and per-provider detail with node-level CPU/memory/GPU resources.`,
-		Args: cobra.MaximumNArgs(1),
-		RunE: monitorRunE(v, "provider"),
+		Args:    cobra.MaximumNArgs(1),
+		Example: `  akt monitor provider`,
+		RunE:    monitorRunE(v, "provider"),
 	}
 
 	addMonitorFlags(cmd)
@@ -435,8 +462,9 @@ func monitorOracleCmd(v *viper.Viper) *cobra.Command {
 Displays oracle price data (aggregated prices, TWAP, health) and
 BME state (mint status, vault balances, ledger entries). This is
 the same dashboard as "akt monitor bme".`,
-		Args: cobra.MaximumNArgs(1),
-		RunE: monitorRunE(v, "oracle-bme"),
+		Args:    cobra.MaximumNArgs(1),
+		Example: `  akt monitor oracle`,
+		RunE:    monitorRunE(v, "oracle-bme"),
 	}
 
 	addMonitorFlags(cmd)
@@ -453,8 +481,9 @@ func monitorBMECmd(v *viper.Viper) *cobra.Command {
 Displays BME state (mint status, vault balances, ledger entries)
 and oracle price data (aggregated prices, TWAP, health). This is
 the same dashboard as "akt monitor oracle".`,
-		Args: cobra.MaximumNArgs(1),
-		RunE: monitorRunE(v, "oracle-bme"),
+		Args:    cobra.MaximumNArgs(1),
+		Example: `  akt monitor bme`,
+		RunE:    monitorRunE(v, "oracle-bme"),
 	}
 
 	addMonitorFlags(cmd)
@@ -462,21 +491,10 @@ the same dashboard as "akt monitor oracle".`,
 	return cmd
 }
 
-// initGlyphs resolves the glyph mode from viper (flag > env > config > default)
-// and initialises the glyphs package. Safe to call multiple times — [glyphs.Init]
-// uses sync.Once internally.
+// initGlyphs resolves the glyph mode from env/config and initialises the
+// glyphs package. Safe to call multiple times — [glyphs.Init] uses sync.Once.
 func initGlyphs(v *viper.Viper) {
-	// Flag/env key (bound as "glyph-mode").
-	modeStr := v.GetString("glyph-mode")
-	if modeStr == "" {
-		// Config fallback.
-		modeStr = v.GetString("defaults.glyph-mode")
-	}
-
-	// Honour legacy --skip-font-check as equivalent to --glyph-mode ascii.
-	if modeStr == "" && v.GetBool("skip-font-check") {
-		modeStr = "ascii"
-	}
+	modeStr := v.GetString("defaults.glyph-mode")
 
 	mode, err := glyphs.ParseMode(modeStr)
 	if err != nil {
@@ -488,11 +506,13 @@ func initGlyphs(v *viper.Viper) {
 
 func versionCmd(bi BuildInfo) *cobra.Command {
 	return &cobra.Command{
-		Use:   "version",
-		Short: "Print version information",
-		Args:  cobra.NoArgs,
-		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Printf("akt %s (commit: %s, built: %s)\n", bi.Version, bi.Commit, bi.Date)
+		Use:     "version",
+		Short:   "Print version information",
+		Args:    cobra.NoArgs,
+		Example: `  akt version`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			_, err := fmt.Fprintf(cmd.OutOrStdout(), "akt %s (commit: %s, built: %s)\n", bi.Version, bi.Commit, bi.Date)
+			return err
 		},
 	}
 }

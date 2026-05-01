@@ -49,8 +49,10 @@ func GetQueryMarketOrderCmd() *cobra.Command {
 				return err
 			}
 
+			defaultOwner := cl.ClientContext().GetFromAddress().String()
+
 			if len(args) == 1 {
-				af, err := cflags.OrderFiltersFromArg(args[0])
+				af, err := cflags.OrderFiltersFromArg(args[0], defaultOwner)
 				if err != nil {
 					return err
 				}
@@ -64,6 +66,11 @@ func GetQueryMarketOrderCmd() *cobra.Command {
 				if af.OSeq != 0 {
 					ofilters.OSeq = af.OSeq
 				}
+			}
+
+			// Default owner fallback when no arg and no --owner flag.
+			if ofilters.Owner == "" && defaultOwner != "" {
+				ofilters.Owner = defaultOwner
 			}
 
 			if cflags.OrderFiltersIsID(ofilters) {
@@ -107,7 +114,8 @@ func GetQueryMarketOrderCmd() *cobra.Command {
 }
 
 // GetQueryMarketBidCmd returns the command to query bids.
-// Accepts an optional positional ID in the form owner[/dseq[/gseq[/oseq[/provider]]]].
+// Accepts an optional positional ID in the form [owner/]dseq[/gseq[/oseq[/provider]]].
+// With --by provider: [provider/]dseq[/gseq[/oseq[/owner]]].
 // When all ID fields are present returns a single bid.
 // When partially specified, returns a filtered list.
 func GetQueryMarketBidCmd() *cobra.Command {
@@ -125,12 +133,18 @@ func GetQueryMarketBidCmd() *cobra.Command {
 				return err
 			}
 
+			defaultOwner := cl.ClientContext().GetFromAddress().String()
+			byProvider, _ := cmd.Flags().GetString("by")
+			isByProvider := byProvider == "provider"
+
 			if len(args) == 1 {
-				af, err := cflags.BidFiltersFromArg(args[0])
+				af, err := cflags.BidFiltersFromArg(args[0], defaultOwner, isByProvider)
 				if err != nil {
 					return err
 				}
-				bfilters.Owner = af.Owner
+				if af.Owner != "" {
+					bfilters.Owner = af.Owner
+				}
 				if af.DSeq != 0 {
 					bfilters.DSeq = af.DSeq
 				}
@@ -143,6 +157,11 @@ func GetQueryMarketBidCmd() *cobra.Command {
 				if af.Provider != "" {
 					bfilters.Provider = af.Provider
 				}
+			}
+
+			// Default owner fallback when no arg and no --owner flag (owner mode only).
+			if !isByProvider && bfilters.Owner == "" && defaultOwner != "" {
+				bfilters.Owner = defaultOwner
 			}
 
 			if cflags.BidFiltersIsID(bfilters) {
@@ -182,12 +201,14 @@ func GetQueryMarketBidCmd() *cobra.Command {
 	cflags.AddQueryFlagsToCmd(cmd)
 	cflags.AddPaginationFlagsToCmd(cmd, "bids")
 	cflags.AddBidFilterFlags(cmd.Flags())
+	cmd.Flags().String("by", "owner", "Filter perspective: owner or provider")
 
 	return cmd
 }
 
 // GetQueryMarketLeaseCmd returns the command to query leases.
-// Accepts an optional positional ID in the form owner[/dseq[/gseq[/oseq[/provider]]]].
+// Accepts an optional positional ID in the form [owner/]dseq[/gseq[/oseq[/provider]]].
+// With --by provider: [provider/]dseq[/gseq[/oseq[/owner]]].
 // When all ID fields are present returns a single lease.
 // When partially specified, returns a filtered list.
 func GetQueryMarketLeaseCmd() *cobra.Command {
@@ -205,12 +226,18 @@ func GetQueryMarketLeaseCmd() *cobra.Command {
 				return err
 			}
 
+			defaultOwner := cl.ClientContext().GetFromAddress().String()
+			byProvider, _ := cmd.Flags().GetString("by")
+			isByProvider := byProvider == "provider"
+
 			if len(args) == 1 {
-				af, err := cflags.LeaseFiltersFromArg(args[0])
+				af, err := cflags.LeaseFiltersFromArg(args[0], defaultOwner, isByProvider)
 				if err != nil {
 					return err
 				}
-				lfilters.Owner = af.Owner
+				if af.Owner != "" {
+					lfilters.Owner = af.Owner
+				}
 				if af.DSeq != 0 {
 					lfilters.DSeq = af.DSeq
 				}
@@ -223,6 +250,11 @@ func GetQueryMarketLeaseCmd() *cobra.Command {
 				if af.Provider != "" {
 					lfilters.Provider = af.Provider
 				}
+			}
+
+			// Default owner fallback when no arg and no --owner flag (owner mode only).
+			if !isByProvider && lfilters.Owner == "" && defaultOwner != "" {
+				lfilters.Owner = defaultOwner
 			}
 
 			if cflags.LeaseFiltersIsID(lfilters) {
@@ -262,6 +294,7 @@ func GetQueryMarketLeaseCmd() *cobra.Command {
 	cflags.AddQueryFlagsToCmd(cmd)
 	cflags.AddPaginationFlagsToCmd(cmd, "leases")
 	cflags.AddLeaseFilterFlags(cmd.Flags())
+	cmd.Flags().String("by", "owner", "Filter perspective: owner or provider")
 
 	return cmd
 }

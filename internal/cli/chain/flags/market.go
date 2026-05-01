@@ -224,93 +224,157 @@ func LeaseFiltersIsID(f mv1.LeaseFilters) bool {
 	return BidFiltersIsID(mvbeta.BidFilters(f))
 }
 
-// OrderFiltersFromArg parses a partial order path (owner[/dseq[/gseq[/oseq]]])
-// into OrderFilters. Only the parts present in the input are populated.
-func OrderFiltersFromArg(arg string) (mvbeta.OrderFilters, error) {
+// OrderFiltersFromArg parses a partial order path with smart type detection.
+//
+// Formats (SPEC §3.8):
+//   - [owner/]dseq[/gseq[/oseq]]
+//   - If the first component is a number, it is dseq and defaultOwner is used.
+//   - If the first component is a bech32 address, it is the owner.
+func OrderFiltersFromArg(arg string, defaultOwner string) (mvbeta.OrderFilters, error) {
 	parts := strings.Split(arg, "/")
 	var f mvbeta.OrderFilters
 
 	if len(parts) < 1 || parts[0] == "" {
-		return f, fmt.Errorf("order filter: owner is required")
+		return f, fmt.Errorf("order filter: argument is required")
 	}
 
-	if _, err := sdk.AccAddressFromBech32(parts[0]); err != nil {
-		return f, fmt.Errorf("order filter: invalid owner address: %w", err)
-	}
-	f.Owner = parts[0]
+	idx := 0
 
-	if len(parts) >= 2 {
-		dseq, err := strconv.ParseUint(parts[1], 10, 64)
+	// Smart type detection on the first component.
+	if _, err := sdk.AccAddressFromBech32(parts[0]); err == nil {
+		f.Owner = parts[0]
+		idx = 1
+	} else {
+		if defaultOwner == "" {
+			return f, fmt.Errorf("order filter: no default account set; provide owner address or configure default-account")
+		}
+		f.Owner = defaultOwner
+	}
+
+	if idx < len(parts) {
+		dseq, err := strconv.ParseUint(parts[idx], 10, 64)
 		if err != nil {
-			return f, fmt.Errorf("order filter: invalid dseq: %w", err)
+			return f, fmt.Errorf("order filter: invalid dseq %q: %w", parts[idx], err)
 		}
 		f.DSeq = dseq
+		idx++
 	}
 
-	if len(parts) >= 3 {
-		gseq, err := strconv.ParseUint(parts[2], 10, 32)
+	if idx < len(parts) {
+		gseq, err := strconv.ParseUint(parts[idx], 10, 32)
 		if err != nil {
-			return f, fmt.Errorf("order filter: invalid gseq: %w", err)
+			return f, fmt.Errorf("order filter: invalid gseq %q: %w", parts[idx], err)
 		}
 		f.GSeq = uint32(gseq)
+		idx++
 	}
 
-	if len(parts) >= 4 {
-		oseq, err := strconv.ParseUint(parts[3], 10, 32)
+	if idx < len(parts) {
+		oseq, err := strconv.ParseUint(parts[idx], 10, 32)
 		if err != nil {
-			return f, fmt.Errorf("order filter: invalid oseq: %w", err)
+			return f, fmt.Errorf("order filter: invalid oseq %q: %w", parts[idx], err)
 		}
 		f.OSeq = uint32(oseq)
+		idx++
 	}
 
-	if len(parts) > 4 {
-		return f, fmt.Errorf("order filter: too many parts in %q, expected owner/dseq/gseq/oseq", arg)
+	if idx < len(parts) {
+		return f, fmt.Errorf("order filter: too many parts in %q", arg)
 	}
 
 	return f, nil
 }
 
-// BidFiltersFromArg parses a partial bid path (owner[/dseq[/gseq[/oseq[/provider]]]])
-// into BidFilters. Only the parts present in the input are populated.
-func BidFiltersFromArg(arg string) (mvbeta.BidFilters, error) {
+// BidFiltersFromArg parses a partial bid/lease path with smart type detection.
+//
+// Owner perspective (default): [owner/]dseq[/gseq[/oseq[/provider]]]
+// Provider perspective (--by provider): [provider/]dseq[/gseq[/oseq[/owner]]]
+//
+// When byProvider is true, the leading address is the provider and the trailing
+// address is the owner. Otherwise the leading address is the owner and the
+// trailing address is the provider.
+func BidFiltersFromArg(arg string, defaultOwner string, byProvider bool) (mvbeta.BidFilters, error) {
 	parts := strings.Split(arg, "/")
+	var f mvbeta.BidFilters
 
-	// Parse the order portion (up to 4 parts).
-	orderArg := arg
-	if len(parts) > 4 {
-		orderArg = strings.Join(parts[:4], "/")
-	}
-	of, err := OrderFiltersFromArg(orderArg)
-	if err != nil {
-		return mvbeta.BidFilters{}, err
+	if len(parts) < 1 || parts[0] == "" {
+		return f, fmt.Errorf("bid filter: argument is required")
 	}
 
-	f := mvbeta.BidFilters{
-		Owner: of.Owner,
-		DSeq:  of.DSeq,
-		GSeq:  of.GSeq,
-		OSeq:  of.OSeq,
-		State: of.State,
-	}
+	idx := 0
 
-	if len(parts) >= 5 {
-		if _, err := sdk.AccAddressFromBech32(parts[4]); err != nil {
-			return f, fmt.Errorf("bid filter: invalid provider address: %w", err)
+	// Smart type detection on the first component.
+	if _, err := sdk.AccAddressFromBech32(parts[0]); err == nil {
+		if byProvider {
+			f.Provider = parts[0]
+		} else {
+			f.Owner = parts[0]
 		}
-		f.Provider = parts[4]
+		idx = 1
+	} else if _, err := strconv.ParseUint(parts[0], 10, 64); err == nil {
+		// First component is a number — use default for the leading address.
+		if byProvider {
+			return f, fmt.Errorf("bid filter: provider address is required with --by provider")
+		}
+		if defaultOwner == "" {
+			return f, fmt.Errorf("bid filter: no default account set; provide owner address or configure default-account")
+		}
+		f.Owner = defaultOwner
+	} else {
+		return f, fmt.Errorf("bid filter: %q is not a valid address or dseq number", parts[0])
 	}
 
-	if len(parts) > 5 {
-		return f, fmt.Errorf("bid filter: too many parts in %q, expected owner/dseq/gseq/oseq/provider", arg)
+	if idx < len(parts) {
+		dseq, err := strconv.ParseUint(parts[idx], 10, 64)
+		if err != nil {
+			return f, fmt.Errorf("bid filter: invalid dseq %q: %w", parts[idx], err)
+		}
+		f.DSeq = dseq
+		idx++
+	}
+
+	if idx < len(parts) {
+		gseq, err := strconv.ParseUint(parts[idx], 10, 32)
+		if err != nil {
+			return f, fmt.Errorf("bid filter: invalid gseq %q: %w", parts[idx], err)
+		}
+		f.GSeq = uint32(gseq)
+		idx++
+	}
+
+	if idx < len(parts) {
+		oseq, err := strconv.ParseUint(parts[idx], 10, 32)
+		if err != nil {
+			return f, fmt.Errorf("bid filter: invalid oseq %q: %w", parts[idx], err)
+		}
+		f.OSeq = uint32(oseq)
+		idx++
+	}
+
+	// Trailing address (opposite of the leading one).
+	if idx < len(parts) {
+		if _, err := sdk.AccAddressFromBech32(parts[idx]); err != nil {
+			return f, fmt.Errorf("bid filter: invalid address %q: %w", parts[idx], err)
+		}
+		if byProvider {
+			f.Owner = parts[idx]
+		} else {
+			f.Provider = parts[idx]
+		}
+		idx++
+	}
+
+	if idx < len(parts) {
+		return f, fmt.Errorf("bid filter: too many parts in %q", arg)
 	}
 
 	return f, nil
 }
 
 // LeaseFiltersFromArg parses a partial lease path into LeaseFilters.
-// The format is owner[/dseq[/gseq[/oseq[/provider]]]].
-func LeaseFiltersFromArg(arg string) (mv1.LeaseFilters, error) {
-	bf, err := BidFiltersFromArg(arg)
+// See BidFiltersFromArg for format details.
+func LeaseFiltersFromArg(arg string, defaultOwner string, byProvider bool) (mv1.LeaseFilters, error) {
+	bf, err := BidFiltersFromArg(arg, defaultOwner, byProvider)
 	if err != nil {
 		return mv1.LeaseFilters{}, err
 	}

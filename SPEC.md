@@ -166,10 +166,9 @@ plugins:
 
 # Defaults
 defaults:
-  output: table                         # table | json | yaml
+  output: pretty                        # pretty | json | yaml
   broadcast-mode: sync                  # sync | async | block
   interactive: true                     # optional; allow TUI mode; false = CLI-only (override with -i)
-  glyph-mode: auto                      # auto | nerd | ascii (see §1.10)
 ```
 
 ### 1.3 Network Schema
@@ -293,7 +292,6 @@ All environment variables use the `AKT_` prefix. When set, they override the cor
 | `AKT_FEES`            | `contexts[*].fees`                                      | `5000uakt`                     |
 | `AKT_BROADCAST_MODE`  | `defaults.broadcast-mode`                               | `sync`                         |
 | `AKT_OUTPUT`          | `defaults.output`                                       | `json`                         |
-| `AKT_GLYPH_MODE`     | `defaults.glyph-mode` (see [§1.10](#110-terminal-requirements-and-glyph-modes)) | `ascii`                |
 | `AKT_CONSOLE_API_KEY` | Console API key (required for `console-api` auth method) | `akt_abc123...`                |
 
 ### 1.9 Built-in Network Templates
@@ -347,53 +345,33 @@ gas-prices: "0.025uakt"
 gas-adjustment: "1.5"
 ```
 
-### 1.10 Terminal Requirements and Glyph Modes
+### 1.10 Terminal Requirements and Glyph Registry
 
-**Glyph modes**: `akt` supports two glyph rendering modes to ensure the interface works in any terminal, with or without special fonts installed:
+`akt` uses ASCII-safe glyphs exclusively. There is no Nerd Font mode and no glyph-mode flag. Standard Unicode characters (block drawing `█░▀`, arrows `←↑→↓`, box drawing `─`, circles `●`) are used freely since they render correctly in virtually all terminal fonts. Nerd Font PUA-range glyphs are never emitted.
 
-| Mode | Requires | Description |
+**Glyph registry**: All glyphs are defined in a centralized registry (`internal/glyphs/`). Rendering code references glyphs via the registry using semantic names, never as inline string literals.
+
+**Glyph mapping**:
+
+| Semantic Name | Glyph | Usage |
 |---|---|---|
-| `nerd` | [Nerd Font](https://www.nerdfonts.com/) | Uses Font Awesome PUA-range glyphs for icons, checkboxes, indicators, and decorative elements. Best visual experience. |
-| `ascii` | Any terminal font | Uses pure ASCII fallbacks (`[x]`/`[ ]` for checkboxes, `>`/`+`/`-`/`*`/`o` for indicators). Works everywhere. |
-
-The active mode is controlled by the `--glyph-mode` flag (or `AKT_GLYPH_MODE` env var, or `defaults.glyph-mode` in config):
-
-| Value | Behavior |
-|---|---|
-| `auto` (default) | Uses ASCII glyphs. Font detection is disabled (see note below). |
-| `nerd` | Force Nerd Font glyphs. Use when a Nerd Font is installed and configured in the terminal. |
-| `ascii` | Force ASCII-safe glyphs. Equivalent to `auto`. |
-
-Standard Unicode characters (block drawing `█░▀`, arrows `←↑→↓`, box drawing `─`, circles `●`) are used in both modes since they render correctly in virtually all terminal fonts.
-
-**Glyph registry**: All Nerd Font (PUA range) glyphs are defined in a centralized registry (`internal/glyphs/`) with both nerd and ascii variants. Rendering code references glyphs via the registry, never as inline string literals. The registry provides semantic glyph names (e.g., `CheckboxOn`, `VoteYes`, `Cursor`) so each context gets the appropriate ASCII fallback for its use case.
-
-**ASCII glyph mapping**:
-
-| Semantic Name | Nerd Font | ASCII | Usage |
-|---|---|---|---|
-| `CheckboxOn` | `\uf00c` (nf-fa-check) | `[x]` | Multiselect checked item |
-| `CheckboxOff` | `\uf10c` (nf-fa-circle_o) | `[ ]` | Multiselect unchecked item |
-| `Cursor` | `\uf0da` (nf-fa-caret_right) | `>` | Row selection indicator |
-| `SelectAll` | `\uf0c8` (nf-fa-th_large) | `#` | Select-all icon |
-| `VoteYes` | `\uf00c` (nf-fa-check) | `+` | Vote grid / prevote confirmed |
-| `VoteNo` | `\uf00d` (nf-fa-times) | `-` | Vote grid / prevote missing |
-| `Star` | `\uf005` (nf-fa-star) | `*` | Block proposer indicator |
-| `DotFilled` | `\uf111` (nf-fa-circle) | `*` | Selected version dot |
-| `DotOpen` | `\uf10c` (nf-fa-circle_o) | `o` | Unselected version dot |
-
-**Font detection**: Disabled. The previous DSR-based terminal probe (which rendered test glyphs and measured cursor advance via `\033[6n`) put the terminal in raw mode and leaked goroutines that consumed subsequent keystrokes, breaking all interactive input. The `auto` mode now resolves to `ascii` without any terminal probing. Users who have a Nerd Font installed opt in explicitly with `--glyph-mode nerd`.
-
-| Flag | Type | Default | Description |
-|---|---|---|---|
-| `--glyph-mode` | string | `"auto"` | Glyph rendering mode: `auto`, `nerd`, `ascii` |
-| `--skip-font-check` | bool | `true` | **Deprecated.** No-op (font detection is disabled). Use `--glyph-mode` instead. |
+| `CheckboxOn` | `[x]` | Multiselect checked item |
+| `CheckboxOff` | `[ ]` | Multiselect unchecked item |
+| `Cursor` | `>` | Row selection indicator |
+| `SelectAll` | `#` | Select-all icon |
+| `VoteYes` | `+` | Vote grid / prevote confirmed |
+| `VoteNo` | `-` | Vote grid / prevote missing |
+| `Star` | `*` | Block proposer indicator |
+| `DotFilled` | `*` | Selected version dot |
+| `DotOpen` | `o` | Unselected version dot |
 
 ---
 
 ## 2. CLI Command Reference
 
 Implementation note: `tx` and `query` commands are clean-copied from `akash-network/chain-sdk/go/cli` into `internal/cli/chain`. Only CLI code is copied; all other chain-sdk packages are imported directly. Command flags default to the resolved akt context values unless explicitly overridden.
+
+**Help text requirement**: Every command and subcommand must populate cobra's `Example` field with at least one usage example. The example should demonstrate the most common use case with realistic argument values. Commands with multiple modes of operation (e.g., list vs get, interactive vs scripted) should include one example per mode. This ensures that `akt <command> --help` is self-contained -- users should never need to consult external documentation for basic usage.
 
 ### 2.1 Command Tree Overview
 
@@ -621,6 +599,8 @@ akt
 │   ├── txs
 │   └── module-name-to-address <module>
 ├── deploy <sdl-file>                    # Workflow: full deployment lifecycle
+├── update <sdl-file>                    # Workflow: update deployment + send manifest
+├── close                                # Workflow: close deployment
 ├── provider                             # Provider gateway commands
 │   ├── status [provider-addr]
 │   ├── lease-status
@@ -1063,8 +1043,82 @@ The `--output jsonl` and `--output json` values serve different purposes: `--out
 Three workflows ship as embedded defaults:
 
 - **deploy**: Full deployment lifecycle (create deployment -> wait bids -> select -> lease -> manifest -> active)
-- **update**: Update deployment (update tx -> send manifest)
-- **close**: Close deployment (close tx)
+- **update**: Update deployment (update tx -> send manifest to all providers with active leases)
+- **close**: Close deployment (close tx, returning remaining escrow balance)
+
+The `update` and `close` workflows wrap the same on-chain transactions as `akt tx deployment update` and `akt tx deployment close`, but add orchestration (manifest re-send for update, confirmation prompts) and unified output modes (TUI progress or JSONL). Users who need only the raw transaction can use the `tx` commands directly.
+
+**Update workflow definition:**
+
+```yaml
+name: update
+description: Update a deployment and send the new manifest to providers
+version: 1
+
+params:
+  sdl-file:
+    type: file
+    required: true
+    description: Path to updated SDL deployment file
+  dseq:
+    type: int
+    required: true
+    description: Deployment sequence to update
+
+steps:
+  - name: update-deployment
+    type: tx
+    msg: deployment.MsgUpdateDeployment
+    params:
+      sdl: "{{ index .Params \"sdl-file\" }}"
+      dseq: "{{ .Params.dseq }}"
+    on-error: abort
+
+  - name: send-manifest
+    type: provider
+    action: send-manifest
+    params:
+      dseq: "{{ .Params.dseq }}"
+      sdl: "{{ index .Params \"sdl-file\" }}"
+    retry:
+      max: 3
+      delay: "5s"
+    on-error: abort
+
+  - name: display-result
+    type: output
+    template: |
+      Deployment updated!
+        DSEQ: {{ .Params.dseq }}
+```
+
+**Close workflow definition:**
+
+```yaml
+name: close
+description: Close a deployment and return remaining escrow balance
+version: 1
+
+params:
+  dseq:
+    type: int
+    required: true
+    description: Deployment sequence to close
+
+steps:
+  - name: close-deployment
+    type: tx
+    msg: deployment.MsgCloseDeployment
+    params:
+      dseq: "{{ .Params.dseq }}"
+    on-error: abort
+
+  - name: display-result
+    type: output
+    template: |
+      Deployment closed.
+        DSEQ: {{ .Params.dseq }}
+```
 
 #### `akt deploy <sdl-file>`
 
@@ -1141,6 +1195,74 @@ $ akt deploy deployment.yaml --bid-select cheapest --yes -o jsonl
 Each line can be parsed independently with `jq`:
 ```bash
 akt deploy deployment.yaml --bid-select cheapest --yes -o jsonl | jq -r 'select(.step == "create-deployment") | .txs[0].hash'
+```
+
+#### `akt update <sdl-file>`
+
+Update an existing deployment with a new SDL. Orchestrates:
+
+1. **Update deployment transaction** on chain with the new SDL.
+2. **Send updated manifest** to the provider(s) with active leases.
+
+| Flag               | Type     | Default         | Description                                                 |
+| ------------------ | -------- | --------------- | ----------------------------------------------------------- |
+| `--from`           | string   | context default | Account that owns the deployment                            |
+| `--dseq`           | uint64   | required        | Deployment sequence to update                               |
+| `--yes`            | bool     | `false`         | Skip all confirmations                                      |
+| `--dry-run`        | bool     | `false`         | Print what would happen without executing                   |
+| `--output`         | string   | `pretty`        | Output format: `pretty` (TUI), `jsonl` (JSONL step output), `json`, `yaml` |
+
+**Transaction flags** (inherited): `--gas`, `--gas-prices`, `--fees`, `--gas-adjustment`, `--broadcast-mode`
+
+**Examples:**
+```bash
+# Interactive (default)
+akt update deployment.yaml --dseq 12345
+
+# Non-interactive
+akt update deployment.yaml --dseq 12345 --yes
+
+# CI/CD pipeline
+akt update deployment.yaml --dseq 12345 --yes -o jsonl
+```
+
+**JSONL mode:**
+```bash
+$ akt update deployment.yaml --dseq 12345 --yes -o jsonl
+{"workflow":"update","id":"wf_x1y2z3","step":"update-deployment","result":"completed","errors":[],"txs":[{"hash":"ABCD1234...","height":12400,"gas_used":140000,"code":0}]}
+{"workflow":"update","id":"wf_x1y2z3","step":"send-manifest","result":"completed","errors":[],"txs":[]}
+```
+
+#### `akt close`
+
+Close a deployment, terminating all active leases and returning remaining escrow balance.
+
+| Flag               | Type     | Default         | Description                                                 |
+| ------------------ | -------- | --------------- | ----------------------------------------------------------- |
+| `--from`           | string   | context default | Account that owns the deployment                            |
+| `--dseq`           | uint64   | required        | Deployment sequence to close                                |
+| `--yes`            | bool     | `false`         | Skip all confirmations                                      |
+| `--dry-run`        | bool     | `false`         | Print what would happen without executing                   |
+| `--output`         | string   | `pretty`        | Output format: `pretty` (TUI), `jsonl` (JSONL step output), `json`, `yaml` |
+
+**Transaction flags** (inherited): `--gas`, `--gas-prices`, `--fees`, `--gas-adjustment`, `--broadcast-mode`
+
+**Examples:**
+```bash
+# Interactive (with confirmation prompt)
+akt close --dseq 12345
+
+# Non-interactive
+akt close --dseq 12345 --yes
+
+# CI/CD pipeline
+akt close --dseq 12345 --yes -o jsonl
+```
+
+**JSONL mode:**
+```bash
+$ akt close --dseq 12345 --yes -o jsonl
+{"workflow":"close","id":"wf_p1q2r3","step":"close-deployment","result":"completed","errors":[],"txs":[{"hash":"WXYZ9876...","height":12500,"gas_used":100000,"code":0}]}
 ```
 
 ### 2.4 Provider Gateway Commands
@@ -1476,8 +1598,20 @@ Applied to every command via the root command's `PersistentFlags()`.
 | `--home`    |       | string | `$AKT_HOME` or XDG default | Home directory for config, contexts, and keyrings             |
 | `--context` |       | string | config `current-context` | Active context name (overrides AKT_CONTEXT)                      |
 | `--output`  | `-o`  | string | `"pretty"`               | Output format: `pretty`, `json`, `yaml`. For workflows, also accepts `jsonl` (see 2.3.7). |
-| `--glyph-mode` |    | string | `"auto"`                 | Glyph rendering mode: `auto`, `nerd`, `ascii` (see [§1.10](#110-terminal-requirements-and-glyph-modes)) |
-| `--debug`   | `-d`  | bool   | `false`                  | Enable debug logging                                             |
+| `--interactive` | `-i` | bool | `false`              | Force interactive (TUI) mode even when `defaults.interactive` is `false` in config. Has no effect when interactive mode is already enabled (the default). |
+| `--verbose` | `-v`  | count  | `0`                      | Increase output verbosity. Stacks: `-v` (level 1) shows operational detail (gas estimates, endpoint selection, config resolution); `-vv` (level 2) adds debug diagnostics (RPC request/response dumps, full stack traces). Default (no flag) shows progress/status messages. Mutually exclusive with `--quiet`. |
+| `--quiet`   | `-q`  | bool   | `false`                  | Suppress all informational output (progress messages, status lines, confirmations). Only data output (query results, transaction results) and errors are emitted. Useful for scripting. Mutually exclusive with `-v`. |
+
+#### 3.1.1 Confirmation and Override Conventions
+
+Two flags control confirmation and safety bypass behavior across the CLI. They serve different purposes and must not be conflated:
+
+| Flag | Short | Semantics | Example |
+|---|---|---|---|
+| `--yes` | `-y` | Skip interactive confirmation prompts. The operation proceeds as if the user answered "yes" to all prompts. The operation itself is unchanged. | `akt tx deployment close --dseq 12345 --yes` |
+| `--force` | | Override a safety guard that would otherwise prevent the operation. The operation may behave differently or bypass a check. | `akt context network delete mainnet --force` (deletes even if contexts reference it) |
+
+`--yes` is the standard flag on all `tx` commands (§3.2) and workflow commands (§2.3). `--force` is used sparingly on specific commands where a structural safety check exists (e.g., deleting a network that is referenced by contexts). Commands should never use `--force` as a synonym for `--yes`.
 
 ### 3.2 Transaction Flags
 
@@ -1509,6 +1643,16 @@ Added to all `tx` commands via `AddTxFlagsToCmd()`.
 | `--unordered`        |       | bool     | `false`                     | Unordered transaction                                         |
 
 **Pretty output for transaction results**: When `--output pretty` is active (the global default), transaction results are rendered in a two-section layout: a common transaction summary (hash, signer, height, gas, fee, status) followed by a message-specific detail section. See [§10.11](#1011-transaction-result-formatting) for the full specification.
+
+**CLI-mode progress feedback**: When a TTY is attached and `--quiet` is not set, `tx` commands display progress status on stderr during multi-second operations. This applies to all `tx` commands, not just workflows.
+
+| Phase | stderr output | Timing |
+|---|---|---|
+| Gas simulation | `Simulating transaction...` | Shown when `--gas auto` (the default) triggers simulation |
+| Broadcast | `Broadcasting transaction...` | Shown immediately after signing |
+| Confirmation wait | `Waiting for tx to be included in block...` | Shown when `--broadcast-mode sync` (the default) waits for CheckTx |
+
+These status lines are written to stderr (see [§10.1.1](#1011-stream-separation-stdout-vs-stderr)) so they never interfere with piped data output. When the operation completes, the final transaction result is written to stdout in the format selected by `--output`. When `--quiet` is set or no TTY is attached, status lines are suppressed -- only the final result (stdout) and errors (stderr) are emitted. When `-v` is set, additional detail is shown (e.g., selected endpoint, simulated gas amount, raw CheckTx response).
 
 ### 3.3 Query Flags
 
@@ -3023,6 +3167,30 @@ Query commands use a **registry-based pretty output system** (`internal/output/p
 
 When `--output pretty` (the default), output is styled using **lipgloss**. Colors are disabled automatically when stdout is not a TTY or when the `NO_COLOR` environment variable is set.
 
+### 10.1.1 Stream Separation (stdout vs stderr)
+
+All CLI output follows strict stream separation for scriptability:
+
+| Stream | Content |
+|--------|---------|
+| **stdout** | Data output only: query results, transaction results, exported store data, version string, completion scripts. This is the machine-parseable payload. |
+| **stderr** | Everything else: error messages, warnings, progress indicators, spinners, status lines, verbose/debug logging, confirmation prompts, and informational messages (e.g., "Broadcasting transaction..."). |
+
+This separation ensures that piping and redirection work correctly:
+
+```bash
+# Data goes to file, progress/errors visible on terminal
+akt query deployment 12345 -o json > deployment.json
+
+# Suppress informational output, keep only data
+akt query deployment 12345 -o json 2>/dev/null
+
+# Chain commands reliably
+akt query deployment 12345 -o json | jq '.deployment.state'
+```
+
+When `--quiet` is set, stderr informational output (progress, status lines) is suppressed; only errors are emitted to stderr. When `--verbose` is set, additional operational detail is emitted to stderr.
+
 ### 10.2 Dispatch Architecture
 
 Every query command calls `pretty.PrintQueryResult(cmd, cctx, msg)`:
@@ -4022,6 +4190,8 @@ type CLIError struct {
 
 ### 11.3 User-Facing Error Messages
 
+All errors are written to **stderr**, never stdout. This is critical for scriptability -- piping stdout to another command or file must never be polluted with error messages (see [§10.1.1](#1011-stream-separation-stdout-vs-stderr)).
+
 Errors presented to users include:
 
 1. **What happened**: A clear description of the failure.
@@ -4038,6 +4208,34 @@ Error: cannot connect to RPC endpoint
   Suggestion: Check your network connection, or try a different endpoint:
     akt context edit mainnet --rpc https://rpc-akash.ecostake.com:443
 ```
+
+### 11.4 Typo Suggestions
+
+When a user types an unknown command or subcommand, `akt` suggests the closest match using Levenshtein distance (cobra's built-in `SuggestionsMinimumDistance`). The suggestion threshold is set to 2 (maximum edit distance).
+
+```
+$ akt qurey deployment
+Error: unknown command "qurey" for "akt"
+
+Did you mean this?
+    query
+
+Run 'akt --help' for usage.
+```
+
+This also applies to subcommands:
+
+```
+$ akt context nework list
+Error: unknown command "nework" for "akt context"
+
+Did you mean this?
+    network
+
+Run 'akt context --help' for usage.
+```
+
+Cobra provides this feature via `Command.SuggestionsMinimumDistance` and `Command.SuggestFor`. All top-level and subcommands must have suggestions enabled (the cobra default). Commands with common aliases should register them via `SuggestFor` (e.g., the `query` command suggests for `q`).
 
 ---
 
@@ -4063,6 +4261,7 @@ Error: cannot connect to RPC endpoint
 | 1.8  | Chain client          | Full and light client with multi-endpoint failover                                                                                                                                          | Successful tx broadcast and query with automatic failover when primary endpoint is down                 |
 | 1.9  | Transaction commands  | All `tx` module commands (bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, slashing, vesting, upgrade, crisis, IBC) | Each command matches the behavioral output of the current `akash` binary                                |
 | 1.10 | Query commands        | All `query` module commands                                                                                                                                                                 | Each command matches the behavioral output of the current `akash` binary                                |
+| 1.10a | Resource filter parsing | `internal/filter/` package implementing the `/`-separated positional filter argument (§3.8) for Akash query commands: deployment, market (order/bid/lease), cert, audit, escrow. Smart type detection (bech32 vs uint), `--by provider` mode, get-vs-list heuristic. | `akt query deployment 12345`, `akt query market lease akash1.../12345/1/1/akash1prov...`, and all §3.8.6 examples work correctly |
 | 1.11 | Key commands          | All `keys` subcommands                                                                                                                                                                      | Full key lifecycle works (create, export, import, delete, show, list)                                   |
 | 1.12 | Auth utility commands | sign, sign-batch, multisign, validate-signatures, broadcast, encode, decode                                                                                                                 | Offline signing workflow works end-to-end                                                               |
 | 1.13 | Output formatting     | Pretty output registry with per-type formatters for all query results. `--output pretty` (default) renders lipgloss-styled tables/sections. `--output json\|yaml` produces machine-readable output. See section 10. | All query results render pretty tables (list) or sectioned key-value (detail) by default. `--output json` or `--output yaml` produces machine-readable output. |

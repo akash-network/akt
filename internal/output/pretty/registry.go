@@ -5,9 +5,14 @@ import (
 	"sync"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/gogoproto/proto"
 	"github.com/spf13/cobra"
 )
+
+// ---------------------------------------------------------------------------
+// Query formatters
+// ---------------------------------------------------------------------------
 
 // PrettyFormatter formats a protobuf query response for human-readable output.
 type PrettyFormatter interface {
@@ -48,5 +53,59 @@ func Lookup(msg proto.Message) (PrettyFormatter, bool) {
 
 	key := proto.MessageName(msg)
 	f, ok := registry[key]
+	return f, ok
+}
+
+// ---------------------------------------------------------------------------
+// Transaction formatters (SPEC §10.11)
+// ---------------------------------------------------------------------------
+
+// TxPrettyFormatter formats a transaction message for pretty output.
+// It renders the message-specific detail section (Section 2 in the two-section
+// layout). The common transaction summary (Section 1) is rendered by the caller.
+type TxPrettyFormatter interface {
+	// FormatTx renders the message-specific detail section.
+	FormatTx(w io.Writer, cmd *cobra.Command, cctx sdkclient.Context, msg sdk.Msg, resp *sdk.TxResponse, msgIndex int) error
+
+	// Title returns the human-readable section header for this message type.
+	// Examples: "Send", "Deployment Created", "Delegate", "Vote"
+	Title() string
+}
+
+// TxPrettyFormatterFunc is a convenience adapter for simple tx formatters.
+type TxPrettyFormatterFunc struct {
+	TitleStr string
+	FormatFn func(w io.Writer, cmd *cobra.Command, cctx sdkclient.Context, msg sdk.Msg, resp *sdk.TxResponse, msgIndex int) error
+}
+
+func (f TxPrettyFormatterFunc) FormatTx(w io.Writer, cmd *cobra.Command, cctx sdkclient.Context, msg sdk.Msg, resp *sdk.TxResponse, msgIndex int) error {
+	return f.FormatFn(w, cmd, cctx, msg, resp, msgIndex)
+}
+
+func (f TxPrettyFormatterFunc) Title() string {
+	return f.TitleStr
+}
+
+var (
+	txMu       sync.RWMutex
+	txRegistry = make(map[string]TxPrettyFormatter)
+)
+
+// RegisterTx registers a TxPrettyFormatter for the given sdk.Msg type.
+func RegisterTx(msg sdk.Msg, formatter TxPrettyFormatter) {
+	txMu.Lock()
+	defer txMu.Unlock()
+
+	key := proto.MessageName(msg)
+	txRegistry[key] = formatter
+}
+
+// LookupTx returns the TxPrettyFormatter registered for the given sdk.Msg type, if any.
+func LookupTx(msg sdk.Msg) (TxPrettyFormatter, bool) {
+	txMu.RLock()
+	defer txMu.RUnlock()
+
+	key := proto.MessageName(msg)
+	f, ok := txRegistry[key]
 	return f, ok
 }

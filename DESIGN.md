@@ -245,13 +245,18 @@ Both modes share the same core services (context, keyring, client, store). The T
 - **TUI mode** (default when TTY is attached): Interactive bubbletea UI with progress display, bid selection tables, spinners, and colored status output.
 - **JSONL mode** (`--output jsonl`): Emits one JSONL line per completed step to stdout. Each line is a self-contained JSON object with workflow name, unique run ID, step name, result status, errors, and transaction results. Designed for CI/CD pipelines, scripts, and programmatic consumption.
 
-**Glyph modes**: The interface supports two glyph rendering modes: **nerd** (Nerd Font glyphs from the Font Awesome PUA range) and **ascii** (pure ASCII fallbacks that work in any terminal font). The `--glyph-mode` flag controls which mode is used:
+**Glyphs**: The interface uses ASCII-safe glyphs exclusively. There is no Nerd Font mode. All glyphs are defined in a centralized registry (`internal/glyphs/`) with semantic names; rendering code references the registry, never inline string literals. Standard Unicode characters (block drawing `█░▀`, arrows `←↑→↓`, box drawing `─`, circles `●`) are used freely since they render correctly in virtually all terminal fonts.
 
-- **`auto`** (default): Uses ASCII glyphs. Font detection is disabled because the DSR terminal probe put the terminal in raw mode and leaked goroutines that consumed keystrokes.
-- **`nerd`**: Forces Nerd Font glyphs. Use when a Nerd Font is installed and configured in the terminal.
-- **`ascii`**: Forces ASCII-safe glyphs. Equivalent to `auto`.
+**CLI UX principles**: The CLI follows six core UX principles that inform all command design:
 
-All Nerd Font (PUA range) glyphs are defined in a centralized registry (`internal/glyphs/`) with both nerd and ascii variants. Standard Unicode characters (block drawing `█░▀`, arrows `←↑→↓`, box drawing `─`, circles `●`) are used in both modes since they render correctly in virtually all terminal fonts.
+1. **Familiarity** -- Standard flags (`--help`, `--version`, `--yes`, `--dry-run`, `--verbose`, `--quiet`), consistent noun-verb command patterns, and conventions matching the Cosmos SDK ecosystem.
+2. **Discoverability** -- Every command includes usage examples in `--help`. Shell completion for commands, flags, and context/network names. Typo suggestions via Levenshtein distance ("Did you mean?"). Command palette in TUI with fuzzy search.
+3. **Feedback** -- Progress indicators on stderr for operations exceeding 1 second (gas simulation, broadcast, confirmation wait). Confirmations for success. Live state display in TUI header.
+4. **Clarity** -- Structured output with sections, aligned columns, indentation hierarchy, and semantic color coding. Data on stdout, everything else on stderr.
+5. **Flow** -- Dual-mode operation (interactive + scripted), correct exit codes, `--quiet` for pipeline-friendly output, `--output json|yaml|jsonl` for machine consumption.
+6. **Forgiveness** -- Three-part error messages (what happened, context, suggestion), confirmation dialogs for destructive actions, typo correction, and clear `--force` vs `--yes` semantics.
+
+See [SPEC.md sections 3, 10, and 11](SPEC.md) for the detailed specification of these principles.
 
 ### 3.3 Storage Architecture
 
@@ -650,6 +655,8 @@ Send
 | `akash keys *`                | `akt keys *`                | Identical behavior                 |
 | (none)                        | `akt context *`             | New context management             |
 | (none)                        | `akt deploy`                | New workflow command               |
+| (none)                        | `akt update`                | New workflow command               |
+| (none)                        | `akt close`                 | New workflow command               |
 | (none)                        | `akt` (no subcommand)       | Launches TUI mode by default       |
 | (none)                        | `akt store *`               | New store management               |
 | (none)                        | `akt plugin *`              | New plugin management              |

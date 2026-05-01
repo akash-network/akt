@@ -30,6 +30,11 @@ orders, bids, leases, providers, audited attributes, and certificates.
 Write tools (with --enable-writes): close deployment, create lease,
 close lease, and submit manifest.`,
 		Args: cobra.NoArgs,
+		Example: `  # Read-only mode (safe for AI agents)
+  akt mcp
+
+  # With write tools enabled
+  akt mcp --enable-writes`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cctx := sdkclient.GetClientContextFromCmd(cmd)

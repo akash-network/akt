@@ -76,7 +76,7 @@ func DefaultConfig() Config {
 		Keyrings: []Keyring{DefaultKeyring()},
 		Contexts: []Context{},
 		Defaults: Defaults{
-			Output:        "table",
+			Output:        "pretty",
 			BroadcastMode: "sync",
 		},
 		TUI: TUISettings{

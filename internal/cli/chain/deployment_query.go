@@ -29,8 +29,10 @@ func GetQueryDeploymentCmds() *cobra.Command {
 				return err
 			}
 
+			defaultOwner := cl.ClientContext().GetFromAddress().String()
+
 			if len(args) == 1 {
-				af, err := cflags.DepFiltersFromArg(args[0])
+				af, err := cflags.DepFiltersFromArg(args[0], defaultOwner)
 				if err != nil {
 					return err
 				}
@@ -38,6 +40,11 @@ func GetQueryDeploymentCmds() *cobra.Command {
 				if af.DSeq != 0 {
 					dfilters.DSeq = af.DSeq
 				}
+			}
+
+			// Default owner fallback when no arg and no --owner flag.
+			if dfilters.Owner == "" && defaultOwner != "" {
+				dfilters.Owner = defaultOwner
 			}
 
 			if cflags.DepFiltersIsID(dfilters) {
@@ -103,8 +110,10 @@ func GetQueryDeploymentGroupCmd() *cobra.Command {
 				gseq  uint32
 			)
 
+			defaultOwner := cl.ClientContext().GetFromAddress().String()
+
 			if len(args) == 1 {
-				parsed, fullySpecified, err := cflags.GroupIDFromArg(args[0])
+				parsed, fullySpecified, err := cflags.GroupIDFromArg(args[0], defaultOwner)
 				if err != nil {
 					return err
 				}
