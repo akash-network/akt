@@ -1,0 +1,3 @@
+  [1;38;5;240mSCOPE[m           [1;38;5;240mXID[m            [1;38;5;240mOWNER[m      [1;38;5;240mSTATE[m   [1;38;5;240mBALANCE[m  [1;38;5;240mSPENT[m  [1;38;5;240mSETTLED AT[m
+deployment  [1makash1abc123/100[m  akash1abc123  [38;5;78mopen[m    [1m5 AKT[m    1 AKT  18,234,567
+deployment  [1makash1def456/200[m  akash1def456  [38;5;203mclosed[m  [1m-[m        -      -         

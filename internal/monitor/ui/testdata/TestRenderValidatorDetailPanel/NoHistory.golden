@@ -1,8 +1,8 @@
-[38;5;8m────────────────────────────────────────────────────────────[m
-  [38;5;8mValidator:[m   [1;38;5;15mStaked[m
-  [38;5;8mAddress:[m     [38;5;8mABCDEF0009[m
-  [38;5;8mPubKey:[m      [38;5;8mpubkey0009[m
-  [38;5;8mPower:[m       [1;38;5;15m1.0K[m[38;5;8m (1.82%)[m
-  [38;5;8mCurrent:[m     prevote [38;5;9m-[m  precommit [38;5;9m-[m
-  [38;5;8mHistory:[m     [38;5;2m16[m signed, [1;38;5;9m4[m missed out of 20 blocks (80.0%)
-[38;5;8m  Esc: collapse[m
+[38;5;245m────────────────────────────────────────────────────────────[m
+  [38;5;245mValidator:[m   [1;38;5;255mStaked[m
+  [38;5;245mAddress:[m     [38;5;245mABCDEF0009[m
+  [38;5;245mPubKey:[m      [38;5;245mpubkey0009[m
+  [38;5;245mPower:[m       [1;38;5;255m1.0K[m[38;5;245m (1.82%)[m
+  [38;5;245mCurrent:[m     prevote [38;5;203m-[m  precommit [38;5;203m-[m
+  [38;5;245mHistory:[m     [38;5;78m16[m signed, [1;38;5;203m4[m missed out of 20 blocks (80.0%)
+[38;5;245m  Esc: collapse[m

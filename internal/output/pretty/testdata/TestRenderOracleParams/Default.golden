@@ -1,0 +1,9 @@
+[1;4;4mO[m[1;4;4mr[m[1;4;4ma[m[1;4;4mc[m[1;4;4ml[m[1;4;4me[m[4m [m[1;4;4mP[m[1;4;4ma[m[1;4;4mr[m[1;4;4ma[m[1;4;4mm[m[1;4;4me[m[1;4;4mt[m[1;4;4me[m[1;4;4mr[m[1;4;4ms[m
+  [38;5;245mSources:[m             coingecko, osmosis
+  [38;5;245mMin Price Sources:[m   3
+  [38;5;245mMax Staleness:[m       30m
+  [38;5;245mTWAP Window:[m         10m
+  [38;5;245mMax Deviation:[m       500 bps
+  [38;5;245mPrice Retention:[m     1 day
+  [38;5;245mPrune Epoch:[m         hour
+  [38;5;245mMax Prune/Epoch:[m     100

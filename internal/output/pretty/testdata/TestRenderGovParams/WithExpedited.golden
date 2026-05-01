@@ -1,0 +1,17 @@
+[1;4;4mG[m[1;4;4mo[m[1;4;4mv[m[1;4;4me[m[1;4;4mr[m[1;4;4mn[m[1;4;4ma[m[1;4;4mn[m[1;4;4mc[m[1;4;4me[m[4m [m[1;4;4mP[m[1;4;4ma[m[1;4;4mr[m[1;4;4ma[m[1;4;4mm[m[1;4;4me[m[1;4;4mt[m[1;4;4me[m[1;4;4mr[m[1;4;4ms[m
+  [38;5;245mVoting Period:[m     2 days
+  [38;5;245mMin Deposit:[m       50000 AKT
+  [38;5;245mMax Deposit Pd:[m    14 days
+  [38;5;245mQuorum:[m            33.4%
+  [38;5;245mThreshold:[m         50%
+  [38;5;245mVeto Threshold:[m    33.4%
+
+  [38;5;245mExpedited:[m
+      [38;5;245mVoting Period:[m   1 day
+      [38;5;245mThreshold:[m       66.7%
+      [38;5;245mMin Deposit:[m     100000 AKT
+
+  [38;5;245mBurn:[m
+      [38;5;245mVote Quorum:[m     No
+      [38;5;245mDeposit Prevote:[m [38;5;78mYes[m
+      [38;5;245mVote Veto:[m       [38;5;78mYes[m

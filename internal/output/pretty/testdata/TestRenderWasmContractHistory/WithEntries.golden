@@ -1,0 +1,3 @@
+                 [1;38;5;240mOPERATION[m                    [1;38;5;240mCODE ID[m   [1;38;5;240mUPDATED[m 
+CONTRACT_CODE_HISTORY_OPERATION_TYPE_INIT           1  block 100
+CONTRACT_CODE_HISTORY_OPERATION_TYPE_MIGRATE        2  block 200

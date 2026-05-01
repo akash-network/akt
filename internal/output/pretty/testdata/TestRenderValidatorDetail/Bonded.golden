@@ -1,0 +1,19 @@
+[1;4;4mV[m[1;4;4ma[m[1;4;4ml[m[1;4;4mi[m[1;4;4md[m[1;4;4ma[m[1;4;4mt[m[1;4;4mo[m[1;4;4mr[m
+  [38;5;245mMoniker:[m             [1mValidatorAlpha[m
+  [38;5;245mOperator:[m            akashvaloper1abc123
+  [38;5;245mStatus:[m              [38;5;78mbonded[m
+  [38;5;245mJailed:[m              false
+  [38;5;245mTokens:[m              [1m5000 AKT[m
+  [38;5;245mDelegator Shares:[m    5000000000.000000000000000000
+
+[1;4;4mD[m[1;4;4me[m[1;4;4ms[m[1;4;4mc[m[1;4;4mr[m[1;4;4mi[m[1;4;4mp[m[1;4;4mt[m[1;4;4mi[m[1;4;4mo[m[1;4;4mn[m
+  [38;5;245mIdentity:[m            DEADBEEF
+  [38;5;245mWebsite:[m             https://alpha.example.com
+  [38;5;245mSecurity:[m            security@alpha.example.com
+  [38;5;245mDetails:[m             A reliable validator
+
+[1;4;4mC[m[1;4;4mo[m[1;4;4mm[m[1;4;4mm[m[1;4;4mi[m[1;4;4ms[m[1;4;4ms[m[1;4;4mi[m[1;4;4mo[m[1;4;4mn[m
+  [38;5;245mRate:[m                5.000000000000000000%
+  [38;5;245mMax Rate:[m            20.000000000000000000%
+  [38;5;245mMax Change Rate:[m     1.000000000000000000%
+  [38;5;245mUpdated At:[m          2026-01-01 12:00:00 UTC

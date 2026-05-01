@@ -13,23 +13,25 @@ import (
 	"github.com/spf13/cobra"
 
 	"cosmossdk.io/math"
+
+	"pkg.akt.dev/akt/internal/ui/theme"
 )
 
-// Styles used throughout pretty output. Colors are automatically disabled
-// when stdout is not a TTY or when NO_COLOR is set (lipgloss handles this).
+// Styles used throughout pretty output. All colors are sourced from the
+// shared theme package so CLI pretty output and TUI views are consistent.
 var (
-	StyleBold    = lipgloss.NewStyle().Bold(true)
-	StyleDim     = lipgloss.NewStyle().Faint(true)
-	StyleSection = lipgloss.NewStyle().Bold(true).Underline(true)
-	StyleKey     = lipgloss.NewStyle().Faint(true)
-	StyleGreen   = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	StyleYellow  = lipgloss.NewStyle().Foreground(lipgloss.Color("3"))
-	StyleRed     = lipgloss.NewStyle().Foreground(lipgloss.Color("1"))
-	StyleGray    = lipgloss.NewStyle().Faint(true)
-	StyleCyan    = lipgloss.NewStyle().Foreground(lipgloss.Color("6"))
-	StyleMagenta = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
+	StyleBold    = theme.Bold
+	StyleDim     = theme.Dim
+	StyleSection = theme.Section
+	StyleKey     = theme.Key
+	StyleGreen   = theme.Green
+	StyleYellow  = theme.Yellow
+	StyleRed     = theme.Red
+	StyleGray    = theme.Gray
+	StyleCyan    = theme.Cyan
+	StyleMagenta = theme.Magenta
 
-	StyleHeader = lipgloss.NewStyle().Bold(true).Faint(true)
+	StyleHeader = theme.Header
 )
 
 // FormatCoin formats a Cosmos SDK Coin for human display.
@@ -558,4 +560,77 @@ func FormatBool(b bool) string {
 		return StyleGreen.Render("Yes")
 	}
 	return "No"
+}
+
+// ─── Shared format helpers (used by both CLI pretty output and TUI) ──
+
+// FormatNumber formats an int64 with comma-separated thousands.
+// Example: 18234567 → "18,234,567"
+func FormatNumber(n int64) string {
+	return formatWithCommas(n)
+}
+
+// FormatPower formats voting power in a compact human-readable way.
+// Example: 1500000 → "1.5M", 2500 → "2.5K"
+func FormatPower(power int64) string {
+	if power >= 1_000_000_000 {
+		return fmt.Sprintf("%.1fB", float64(power)/1_000_000_000)
+	}
+	if power >= 1_000_000 {
+		return fmt.Sprintf("%.1fM", float64(power)/1_000_000)
+	}
+	if power >= 1_000 {
+		return fmt.Sprintf("%.1fK", float64(power)/1_000)
+	}
+	return fmt.Sprintf("%d", power)
+}
+
+// FormatShortDuration formats a duration for compact display (block times).
+// Uses ms/s/m format: "350ms", "3.5s", "1m30s"
+func FormatShortDuration(d time.Duration) string {
+	if d < time.Second {
+		return fmt.Sprintf("%dms", d.Milliseconds())
+	}
+	if d < time.Minute {
+		return fmt.Sprintf("%.1fs", d.Seconds())
+	}
+	return fmt.Sprintf("%dm%.0fs", int(d.Minutes()), d.Seconds()-float64(int(d.Minutes()))*60)
+}
+
+// FormatBytes formats a byte count as a human-readable string using
+// binary units: Ki, Mi, Gi, Ti.
+func FormatBytes(bytes uint64) string {
+	const (
+		ki = 1024
+		mi = 1024 * ki
+		gi = 1024 * mi
+		ti = 1024 * gi
+	)
+	switch {
+	case bytes >= ti:
+		return fmt.Sprintf("%.0fTi", float64(bytes)/float64(ti))
+	case bytes >= gi:
+		return fmt.Sprintf("%.0fGi", float64(bytes)/float64(gi))
+	case bytes >= mi:
+		return fmt.Sprintf("%dMi", bytes/mi)
+	default:
+		return fmt.Sprintf("%d", bytes)
+	}
+}
+
+// FormatMemoryRatio formats a memory available/total ratio as "avail/total"
+// using human-readable byte units.
+func FormatMemoryRatio(available, total uint64) string {
+	if total == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%s/%s", FormatBytes(available), FormatBytes(total))
+}
+
+// FormatResourceRatio formats an available/total resource count as "avail/total".
+func FormatResourceRatio(available, total uint64) string {
+	if total == 0 {
+		return "-"
+	}
+	return fmt.Sprintf("%d/%d", available, total)
 }

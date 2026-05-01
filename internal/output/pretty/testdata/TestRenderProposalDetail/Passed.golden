@@ -1,0 +1,20 @@
+[1;4;4mP[m[1;4;4mr[m[1;4;4mo[m[1;4;4mp[m[1;4;4mo[m[1;4;4ms[m[1;4;4ma[m[1;4;4ml[m
+  [38;5;245mID:[m                  [1m2[m
+  [38;5;245mTitle:[m               [1mCommunity Pool Spend[m
+  [38;5;245mStatus:[m              [38;5;78mpassed[m
+  [38;5;245mProposer:[m            akash1proposer456
+
+[1;4;4mT[m[1;4;4mi[m[1;4;4mm[m[1;4;4me[m[1;4;4ml[m[1;4;4mi[m[1;4;4mn[m[1;4;4me[m
+  [38;5;245mSubmit Time:[m         2026-01-01 12:00:00 UTC
+  [38;5;245mDeposit End:[m         2026-01-15 12:00:00 UTC
+  [38;5;245mVoting Start:[m        2026-01-02 12:00:00 UTC
+  [38;5;245mVoting End:[m          2026-01-09 12:00:00 UTC
+
+[1;4;4mD[m[1;4;4me[m[1;4;4mp[m[1;4;4mo[m[1;4;4ms[m[1;4;4mi[m[1;4;4mt[m
+  [38;5;245mTotal Deposit:[m       [1m50000 AKT[m
+
+[1;4;4mT[m[1;4;4ma[m[1;4;4ml[m[1;4;4ml[m[1;4;4my[m
+  [38;5;245mYes:[m                 5000000
+  [38;5;245mNo:[m                  100000
+  [38;5;245mAbstain:[m             20000
+  [38;5;245mNo With Veto:[m        5000

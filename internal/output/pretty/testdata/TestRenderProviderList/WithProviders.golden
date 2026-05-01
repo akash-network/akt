@@ -1,0 +1,3 @@
+      [1;38;5;240mOWNER[m                     [1;38;5;240mHOST URI[m                          [1;38;5;240mEMAIL[m                        [1;38;5;240mWEBSITE[m           
+akash1provider001  https://provider1.example.com:8443  admin@provider1.example.com  https://provider1.example.com
+akash1provider002  https://provider2.example.com:8443  ops@provider2.example.com    https://provider2.example.com

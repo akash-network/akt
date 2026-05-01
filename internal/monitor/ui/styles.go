@@ -7,133 +7,45 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"pkg.akt.dev/akt/internal/glyphs"
+	"pkg.akt.dev/akt/internal/ui/theme"
 )
 
+// All colors and styles are sourced from the shared theme package so the
+// monitor dashboard, CLI pretty output, and TUI views stay visually
+// consistent.
 var (
-	// ANSI terminal palette colors (respects terminal theme like Catppuccin)
-	// Uses the terminal's 16-color palette (0-15)
-	primaryColor = lipgloss.ANSIColor(1)  // Red
-	accentColor  = lipgloss.ANSIColor(9)  // Bright Red
-	successColor = lipgloss.ANSIColor(2)  // Green
-	warningColor = lipgloss.ANSIColor(3)  // Yellow
-	errorColor   = lipgloss.ANSIColor(9)  // Bright Red
-	mutedColor   = lipgloss.ANSIColor(8)  // Bright Black (Surface)
-	textColor    = lipgloss.ANSIColor(7)  // White (Text)
-	brightText   = lipgloss.ANSIColor(15) // Bright White
-	borderColor  = lipgloss.ANSIColor(8)  // Bright Black (Surface)
+	// Styles — aliases into the shared theme.
+	titleStyle        = theme.Title
+	headerStyle       = theme.SectionHeader
+	labelStyle        = theme.Label.Width(12)
+	valueStyle        = theme.Value
+	percentLowStyle   = theme.PercentLow
+	percentHighStyle  = theme.PercentHigh
+	gridVotedStyle    = theme.GridVoted
+	gridNotVotedStyle = theme.GridNotVoted
+	errorStyle        = theme.Error
+	helpStyle         = theme.HelpBar
+	statusBarStyle    = theme.StatusBar
+	mutedStyle        = theme.Muted
+	proposerStyle     = theme.Proposer
+	tabActiveStyle    = theme.TabActive
+	tabInactiveStyle  = theme.TabInactive
+	monikerStyle      = theme.Moniker
+	highlightStyle    = theme.Highlight
+	detailHeaderStyle = theme.DetailHeader
+	detailLabelStyle  = theme.DetailLabel
+	detailValueStyle  = theme.DetailValue
+	voteYesStyle      = theme.VoteYes
+	voteNoStyle       = theme.VoteNo
 
-	// Title style
-	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(accentColor).
-			MarginBottom(1)
-
-	// Header style for section headers
-	headerStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(primaryColor).
-			BorderStyle(lipgloss.NormalBorder()).
-			BorderBottom(true).
-			BorderForeground(borderColor).
-			PaddingBottom(1).
-			MarginBottom(1)
-
-	// Label style for field labels
-	labelStyle = lipgloss.NewStyle().
-			Foreground(mutedColor).
-			Width(12)
-
-	// Value style for field values
-	valueStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(brightText)
-
-	// Double progress bar color
-	precommitBarColor = lipgloss.ANSIColor(6) // Cyan — precommits
-
-	// Percentage styles based on threshold
-	percentLowStyle = lipgloss.NewStyle().
-			Foreground(warningColor)
-
-	percentHighStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(successColor)
-
-	// Grid styles (dots and version indicators stay green)
-	gridVotedStyle = lipgloss.NewStyle().
-			Foreground(successColor)
-
-	gridNotVotedStyle = lipgloss.NewStyle().
-				Foreground(mutedColor)
-
-	// Error style
-	errorStyle = lipgloss.NewStyle().
-			Foreground(errorColor).
-			Bold(true)
-
-	// Help style
-	helpStyle = lipgloss.NewStyle().
-			Foreground(mutedColor).
-			MarginTop(1)
-
-	// Status bar style
-	statusBarStyle = lipgloss.NewStyle().
-			Foreground(mutedColor).
-			MarginTop(1)
-
-	// Muted text style (for general muted text)
-	mutedStyle = lipgloss.NewStyle().
-			Foreground(mutedColor)
-
-	// Proposer style (star indicator)
-	proposerStyle = lipgloss.NewStyle().
-			Foreground(warningColor).
-			Bold(true)
-
-	// Tab styles
-	tabActiveStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(brightText).
-			Background(primaryColor).
-			Padding(0, 1)
-
-	tabInactiveStyle = lipgloss.NewStyle().
-				Foreground(mutedColor).
-				Padding(0, 1)
-
-	// Moniker style
-	monikerStyle = lipgloss.NewStyle().
-			Foreground(textColor)
-
-	// Highlight style for selected rows
-	highlightStyle = lipgloss.NewStyle().
-			Foreground(brightText).
-			Bold(true)
-
-	// Detail view styles
-	detailHeaderStyle = lipgloss.NewStyle().
-				Bold(true).
-				Foreground(primaryColor)
-
-	detailLabelStyle = lipgloss.NewStyle().
-				Foreground(mutedColor).
-				Width(10)
-
-	detailValueStyle = lipgloss.NewStyle().
-				Foreground(textColor)
-
-	// Vote indicator styles
-	voteYesStyle = lipgloss.NewStyle().
-			Foreground(successColor)
-
-	voteNoStyle = lipgloss.NewStyle().
-			Foreground(errorColor)
+	// Progress bar color — used by DoubleProgressBar for the precommit bar.
+	precommitBarColor = theme.ProgressPrecommit
 )
 
 // ProgressBar renders a progress bar with the given percentage (0-1) using bubbles/progress.
 func ProgressBar(percent float64, width int) string {
 	p := progress.New(
-		progress.WithColors(primaryColor),
+		progress.WithColors(theme.ProgressPrimary),
 		progress.WithoutPercentage(),
 	)
 	p.SetWidth(width)
@@ -168,7 +80,7 @@ func ProgressBarWithLabel(percent float64, width int, label string) string {
 	}
 
 	p := progress.New(
-		progress.WithColors(primaryColor),
+		progress.WithColors(theme.ProgressPrimary),
 		progress.WithoutPercentage(),
 	)
 	p.SetWidth(width)
@@ -208,7 +120,7 @@ func DoubleProgressBar(prevotePct, precommitPct float64, width int) string {
 	precommitPct = clamp(precommitPct)
 
 	pvBar := progress.New(
-		progress.WithColors(successColor),
+		progress.WithColors(theme.ProgressSuccess),
 		progress.WithoutPercentage(),
 	)
 	pvBar.SetWidth(width)
