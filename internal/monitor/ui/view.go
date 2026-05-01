@@ -7,7 +7,6 @@ import (
 	"time"
 	"unicode"
 
-	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/viewport"
 	"charm.land/lipgloss/v2"
@@ -94,8 +93,10 @@ type ViewContext struct {
 	NodeTable      table.Model
 	ValidatorTable table.Model
 	BlockTable     table.Model
-	GovModuleList  list.Model
-	GovParamView   viewport.Model
+	GovModuleIdx    int // selected module index
+	GovModuleScroll int // first visible module index
+	GovModuleHeight int // visible rows for module list
+	GovParamView    viewport.Model
 }
 
 // RenderView renders the complete view
@@ -207,11 +208,19 @@ func renderOraclePanel(ctx ViewContext, width int) string {
 	var b strings.Builder
 
 	if len(ctx.Oracle.Aggregated) == 0 {
-		b.WriteString(mutedStyle.Render("  Oracle v2 module not active on this network."))
+		switch ctx.Oracle.Version {
+		case "none":
+			b.WriteString(mutedStyle.Render("  Oracle module not active on this network."))
+		case "":
+			b.WriteString(mutedStyle.Render("  Loading oracle data..."))
+		default:
+			b.WriteString(mutedStyle.Render(
+				fmt.Sprintf("  Oracle %s detected — waiting for aggregated prices...", ctx.Oracle.Version)))
+		}
 		b.WriteString("\n")
 	}
 	// TODO: call pretty.RenderAggregatedPrice / pretty.RenderOraclePrices
-	// when oracle v2 is on mainnet and data is available.
+	// when data is available.
 
 	return b.String()
 }
@@ -384,6 +393,14 @@ const consensusThreshold = 0.667
 // title(1) + hub tabs(1) + sub tabs(1) + blank(1) + section header(3) +
 // progress bars(2) + blank(1) = 10
 const overviewOverhead = 10
+
+// governanceOverhead is the number of lines consumed by chrome around
+// the governance module list/param view.
+// title(1) + hub tabs(1) + sub tabs(1) + blank after tabs(1) +
+// headerStyle "Governance Parameters" with border+padding+margin(4) +
+// help text(1) + blank after help(1) +
+// newline after dashboard(1) + status bar help(1) + status bar RPC(1) = 13
+const governanceOverhead = 13
 
 // Fixed column widths for the block table.
 const (
@@ -1308,78 +1325,34 @@ func renderStatusBar(endpoint string, activeTab Tab, _ bool, wsConnected bool, w
 	return help + "\n" + status
 }
 
-// formatDuration formats a duration in a human-readable way
+// formatDuration delegates to the shared pretty.FormatShortDuration helper.
 func formatDuration(d time.Duration) string {
-	if d < time.Second {
-		return fmt.Sprintf("%dms", d.Milliseconds())
-	}
-	if d < time.Minute {
-		return fmt.Sprintf("%.1fs", d.Seconds())
-	}
-	return fmt.Sprintf("%dm%.0fs", int(d.Minutes()), d.Seconds()-float64(int(d.Minutes()))*60)
+	return pretty.FormatShortDuration(d)
 }
 
-// formatNumber formats a number with thousand separators
+// formatNumber delegates to the shared pretty.FormatNumber helper.
 func formatNumber(n int64) string {
-	s := fmt.Sprintf("%d", n)
-	if len(s) <= 3 {
-		return s
-	}
-
-	var result strings.Builder
-	for i, c := range s {
-		if i > 0 && (len(s)-i)%3 == 0 {
-			result.WriteRune(',')
-		}
-		result.WriteRune(c)
-	}
-	return result.String()
+	return pretty.FormatNumber(n)
 }
 
-// formatPower formats voting power in a compact way
+// formatPower delegates to the shared pretty.FormatPower helper.
 func formatPower(power int64) string {
-	if power >= 1_000_000_000 {
-		return fmt.Sprintf("%.1fB", float64(power)/1_000_000_000)
-	}
-	if power >= 1_000_000 {
-		return fmt.Sprintf("%.1fM", float64(power)/1_000_000)
-	}
-	if power >= 1_000 {
-		return fmt.Sprintf("%.1fK", float64(power)/1_000)
-	}
-	return fmt.Sprintf("%d", power)
+	return pretty.FormatPower(power)
 }
 
-// formatResourceRatio formats available/total as "avail/total"
+// formatResourceRatio delegates to the shared pretty.FormatResourceRatio helper.
 func formatResourceRatio(available, total uint64) string {
-	if total == 0 {
-		return "-"
-	}
-	return fmt.Sprintf("%d/%d", available, total)
+	return pretty.FormatResourceRatio(available, total)
 }
 
-// formatMemoryRatio formats memory available/total in human-readable format
+// formatMemoryRatio delegates to the shared pretty.FormatMemoryRatio helper.
 func formatMemoryRatio(available, total uint64) string {
-	if total == 0 {
-		return "-"
-	}
-	return fmt.Sprintf("%s/%s", formatBytes(available), formatBytes(total))
+	return pretty.FormatMemoryRatio(available, total)
 }
 
-// formatBytes formats bytes into Kubernetes-style binary units (Gi/Ti/Mi)
+// formatBytes delegates to the shared pretty.FormatBytes helper.
 func formatBytes(bytes uint64) string {
-	const (
-		Mi = 1024 * 1024
-		Gi = 1024 * Mi
-		Ti = 1024 * Gi
-	)
-	if bytes >= Ti {
-		return fmt.Sprintf("%.0fTi", float64(bytes)/float64(Ti))
-	}
-	if bytes >= Gi {
-		return fmt.Sprintf("%.0fGi", float64(bytes)/float64(Gi))
-	}
-	return fmt.Sprintf("%dMi", bytes/Mi)
+	return pretty.FormatBytes(bytes)
 }
 
 func renderGovernanceTab(ctx ViewContext) string {
@@ -1393,7 +1366,7 @@ func renderGovernanceTab(ctx ViewContext) string {
 	b.WriteString(mutedStyle.Render("j/k: select module, h/l: scroll params") + "\n\n")
 
 	// Two-column layout: module list on left, params on right.
-	leftCol := ctx.GovModuleList.View()
+	leftCol := renderGovModuleList(ctx.GovModuleIdx, ctx.GovModuleScroll, ctx.GovModuleHeight)
 	rightCol := ctx.GovParamView.View()
 
 	moduleColWidth := 22
@@ -1401,6 +1374,47 @@ func renderGovernanceTab(ctx ViewContext) string {
 	rightStyled := lipgloss.NewStyle().Width(ctx.Width - moduleColWidth).Render(rightCol)
 
 	b.WriteString(lipgloss.JoinHorizontal(lipgloss.Top, leftStyled, rightStyled))
+
+	return b.String()
+}
+
+// renderGovModuleList renders the governance module selector as a simple
+// scrolling list with a cursor indicator on the selected row.
+// When the list is scrollable, a scroll indicator is shown on the last line.
+func renderGovModuleList(selectedIdx, scrollOffset, visibleRows int) string {
+	modules := governance.ModuleOrder
+	total := len(modules)
+	if visibleRows <= 0 {
+		visibleRows = total
+	}
+
+	needsScroll := total > visibleRows
+	// Reserve 1 row for the scroll indicator when the list overflows.
+	itemRows := visibleRows
+	if needsScroll {
+		itemRows = visibleRows - 1
+	}
+
+	end := scrollOffset + itemRows
+	if end > total {
+		end = total
+	}
+
+	var b strings.Builder
+	for i := scrollOffset; i < end; i++ {
+		name := governance.GetModuleDisplayName(modules[i])
+		if i == selectedIdx {
+			b.WriteString(highlightStyle.Render(fmt.Sprintf("  %-18s", name)))
+		} else {
+			b.WriteString(fmt.Sprintf("  %-18s", name))
+		}
+		b.WriteString("\n")
+	}
+
+	if needsScroll {
+		b.WriteString("\n")
+		b.WriteString(mutedStyle.Render(fmt.Sprintf("  %d/%d", selectedIdx+1, total)))
+	}
 
 	return b.String()
 }

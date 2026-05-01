@@ -7,6 +7,7 @@ import (
 	"github.com/charmbracelet/x/exp/golden"
 
 	"pkg.akt.dev/akt/internal/monitor/consensus"
+	"pkg.akt.dev/akt/internal/monitor/rpc"
 )
 
 func TestRenderView(t *testing.T) {
@@ -328,12 +329,55 @@ func TestRenderGovernanceTab(t *testing.T) {
 			}(),
 		},
 		"WithParams": {
-			ctx: newTestViewContext(withHubTab(HubNetwork), withTab(TabGovernance)),
+			ctx: newTestViewContext(withHubTab(HubNetwork), withTab(TabGovernance), withGovernanceParams()),
+		},
+		"ScrolledToBottom": {
+			ctx: func() ViewContext {
+				ctx := newTestViewContext(withHubTab(HubNetwork), withTab(TabGovernance), withGovernanceParams())
+				ctx.GovModuleHeight = 8 // simulate small terminal: only 8 rows for the list
+				ctx.GovModuleIdx = 11   // last module (crisis)
+				ctx.GovModuleScroll = 5 // scrolled so items 5..11 + indicator visible
+				return ctx
+			}(),
 		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			golden.RequireEqual(t, renderGovernanceTab(tc.ctx))
+		})
+	}
+}
+
+func TestRenderGovModuleList(t *testing.T) {
+	tests := map[string]struct {
+		selectedIdx int
+		scrollOff   int
+		visibleRows int
+	}{
+		"AllFit": {
+			selectedIdx: 0,
+			scrollOff:   0,
+			visibleRows: 20, // plenty of room for 12 modules
+		},
+		"SmallTerminal": {
+			selectedIdx: 3,
+			scrollOff:   0,
+			visibleRows: 8,
+		},
+		"ScrolledDown": {
+			selectedIdx: 11,
+			scrollOff:   5,
+			visibleRows: 8,
+		},
+		"MiddleScroll": {
+			selectedIdx: 6,
+			scrollOff:   2,
+			visibleRows: 8,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			golden.RequireEqual(t, renderGovModuleList(tc.selectedIdx, tc.scrollOff, tc.visibleRows))
 		})
 	}
 }
@@ -372,6 +416,158 @@ func TestRenderStatusBar(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			golden.RequireEqual(t, renderStatusBar("https://rpc.akashnet.net:443", tc.tab, false, tc.wsConnected, testWidth))
+		})
+	}
+}
+
+func TestRenderNetworkDashboard(t *testing.T) {
+	tests := map[string]struct {
+		ctx ViewContext
+	}{
+		"Overview": {
+			ctx: newTestViewContext(withHubTab(HubNetwork), withTab(TabOverview)),
+		},
+		"NilState": {
+			ctx: newTestViewContext(withNilState()),
+		},
+		"WithError": {
+			ctx: newTestViewContext(withHubTab(HubNetwork), withTab(TabOverview), withStateError(fmt.Errorf("connection refused"))),
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			golden.RequireEqual(t, renderNetworkDashboard(tc.ctx))
+		})
+	}
+}
+
+func TestRenderProviderDashboard(t *testing.T) {
+	providers := newTestProviders(1)
+	p := &providers[0]
+	nodes := newTestNodes(3)
+
+	tests := map[string]struct {
+		ctx ViewContext
+	}{
+		"List": {
+			ctx: newTestViewContext(withHubTab(HubProvider)),
+		},
+		"Detail": {
+			ctx: newTestViewContext(withHubTab(HubProvider), withProviderDetail(p, nodes)),
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			golden.RequireEqual(t, renderProviderDashboard(tc.ctx))
+		})
+	}
+}
+
+func TestRenderOracleBMEDashboard(t *testing.T) {
+	tests := map[string]struct {
+		ctx ViewContext
+	}{
+		"Empty": {
+			ctx: newTestViewContext(withHubTab(HubOracleBME)),
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			golden.RequireEqual(t, renderOracleBMEDashboard(tc.ctx))
+		})
+	}
+}
+
+func TestRenderOverviewTab(t *testing.T) {
+	tests := map[string]struct {
+		ctx ViewContext
+	}{
+		"Normal": {
+			ctx: newTestViewContext(withHubTab(HubNetwork), withTab(TabOverview)),
+		},
+		"NilState": {
+			ctx: newTestViewContext(withNilState()),
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			golden.RequireEqual(t, renderOverviewTab(tc.ctx))
+		})
+	}
+}
+
+func TestRenderVersionDistribution(t *testing.T) {
+	providers := newTestProviders(5)
+
+	tests := map[string]struct {
+		providers []rpc.Provider
+		versions  []string
+		selected  string
+	}{
+		"Loading": {
+			providers: nil,
+			versions:  []string{"0.6.4"},
+			selected:  "0.6.4",
+		},
+		"Populated": {
+			providers: providers,
+			versions:  []string{"0.6.4", "0.6.3", "0.6.2"},
+			selected:  "0.6.4",
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			golden.RequireEqual(t, renderVersionDistribution(tc.providers, tc.versions, tc.selected))
+		})
+	}
+}
+
+func TestRenderVoteLine(t *testing.T) {
+	tests := map[string]struct {
+		label      string
+		percent    float64
+		power      int64
+		totalPower int64
+	}{
+		"AboveThreshold": {"Prevotes:", 0.95, 950000, 1000000},
+		"BelowThreshold": {"Prevotes:", 0.45, 450000, 1000000},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			golden.RequireEqual(t, renderVoteLine(tc.label, tc.percent, tc.power, tc.totalPower))
+		})
+	}
+}
+
+func TestRenderValidatorRowWithBlocks(t *testing.T) {
+	state := newTestConsensusState(10)
+	monikers := newTestMonikers(10)
+	signHist := newTestSignHistory(10, 20)
+	proposerHist := newTestProposerHistory(10, 20)
+
+	tests := map[string]struct {
+		validator  consensus.ValidatorStatus
+		isSelected bool
+	}{
+		"Normal": {
+			validator:  state.Validators[0],
+			isSelected: false,
+		},
+		"Selected": {
+			validator:  state.Validators[0],
+			isSelected: true,
+		},
+		"NoHistory": {
+			validator: func() consensus.ValidatorStatus {
+				v := state.Validators[9]
+				return v
+			}(),
+			isSelected: false,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			golden.RequireEqual(t, renderValidatorRowWithBlocks(tc.validator, monikers, signHist, proposerHist, state.TotalVotingPower, 28, 40, tc.isSelected))
 		})
 	}
 }

@@ -6,7 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/viewport"
 	"charm.land/lipgloss/v2"
@@ -16,6 +15,7 @@ import (
 	"pkg.akt.dev/akt/internal/monitor/governance"
 	"pkg.akt.dev/akt/internal/monitor/rpc"
 
+	bmetypes "pkg.akt.dev/go/node/bme/v1"
 	oracletypes "pkg.akt.dev/go/node/oracle/v2"
 )
 
@@ -363,20 +363,6 @@ func newTestNodeTableModel(nodes []rpc.ProviderNodeWithGPU) table.Model {
 	return t
 }
 
-// newTestGovModuleList builds a bubbles list.Model for governance module tests.
-func newTestGovModuleList() list.Model {
-	items := make([]list.Item, len(governance.ModuleOrder))
-	for i, mod := range governance.ModuleOrder {
-		items[i] = govModuleItem{name: mod, displayName: governance.GetModuleDisplayName(mod)}
-	}
-	l := list.New(items, list.NewDefaultDelegate(), 20, 20)
-	l.SetShowTitle(false)
-	l.SetShowStatusBar(false)
-	l.SetShowFilter(false)
-	l.SetShowHelp(false)
-	return l
-}
-
 // newTestGovParamView builds a bubbles viewport.Model for governance param display.
 func newTestGovParamView() viewport.Model {
 	vp := viewport.New(viewport.WithWidth(60), viewport.WithHeight(20))
@@ -423,8 +409,10 @@ func newTestViewContext(opts ...func(*ViewContext)) ViewContext {
 		ValidatorTable: newTestValidatorTableModel(state, monikers, signHist, proposerHist),
 		ProviderTable:  newTestProviderTableModel(providers),
 		NodeTable:      newTestNodeTableModel(newTestNodes(3)),
-		GovModuleList:  newTestGovModuleList(),
-		GovParamView:   newTestGovParamView(),
+		GovModuleIdx:    0,
+		GovModuleScroll: 0,
+		GovModuleHeight: 20,
+		GovParamView:    newTestGovParamView(),
 	}
 
 	for _, opt := range opts {
@@ -500,5 +488,27 @@ func withProvidersLoading(total, loaded int) func(*ViewContext) {
 		ctx.Providers.Loading = true
 		ctx.Providers.Total = total
 		ctx.Providers.Loaded = loaded
+	}
+}
+
+func withGovernanceParams() func(*ViewContext) {
+	return func(ctx *ViewContext) {
+		ctx.GovernanceParams = &governance.AllParams{
+			Modules: make(map[string]*governance.ModuleParams),
+		}
+	}
+}
+
+func withBMEStatus(status *bmetypes.QueryStatusResponse) func(*ViewContext) {
+	return func(ctx *ViewContext) {
+		ctx.Oracle.BMEStatus = status
+	}
+}
+
+func withStateError(err error) func(*ViewContext) {
+	return func(ctx *ViewContext) {
+		if ctx.State != nil {
+			ctx.State.Error = err
+		}
 	}
 }

@@ -1,21 +1,17 @@
 package ui
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
-	"charm.land/bubbles/v2/list"
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
-	"github.com/cosmos/gogoproto/jsonpb"
 
 	"pkg.akt.dev/akt/internal/monitor/cache"
 	"pkg.akt.dev/akt/internal/monitor/consensus"
@@ -23,7 +19,6 @@ import (
 	"pkg.akt.dev/akt/internal/monitor/rpc"
 	"pkg.akt.dev/akt/internal/output/pretty"
 
-	bmetypes "pkg.akt.dev/go/node/bme/v1"
 	oracletypes "pkg.akt.dev/go/node/oracle/v2"
 	"pkg.akt.dev/go/util/pubsub"
 )
@@ -198,8 +193,10 @@ type Model struct {
 	nodeTable      table.Model
 	validatorTable table.Model
 	blockTable     table.Model
-	govModuleList  list.Model
-	govParamView   viewport.Model
+	govModuleIdx    int // selected module index in governance.ModuleOrder
+	govModuleScroll int // first visible module index (scroll offset)
+	govModuleHeight int // visible rows for the module list
+	govParamView    viewport.Model
 
 	// Event bus — shared across the application; carries all typed ABCI
 	// events.  Individual dashboards subscribe and filter by type.
@@ -315,15 +312,6 @@ type ModelConfig struct {
 	Bus                pubsub.Bus // shared event bus; may be nil
 }
 
-// govModuleItem implements list.Item and list.DefaultItem for governance module names.
-type govModuleItem struct {
-	name        string
-	displayName string
-}
-
-func (i govModuleItem) Title() string       { return i.displayName }
-func (i govModuleItem) Description() string { return "" }
-func (i govModuleItem) FilterValue() string { return i.name }
 
 // NewModel creates a new UI model
 func NewModel(cfg ModelConfig) Model {
@@ -414,18 +402,8 @@ func NewModel(cfg ModelConfig) Model {
 	m.blockTable.SetStyles(ts)
 	m.nodeTable.SetStyles(ts)
 
-	// Initialize governance module list.
-	govItems := make([]list.Item, len(governance.ModuleOrder))
-	for i, mod := range governance.ModuleOrder {
-		govItems[i] = govModuleItem{name: mod, displayName: governance.GetModuleDisplayName(mod)}
-	}
-	m.govModuleList = list.New(govItems, list.NewDefaultDelegate(), 20, 20)
-	m.govModuleList.SetShowTitle(false)
-	m.govModuleList.SetShowStatusBar(false)
-	m.govModuleList.SetShowFilter(false)
-	m.govModuleList.SetShowHelp(false)
-
 	m.govParamView = viewport.New(viewport.WithWidth(60), viewport.WithHeight(20))
+	m.govModuleHeight = 20 // updated in resizeComponents
 
 	// Subscribe to the shared event bus if available.
 	if cfg.Bus != nil {
@@ -1031,7 +1009,7 @@ func (m *Model) rebuildNodeTableRows() {
 // updateGovParamView updates the governance parameter viewport content
 // based on the currently selected module in govModuleList.
 func (m *Model) updateGovParamView() {
-	idx := m.govModuleList.Index()
+	idx := m.govModuleIdx
 	if idx < 0 || idx >= len(governance.ModuleOrder) || m.governanceParams == nil {
 		m.govParamView.SetContent("")
 		return
@@ -1312,9 +1290,11 @@ func (m *Model) handleKeyMsg(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case m.hubTab == HubProvider:
 			m.providerTable, cmd = m.providerTable.Update(msg)
 		case m.hubTab == HubNetwork && m.activeTab == TabGovernance:
-			oldIdx := m.govModuleList.Index()
-			m.govModuleList, cmd = m.govModuleList.Update(msg)
-			if m.govModuleList.Index() != oldIdx {
+			if m.govModuleIdx > 0 {
+				m.govModuleIdx--
+				if m.govModuleIdx < m.govModuleScroll {
+					m.govModuleScroll = m.govModuleIdx
+				}
 				m.updateGovParamView()
 			}
 		case m.hubTab == HubNetwork && m.activeTab == TabOverview:
@@ -1337,9 +1317,11 @@ func (m *Model) handleKeyMsg(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case m.hubTab == HubProvider:
 			m.providerTable, cmd = m.providerTable.Update(msg)
 		case m.hubTab == HubNetwork && m.activeTab == TabGovernance:
-			oldIdx := m.govModuleList.Index()
-			m.govModuleList, cmd = m.govModuleList.Update(msg)
-			if m.govModuleList.Index() != oldIdx {
+			if m.govModuleIdx < len(governance.ModuleOrder)-1 {
+				m.govModuleIdx++
+				if m.govModuleIdx >= m.govModuleScroll+m.govModuleHeight {
+					m.govModuleScroll = m.govModuleIdx - m.govModuleHeight + 1
+				}
 				m.updateGovParamView()
 			}
 		case m.hubTab == HubNetwork && m.activeTab == TabOverview:
@@ -1360,7 +1342,8 @@ func (m *Model) handleKeyMsg(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case m.hubTab == HubProvider:
 			m.providerTable, cmd = m.providerTable.Update(msg)
 		case m.hubTab == HubNetwork && m.activeTab == TabGovernance:
-			m.govModuleList, cmd = m.govModuleList.Update(msg)
+			m.govModuleIdx = 0
+			m.govModuleScroll = 0
 			m.updateGovParamView()
 		case m.hubTab == HubNetwork && m.activeTab == TabOverview:
 			m.blockTable.SetCursor(0)
@@ -1374,7 +1357,8 @@ func (m *Model) handleKeyMsg(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case m.hubTab == HubProvider:
 			m.providerTable, cmd = m.providerTable.Update(msg)
 		case m.hubTab == HubNetwork && m.activeTab == TabGovernance:
-			m.govModuleList, cmd = m.govModuleList.Update(msg)
+			m.govModuleIdx = len(governance.ModuleOrder) - 1
+			m.govModuleScroll = max(0, m.govModuleIdx-m.govModuleHeight+1)
 			m.updateGovParamView()
 		case m.hubTab == HubNetwork && m.activeTab == TabOverview:
 			m.blockTable, cmd = m.blockTable.Update(msg)
@@ -1590,47 +1574,31 @@ func (m *Model) handleOracleStateMsg(msg oracleStateMsg) (tea.Model, tea.Cmd) {
 		return m, m.oracleSyncTick()
 	}
 
-	// Seed aggregated prices from REST JSON into the same map the bus
+	// Store the detected oracle version for the UI.
+	if msg.state.Version != "" {
+		m.oracle.Version = msg.state.Version
+	}
+
+	// Seed aggregated prices from ABCI response into the same map the bus
 	// events write to.  Bus events will overwrite these in real-time.
-	for denom, raw := range msg.state.AggregatedPrices {
-		var resp struct {
-			AggregatedPrice oracletypes.AggregatedPrice `json:"aggregated_price"`
-		}
-		if err := json.Unmarshal(raw, &resp); err == nil {
-			m.oracle.Aggregated[denom] = &oracletypes.EventAggregatedPrice{
-				Price: resp.AggregatedPrice,
-			}
+	for denom, agResp := range msg.state.Aggregated {
+		m.oracle.Aggregated[denom] = &oracletypes.EventAggregatedPrice{
+			Price: agResp.AggregatedPrice,
 		}
 	}
 
-	// Seed recent price entries from REST if the event log is empty
-	// (first load).
-	if len(m.oracle.Prices) == 0 && len(msg.state.Prices) > 0 {
-		var resp struct {
-			Prices []struct {
-				ID struct {
-					Denom     string `json:"denom"`
-					BaseDenom string `json:"base_denom"`
-				} `json:"id"`
-				State struct {
-					Price string `json:"price"`
-				} `json:"state"`
-				Source    string    `json:"source"`
-				Timestamp time.Time `json:"timestamp"`
-			} `json:"prices"`
+	// Seed recent price entries if the event log is empty (first load).
+	if len(m.oracle.Prices) == 0 && msg.state.Prices != nil {
+		for _, p := range msg.state.Prices.Prices {
+			m.oracle.Prices = append(m.oracle.Prices, OraclePriceEntry{
+				Denom:     p.ID.Denom,
+				Price:     p.State.Price.String(),
+				Source:    fmt.Sprintf("%d", p.ID.Source),
+				Timestamp: p.ID.Timestamp,
+			})
 		}
-		if err := json.Unmarshal(msg.state.Prices, &resp); err == nil {
-			for _, p := range resp.Prices {
-				m.oracle.Prices = append(m.oracle.Prices, OraclePriceEntry{
-					Denom:     p.ID.Denom,
-					Price:     p.State.Price,
-					Source:    p.Source,
-					Timestamp: p.Timestamp,
-				})
-			}
-			if len(m.oracle.Prices) > maxOracleEvents {
-				m.oracle.Prices = m.oracle.Prices[:maxOracleEvents]
-			}
+		if len(m.oracle.Prices) > maxOracleEvents {
+			m.oracle.Prices = m.oracle.Prices[:maxOracleEvents]
 		}
 	}
 
@@ -1642,23 +1610,12 @@ func (m *Model) handleBMEStateMsg(msg bmeStateMsg) (tea.Model, tea.Cmd) {
 		return m, m.bmeSyncTick()
 	}
 
-	jsu := &jsonpb.Unmarshaler{AllowUnknownFields: true}
-
-	// Parse status using chain-sdk type via proto-JSON unmarshaler
-	// (handles enum string values like "mint_status_healthy").
-	if len(msg.state.Status) > 0 {
-		var status bmetypes.QueryStatusResponse
-		if err := jsu.Unmarshal(bytes.NewReader(msg.state.Status), &status); err == nil {
-			m.oracle.BMEStatus = &status
-		}
+	if msg.state.Status != nil {
+		m.oracle.BMEStatus = msg.state.Status
 	}
 
-	// Parse ledger using chain-sdk type via proto-JSON unmarshaler.
-	if len(msg.state.Ledger) > 0 {
-		var resp bmetypes.QueryLedgerRecordsResponse
-		if err := jsu.Unmarshal(bytes.NewReader(msg.state.Ledger), &resp); err == nil {
-			m.oracle.BMELedger = resp.Records
-		}
+	if msg.state.Ledger != nil {
+		m.oracle.BMELedger = msg.state.Ledger.Records
 	}
 
 	return m, m.bmeSyncTick()
@@ -1891,11 +1848,15 @@ func (m *Model) resizeComponents() {
 	m.nodeTable.SetWidth(m.width)
 	m.nodeTable.UpdateViewport()
 
-	govHeight := m.height - 6
+	govHeight := m.height - governanceOverhead
 	if govHeight < 5 {
 		govHeight = 5
 	}
-	m.govModuleList.SetHeight(govHeight)
+	m.govModuleHeight = govHeight
+	// Clamp scroll if terminal grew.
+	if m.govModuleScroll > max(0, len(governance.ModuleOrder)-govHeight) {
+		m.govModuleScroll = max(0, len(governance.ModuleOrder)-govHeight)
+	}
 	m.govParamView.SetHeight(govHeight)
 	m.govParamView.SetWidth(m.width - 22)
 }
@@ -1934,7 +1895,9 @@ func (m Model) View() tea.View {
 		NodeTable:          m.nodeTable,
 		ValidatorTable:     m.validatorTable,
 		BlockTable:         m.blockTable,
-		GovModuleList:      m.govModuleList,
+		GovModuleIdx:       m.govModuleIdx,
+		GovModuleScroll:    m.govModuleScroll,
+		GovModuleHeight:    m.govModuleHeight,
 		GovParamView:       m.govParamView,
 		Providers: ProviderViewState{
 			Providers: m.providers.Items,

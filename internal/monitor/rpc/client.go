@@ -3,6 +3,8 @@ package rpc
 import (
 	"context"
 	"crypto/tls"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,6 +15,12 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/cosmos/gogoproto/proto"
+	querytypes "github.com/cosmos/cosmos-sdk/types/query"
+
+	bmetypes "pkg.akt.dev/go/node/bme/v1"
+	oracletypes "pkg.akt.dev/go/node/oracle/v2"
 
 	"pkg.akt.dev/akt/internal/monitor/consensus"
 	"pkg.akt.dev/akt/internal/monitor/governance"
@@ -37,6 +45,10 @@ type Client struct {
 	validators     []consensus.Validator // cached validators
 	validatorsErr  error
 	validatorsOnce sync.Once
+
+	// oracleVersion caches which oracle REST API version is available.
+	// "" = not yet probed, "v1" or "v2" = detected, "none" = neither works.
+	oracleVersion string
 }
 
 // NewClient creates a new RPC client
@@ -731,42 +743,76 @@ func (c *Client) GetGenericParam(ctx context.Context, subspace, key string) (*go
 	return &paramResp.Param, nil
 }
 
-// OracleState holds the combined result of oracle REST queries.
+// OracleState holds the result of oracle ABCI queries.
 type OracleState struct {
-	// AggregatedPrices maps denom → aggregated price response body.
-	AggregatedPrices map[string]json.RawMessage
-	// Prices is the raw JSON body from the paginated prices list.
-	Prices json.RawMessage
+	Prices     *oracletypes.QueryPricesResponse
+	Aggregated map[string]*oracletypes.QueryAggregatedPriceResponse
+	// Version is the detected oracle API version ("v1", "v2", or "none").
+	Version string
 }
 
-// GetOracleState fetches oracle prices and aggregated prices for known
-// denoms via REST.  Errors on individual sub-queries are swallowed so
-// partial results are returned.
+// GetOracleState fetches oracle prices and aggregated prices via ABCI
+// queries through the RPC endpoint.  On the first call it probes v2
+// then v1 to discover which module version the chain supports, and
+// caches the result.  Errors on individual sub-queries are swallowed
+// so partial results are returned.
 func (c *Client) GetOracleState(ctx context.Context) (*OracleState, error) {
 	state := &OracleState{
-		AggregatedPrices: make(map[string]json.RawMessage),
+		Aggregated: make(map[string]*oracletypes.QueryAggregatedPriceResponse),
 	}
 
-	// 1. Fetch recent prices (this also tells us which denoms exist).
-	pricesURL := fmt.Sprintf("%s/akash/oracle/v2/prices?pagination.limit=50", c.restEndpoint)
-	pricesBody, err := c.restGet(ctx, pricesURL)
-	if err == nil {
-		state.Prices = pricesBody
+	// Determine which API version to use.
+	version := c.oracleVersion
+	if version == "" {
+		version = c.probeOracleVersion(ctx)
+		c.oracleVersion = version
+	}
+	state.Version = version
+
+	if version == "none" {
+		return state, nil
 	}
 
-	// 2. Extract unique denoms from prices response.
-	denoms := extractOracleDenoms(pricesBody)
+	// 1. Fetch recent prices (also tells us which denoms exist).
+	pricesPath := fmt.Sprintf("/akash.oracle.%s.Query/Prices", version)
+	pricesReq := &oracletypes.QueryPricesRequest{
+		Pagination: &querytypes.PageRequest{Limit: 50},
+	}
+	var pricesResp oracletypes.QueryPricesResponse
+	if err := c.abciQuery(ctx, pricesPath, pricesReq, &pricesResp); err == nil {
+		state.Prices = &pricesResp
+	}
+
+	// 2. Extract unique denoms.
+	denoms := extractOracleDenoms(state.Prices)
 
 	// 3. Fetch aggregated price for each denom.
+	agPath := fmt.Sprintf("/akash.oracle.%s.Query/AggregatedPrice", version)
 	for _, denom := range denoms {
-		agURL := fmt.Sprintf("%s/akash/oracle/v2/aggregated-price/%s", c.restEndpoint, url.PathEscape(denom))
-		body, agErr := c.restGet(ctx, agURL)
-		if agErr == nil {
-			state.AggregatedPrices[denom] = body
+		agReq := &oracletypes.QueryAggregatedPriceRequest{Denom: denom}
+		var agResp oracletypes.QueryAggregatedPriceResponse
+		if err := c.abciQuery(ctx, agPath, agReq, &agResp); err == nil {
+			state.Aggregated[denom] = &agResp
 		}
 	}
 
 	return state, nil
+}
+
+// probeOracleVersion tries the oracle Prices ABCI query at v2, then v1.
+// Returns "v2", "v1", or "none".
+func (c *Client) probeOracleVersion(ctx context.Context) string {
+	req := &oracletypes.QueryPricesRequest{
+		Pagination: &querytypes.PageRequest{Limit: 1},
+	}
+	var resp oracletypes.QueryPricesResponse
+	for _, v := range []string{"v2", "v1"} {
+		path := fmt.Sprintf("/akash.oracle.%s.Query/Prices", v)
+		if err := c.abciQuery(ctx, path, req, &resp); err == nil {
+			return v
+		}
+	}
+	return "none"
 }
 
 // restGet performs a GET request and returns the response body.
@@ -790,58 +836,100 @@ func (c *Client) restGet(ctx context.Context, reqURL string) (json.RawMessage, e
 	return json.RawMessage(body), nil
 }
 
-// extractOracleDenoms parses the /akash/oracle/v2/prices response to
-// find unique asset denoms.
-func extractOracleDenoms(raw json.RawMessage) []string {
-	if len(raw) == 0 {
-		return nil
-	}
-	var resp struct {
-		Prices []struct {
-			ID struct {
-				Denom string `json:"denom"`
-			} `json:"id"`
-		} `json:"prices"`
-	}
-	if err := json.Unmarshal(raw, &resp); err != nil {
+// extractOracleDenoms extracts unique asset denoms from a prices response.
+func extractOracleDenoms(resp *oracletypes.QueryPricesResponse) []string {
+	if resp == nil {
 		return nil
 	}
 	seen := make(map[string]bool)
 	var out []string
 	for _, p := range resp.Prices {
-		if p.ID.Denom != "" && !seen[p.ID.Denom] {
-			seen[p.ID.Denom] = true
-			out = append(out, p.ID.Denom)
+		d := p.ID.Denom
+		if d != "" && !seen[d] {
+			seen[d] = true
+			out = append(out, d)
 		}
 	}
 	return out
 }
 
-// BMEState holds the raw JSON responses from BME REST queries.
+// BMEState holds the result of BME ABCI queries.
 type BMEState struct {
-	Status json.RawMessage // /akash/bme/v1/status
-	Ledger json.RawMessage // /akash/bme/v1/ledger
+	Status *bmetypes.QueryStatusResponse
+	Ledger *bmetypes.QueryLedgerRecordsResponse
 }
 
-// GetBMEState fetches BME status and recent ledger entries via REST.
-// Errors on individual sub-queries are swallowed so partial results
-// are returned.
+// GetBMEState fetches BME status and recent ledger entries via ABCI
+// queries through the RPC endpoint.  Errors on individual sub-queries
+// are swallowed so partial results are returned.
 func (c *Client) GetBMEState(ctx context.Context) (*BMEState, error) {
 	state := &BMEState{}
 
-	statusURL := fmt.Sprintf("%s/akash/bme/v1/status", c.restEndpoint)
-	body, err := c.restGet(ctx, statusURL)
-	if err == nil {
-		state.Status = body
+	var statusResp bmetypes.QueryStatusResponse
+	if err := c.abciQuery(ctx, "/akash.bme.v1.Query/Status", &bmetypes.QueryStatusRequest{}, &statusResp); err == nil {
+		state.Status = &statusResp
 	}
 
-	ledgerURL := fmt.Sprintf("%s/akash/bme/v1/ledger?pagination.limit=20&pagination.reverse=true", c.restEndpoint)
-	body, err = c.restGet(ctx, ledgerURL)
-	if err == nil {
-		state.Ledger = body
+	ledgerReq := &bmetypes.QueryLedgerRecordsRequest{
+		Pagination: &querytypes.PageRequest{Limit: 20, Reverse: true},
+	}
+	var ledgerResp bmetypes.QueryLedgerRecordsResponse
+	if err := c.abciQuery(ctx, "/akash.bme.v1.Query/LedgerRecords", ledgerReq, &ledgerResp); err == nil {
+		state.Ledger = &ledgerResp
 	}
 
 	return state, nil
+}
+
+// abciQuery performs a protobuf ABCI query via the RPC endpoint and
+// unmarshals the response into dst.
+func (c *Client) abciQuery(ctx context.Context, path string, req proto.Marshaler, dst proto.Unmarshaler) error {
+	queryURL := fmt.Sprintf("%s/abci_query?path=%s",
+		c.rpcEndpoint,
+		url.QueryEscape(fmt.Sprintf("%q", path)),
+	)
+
+	reqData, err := req.Marshal()
+	if err != nil {
+		return fmt.Errorf("marshal request: %w", err)
+	}
+	if len(reqData) > 0 {
+		queryURL += "&data=0x" + hex.EncodeToString(reqData)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, queryURL, nil)
+	if err != nil {
+		return err
+	}
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("status %d", resp.StatusCode)
+	}
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return err
+	}
+
+	var abciResp ABCIQueryResponse
+	if err := json.Unmarshal(body, &abciResp); err != nil {
+		return fmt.Errorf("parse ABCI response: %w", err)
+	}
+	if abciResp.Result.Response.Code != 0 {
+		return fmt.Errorf("ABCI error: code=%d log=%s", abciResp.Result.Response.Code, abciResp.Result.Response.Log)
+	}
+
+	valueBytes, err := base64.StdEncoding.DecodeString(abciResp.Result.Response.Value)
+	if err != nil {
+		return fmt.Errorf("decode base64: %w", err)
+	}
+
+	return dst.Unmarshal(valueBytes)
 }
 
 // GetAllGovernanceParams fetches all governance parameters

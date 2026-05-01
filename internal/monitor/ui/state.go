@@ -53,6 +53,10 @@ type OracleState struct {
 
 	ScrollPos int
 
+	// Version is the detected oracle API version ("v1", "v2", or "none").
+	// Empty string means not yet determined.
+	Version string
+
 	// BME state — populated from REST queries.
 	BMEStatus *bmetypes.QueryStatusResponse
 	BMELedger []bmetypes.QueryLedgerRecordEntry
