@@ -3,6 +3,7 @@ package pretty
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/gogoproto/proto"
@@ -21,163 +22,166 @@ func init() {
 	Register((*types.QueryContractsByCreatorResponse)(nil), PrettyFormatterFunc(formatWasmContractsByCreator))
 }
 
-func formatWasmCodeList(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	res := msg.(*types.QueryCodesResponse)
-
+// RenderWasmCodeList renders a WASM codes list as a styled string.
+func RenderWasmCodeList(res *types.QueryCodesResponse) string {
+	var buf strings.Builder
 	if len(res.CodeInfos) == 0 {
-		fmt.Fprintln(w, Dim("(no codes)"))
-		return nil
+		fmt.Fprintln(&buf, Dim("(no codes)"))
+		return buf.String()
 	}
-
 	cols := []ColDef{
 		{Header: "CODE ID", Align: AlignRight},
 		{Header: "CREATOR"},
 		{Header: "CHECKSUM"},
 	}
-
 	rows := make([][]string, 0, len(res.CodeInfos))
 	for _, ci := range res.CodeInfos {
 		checksum := ci.DataHash.String()
 		if len(checksum) > 16 {
 			checksum = checksum[:16] + "..."
 		}
-
-		rows = append(rows, []string{
-			Bold(fmt.Sprintf("%d", ci.CodeID)),
-			ci.Creator,
-			checksum,
-		})
+		rows = append(rows, []string{Bold(fmt.Sprintf("%d", ci.CodeID)), ci.Creator, checksum})
 	}
+	WriteTableCols(&buf, cols, rows)
+	return buf.String()
+}
 
-	WriteTableCols(w, cols, rows)
-	return nil
+func formatWasmCodeList(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
+	_, err := fmt.Fprint(w, RenderWasmCodeList(msg.(*types.QueryCodesResponse)))
+	return err
+}
+
+// RenderWasmContractsByCode renders contracts for a code as a styled string.
+func RenderWasmContractsByCode(res *types.QueryContractsByCodeResponse) string {
+	var buf strings.Builder
+	if len(res.Contracts) == 0 {
+		fmt.Fprintln(&buf, Dim("(no contracts)"))
+		return buf.String()
+	}
+	headers := []string{"#", "CONTRACT ADDRESS"}
+	rows := make([][]string, 0, len(res.Contracts))
+	for i, addr := range res.Contracts {
+		rows = append(rows, []string{fmt.Sprintf("%d", i+1), addr})
+	}
+	WriteTable(&buf, headers, rows)
+	return buf.String()
 }
 
 func formatWasmContractsByCode(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	res := msg.(*types.QueryContractsByCodeResponse)
+	_, err := fmt.Fprint(w, RenderWasmContractsByCode(msg.(*types.QueryContractsByCodeResponse)))
+	return err
+}
 
-	if len(res.Contracts) == 0 {
-		fmt.Fprintln(w, Dim("(no contracts)"))
-		return nil
+// RenderWasmCodeInfo renders WASM code info as a styled string.
+func RenderWasmCodeInfo(res *types.QueryCodeInfoResponse) string {
+	var buf strings.Builder
+	fmt.Fprintln(&buf, Section("Code Info"))
+	KV(&buf, "Code ID", Bold(fmt.Sprintf("%d", res.CodeID)))
+	KV(&buf, "Creator", res.Creator)
+	KV(&buf, "Checksum", res.Checksum.String())
+	KV(&buf, "Instantiate", res.InstantiatePermission.Permission.String())
+	if len(res.InstantiatePermission.Addresses) > 0 {
+		for _, addr := range res.InstantiatePermission.Addresses {
+			KV(&buf, "Address", addr)
+		}
 	}
-
-	headers := []string{"#", "CONTRACT ADDRESS"}
-	rows := make([][]string, 0, len(res.Contracts))
-
-	for i, addr := range res.Contracts {
-		rows = append(rows, []string{
-			fmt.Sprintf("%d", i+1),
-			addr,
-		})
-	}
-
-	WriteTable(w, headers, rows)
-	return nil
+	return buf.String()
 }
 
 func formatWasmCodeInfo(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	res := msg.(*types.QueryCodeInfoResponse)
+	_, err := fmt.Fprint(w, RenderWasmCodeInfo(msg.(*types.QueryCodeInfoResponse)))
+	return err
+}
 
-	fmt.Fprintln(w, Section("Code Info"))
-	KV(w, "Code ID", Bold(fmt.Sprintf("%d", res.CodeID)))
-	KV(w, "Creator", res.Creator)
-	KV(w, "Checksum", res.Checksum.String())
-	KV(w, "Instantiate", res.InstantiatePermission.Permission.String())
-	if len(res.InstantiatePermission.Addresses) > 0 {
-		for _, addr := range res.InstantiatePermission.Addresses {
-			KV(w, "Address", addr)
-		}
+// RenderWasmContractInfo renders WASM contract info as a styled string.
+func RenderWasmContractInfo(res *types.QueryContractInfoResponse) string {
+	var buf strings.Builder
+	fmt.Fprintln(&buf, Section("Contract"))
+	KV(&buf, "Address", res.Address)
+	KV(&buf, "Code ID", Bold(fmt.Sprintf("%d", res.CodeID)))
+	KV(&buf, "Label", res.Label)
+	KV(&buf, "Creator", res.Creator)
+	if res.Admin != "" {
+		KV(&buf, "Admin", res.Admin)
 	}
-
-	return nil
+	if res.IBCPortID != "" {
+		KV(&buf, "IBC Port", res.IBCPortID)
+	}
+	return buf.String()
 }
 
 func formatWasmContractInfo(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	res := msg.(*types.QueryContractInfoResponse)
-
-	fmt.Fprintln(w, Section("Contract"))
-	KV(w, "Address", res.Address)
-	KV(w, "Code ID", Bold(fmt.Sprintf("%d", res.CodeID)))
-	KV(w, "Label", res.Label)
-	KV(w, "Creator", res.Creator)
-	if res.Admin != "" {
-		KV(w, "Admin", res.Admin)
-	}
-	if res.IBCPortID != "" {
-		KV(w, "IBC Port", res.IBCPortID)
-	}
-
-	return nil
+	_, err := fmt.Fprint(w, RenderWasmContractInfo(msg.(*types.QueryContractInfoResponse)))
+	return err
 }
 
-func formatWasmContractHistory(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	res := msg.(*types.QueryContractHistoryResponse)
-
+// RenderWasmContractHistory renders contract history as a styled string.
+func RenderWasmContractHistory(res *types.QueryContractHistoryResponse) string {
+	var buf strings.Builder
 	if len(res.Entries) == 0 {
-		fmt.Fprintln(w, Dim("(no history entries)"))
-		return nil
+		fmt.Fprintln(&buf, Dim("(no history entries)"))
+		return buf.String()
 	}
-
 	cols := []ColDef{
 		{Header: "OPERATION"},
 		{Header: "CODE ID", Align: AlignRight},
 		{Header: "UPDATED"},
 	}
-
 	rows := make([][]string, 0, len(res.Entries))
 	for _, e := range res.Entries {
 		updated := "-"
 		if e.Updated != nil {
 			updated = fmt.Sprintf("block %d", e.Updated.BlockHeight)
 		}
-
-		rows = append(rows, []string{
-			e.Operation.String(),
-			fmt.Sprintf("%d", e.CodeID),
-			updated,
-		})
+		rows = append(rows, []string{e.Operation.String(), fmt.Sprintf("%d", e.CodeID), updated})
 	}
-
-	WriteTableCols(w, cols, rows)
-	return nil
+	WriteTableCols(&buf, cols, rows)
+	return buf.String()
 }
 
-func formatWasmPinnedCodes(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	res := msg.(*types.QueryPinnedCodesResponse)
+func formatWasmContractHistory(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
+	_, err := fmt.Fprint(w, RenderWasmContractHistory(msg.(*types.QueryContractHistoryResponse)))
+	return err
+}
 
+// RenderWasmPinnedCodes renders pinned codes as a styled string.
+func RenderWasmPinnedCodes(res *types.QueryPinnedCodesResponse) string {
+	var buf strings.Builder
 	if len(res.CodeIDs) == 0 {
-		fmt.Fprintln(w, Dim("(no pinned codes)"))
-		return nil
+		fmt.Fprintln(&buf, Dim("(no pinned codes)"))
+		return buf.String()
 	}
-
 	headers := []string{"CODE ID"}
 	rows := make([][]string, 0, len(res.CodeIDs))
 	for _, id := range res.CodeIDs {
 		rows = append(rows, []string{Bold(fmt.Sprintf("%d", id))})
 	}
+	WriteTable(&buf, headers, rows)
+	return buf.String()
+}
 
-	WriteTable(w, headers, rows)
-	return nil
+func formatWasmPinnedCodes(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
+	_, err := fmt.Fprint(w, RenderWasmPinnedCodes(msg.(*types.QueryPinnedCodesResponse)))
+	return err
+}
+
+// RenderWasmContractsByCreator renders contracts by creator as a styled string.
+func RenderWasmContractsByCreator(res *types.QueryContractsByCreatorResponse) string {
+	var buf strings.Builder
+	if len(res.ContractAddresses) == 0 {
+		fmt.Fprintln(&buf, Dim("(no contracts)"))
+		return buf.String()
+	}
+	headers := []string{"#", "CONTRACT ADDRESS"}
+	rows := make([][]string, 0, len(res.ContractAddresses))
+	for i, addr := range res.ContractAddresses {
+		rows = append(rows, []string{fmt.Sprintf("%d", i+1), addr})
+	}
+	WriteTable(&buf, headers, rows)
+	return buf.String()
 }
 
 func formatWasmContractsByCreator(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	res := msg.(*types.QueryContractsByCreatorResponse)
-
-	if len(res.ContractAddresses) == 0 {
-		fmt.Fprintln(w, Dim("(no contracts)"))
-		return nil
-	}
-
-	headers := []string{"#", "CONTRACT ADDRESS"}
-	rows := make([][]string, 0, len(res.ContractAddresses))
-
-	for i, addr := range res.ContractAddresses {
-		rows = append(rows, []string{
-			fmt.Sprintf("%d", i+1),
-			addr,
-		})
-	}
-
-	WriteTable(w, headers, rows)
-	return nil
+	_, err := fmt.Fprint(w, RenderWasmContractsByCreator(msg.(*types.QueryContractsByCreatorResponse)))
+	return err
 }

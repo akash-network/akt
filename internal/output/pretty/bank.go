@@ -3,6 +3,7 @@ package pretty
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -18,47 +19,48 @@ func init() {
 	Register((*types.QueryTotalSupplyResponse)(nil), PrettyFormatterFunc(formatTotalSupply))
 }
 
-func formatAllBalances(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	res := msg.(*types.QueryAllBalancesResponse)
-	return writeCoinsTable(w, res.Balances)
-}
-
-func formatSpendableBalances(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	res := msg.(*types.QuerySpendableBalancesResponse)
-	return writeCoinsTable(w, res.Balances)
-}
-
-func formatBalance(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	res := msg.(*types.QueryBalanceResponse)
-	if res.Balance == nil {
-		fmt.Fprintln(w, Dim("(no balance)"))
-		return nil
-	}
-
-	fmt.Fprintln(w, Bold(FormatCoin(*res.Balance)))
-	return nil
-}
-
-func formatTotalSupply(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	res := msg.(*types.QueryTotalSupplyResponse)
-	return writeCoinsTable(w, res.Supply)
-}
-
-func writeCoinsTable(w io.Writer, coins sdk.Coins) error {
+// RenderCoinsTable renders a coins list as a styled string.
+func RenderCoinsTable(coins sdk.Coins) string {
+	var buf strings.Builder
 	if len(coins) == 0 {
-		fmt.Fprintln(w, Dim("(no balances)"))
-		return nil
+		fmt.Fprintln(&buf, Dim("(no balances)"))
+		return buf.String()
 	}
-
 	cols := []ColDef{
 		{Header: "BALANCES", Align: AlignRight},
 	}
 	rows := make([][]string, 0, len(coins))
-
 	for _, coin := range coins {
 		rows = append(rows, []string{Bold(FormatCoin(coin))})
 	}
+	WriteTableCols(&buf, cols, rows)
+	return buf.String()
+}
 
-	WriteTableCols(w, cols, rows)
-	return nil
+// RenderBalance renders a single balance as a styled string.
+func RenderBalance(res *types.QueryBalanceResponse) string {
+	if res.Balance == nil {
+		return Dim("(no balance)") + "\n"
+	}
+	return Bold(FormatCoin(*res.Balance)) + "\n"
+}
+
+func formatAllBalances(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
+	_, err := fmt.Fprint(w, RenderCoinsTable(msg.(*types.QueryAllBalancesResponse).Balances))
+	return err
+}
+
+func formatSpendableBalances(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
+	_, err := fmt.Fprint(w, RenderCoinsTable(msg.(*types.QuerySpendableBalancesResponse).Balances))
+	return err
+}
+
+func formatBalance(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
+	_, err := fmt.Fprint(w, RenderBalance(msg.(*types.QueryBalanceResponse)))
+	return err
+}
+
+func formatTotalSupply(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
+	_, err := fmt.Fprint(w, RenderCoinsTable(msg.(*types.QueryTotalSupplyResponse).Supply))
+	return err
 }

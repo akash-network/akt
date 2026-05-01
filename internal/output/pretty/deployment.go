@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/gogoproto/proto"
@@ -21,8 +22,10 @@ func init() {
 	// QueryParamsResponse is registered in params.go.
 }
 
-func formatDeploymentsList(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	res := msg.(*dvbeta.QueryDeploymentsResponse)
+// RenderDeploymentList renders a deployments list as a styled string.
+// Used by both CLI pretty output and TUI deployment list views.
+func RenderDeploymentList(res *dvbeta.QueryDeploymentsResponse) string {
+	var buf strings.Builder
 
 	cols := []ColDef{
 		{Header: "ID"},
@@ -42,65 +45,104 @@ func formatDeploymentsList(w io.Writer, _ *cobra.Command, _ sdkclient.Context, m
 		})
 	}
 
-	WriteTableCols(w, cols, rows)
-	return nil
+	WriteTableCols(&buf, cols, rows)
+	return buf.String()
 }
 
-func formatDeploymentDetail(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	res := msg.(*dvbeta.QueryDeploymentResponse)
+func formatDeploymentsList(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
+	_, err := fmt.Fprint(w, RenderDeploymentList(msg.(*dvbeta.QueryDeploymentsResponse)))
+	return err
+}
+
+// RenderDeploymentDetail renders a deployment detail as a styled string.
+// Used by both CLI pretty output and TUI deployment detail views.
+func RenderDeploymentDetail(res *dvbeta.QueryDeploymentResponse) string {
+	var buf strings.Builder
 	dep := res.Deployment
 
-	fmt.Fprintln(w, Section("Deployment"))
-	KV(w, "DSEQ", Bold(fmt.Sprintf("%d", dep.ID.DSeq)))
-	KV(w, "Owner", dep.ID.Owner)
-	KV(w, "State", ColorState(dep.State.String()))
-	KV(w, "Hash", hex.EncodeToString(dep.Hash))
-	KV(w, "Created At", FormatHeight(dep.CreatedAt))
+	fmt.Fprintln(&buf, Section("Deployment"))
+	KV(&buf, "DSEQ", Bold(fmt.Sprintf("%d", dep.ID.DSeq)))
+	KV(&buf, "Owner", dep.ID.Owner)
+	KV(&buf, "State", ColorState(dep.State.String()))
+	KV(&buf, "Hash", hex.EncodeToString(dep.Hash))
+	KV(&buf, "Created At", FormatHeight(dep.CreatedAt))
 
 	for i, g := range res.Groups {
-		Newline(w)
-		fmt.Fprintf(w, "%s %s\n", Section(fmt.Sprintf("Group %d:", i+1)), Bold(g.GroupSpec.Name))
-		KV(w, "GSeq", fmt.Sprintf("%d", g.ID.GSeq))
-		KV(w, "State", ColorState(g.State.String()))
+		Newline(&buf)
+		fmt.Fprintf(&buf, "%s %s\n", Section(fmt.Sprintf("Group %d:", i+1)), Bold(g.GroupSpec.Name))
+		KV(&buf, "GSeq", fmt.Sprintf("%d", g.ID.GSeq))
+		KV(&buf, "State", ColorState(g.State.String()))
 
-		formatResourceUnits(w, g.GroupSpec.Resources)
+		formatResourceUnits(&buf, g.GroupSpec.Resources)
 	}
 
-	Newline(w)
-	fmt.Fprintln(w, Section("Escrow"))
+	Newline(&buf)
+	fmt.Fprintln(&buf, Section("Escrow"))
 	esc := res.EscrowAccount
-	KV(w, "Account ID", fmt.Sprintf("%s/%s", esc.ID.Scope.String(), esc.ID.XID))
-	KV(w, "State", ColorState(esc.State.State.String()))
-	KV(w, "Owner", esc.State.Owner)
+	KV(&buf, "Account ID", fmt.Sprintf("%s/%s", esc.ID.Scope.String(), esc.ID.XID))
+	KV(&buf, "State", ColorState(esc.State.State.String()))
+	KV(&buf, "Owner", esc.State.Owner)
 	if len(esc.State.Funds) > 0 {
 		for _, f := range esc.State.Funds {
-			KV(w, "Balance", FormatDecAmount(f.Amount, f.Denom))
+			KV(&buf, "Balance", FormatDecAmount(f.Amount, f.Denom))
 		}
 	}
 	if len(esc.State.Transferred) > 0 {
 		for _, c := range esc.State.Transferred {
-			KV(w, "Spent", FormatDecAmount(c.Amount, c.Denom))
+			KV(&buf, "Spent", FormatDecAmount(c.Amount, c.Denom))
 		}
 	}
 
-	return nil
+	return buf.String()
+}
+
+func formatDeploymentDetail(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
+	_, err := fmt.Fprint(w, RenderDeploymentDetail(msg.(*dvbeta.QueryDeploymentResponse)))
+	return err
+}
+
+// RenderGroupDetail renders a group detail as a styled string.
+// Used by both CLI pretty output and TUI group detail views.
+func RenderGroupDetail(res *dvbeta.QueryGroupResponse) string {
+	var buf strings.Builder
+	g := res.Group
+
+	fmt.Fprintln(&buf, Section("Group"))
+	KV(&buf, "Name", Bold(g.GroupSpec.Name))
+	KV(&buf, "Owner", g.ID.Owner)
+	KV(&buf, "DSeq", fmt.Sprintf("%d", g.ID.DSeq))
+	KV(&buf, "GSeq", fmt.Sprintf("%d", g.ID.GSeq))
+	KV(&buf, "State", ColorState(g.State.String()))
+	KV(&buf, "Created At", FormatHeight(g.CreatedAt))
+
+	formatResourceUnits(&buf, g.GroupSpec.Resources)
+
+	return buf.String()
 }
 
 func formatGroupDetail(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	res := msg.(*dvbeta.QueryGroupResponse)
-	g := res.Group
+	_, err := fmt.Fprint(w, RenderGroupDetail(msg.(*dvbeta.QueryGroupResponse)))
+	return err
+}
 
-	fmt.Fprintln(w, Section("Group"))
-	KV(w, "Name", Bold(g.GroupSpec.Name))
-	KV(w, "Owner", g.ID.Owner)
-	KV(w, "DSeq", fmt.Sprintf("%d", g.ID.DSeq))
-	KV(w, "GSeq", fmt.Sprintf("%d", g.ID.GSeq))
-	KV(w, "State", ColorState(g.State.String()))
-	KV(w, "Created At", FormatHeight(g.CreatedAt))
+// RenderGroupsList renders a list of groups as a styled string.
+// Used by both CLI pretty output and TUI views.
+func RenderGroupsList(groups dvbeta.Groups) string {
+	var buf strings.Builder
 
-	formatResourceUnits(w, g.GroupSpec.Resources)
+	for i, g := range groups {
+		if i > 0 {
+			Newline(&buf)
+		}
+		fmt.Fprintf(&buf, "%s %s\n", Section(fmt.Sprintf("Group %d:", i+1)), Bold(g.GroupSpec.Name))
+		KV(&buf, "ID", g.ID.String())
+		KV(&buf, "State", ColorState(g.State.String()))
+		KV(&buf, "Created At", FormatHeight(g.CreatedAt))
 
-	return nil
+		formatResourceUnits(&buf, g.GroupSpec.Resources)
+	}
+
+	return buf.String()
 }
 
 // PrintGroupsList formats a list of deployment groups for display.
@@ -120,23 +162,8 @@ func PrintGroupsList(cmd *cobra.Command, cctx sdkclient.Context, groups dvbeta.G
 		return nil
 	}
 
-	return formatGroupsList(os.Stdout, groups)
-}
-
-func formatGroupsList(w io.Writer, groups dvbeta.Groups) error {
-	for i, g := range groups {
-		if i > 0 {
-			Newline(w)
-		}
-		fmt.Fprintf(w, "%s %s\n", Section(fmt.Sprintf("Group %d:", i+1)), Bold(g.GroupSpec.Name))
-		KV(w, "ID", g.ID.String())
-		KV(w, "State", ColorState(g.State.String()))
-		KV(w, "Created At", FormatHeight(g.CreatedAt))
-
-		formatResourceUnits(w, g.GroupSpec.Resources)
-	}
-
-	return nil
+	_, err := fmt.Fprint(os.Stdout, RenderGroupsList(groups))
+	return err
 }
 
 // formatResourceUnits renders a list of resource units with full spec details.

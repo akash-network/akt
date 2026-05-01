@@ -1,6 +1,7 @@
 package pretty
 
 import (
+	"fmt"
 	"io"
 	"strings"
 
@@ -16,12 +17,11 @@ func init() {
 	Register((*etypes.QueryPaymentsResponse)(nil), PrettyFormatterFunc(formatEscrowPayments))
 }
 
-func formatEscrowAccounts(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	res := msg.(*etypes.QueryAccountsResponse)
-
+// RenderEscrowAccounts renders an escrow accounts list as a styled string.
+func RenderEscrowAccounts(res *etypes.QueryAccountsResponse) string {
+	var buf strings.Builder
 	headers := []string{"SCOPE", "XID", "OWNER", "STATE", "BALANCE", "SPENT", "SETTLED AT"}
 	rows := make([][]string, 0, len(res.Accounts))
-
 	for _, a := range res.Accounts {
 		balance := "-"
 		if len(a.State.Funds) > 0 {
@@ -35,41 +35,39 @@ func formatEscrowAccounts(w io.Writer, _ *cobra.Command, _ sdkclient.Context, ms
 		if len(a.State.Transferred) > 0 {
 			spent = FormatDecCoins(a.State.Transferred)
 		}
-
 		rows = append(rows, []string{
-			a.ID.Scope.String(),
-			Bold(a.ID.XID),
-			a.State.Owner,
-			ColorState(a.State.State.String()),
-			Bold(balance),
-			spent,
+			a.ID.Scope.String(), Bold(a.ID.XID), a.State.Owner,
+			ColorState(a.State.State.String()), Bold(balance), spent,
 			FormatHeight(a.State.SettledAt),
 		})
 	}
-
-	WriteTable(w, headers, rows)
-	return nil
+	WriteTable(&buf, headers, rows)
+	return buf.String()
 }
 
-func formatEscrowPayments(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	res := msg.(*etypes.QueryPaymentsResponse)
+func formatEscrowAccounts(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
+	_, err := fmt.Fprint(w, RenderEscrowAccounts(msg.(*etypes.QueryAccountsResponse)))
+	return err
+}
 
+// RenderEscrowPayments renders an escrow payments list as a styled string.
+func RenderEscrowPayments(res *etypes.QueryPaymentsResponse) string {
+	var buf strings.Builder
 	headers := []string{"ACCOUNT SCOPE", "ACCOUNT XID", "PAYMENT XID", "OWNER", "STATE", "RATE", "BALANCE", "WITHDRAWN"}
 	rows := make([][]string, 0, len(res.Payments))
-
 	for _, p := range res.Payments {
 		rows = append(rows, []string{
-			p.ID.AID.Scope.String(),
-			p.ID.AID.XID,
-			Bold(p.ID.XID),
-			p.State.Owner,
-			ColorState(p.State.State.String()),
-			FormatDecCoin(p.State.Rate),
-			FormatDecCoin(p.State.Balance),
+			p.ID.AID.Scope.String(), p.ID.AID.XID, Bold(p.ID.XID),
+			p.State.Owner, ColorState(p.State.State.String()),
+			FormatDecCoin(p.State.Rate), FormatDecCoin(p.State.Balance),
 			FormatCoin(p.State.Withdrawn),
 		})
 	}
+	WriteTable(&buf, headers, rows)
+	return buf.String()
+}
 
-	WriteTable(w, headers, rows)
-	return nil
+func formatEscrowPayments(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
+	_, err := fmt.Fprint(w, RenderEscrowPayments(msg.(*etypes.QueryPaymentsResponse)))
+	return err
 }

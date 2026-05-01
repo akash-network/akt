@@ -3,6 +3,7 @@ package pretty
 import (
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/cosmos/gogoproto/proto"
 	"github.com/spf13/cobra"
@@ -16,49 +17,48 @@ func init() {
 	Register((*distrtypes.ValidatorAccumulatedCommission)(nil), PrettyFormatterFunc(formatValidatorCommission))
 }
 
-func formatDelegationTotalRewards(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	res := msg.(*distrtypes.QueryDelegationTotalRewardsResponse)
-
+// RenderDelegationTotalRewards renders delegation rewards as a styled string.
+func RenderDelegationTotalRewards(res *distrtypes.QueryDelegationTotalRewardsResponse) string {
+	var buf strings.Builder
 	if len(res.Rewards) == 0 {
-		fmt.Fprintln(w, Dim("(no rewards)"))
-		return nil
+		fmt.Fprintln(&buf, Dim("(no rewards)"))
+		return buf.String()
 	}
-
 	headers := []string{"VALIDATOR", "REWARD"}
 	rows := make([][]string, 0, len(res.Rewards))
-
 	for _, r := range res.Rewards {
 		reward := "-"
 		if len(r.Reward) > 0 {
 			reward = FormatDecCoins(r.Reward)
 		}
-		rows = append(rows, []string{
-			r.ValidatorAddress,
-			reward,
-		})
+		rows = append(rows, []string{r.ValidatorAddress, reward})
 	}
-
-	WriteTable(w, headers, rows)
-
-	// Print total rewards below the table.
+	WriteTable(&buf, headers, rows)
 	if len(res.Total) > 0 {
-		Newline(w)
-		KV(w, "Total", Bold(FormatDecCoins(res.Total)))
+		Newline(&buf)
+		KV(&buf, "Total", Bold(FormatDecCoins(res.Total)))
 	}
+	return buf.String()
+}
 
-	return nil
+func formatDelegationTotalRewards(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
+	_, err := fmt.Fprint(w, RenderDelegationTotalRewards(msg.(*distrtypes.QueryDelegationTotalRewardsResponse)))
+	return err
+}
+
+// RenderValidatorCommission renders validator commission as a styled string.
+func RenderValidatorCommission(commission *distrtypes.ValidatorAccumulatedCommission) string {
+	var buf strings.Builder
+	if len(commission.Commission) == 0 {
+		fmt.Fprintln(&buf, Dim("(no commission)"))
+		return buf.String()
+	}
+	fmt.Fprintln(&buf, Section("Validator Commission"))
+	KV(&buf, "Commission", Bold(FormatDecCoins(commission.Commission)))
+	return buf.String()
 }
 
 func formatValidatorCommission(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	commission := msg.(*distrtypes.ValidatorAccumulatedCommission)
-
-	if len(commission.Commission) == 0 {
-		fmt.Fprintln(w, Dim("(no commission)"))
-		return nil
-	}
-
-	fmt.Fprintln(w, Section("Validator Commission"))
-	KV(w, "Commission", Bold(FormatDecCoins(commission.Commission)))
-
-	return nil
+	_, err := fmt.Fprint(w, RenderValidatorCommission(msg.(*distrtypes.ValidatorAccumulatedCommission)))
+	return err
 }

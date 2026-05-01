@@ -24,93 +24,89 @@ func formatProposalStatus(status govv1.ProposalStatus) string {
 	return strings.ToLower(s)
 }
 
-func formatProposalsList(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	res := msg.(*govv1.QueryProposalsResponse)
-
+// RenderProposalList renders a proposals list as a styled string.
+func RenderProposalList(res *govv1.QueryProposalsResponse) string {
+	var buf strings.Builder
 	headers := []string{"ID", "TITLE", "STATUS", "SUBMIT TIME", "VOTING END"}
 	rows := make([][]string, 0, len(res.Proposals))
-
 	for _, p := range res.Proposals {
 		submitTime := "-"
 		if p.SubmitTime != nil {
 			submitTime = p.SubmitTime.Format("2006-01-02 15:04")
 		}
-
 		votingEnd := "-"
 		if p.VotingEndTime != nil {
 			votingEnd = p.VotingEndTime.Format("2006-01-02 15:04")
 		}
-
-		status := formatProposalStatus(p.Status)
-
 		rows = append(rows, []string{
 			Bold(fmt.Sprintf("%d", p.Id)),
 			truncateString(p.Title, 40),
-			ColorState(status),
-			submitTime,
-			votingEnd,
+			ColorState(formatProposalStatus(p.Status)),
+			submitTime, votingEnd,
 		})
 	}
+	WriteTable(&buf, headers, rows)
+	return buf.String()
+}
 
-	WriteTable(w, headers, rows)
-	return nil
+func formatProposalsList(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
+	_, err := fmt.Fprint(w, RenderProposalList(msg.(*govv1.QueryProposalsResponse)))
+	return err
+}
+
+// RenderProposalDetail renders a proposal detail as a styled string.
+func RenderProposalDetail(p *govv1.Proposal) string {
+	var buf strings.Builder
+	fmt.Fprintln(&buf, Section("Proposal"))
+	KV(&buf, "ID", Bold(fmt.Sprintf("%d", p.Id)))
+	KV(&buf, "Title", Bold(p.Title))
+	KV(&buf, "Status", ColorState(formatProposalStatus(p.Status)))
+	KV(&buf, "Proposer", p.Proposer)
+	if p.Summary != "" {
+		KV(&buf, "Summary", p.Summary)
+	}
+	if p.Expedited {
+		KV(&buf, "Expedited", "yes")
+	}
+	Newline(&buf)
+	fmt.Fprintln(&buf, Section("Timeline"))
+	if p.SubmitTime != nil {
+		KV(&buf, "Submit Time", p.SubmitTime.Format("2006-01-02 15:04:05 UTC"))
+	}
+	if p.DepositEndTime != nil {
+		KV(&buf, "Deposit End", p.DepositEndTime.Format("2006-01-02 15:04:05 UTC"))
+	}
+	if p.VotingStartTime != nil {
+		KV(&buf, "Voting Start", p.VotingStartTime.Format("2006-01-02 15:04:05 UTC"))
+	}
+	if p.VotingEndTime != nil {
+		KV(&buf, "Voting End", p.VotingEndTime.Format("2006-01-02 15:04:05 UTC"))
+	}
+	if len(p.TotalDeposit) > 0 {
+		Newline(&buf)
+		fmt.Fprintln(&buf, Section("Deposit"))
+		for _, coin := range p.TotalDeposit {
+			KV(&buf, "Total Deposit", Bold(FormatCoin(coin)))
+		}
+	}
+	if p.FinalTallyResult != nil {
+		Newline(&buf)
+		fmt.Fprintln(&buf, Section("Tally"))
+		KV(&buf, "Yes", p.FinalTallyResult.YesCount)
+		KV(&buf, "No", p.FinalTallyResult.NoCount)
+		KV(&buf, "Abstain", p.FinalTallyResult.AbstainCount)
+		KV(&buf, "No With Veto", p.FinalTallyResult.NoWithVetoCount)
+	}
+	if p.FailedReason != "" {
+		Newline(&buf)
+		KV(&buf, "Failed Reason", p.FailedReason)
+	}
+	return buf.String()
 }
 
 func formatProposalDetail(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	p := msg.(*govv1.Proposal)
-
-	fmt.Fprintln(w, Section("Proposal"))
-	KV(w, "ID", Bold(fmt.Sprintf("%d", p.Id)))
-	KV(w, "Title", Bold(p.Title))
-	KV(w, "Status", ColorState(formatProposalStatus(p.Status)))
-	KV(w, "Proposer", p.Proposer)
-
-	if p.Summary != "" {
-		KV(w, "Summary", p.Summary)
-	}
-
-	if p.Expedited {
-		KV(w, "Expedited", "yes")
-	}
-
-	Newline(w)
-	fmt.Fprintln(w, Section("Timeline"))
-	if p.SubmitTime != nil {
-		KV(w, "Submit Time", p.SubmitTime.Format("2006-01-02 15:04:05 UTC"))
-	}
-	if p.DepositEndTime != nil {
-		KV(w, "Deposit End", p.DepositEndTime.Format("2006-01-02 15:04:05 UTC"))
-	}
-	if p.VotingStartTime != nil {
-		KV(w, "Voting Start", p.VotingStartTime.Format("2006-01-02 15:04:05 UTC"))
-	}
-	if p.VotingEndTime != nil {
-		KV(w, "Voting End", p.VotingEndTime.Format("2006-01-02 15:04:05 UTC"))
-	}
-
-	if len(p.TotalDeposit) > 0 {
-		Newline(w)
-		fmt.Fprintln(w, Section("Deposit"))
-		for _, coin := range p.TotalDeposit {
-			KV(w, "Total Deposit", Bold(FormatCoin(coin)))
-		}
-	}
-
-	if p.FinalTallyResult != nil {
-		Newline(w)
-		fmt.Fprintln(w, Section("Tally"))
-		KV(w, "Yes", p.FinalTallyResult.YesCount)
-		KV(w, "No", p.FinalTallyResult.NoCount)
-		KV(w, "Abstain", p.FinalTallyResult.AbstainCount)
-		KV(w, "No With Veto", p.FinalTallyResult.NoWithVetoCount)
-	}
-
-	if p.FailedReason != "" {
-		Newline(w)
-		KV(w, "Failed Reason", p.FailedReason)
-	}
-
-	return nil
+	_, err := fmt.Fprint(w, RenderProposalDetail(msg.(*govv1.Proposal)))
+	return err
 }
 
 // truncateString truncates a string to maxLen characters, appending "..." if truncated.
