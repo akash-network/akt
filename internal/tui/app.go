@@ -28,9 +28,12 @@ type activeView int
 
 const (
 	viewDashboard activeView = iota
-	viewQuery
-	viewTx
+	viewDeployments
+	viewLeases
+	viewProviders
 	viewMonitor
+	viewGovernance
+	viewStaking
 )
 
 // statusBarHeight is the number of lines reserved for the bottom status bar.
@@ -51,12 +54,18 @@ type Config struct {
 type App struct {
 	keys       KeyMap
 	view       activeView
-	query      views.QueryView
-	tx         views.TxView
 	palette    views.CommandPalette
 	standalone bool // disables command palette and view switching
 	width      int
 	height     int
+
+	// Primary view components — reusable ListView for each resource type.
+	deployments views.ListView
+	leases      views.ListView
+	providers   views.ListView
+	governance  views.ListView
+	staking     views.ListView
+	detail      views.DetailView
 
 	// monitorModel is the real-time monitor from internal/monitor/ui.
 	// It is nil when no RPC endpoint is available.
@@ -74,8 +83,32 @@ func newApp(cfg Config, topModel tea.Model) App {
 		keys:       km,
 		view:       viewDashboard,
 		standalone: cfg.Standalone,
-		query:      views.NewQueryView(),
-		tx:         views.NewTxView(),
+		deployments: views.NewListView(views.ListViewConfig{
+			Title:   "Deployments",
+			Columns: []views.ListColumn{{Header: "ID"}, {Header: "STATE", Width: 12}, {Header: "GROUPS", Width: 8}, {Header: "CREATED AT", Width: 14}},
+			Empty:   "No deployments. Use 'akt deploy <sdl>' to create one.",
+		}),
+		leases: views.NewListView(views.ListViewConfig{
+			Title:   "Leases",
+			Columns: []views.ListColumn{{Header: "ID"}, {Header: "PRICE/BLOCK", Width: 16}, {Header: "STATE", Width: 12}},
+			Empty:   "No active leases.",
+		}),
+		providers: views.NewListView(views.ListViewConfig{
+			Title:   "Providers",
+			Columns: []views.ListColumn{{Header: "OWNER"}, {Header: "HOST URI"}, {Header: "EMAIL", Width: 20}},
+			Empty:   "No providers found.",
+		}),
+		governance: views.NewListView(views.ListViewConfig{
+			Title:   "Governance Proposals",
+			Columns: []views.ListColumn{{Header: "ID", Width: 6}, {Header: "TITLE"}, {Header: "STATUS", Width: 16}, {Header: "VOTING END", Width: 18}},
+			Empty:   "No proposals.",
+		}),
+		staking: views.NewListView(views.ListViewConfig{
+			Title:   "Validators",
+			Columns: []views.ListColumn{{Header: "MONIKER"}, {Header: "STATUS", Width: 12}, {Header: "VOTING POWER", Width: 16}, {Header: "COMMISSION", Width: 12}},
+			Empty:   "No validators found.",
+		}),
+		detail: views.NewDetailView(),
 		palette: views.NewCommandPalette(reg, views.PaletteKeys{
 			CursorUp:   km.CursorUp,
 			CursorDown: km.CursorDown,
@@ -196,14 +229,23 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// App-level key dispatch (non-top views).
 		switch {
-		case key.Matches(kmsg, a.keys.Query):
-			a.view = viewQuery
+		case key.Matches(kmsg, a.keys.Deployments):
+			a.view = viewDeployments
 			return a, nil
-		case key.Matches(kmsg, a.keys.Tx):
-			a.view = viewTx
+		case key.Matches(kmsg, a.keys.Leases):
+			a.view = viewLeases
+			return a, nil
+		case key.Matches(kmsg, a.keys.Providers):
+			a.view = viewProviders
 			return a, nil
 		case key.Matches(kmsg, a.keys.Monitor):
 			a.view = viewMonitor
+			return a, nil
+		case key.Matches(kmsg, a.keys.Governance):
+			a.view = viewGovernance
+			return a, nil
+		case key.Matches(kmsg, a.keys.Staking):
+			a.view = viewStaking
 			return a, nil
 		case key.Matches(kmsg, a.keys.Back):
 			a.view = viewDashboard
@@ -252,10 +294,16 @@ func (a App) View() tea.View {
 
 	var main string
 	switch a.view {
-	case viewQuery:
-		main = a.query.View()
-	case viewTx:
-		main = a.tx.View()
+	case viewDeployments:
+		main = a.deployments.View()
+	case viewLeases:
+		main = a.leases.View()
+	case viewProviders:
+		main = a.providers.View()
+	case viewGovernance:
+		main = a.governance.View()
+	case viewStaking:
+		main = a.staking.View()
 	case viewMonitor:
 		main = a.renderCentered(mainH, "No RPC endpoint configured.\nUse :consensus after setting up a context.")
 	default:
@@ -294,17 +342,24 @@ func (a App) renderStatusBar() string {
 	switch a.view {
 	case viewMonitor:
 		line1, line2 = a.monitorStatusLines()
-	case viewQuery:
-		line1 = "Query commands panel"
-		line2 = ""
-	case viewTx:
-		line1 = "Transaction commands panel"
-		line2 = ""
+	case viewDeployments:
+		line1 = "Deployments"
+		line2 = "enter: detail  j/k: navigate"
+	case viewLeases:
+		line1 = "Leases"
+		line2 = "enter: detail  j/k: navigate"
+	case viewProviders:
+		line1 = "Providers"
+		line2 = "enter: detail  j/k: navigate"
+	case viewGovernance:
+		line1 = "Governance"
+		line2 = "enter: detail  j/k: navigate"
+	case viewStaking:
+		line1 = "Staking"
+		line2 = "enter: detail  j/k: navigate"
 	default:
-		line1 = a.keys.Query.Help().Key + ": query  " +
-			a.keys.Tx.Help().Key + ": tx  " +
-			a.keys.Monitor.Help().Key + ": monitor  " +
-			"?: help"
+		line1 = "1: deployments  2: leases  3: providers  " +
+			a.keys.Monitor.Help().Key + ": monitor  5: governance  6: staking"
 		line2 = ""
 	}
 
@@ -390,13 +445,18 @@ func (a App) handleCommand(cmd string) (tea.Model, tea.Cmd) {
 		a.view = viewDashboard
 	case "monitor", "consensus", "top":
 		a.view = viewMonitor
-	case "query":
-		a.view = viewQuery
-	case "tx":
-		a.view = viewTx
+	case "deployments", "dep":
+		a.view = viewDeployments
+	case "leases":
+		a.view = viewLeases
+	case "providers", "prov":
+		a.view = viewProviders
+	case "governance", "gov":
+		a.view = viewGovernance
+	case "staking", "validators", "val":
+		a.view = viewStaking
 
-	case "deployments", "leases", "providers", "validators",
-		"governance", "certificates", "escrow", "orders", "bids",
+	case "certificates", "escrow", "orders", "bids",
 		"deploy", "help":
 		a.view = viewDashboard
 	}
@@ -411,8 +471,12 @@ func (a *App) resize() {
 		mainH = 1
 	}
 
-	a.query.SetSize(a.width, mainH)
-	a.tx.SetSize(a.width, mainH)
+	a.deployments.SetSize(a.width, mainH)
+	a.leases.SetSize(a.width, mainH)
+	a.providers.SetSize(a.width, mainH)
+	a.governance.SetSize(a.width, mainH)
+	a.staking.SetSize(a.width, mainH)
+	a.detail.SetSize(a.width, mainH)
 	a.palette.SetSize(a.width, mainH)
 }
 

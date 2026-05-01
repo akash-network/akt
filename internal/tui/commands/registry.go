@@ -68,15 +68,13 @@ func DefaultRegistry() *Registry {
 	r.Register(Command{Name: "Deployments", Description: "View all deployments", Category: "navigation", Aliases: []string{"dep"}})
 	r.Register(Command{Name: "Leases", Description: "View leases", Category: "navigation"})
 	r.Register(Command{Name: "Providers", Description: "View providers", Category: "navigation", Aliases: []string{"prov"}})
-	r.Register(Command{Name: "Validators", Description: "View validators", Category: "navigation", Aliases: []string{"val"}})
+	r.Register(Command{Name: "Staking", Description: "View validators & delegation", Category: "navigation", Aliases: []string{"validators", "val"}})
 	r.Register(Command{Name: "Governance", Description: "View governance proposals", Category: "navigation", Aliases: []string{"gov"}})
+	r.Register(Command{Name: "Monitor", Description: "Real-time network monitor", Category: "navigation", Aliases: []string{"monitor", "top", "consensus"}})
 	r.Register(Command{Name: "Certificates", Description: "View certificates", Category: "navigation", Aliases: []string{"cert"}})
 	r.Register(Command{Name: "Escrow", Description: "View escrow accounts", Category: "navigation"})
 	r.Register(Command{Name: "Orders", Description: "View orders", Category: "navigation"})
 	r.Register(Command{Name: "Bids", Description: "View bids", Category: "navigation"})
-	r.Register(Command{Name: "Monitor", Description: "Real-time network monitor", Category: "navigation", Aliases: []string{"monitor", "top", "consensus"}})
-	r.Register(Command{Name: "Query", Description: "Query commands panel", Category: "navigation"})
-	r.Register(Command{Name: "Tx", Description: "Transaction commands panel", Category: "navigation"})
 
 	// Action commands.
 	r.Register(Command{Name: "Deploy", Description: "Create new deployment", Category: "action"})
