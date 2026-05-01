@@ -12,7 +12,7 @@ import (
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 
-	v1beta3 "pkg.akt.dev/go/node/client/v1beta3"
+	client "pkg.akt.dev/go/node/client/v1beta3"
 
 	"pkg.akt.dev/akt/internal/mcp/tools/audit"
 	"pkg.akt.dev/akt/internal/mcp/tools/bank"
@@ -47,14 +47,14 @@ func New(ctx context.Context, cctx sdkclient.Context, enableWrites bool) (*Serve
 	s := &Server{mcp: srv}
 
 	if enableWrites {
-		cl, err := v1beta3.NewClient(ctx, cctx)
+		cl, err := client.NewClient(ctx, cctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create chain client: %w", err)
 		}
 		s.registerQueryTools(cl)
 		s.registerWriteTools(cl)
 	} else {
-		cl, err := v1beta3.NewLightClient(cctx)
+		cl, err := client.NewLightClient(cctx)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create chain client: %w", err)
 		}
@@ -72,7 +72,7 @@ func (s *Server) ServeStdio(ctx context.Context) error {
 }
 
 // registerQueryTools registers all read-only query tools.
-func (s *Server) registerQueryTools(cl v1beta3.LightClient) {
+func (s *Server) registerQueryTools(cl client.LightClient) {
 	// Node tools
 	s.addTool(node.ToolNodeStatus(), node.HandleNodeStatus(cl))
 	s.addTool(node.ToolBlockHeight(), node.HandleBlockHeight(cl))
@@ -111,7 +111,7 @@ func (s *Server) registerQueryTools(cl v1beta3.LightClient) {
 
 // registerWriteTools registers write tools that require --enable-writes.
 // These tools perform on-chain transactions or mutating provider REST calls.
-func (s *Server) registerWriteTools(cl v1beta3.Client) {
+func (s *Server) registerWriteTools(cl client.Client) {
 	// Deployment tx tools
 	s.addTool(deployment.ToolCloseDeployment(), deployment.HandleCloseDeployment(cl))
 

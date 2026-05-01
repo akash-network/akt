@@ -8,6 +8,7 @@ import (
 
 	aktctx "pkg.akt.dev/akt/internal/context"
 	"pkg.akt.dev/akt/internal/output"
+	"pkg.akt.dev/akt/internal/output/pretty"
 )
 
 // Commands returns the "network" command tree.
@@ -213,35 +214,7 @@ func showCmd(mgr func() *aktctx.Manager) *cobra.Command {
 				return fmt.Errorf("network %q not found", args[0])
 			}
 
-			fmt.Printf("Name:           %s\n", net.Name)
-			fmt.Printf("Chain ID:       %s\n", net.ChainID)
-			fmt.Printf("Gas Prices:     %s\n", net.GasPrices)
-			fmt.Printf("Gas Adjustment: %s\n", net.GasAdjustment)
-
-			fmt.Println("RPC Endpoints:")
-			for _, e := range net.Endpoints.RPC {
-				fmt.Printf("  - %s\n", e)
-			}
-
-			if len(net.Endpoints.API) > 0 {
-				fmt.Println("API Endpoints:")
-				for _, e := range net.Endpoints.API {
-					fmt.Printf("  - %s\n", e)
-				}
-			}
-
-			if len(net.Endpoints.GRPC) > 0 {
-				fmt.Println("gRPC Endpoints:")
-				for _, e := range net.Endpoints.GRPC {
-					fmt.Printf("  - %s\n", e)
-				}
-			}
-
-			users := m.NetworkUsers(net.Name)
-			if len(users) > 0 {
-				fmt.Printf("Used by:        %s\n", strings.Join(users, ", "))
-			}
-
+			fmt.Print(pretty.RenderNetworkShow(*net, m.NetworkUsers(net.Name)))
 			return nil
 		},
 	}

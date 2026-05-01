@@ -13,6 +13,7 @@ import (
 	clinetwork "pkg.akt.dev/akt/internal/cli/network"
 	aktctx "pkg.akt.dev/akt/internal/context"
 	"pkg.akt.dev/akt/internal/output"
+	"pkg.akt.dev/akt/internal/output/pretty"
 )
 
 // Commands returns the "context" command tree, including "network" and "keys" as subcommands.
@@ -174,55 +175,7 @@ func currentCmd(mgr func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("Context:         %s\n", rc.Name)
-			fmt.Printf("Network:         %s\n", rc.Network.Name)
-			fmt.Printf("  Chain ID:      %s\n", rc.Network.ChainID)
-
-			rpcStr := "(none)"
-			if len(rc.Network.Endpoints.RPC) > 0 {
-				rpcStr = rc.Network.Endpoints.RPC[0]
-				if len(rc.Network.Endpoints.RPC) > 1 {
-					rpcStr += fmt.Sprintf(" (+%d backup)", len(rc.Network.Endpoints.RPC)-1)
-				}
-			}
-
-			fmt.Printf("  RPC:           %s\n", rpcStr)
-
-			if len(rc.Network.Endpoints.API) > 0 {
-				apiStr := rc.Network.Endpoints.API[0]
-				if len(rc.Network.Endpoints.API) > 1 {
-					apiStr += fmt.Sprintf(" (+%d backup)", len(rc.Network.Endpoints.API)-1)
-				}
-
-				fmt.Printf("  API:           %s\n", apiStr)
-			}
-
-			if len(rc.Network.Endpoints.GRPC) > 0 {
-				fmt.Printf("  gRPC:          %s\n", rc.Network.Endpoints.GRPC[0])
-			}
-
-			fmt.Printf("  Gas Prices:    %s\n", rc.GasPrices)
-			fmt.Printf("  Gas Adj:       %s\n", rc.GasAdjustment)
-			fmt.Printf("Keyring:         %s (backend: %s)\n", rc.Keyring.Name, rc.Keyring.Backend)
-
-			if rc.DefaultAccount != "" {
-				fmt.Printf("Default Account: %s\n", rc.DefaultAccount)
-			} else {
-				fmt.Printf("Default Account: (not set)\n")
-			}
-
-			fmt.Printf("Gas:             %s\n", rc.Gas)
-
-			if rc.Fees != "" {
-				fmt.Printf("Fees:            %s\n", rc.Fees)
-			} else {
-				fmt.Printf("Fees:            (none)\n")
-			}
-
-			fmt.Printf("Provider Auth:   %s\n", rc.AuthType)
-			fmt.Printf("Store:           %s\n", aktctx.StoreDir(rc.Root, rc.Name))
-			fmt.Printf("Action Log:      %s\n", aktctx.ActionLogPath(rc.Root, rc.Name))
-
+			fmt.Print(pretty.RenderContextShow(*rc))
 			return nil
 		},
 	}

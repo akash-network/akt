@@ -8,9 +8,10 @@ import (
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 
+	types "pkg.akt.dev/go/node/oracle/v2"
+
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	"pkg.akt.dev/akt/internal/output/pretty"
-	types "pkg.akt.dev/go/node/oracle/v2"
 )
 
 func GetQueryOracleCmd() *cobra.Command {

@@ -46,8 +46,7 @@ close lease, and submit manifest.`,
 				mode = "read-write"
 			}
 
-			fmt.Fprintf(os.Stderr, "akt mcp: starting stdio server (node=%s, chain=%s, mode=%s)\n",
-				cctx.NodeURI, cctx.ChainID, mode)
+			_, _ = fmt.Fprintf(os.Stderr, "akt mcp: starting stdio server (node=%s, chain=%s, mode=%s)\n", cctx.NodeURI, cctx.ChainID, mode)
 
 			return srv.ServeStdio(ctx)
 		},
