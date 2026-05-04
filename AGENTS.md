@@ -25,6 +25,35 @@ Never implement code that contradicts or isn't documented in the spec. If the sp
 
 If a `go.work` file is present in the repository root, agents MUST read it and take into account all `replace` directives defined there. Local module replacements affect import resolution and must be followed when navigating or editing dependency code.
 
+### Git Conventions
+
+All commit messages MUST follow the [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) specification:
+
+```
+<type>[optional scope]: <description>
+
+[optional body]
+
+[optional footer(s)]
+```
+
+**Types** (required):
+- `feat` — a new feature
+- `fix` — a bug fix
+- `docs` — documentation-only changes
+- `style` — formatting, missing semicolons, etc. (no code change)
+- `refactor` — code change that neither fixes a bug nor adds a feature
+- `perf` — performance improvement
+- `test` — adding or correcting tests
+- `build` — changes to the build system or dependencies
+- `ci` — changes to CI configuration
+- `chore` — other changes that don't modify src or test files
+
+**Rules**:
+- Subject line: lowercase, imperative mood, no period at the end, max 72 characters
+- Body: wrap at 72 characters, explain *what* and *why* (not *how*)
+- Breaking changes: add `!` after type/scope (e.g., `feat!:`) or a `BREAKING CHANGE:` footer
+
 ### Code Conventions
 
 - **Language**: Go
