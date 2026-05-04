@@ -93,15 +93,29 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd.Flags().Bool("set-current", false, "Set as current context after creation")
 	_ = cmd.MarkFlagRequired("network")
 
+	_ = cmd.RegisterFlagCompletionFunc("network", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		m := mgr()
+		if m == nil {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+		nets := m.ListNetworks()
+		names := make([]string, 0, len(nets))
+		for _, n := range nets {
+			names = append(names, n.Name)
+		}
+		return names, cobra.ShellCompDirectiveNoFileComp
+	})
+
 	return cmd
 }
 
 func useCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	return &cobra.Command{
-		Use:   "use <name>",
-		Short: "Switch the active context",
-		Args:  cobra.ExactArgs(1),
-		Example: `  akt context use staging`,
+		Use:               "use <name>",
+		Short:             "Switch the active context",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeContextNames(mgr),
+		Example:           `  akt context use staging`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return mgr().UseContext(args[0])
 		},
@@ -194,10 +208,11 @@ func currentCmd(mgr func() *aktctx.Manager) *cobra.Command {
 
 func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "edit <name>",
-		Short: "Edit a context",
-		Args:  cobra.ExactArgs(1),
-		Example: `  # Change default account
+		Use:               "edit <name>",
+		Short:             "Edit a context",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeContextNames(mgr),
+		Example:           `  # Change default account
   akt context edit prod --default-account bob
 
   # Switch to a different network
@@ -246,15 +261,29 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd.Flags().String("fees", "", "Change fees setting")
 	cmd.Flags().Bool("fork-network", false, "Fork the context's network before editing")
 
+	_ = cmd.RegisterFlagCompletionFunc("network", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		m := mgr()
+		if m == nil {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+		nets := m.ListNetworks()
+		names := make([]string, 0, len(nets))
+		for _, n := range nets {
+			names = append(names, n.Name)
+		}
+		return names, cobra.ShellCompDirectiveNoFileComp
+	})
+
 	return cmd
 }
 
 func deleteCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "delete <name>",
-		Short: "Delete a context",
-		Args:  cobra.ExactArgs(1),
-		Example: `  # Delete with confirmation prompt
+		Use:               "delete <name>",
+		Short:             "Delete a context",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeContextNames(mgr),
+		Example:           `  # Delete with confirmation prompt
   akt context delete staging
 
   # Skip confirmation
@@ -289,10 +318,11 @@ func deleteCmd(mgr func() *aktctx.Manager) *cobra.Command {
 
 func renameCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	return &cobra.Command{
-		Use:   "rename <old> <new>",
-		Short: "Rename a context",
-		Args:  cobra.ExactArgs(2),
-		Example: `  akt context rename staging testnet-staging`,
+		Use:               "rename <old> <new>",
+		Short:             "Rename a context",
+		Args:              cobra.ExactArgs(2),
+		ValidArgsFunction: completeContextNames(mgr),
+		Example:           `  akt context rename staging testnet-staging`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return mgr().RenameContext(args[0], args[1])
 		},

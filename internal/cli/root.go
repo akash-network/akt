@@ -219,6 +219,20 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	root.PersistentFlags().CountP("verbose", "v", "Increase output verbosity (-v verbose, -vv debug)")
 	root.PersistentFlags().BoolP("quiet", "q", false, "Suppress all output except errors")
 
+	// Register shell completion for the global --context flag.
+	_ = root.RegisterFlagCompletionFunc("context", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+		m := mgrFn()
+		if m == nil {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+		ctxs := m.ListContexts()
+		names := make([]string, 0, len(ctxs))
+		for _, c := range ctxs {
+			names = append(names, c.Name)
+		}
+		return names, cobra.ShellCompDirectiveNoFileComp
+	})
+
 	// Context management (includes network and keys subcommands).
 	root.AddCommand(clicontext.Commands(mgrFn, getKeyring))
 

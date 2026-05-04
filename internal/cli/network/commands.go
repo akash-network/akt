@@ -89,11 +89,12 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 
 func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "edit <name>",
-		Short: "Edit a network definition",
-		Long:  "Changes apply to ALL contexts using this network.",
-		Args:  cobra.ExactArgs(1),
-		Example: `  # Add a backup RPC endpoint
+		Use:               "edit <name>",
+		Short:             "Edit a network definition",
+		Long:              "Changes apply to ALL contexts using this network.",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeNetworkNames(mgr),
+		Example:           `  # Add a backup RPC endpoint
   akt context network edit mainnet --rpc https://rpc.akashnet.net:443,https://rpc-backup.example.com:443
 
   # Change gas prices
@@ -143,11 +144,12 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 
 func deleteCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	return &cobra.Command{
-		Use:   "delete <name>",
-		Short: "Delete a network definition",
-		Long:  "Fails if any context references this network.",
-		Args:  cobra.ExactArgs(1),
-		Example: `  akt context network delete mainnet-custom`,
+		Use:               "delete <name>",
+		Short:             "Delete a network definition",
+		Long:              "Fails if any context references this network.",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeNetworkNames(mgr),
+		Example:           `  akt context network delete mainnet-custom`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return mgr().DeleteNetwork(args[0])
 		},
@@ -216,10 +218,11 @@ func listCmd(mgr func() *aktctx.Manager) *cobra.Command {
 
 func showCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	return &cobra.Command{
-		Use:   "show <name>",
-		Short: "Show network details",
-		Args:  cobra.ExactArgs(1),
-		Example: `  akt context network show mainnet`,
+		Use:               "show <name>",
+		Short:             "Show network details",
+		Args:              cobra.ExactArgs(1),
+		ValidArgsFunction: completeNetworkNames(mgr),
+		Example:           `  akt context network show mainnet`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			m := mgr()
 			net := m.GetNetwork(args[0])
