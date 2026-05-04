@@ -51,3 +51,8 @@ Every change MUST include a corresponding entry in `AICHANGELOG.md`. Each entry 
 ### Problem-Solving
 
 - **Never guess or hack.** If something is not working, and you don't understand why, ask for instructions. Do not invent workarounds, nil-guards, or fallback paths to mask a problem you haven't fully traced.
+
+<!-- SPECKIT START -->
+For additional context about technologies to be used, project structure,
+shell commands, and other important information, read the current plan
+<!-- SPECKIT END -->
