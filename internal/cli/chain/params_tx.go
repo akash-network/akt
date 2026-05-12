@@ -11,6 +11,8 @@ import (
 	govv1beta1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1beta1"
 	paramscutils "github.com/cosmos/cosmos-sdk/x/params/client/utils"
 	paramproposal "github.com/cosmos/cosmos-sdk/x/params/types/proposal"
+
+	"pkg.akt.dev/akt/internal/output/pretty"
 )
 
 // GetTxParamsSubmitParamChangeProposalCmd returns a CLI command handler for creating
@@ -85,7 +87,7 @@ Where proposal.json contains:
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 	}
 }

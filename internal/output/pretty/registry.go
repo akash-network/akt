@@ -37,7 +37,8 @@ var (
 
 // Register registers a PrettyFormatter for the given protobuf message type.
 // The key is the proto full name (e.g., "akash.deployment.v1beta4.QueryDeploymentsResponse").
-// Registration is typically done in init() functions within per-module formatter files.
+// Query formatters are registered in init() functions within per-module formatter files.
+// Tx formatters are registered via RegisterAllTxFormatters() called during root command setup.
 func Register(msg proto.Message, f PrettyFormatter) {
 	mu.Lock()
 	defer mu.Unlock()

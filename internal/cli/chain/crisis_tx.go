@@ -10,6 +10,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/crisis/types"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"pkg.akt.dev/akt/internal/output/pretty"
 )
 
 // GetTxCrisisCmd returns a root CLI command handler for all x/crisis transaction commands.
@@ -59,7 +60,7 @@ func GetTxCrisisVerifyInvariantTxCmd() *cobra.Command {
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 	}
 

@@ -8,6 +8,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/slashing/types"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"pkg.akt.dev/akt/internal/output/pretty"
 )
 
 // GetTxSlashingCmd returns a root CLI command handler for all x/slashing transaction commands.
@@ -52,7 +53,7 @@ $ <appd> tx slashing unjail --from mykey
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 	}
 

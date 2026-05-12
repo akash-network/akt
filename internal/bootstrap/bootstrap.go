@@ -76,6 +76,9 @@ func Run(cfgRoot string) error {
 		os.Exit(0)
 	}
 
+	// Keyring backend selection.
+	backend := selectKeyringBackend()
+
 	// Pick current-context: prefer mainnet, else first selected.
 	currentCtx := selected[0].Name
 	for _, n := range selected {
@@ -90,10 +93,10 @@ func Run(cfgRoot string) error {
 		CurrentContext: currentCtx,
 		Networks:       selected,
 		Keyrings: []aktctx.Keyring{
-			{Name: "default", Backend: "os"},
+			{Name: "default", Backend: backend},
 		},
 		Defaults: aktctx.Defaults{
-			Output:        "table",
+			Output:        "pretty",
 			BroadcastMode: "sync",
 		},
 	}
@@ -292,6 +295,114 @@ func allSelected(checked []bool) bool {
 		}
 	}
 	return true
+}
+
+// keyringOption describes one selectable keyring backend.
+type keyringOption struct {
+	value string
+	label string
+	desc  string
+}
+
+// selectKeyringBackend presents a single-select menu for keyring backend.
+// Returns the selected backend string (e.g. "os", "file", "test").
+func selectKeyringBackend() string {
+	options := []keyringOption{
+		{value: "os", label: "os", desc: "System keyring (recommended)"},
+		{value: "file", label: "file", desc: "File-based encrypted keyring"},
+		{value: "test", label: "test", desc: "Unencrypted test keyring (development only)"},
+	}
+
+	cursor := 0 // default to "os"
+
+	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
+	if err != nil {
+		return "os" // fallback
+	}
+	defer term.Restore(int(os.Stdin.Fd()), oldState)
+
+	render := func() {
+		g := glyphs.G()
+		var b strings.Builder
+
+		b.WriteString(ansiBold + "Select keyring backend" + ansiReset + ansiDim + "  ↑↓ move  enter confirm" + ansiReset + "\r\n")
+		b.WriteString("\r\n")
+
+		for i, opt := range options {
+			icon := ansiDim + g.CheckboxOff + ansiReset
+			nameStyle := ansiDim
+			prefix := "  "
+			rowStart := ""
+			rowEnd := ""
+			if i == cursor {
+				icon = ansiGreen + g.CheckboxOn + ansiReset
+				nameStyle = ansiReset
+				prefix = ansiYellow + g.Cursor + " " + ansiReset
+				rowStart = ansiBgSel
+				rowEnd = ansiReset
+			}
+
+			b.WriteString(fmt.Sprintf("  %s%s %s  %s%-10s %s%s%s\r\n",
+				rowStart, prefix, icon, nameStyle, opt.label+ansiReset,
+				ansiDim, opt.desc+ansiReset, rowEnd))
+		}
+
+		b.WriteString("\r\n")
+		os.Stdout.WriteString(b.String())
+	}
+
+	// header(1) + blank(1) + options(3) + blank(1) = 6
+	renderLines := len(options) + 3
+
+	clear := func() {
+		for i := 0; i < renderLines; i++ {
+			os.Stdout.WriteString("\033[A\033[2K")
+		}
+	}
+
+	render()
+
+	buf := make([]byte, 3)
+	totalItems := len(options)
+	for {
+		nr, err := os.Stdin.Read(buf)
+		if err != nil {
+			break
+		}
+
+		if nr == 1 {
+			switch buf[0] {
+			case '\r', '\n':
+				os.Stdout.WriteString("\r\n")
+				term.Restore(int(os.Stdin.Fd()), oldState)
+				return options[cursor].value
+			case 'j':
+				clear()
+				cursor = (cursor + 1) % totalItems
+				render()
+			case 'k':
+				clear()
+				cursor = (cursor - 1 + totalItems) % totalItems
+				render()
+			case 'q', 3:
+				os.Stdout.WriteString("\r\n")
+				term.Restore(int(os.Stdin.Fd()), oldState)
+				fmt.Println("Aborted.")
+				os.Exit(0)
+			}
+		} else if nr == 3 && buf[0] == 27 && buf[1] == 91 {
+			clear()
+			switch buf[2] {
+			case 65: // Up
+				cursor = (cursor - 1 + totalItems) % totalItems
+			case 66: // Down
+				cursor = (cursor + 1) % totalItems
+			}
+			render()
+		}
+	}
+
+	return options[cursor].value
 }
 
 // --- Network fetching ---

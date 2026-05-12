@@ -14,6 +14,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/auth/vesting/types"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"pkg.akt.dev/akt/internal/output/pretty"
 )
 
 // GetTxVestingCmd returns vesting module's transaction commands.
@@ -82,7 +83,7 @@ timestamp.`,
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 	}
 
@@ -130,7 +131,7 @@ tokens.`,
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 	}
 
@@ -220,7 +221,7 @@ func GetTxVestingCreatePeriodicAccountCmd() *cobra.Command {
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 	}
 

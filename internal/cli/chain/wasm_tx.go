@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"pkg.akt.dev/akt/internal/output/pretty"
 )
 
 // GetTxWasmCmd returns the transaction commands for this module
@@ -61,7 +62,7 @@ func GetTxWasmStoreCodeCmd() *cobra.Command {
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 		SilenceUsage: true,
 	}
@@ -108,7 +109,7 @@ $ %s tx wasm instantiate 1 '{"foo":"bar"}' --admin="$(%s keys show mykey -a)" \
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 		SilenceUsage: true,
 	}
@@ -174,7 +175,7 @@ $ %s tx wasm instantiate2 1 '{"foo":"bar"}' $(echo -n "testing" | xxd -ps) --adm
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 		SilenceUsage: true,
 	}
@@ -211,7 +212,7 @@ func GetTxWasmExecuteContractCmd() *cobra.Command {
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 		SilenceUsage: true,
 	}
@@ -244,7 +245,7 @@ func GetTxWasmMigrateContractCmd() *cobra.Command {
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 		SilenceUsage: true,
 	}
@@ -295,7 +296,7 @@ func GetTxWasmUpdateContractAdminCmd() *cobra.Command {
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 		SilenceUsage: true,
 	}
@@ -338,7 +339,7 @@ func GetTxWasmClearContractAdminCmd() *cobra.Command {
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 		SilenceUsage: true,
 	}
@@ -382,7 +383,7 @@ func GetTxWasmUpdateInstantiateConfigCmd() *cobra.Command {
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 		SilenceUsage: true,
 	}
@@ -418,7 +419,7 @@ func GetTxWasmSetContractLabelCmd() *cobra.Command {
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 		SilenceUsage: true,
 	}

@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"pkg.akt.dev/akt/internal/output/pretty"
 	eid "pkg.akt.dev/go/node/escrow/id/v1"
 	emodule "pkg.akt.dev/go/node/escrow/module"
 	ev1 "pkg.akt.dev/go/node/escrow/v1"
@@ -76,7 +77,7 @@ func GetTxEscrowDeposit() *cobra.Command {
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 	}
 

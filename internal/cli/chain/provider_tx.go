@@ -12,6 +12,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"pkg.akt.dev/akt/internal/output/pretty"
 	types "pkg.akt.dev/go/node/provider/v1beta4"
 	tattr "pkg.akt.dev/go/node/types/attributes/v1"
 )
@@ -104,7 +105,7 @@ func GetTxProviderCreateCmd() *cobra.Command {
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 	}
 
@@ -145,7 +146,7 @@ func GetTxProviderUpdateCmd() *cobra.Command {
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 	}
 

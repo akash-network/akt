@@ -8,6 +8,7 @@ import (
 	"github.com/spf13/cobra"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"pkg.akt.dev/akt/internal/output/pretty"
 )
 
 func GetAuxToFeeCommand() *cobra.Command {
@@ -70,7 +71,7 @@ func GetAuxToFeeCommand() *cobra.Command {
 				return err
 			}
 
-			return cl.PrintMessage(res)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), res)
 		},
 	}
 

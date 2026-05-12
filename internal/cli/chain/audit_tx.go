@@ -10,6 +10,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"pkg.akt.dev/akt/internal/output/pretty"
 	types "pkg.akt.dev/go/node/audit/v1"
 	ptypes "pkg.akt.dev/go/node/provider/v1beta4"
 	attrtypes "pkg.akt.dev/go/node/types/attributes/v1"
@@ -89,7 +90,7 @@ func CmdCreateProviderAttributes() *cobra.Command {
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 	}
 
@@ -134,7 +135,7 @@ func CmdDeleteProviderAttributes() *cobra.Command {
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 	}
 

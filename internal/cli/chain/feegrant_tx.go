@@ -13,6 +13,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/version"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"pkg.akt.dev/akt/internal/output/pretty"
 )
 
 // GetTxFeegrantCmd returns the transaction commands for this module
@@ -161,7 +162,7 @@ Examples:
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 	}
 
@@ -208,7 +209,7 @@ Example:
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 	}
 

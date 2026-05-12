@@ -4,6 +4,24 @@
 
 ### Added
 
+- **Transaction result pretty formatters (T033)**: Implemented all per-message `TxPrettyFormatter` registrations in `internal/output/pretty/tx_formatters.go` covering all tx modules: bank (2), deployment (6), market (5), provider (2), cert (2), audit (2), staking (6), distribution (5), gov (4), authz (3), feegrant (2), escrow (1), slashing (1), vesting (3), upgrade (2), crisis (1), wasm (9), oracle (1), bme (3). Each formatter extracts message fields and renders via `KV()`/`FormatCoin()`/`Bold()` per SPEC §10.11.5. Registration is explicit via `RegisterAllTxFormatters()` called from root command setup (no `init()`). Wired `pretty.PrintTxResult(cmd, cl.ClientContext(), resp)` into all 63 tx command call sites (replacing `cl.PrintMessage(resp)`) across 21 files. Changed `AddTxFlagsToCmd` output flag default from `"json"` to `OutputPretty` per SPEC §10.11.
+
+- **Transaction formatter tests (T014)**: Created `internal/output/pretty/tx_test.go` with 6 golden-file test cases covering bank send, deployment create, staking delegate, gov vote, wasm execute formatters, plus a registration verification test. Uses the existing `charmbracelet/golden` snapshot pattern.
+
+- **Shell completion command (T034)**: Added `akt completion bash/zsh/fish/powershell` subcommand in `internal/cli/root.go`. Uses cobra's built-in generation functions. Includes usage examples in the `Example` field. Exempted from `requiresContext()` since it generates static scripts.
+
+- **Bootstrap wizard keyring backend selection (T036)**: Extended `internal/bootstrap/bootstrap.go` with a `selectKeyringBackend()` interactive single-select (os/file/test options, default: os) using the same raw-terminal pattern as the network multi-select. The selected backend is used in config instead of the hardcoded `"os"`.
+
+- **Offline E2E test suite (T037)**: Created `e2e/cli_test.go` and `e2e/helpers_test.go` with 6 offline E2E tests exercising the compiled binary: version, help, completion generation, network template CRUD, full context lifecycle (create/list/show/rename/switch/delete), and unknown command error. Added `test` and `test-e2e` Makefile targets.
+
+### Fixed
+
+- **Bootstrap wizard `Defaults.Output` was `"table"` instead of `"pretty"`**: Changed to `"pretty"` to align with SPEC §1.2 and the `OutputPretty` constant.
+
+- **SPEC.md §2.0 bootstrap description missing keyring backend detail**: Clarified that the wizard prompts for keyring backend selection (`os`, `file`, or `test`; default: `os`).
+
+- **`registry.go` comment suggested `init()` for tx formatters**: Updated to document that query formatters use `init()` while tx formatters use explicit `RegisterAllTxFormatters()`.
+
 - **`akt update` and `akt close` workflow commands specified**: Added `update <sdl-file>` and `close` to the SPEC.md §2.1 command tree as top-level workflow commands alongside `deploy`. Added full command specifications (flags, examples, JSONL output) after the `akt deploy` section. Expanded §2.3.8 with complete YAML workflow definitions for both `update` (update-deployment tx + send-manifest with retry) and `close` (close-deployment tx). Added clarifying note that these workflows wrap the same on-chain transactions as `akt tx deployment update/close` but add orchestration and unified output modes. Updated DESIGN.md §7.1 mapping table with `akt update` and `akt close` rows.
 
 - **Structured error handling framework (`internal/cliutil/`)**: Implemented `CLIError` type per SPEC §11.1 with three-part error messages (what happened, context, suggestion), structured exit codes per SPEC §11.2 (0=success, 1=general, 2=usage, 3=config, 4=connection, 5=transaction, 6=auth, 7=store, 127=plugin-not-found), and convenience constructors (`ErrUsage`, `ErrConfig`, `ErrConnection`, `ErrTransaction`, `ErrAuth`). `ExitCode(err)` extracts the code from any error via `errors.As`. Wired into `cmd/akt/main.go` to use `cli.ExitCode(err)` instead of hardcoded `os.Exit(1)`. The `internal/cliutil/` package is a cycle-free leaf package importable by both `internal/cli` and `internal/cli/chain`; re-exported via type aliases in `internal/cli/` for backward compatibility.

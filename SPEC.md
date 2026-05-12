@@ -380,7 +380,7 @@ Implementation note: `tx` and `query` commands are clean-copied from `akash-netw
 
 When `akt` is invoked with no subcommand, the following flow determines what happens:
 
-1. **No config exists** (first run): The bootstrap wizard runs (§1.11, `internal/bootstrap/wizard.go`). It prompts the user to select networks, create a keyring, and configure an initial context. After bootstrap completes, the root command continues to step 2.
+1. **No config exists** (first run): The bootstrap wizard runs (§1.11, `internal/bootstrap/wizard.go`). It prompts the user to select networks, select a keyring backend (`os`, `file`, or `test`; default: `os`), and configure an initial context. After bootstrap completes, the root command continues to step 2.
 2. **Config exists, `defaults.interactive` is `true` (default), and a TTY is attached**: The interactive TUI application launches (§8).
 3. **Config exists, `defaults.interactive` is `false`**: Print the help text (equivalent to `akt --help`). The user has opted out of TUI mode and must use explicit subcommands.
 4. **Config exists, no TTY attached** (e.g., `akt | cat`): Print the help text. The TUI requires a terminal.

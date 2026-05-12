@@ -18,6 +18,7 @@ import (
 	staking "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"pkg.akt.dev/akt/internal/output/pretty"
 	ev1 "pkg.akt.dev/go/node/escrow/v1"
 )
 
@@ -244,7 +245,7 @@ Examples:
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 	}
 
@@ -402,7 +403,7 @@ $ %s tx grant contract <grantee_addr> execution <contract_addr> --allow-all-mess
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 	}
 
@@ -464,7 +465,7 @@ $ %s tx grant store-code <grantee_addr> *:%s1l2rsakp388kuv9k8qzq6lrm9taddae7fpx5
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 	}
 
@@ -520,7 +521,7 @@ Example:
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 	}
 	cflags.AddTxFlagsToCmd(cmd)
@@ -563,7 +564,7 @@ Example:
 				return err
 			}
 
-			return cl.PrintMessage(resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 		},
 	}
 

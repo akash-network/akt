@@ -18,6 +18,7 @@ import (
 	genutiltypes "github.com/cosmos/cosmos-sdk/x/genutil/types"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"pkg.akt.dev/akt/internal/output/pretty"
 	types "pkg.akt.dev/go/node/cert/v1"
 	utiltls "pkg.akt.dev/go/util/tls"
 )
@@ -154,7 +155,7 @@ func doPublishCmd(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	return cl.PrintMessage(resp)
+	return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 }
 
 func doRevokeCmd(cmd *cobra.Command, _ []string) error {
@@ -219,7 +220,7 @@ func doRevokeCmd(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	return cl.PrintMessage(resp)
+	return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
 }
 
 func GetTxCertGenerateCmd() *cobra.Command {

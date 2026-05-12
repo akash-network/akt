@@ -74,5 +74,13 @@ GO_TEST                      := $(GO) test -mod=$(GOMOD)
 GO_VET                       := $(GO) vet -mod=$(GOMOD)
 GO_MOD_NAME                  := $(shell go list -m 2>/dev/null)
 
+.PHONY: test test-e2e
+
+test:
+	$(GO_TEST) ./...
+
+test-e2e: akt
+	$(GO_TEST) ./e2e/... -v -count=1
+
 include $(AKT_ROOT)/make/setup-cache.mk
 include $(AKT_ROOT)/make/releasing.mk

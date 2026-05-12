@@ -27,6 +27,8 @@ import (
 	aktkeyring "pkg.akt.dev/akt/internal/keyring"
 	akttui "pkg.akt.dev/akt/internal/tui"
 
+	"pkg.akt.dev/akt/internal/output/pretty"
+
 	arpcclient "pkg.akt.dev/go/node/client"
 )
 
@@ -47,6 +49,10 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	v.SetDefault("defaults.interactive", true)
 
 	encCfg := aktcodec.MakeEncodingConfig()
+
+	// Register tx pretty formatters so that --output pretty renders
+	// human-readable transaction results (SPEC §10.11).
+	pretty.RegisterAllTxFormatters()
 
 	// The manager and keyring manager are lazily initialized in PersistentPreRunE.
 	var mgr *aktctx.Manager
@@ -243,6 +249,7 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	root.AddCommand(monitorCmd(v))
 	root.AddCommand(mcpCmd())
 	root.AddCommand(versionCmd(bi))
+	root.AddCommand(completionCmd())
 
 	return root
 }
@@ -275,6 +282,8 @@ func requiresContext(cmd *cobra.Command) bool {
 	case strings.HasPrefix(path, "akt version"):
 		return false
 	case strings.HasPrefix(path, "akt monitor"):
+		return false
+	case strings.HasPrefix(path, "akt completion"):
 		return false
 	}
 
@@ -516,6 +525,66 @@ func initGlyphs(v *viper.Viper) {
 	}
 
 	glyphs.Init(mode)
+}
+
+func completionCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "completion [bash|zsh|fish|powershell]",
+		Short: "Generate shell completion scripts",
+		Long: `Generate shell completion scripts for akt.
+
+These scripts enable tab-completion for commands, flags, and arguments
+in your shell. Follow the instructions for your shell below.`,
+		Example: `  # Bash
+  akt completion bash > /etc/bash_completion.d/akt
+
+  # Zsh
+  akt completion zsh > "${fpath[1]}/_akt"
+
+  # Fish
+  akt completion fish > ~/.config/fish/completions/akt.fish
+
+  # PowerShell
+  akt completion powershell > akt.ps1`,
+	}
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "bash",
+		Short: "Generate bash completion script",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Root().GenBashCompletionV2(os.Stdout, true)
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "zsh",
+		Short: "Generate zsh completion script",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Root().GenZshCompletion(os.Stdout)
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "fish",
+		Short: "Generate fish completion script",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Root().GenFishCompletion(os.Stdout, true)
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "powershell",
+		Short: "Generate PowerShell completion script",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return cmd.Root().GenPowerShellCompletion(os.Stdout)
+		},
+	})
+
+	return cmd
 }
 
 func versionCmd(bi BuildInfo) *cobra.Command {
