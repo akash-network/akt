@@ -196,7 +196,7 @@ e2e/                               # End-to-end tests
 
 ### Design for User Story 2
 
-- [ ] T045 [P] [US2] Deploy workflow interactive UX design: bid presentation table, bid selection flow, step-by-step progress display, JSONL output mode per SPEC.md §2.3.7
+- [ ] T045 [P] [US2] Deploy workflow interactive UX design: bid presentation table, bid selection flow, step-by-step progress display, JSONL output mode per SPEC.md §2.3.8
 - [ ] T046 [P] [US2] Provider command output design: lease-status layout, log stream format, event stream format, shell connection UX
 
 ### Implementation for User Story 2
@@ -219,7 +219,7 @@ e2e/                               # End-to-end tests
 
 #### US2-Workflow: Deploy/Update/Close
 
-- [ ] T054 [US2] akt deploy workflow: full lifecycle (create deployment tx → wait for bids → select bid (interactive/cheapest/provider=addr) → create lease tx → send manifest → wait for active → display endpoints), TUI mode + JSONL mode per SPEC.md §2.3.7 in internal/cli/workflow/deploy.go
+- [ ] T054 [US2] akt deploy workflow: full lifecycle (create deployment tx → wait for bids → select bid (interactive/cheapest/provider=addr) → create lease tx → send manifest → wait for active → display endpoints), TUI mode + JSONL mode per SPEC.md §2.3.8 in internal/cli/workflow/deploy.go
 - [ ] T055 [US2] akt update workflow: update deployment tx + send manifest to providers with active leases, TUI mode + JSONL mode in internal/cli/workflow/update.go
 - [ ] T056 [US2] akt close workflow: close deployment tx with confirmation, TUI mode + JSONL mode in internal/cli/workflow/close.go
 

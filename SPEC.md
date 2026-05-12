@@ -119,8 +119,10 @@ keyrings:
 contexts:
   - name: prod
     network: mainnet                    # references a network definition
+    auth-method: keyring                # keyring (default) or console-api
     keyring: default                    # references a keyring definition
     default-account: "alice"            # account name or address; empty = prompt
+    tracked-accounts: []                # accounts to sync; empty = [default-account]; ["*"] = all keyring accounts
     gas: auto                           # gas limit override (or "auto")
     fees: ""                            # fixed fees override (overrides network gas-prices)
     provider-defaults:
@@ -208,6 +210,7 @@ Contexts compose a network, keyring, and context-specific settings. The state st
 | `console-api-url`             | string | no       | `"https://console-api.akash.network"` | Console API base URL (only with `console-api` auth)                          |
 | `keyring`                     | string | no       | `"default"`                            | Keyring name for signing keys (only with `keyring` auth)                     |
 | `default-account`             | string | no       | `""`                                   | Default `--from` value (only with `keyring` auth)                            |
+| `tracked-accounts`            | []string | no     | `[]`                                   | Accounts to sync (empty = `[default-account]`; `["*"]` = all keyring accounts). See §6.7. |
 | `gas`                         | string | no       | `"auto"`                               | Gas limit or `"auto"` (only with `keyring` auth)                             |
 | `fees`                        | string | no       | `""`                                   | Fixed fees (only with `keyring` auth)                                        |
 | `provider-defaults.auth-type` | string | no       | `"jwt"`                                | Provider gateway auth: `jwt` or `mtls` (only with `keyring` auth)            |
@@ -294,7 +297,7 @@ All environment variables use the `AKT_` prefix. When set, they override the cor
 | `AKT_OUTPUT`          | `defaults.output`                                       | `json`                         |
 | `AKT_CONSOLE_API_KEY` | Console API key (required for `console-api` auth method) | `akt_abc123...`                |
 
-### 1.9 Built-in Network Templates
+### 1.10 Built-in Network Templates
 
 The `akt context network create --template <name>` command creates a network definition from a built-in template.
 
@@ -345,7 +348,7 @@ gas-prices: "0.025uakt"
 gas-adjustment: "1.5"
 ```
 
-### 1.10 Terminal Requirements and Glyph Registry
+### 1.11 Terminal Requirements and Glyph Registry
 
 `akt` uses ASCII-safe glyphs exclusively. There is no Nerd Font mode and no glyph-mode flag. Standard Unicode characters (block drawing `█░▀`, arrows `←↑→↓`, box drawing `─`, circles `●`) are used freely since they render correctly in virtually all terminal fonts. Nerd Font PUA-range glyphs are never emitted.
 
@@ -372,6 +375,16 @@ gas-adjustment: "1.5"
 Implementation note: `tx` and `query` commands are clean-copied from `akash-network/chain-sdk/go/cli` into `internal/cli/chain`. Only CLI code is copied; all other chain-sdk packages are imported directly. Command flags default to the resolved akt context values unless explicitly overridden.
 
 **Help text requirement**: Every command and subcommand must populate cobra's `Example` field with at least one usage example. The example should demonstrate the most common use case with realistic argument values. Commands with multiple modes of operation (e.g., list vs get, interactive vs scripted) should include one example per mode. This ensures that `akt <command> --help` is self-contained -- users should never need to consult external documentation for basic usage.
+
+### 2.0 Root Command Behavior (`akt` with no subcommand)
+
+When `akt` is invoked with no subcommand, the following flow determines what happens:
+
+1. **No config exists** (first run): The bootstrap wizard runs (§1.11, `internal/bootstrap/wizard.go`). It prompts the user to select networks, create a keyring, and configure an initial context. After bootstrap completes, the root command continues to step 2.
+2. **Config exists, `defaults.interactive` is `true` (default), and a TTY is attached**: The interactive TUI application launches (§8).
+3. **Config exists, `defaults.interactive` is `false`**: Print the help text (equivalent to `akt --help`). The user has opted out of TUI mode and must use explicit subcommands.
+4. **Config exists, no TTY attached** (e.g., `akt | cat`): Print the help text. The TUI requires a terminal.
+5. **`--interactive` / `-i` flag is set**: Force TUI launch regardless of `defaults.interactive` setting. Still requires a TTY — if no TTY is attached with `-i`, print an error.
 
 ### 2.1 Command Tree Overview
 
@@ -589,8 +602,8 @@ akt
 │   │   ├── vault-state
 │   │   ├── status
 │   │   └── ledger
-│   ├── ibc
-│   ├── ibc-transfer
+│   ├── ibc                              # IBC core (passthrough from cosmos-sdk, subcommands not expanded)
+│   ├── ibc-transfer                     # IBC transfer (passthrough from cosmos-sdk, subcommands not expanded)
 │   ├── upgrade
 │   ├── block [height]
 │   ├── blocks
@@ -599,8 +612,8 @@ akt
 │   ├── txs
 │   └── module-name-to-address <module>
 ├── deploy <sdl-file>                    # Workflow: full deployment lifecycle
-├── update <sdl-file>                    # Workflow: update deployment + send manifest
-├── close                                # Workflow: close deployment
+├── update <sdl-file> [dseq]             # Workflow: update deployment + send manifest
+├── close [dseq]                         # Workflow: close deployment
 ├── provider                             # Provider gateway commands
 │   ├── status [provider-addr]
 │   ├── lease-status
@@ -750,12 +763,13 @@ Rename a context. Updates `current-context` if the renamed context was active. R
 
 View the action log for the current context.
 
-| Flag        | Type   | Default | Description                                                         |
-| ----------- | ------ | ------- | ------------------------------------------------------------------- |
-| `--context` | string | current | Context to view log for                                             |
-| `--limit`   | int    | `50`    | Number of entries to show                                           |
-| `--type`    | string | `""`    | Filter by action type: `tx`, `query`, `workflow`, `error`           |
-| `--since`   | string | `""`    | Show entries since timestamp or duration (e.g., `1h`, `2024-01-01`) |
+| Flag        | Type   | Default   | Description                                                         |
+| ----------- | ------ | --------- | ------------------------------------------------------------------- |
+| `--context` | string | current   | Context to view log for                                             |
+| `--limit`   | int    | `50`      | Number of entries to show                                           |
+| `--type`    | string | `""`      | Filter by action type: `tx`, `query`, `workflow`, `error`           |
+| `--since`   | string | `""`      | Show entries since timestamp or duration (e.g., `1h`, `2024-01-01`) |
+| `--output`  | string | `pretty`  | Output format: `pretty` (table), `json` (raw JSONL entries, one per line) |
 
 ```bash
 $ akt context log --limit 5
@@ -874,8 +888,8 @@ params:
     description: Path to SDL deployment file
   deposit:
     type: string
-    default: "5000000uakt"
-    description: Initial deposit amount
+    default: "auto"
+    description: Initial deposit amount (auto = chain minimum or SDL-specified)
   bid-timeout:
     type: duration
     default: "5m"
@@ -951,6 +965,35 @@ steps:
 | `output`   | Display formatted output                       | `template`                                    |
 | `shell`    | Run a shell command (for custom workflows)     | `command`, `output`                           |
 | `check`    | Assert a condition, skip/abort if not met      | `condition`, `on-fail: skip\|abort`           |
+| `foreach`  | Iterate over a query result, executing a sub-step for each item | `query`, `params`, `as`, `step`, `on-error`  |
+
+**`foreach` step detail:**
+
+The `foreach` step queries a data source and executes a nested `step` definition for each item in the result. The current item is available as `.Item` in templates within the nested step.
+
+```yaml
+- name: send-manifests
+  type: foreach
+  query: market.leases
+  params:
+    owner: "{{ .Account }}"
+    dseq: "{{ .Params.dseq }}"
+    state: active
+  as: lease
+  step:
+    type: provider
+    action: send-manifest
+    params:
+      provider: "{{ .Item.lease.id.provider }}"
+      dseq: "{{ .Params.dseq }}"
+      sdl: "{{ index .Params \"sdl-file\" }}"
+    retry:
+      max: 3
+      delay: "5s"
+  on-error: continue
+```
+
+The `as` field names the iteration variable (available as `.Item`). `on-error` at the `foreach` level controls behavior when any individual iteration fails: `continue` proceeds to the next item, `abort` stops the entire workflow.
 
 #### 2.3.4 Template Variables
 
@@ -976,7 +1019,27 @@ Each step's `on-error` field controls behavior on failure:
 
 Steps can also define `retry` with `max` attempts and `delay` between retries.
 
-#### 2.3.6 Param Types
+#### 2.3.6 Error Recovery and Partial State
+
+When a workflow aborts due to a step failure, the user may be left with partial on-chain state (e.g., a deployment was created but no lease was established, consuming escrow). The workflow engine handles this as follows:
+
+1. **Abort message includes partial state summary**: When a workflow aborts, the error output lists all successfully completed steps and their results (e.g., "Deployment created with DSEQ 12345"). This gives the user the information needed to clean up manually.
+
+2. **Recovery suggestions**: The abort message includes actionable suggestions based on which step failed:
+   - Failed after `create-deployment`: Suggest `akt close <dseq>` to close the orphaned deployment and reclaim the escrow deposit.
+   - Failed after `create-lease` but before `send-manifest`: Suggest `akt provider send-manifest <sdl-file> --dseq <dseq>` to retry manifest submission.
+   - Failed during `send-manifest`: Suggest retrying with `akt provider send-manifest` directly.
+
+3. **JSONL mode**: In JSONL mode, the error line includes a `"recovery"` field with the suggested command:
+   ```jsonl
+   {"workflow":"deploy","id":"wf_abc123","step":"send-manifest","result":"error","errors":["provider gateway timeout"],"txs":[],"recovery":"akt provider send-manifest deploy.yaml --dseq 12345"}
+   ```
+
+4. **No automatic rollback**: The workflow engine does not automatically roll back completed steps. On-chain transactions are irreversible. The user must explicitly close deployments or leases they no longer want.
+
+5. **Future: `--resume` flag**: A future enhancement may add a `--resume <workflow-id>` flag that re-runs a workflow from the last failed step, using the stored outputs from completed steps. This is not part of the initial implementation.
+
+#### 2.3.7 Param Types
 
 | Type       | Description                       | Flag type      |
 |------------|-----------------------------------|----------------|
@@ -986,7 +1049,7 @@ Steps can also define `retry` with `max` attempts and `delay` between retries.
 | `duration` | Go duration string                | `--name 5m`    |
 | `file`     | File path (positional if first)   | positional arg |
 
-#### 2.3.7 Execution Modes
+#### 2.3.8 Execution Modes
 
 Workflows support two execution modes:
 
@@ -1038,7 +1101,7 @@ On error:
 
 The `--output jsonl` and `--output json` values serve different purposes: `--output json` affects how individual command results are formatted (JSON serialization), while `--output jsonl` controls the workflow execution mode, emitting structured JSONL progress for the entire multi-step workflow.
 
-#### 2.3.8 Built-in Workflows
+#### 2.3.9 Built-in Workflows
 
 Three workflows ship as embedded defaults:
 
@@ -1074,16 +1137,25 @@ steps:
       dseq: "{{ .Params.dseq }}"
     on-error: abort
 
-  - name: send-manifest
-    type: provider
-    action: send-manifest
+  - name: send-manifests
+    type: foreach
+    query: market.leases
     params:
+      owner: "{{ .Account }}"
       dseq: "{{ .Params.dseq }}"
-      sdl: "{{ index .Params \"sdl-file\" }}"
-    retry:
-      max: 3
-      delay: "5s"
-    on-error: abort
+      state: active
+    as: lease
+    step:
+      type: provider
+      action: send-manifest
+      params:
+        provider: "{{ .Item.lease.id.provider }}"
+        dseq: "{{ .Params.dseq }}"
+        sdl: "{{ index .Params \"sdl-file\" }}"
+      retry:
+        max: 3
+        delay: "5s"
+    on-error: continue
 
   - name: display-result
     type: output
@@ -1146,7 +1218,7 @@ The flagship workflow command. Orchestrates the full deployment lifecycle:
 | `--note`           | string   | `""`            | User note for local store metadata                          |
 | `--yes`            | bool     | `false`         | Skip all confirmations                                      |
 | `--dry-run`        | bool     | `false`         | Print what would happen without executing                   |
-| `--output`         | string   | `pretty`        | Output format: `pretty` (TUI), `jsonl` (JSONL step output, see 2.3.7), `json`, `yaml` |
+| `--output`         | string   | `pretty`        | Output format: `pretty` (TUI), `jsonl` (JSONL step output, see 2.3.8), `json`, `yaml` |
 
 **Transaction flags** (inherited): `--gas`, `--gas-prices`, `--fees`, `--gas-adjustment`, `--broadcast-mode`
 
@@ -1197,17 +1269,19 @@ Each line can be parsed independently with `jq`:
 akt deploy deployment.yaml --bid-select cheapest --yes -o jsonl | jq -r 'select(.step == "create-deployment") | .txs[0].hash'
 ```
 
-#### `akt update <sdl-file>`
+#### `akt update <sdl-file> [dseq]`
 
 Update an existing deployment with a new SDL. Orchestrates:
 
 1. **Update deployment transaction** on chain with the new SDL.
 2. **Send updated manifest** to the provider(s) with active leases.
 
+The `dseq` is a positional argument (consistent with the filter argument pattern used by query commands). It can also be specified via the `--dseq` flag.
+
 | Flag               | Type     | Default         | Description                                                 |
 | ------------------ | -------- | --------------- | ----------------------------------------------------------- |
 | `--from`           | string   | context default | Account that owns the deployment                            |
-| `--dseq`           | uint64   | required        | Deployment sequence to update                               |
+| `--dseq`           | uint64   | `0`             | Deployment sequence (alternative to positional arg)         |
 | `--yes`            | bool     | `false`         | Skip all confirmations                                      |
 | `--dry-run`        | bool     | `false`         | Print what would happen without executing                   |
 | `--output`         | string   | `pretty`        | Output format: `pretty` (TUI), `jsonl` (JSONL step output), `json`, `yaml` |
@@ -1216,14 +1290,17 @@ Update an existing deployment with a new SDL. Orchestrates:
 
 **Examples:**
 ```bash
-# Interactive (default)
+# Interactive (default) — dseq as positional arg
+akt update deployment.yaml 12345
+
+# dseq via flag (equivalent)
 akt update deployment.yaml --dseq 12345
 
 # Non-interactive
-akt update deployment.yaml --dseq 12345 --yes
+akt update deployment.yaml 12345 --yes
 
 # CI/CD pipeline
-akt update deployment.yaml --dseq 12345 --yes -o jsonl
+akt update deployment.yaml 12345 --yes -o jsonl
 ```
 
 **JSONL mode:**
@@ -1233,14 +1310,16 @@ $ akt update deployment.yaml --dseq 12345 --yes -o jsonl
 {"workflow":"update","id":"wf_x1y2z3","step":"send-manifest","result":"completed","errors":[],"txs":[]}
 ```
 
-#### `akt close`
+#### `akt close [dseq]`
 
 Close a deployment, terminating all active leases and returning remaining escrow balance.
+
+The `dseq` is a positional argument (consistent with the filter argument pattern used by query commands). It can also be specified via the `--dseq` flag.
 
 | Flag               | Type     | Default         | Description                                                 |
 | ------------------ | -------- | --------------- | ----------------------------------------------------------- |
 | `--from`           | string   | context default | Account that owns the deployment                            |
-| `--dseq`           | uint64   | required        | Deployment sequence to close                                |
+| `--dseq`           | uint64   | `0`             | Deployment sequence (alternative to positional arg)         |
 | `--yes`            | bool     | `false`         | Skip all confirmations                                      |
 | `--dry-run`        | bool     | `false`         | Print what would happen without executing                   |
 | `--output`         | string   | `pretty`        | Output format: `pretty` (TUI), `jsonl` (JSONL step output), `json`, `yaml` |
@@ -1249,14 +1328,17 @@ Close a deployment, terminating all active leases and returning remaining escrow
 
 **Examples:**
 ```bash
-# Interactive (with confirmation prompt)
+# Interactive (with confirmation prompt) — dseq as positional arg
+akt close 12345
+
+# dseq via flag (equivalent)
 akt close --dseq 12345
 
 # Non-interactive
-akt close --dseq 12345 --yes
+akt close 12345 --yes
 
 # CI/CD pipeline
-akt close --dseq 12345 --yes -o jsonl
+akt close 12345 --yes -o jsonl
 ```
 
 **JSONL mode:**
@@ -1374,7 +1456,7 @@ Display local store information for the current context.
 ```
 $ akt store status
 Context:      mainnet
-Store Path:   ~/.config/akt/stores/mainnet/
+Store Path:   ~/.config/akt/contexts/mainnet/store/
 Database:     deployments.db (2.4 MB)
 Schema:       v3
 
@@ -1440,7 +1522,7 @@ If no endpoint can be resolved, the command exits with an error.
 | Flag              | Type   | Default         | Description                                              |
 | ----------------- | ------ | --------------- | -------------------------------------------------------- |
 | `--rpc`           | string | context default | RPC endpoint (WebSocket-capable)                         |
-| `--rest`          | string | `""`            | REST API endpoint (for governance/oracle/BME queries)   |
+| `--rest`          | string | auto-derived    | REST API endpoint (for governance/oracle/BME queries). Default: derived from the context's `endpoints.api[0]`. If no API endpoint is configured, falls back to the RPC host on port 1317 (standard Cosmos REST port). |
 | `--insecure`      | bool   | `false`         | Skip TLS certificate verification                        |
 | `--clean-cache`   | bool   | `false`         | Clear the local cache before start                       |
 
@@ -1496,6 +1578,48 @@ Data sources:
 
 Refresh intervals: oracle aggregated prices every 30s, BME status/vault every 30s, price history and ledger every 2m.
 
+### 2.7 Events Command
+
+#### `akt events`
+
+Stream live blockchain events in real-time. When launched with no subcommand and a TTY is attached, opens an interactive TUI event viewer. When piped or with `--output json`, emits one JSON object per event to stdout.
+
+| Flag          | Type     | Default         | Description                                              |
+| ------------- | -------- | --------------- | -------------------------------------------------------- |
+| `--module`    | string   | `""`            | Filter by module (e.g., `deployment`, `market`, `bank`). Empty = all modules. |
+| `--type`      | string   | `""`            | Filter by event type (e.g., `MsgCreateDeployment`, `EventBidCreated`). Empty = all types. |
+| `--follow`    | bool     | `true`          | Stream events continuously. When `false`, prints events from recent blocks and exits. |
+| `--height`    | int64    | `0`             | Start from a specific block height (0 = current). Only used with `--follow=false`. |
+| `--output`    | string   | `pretty`        | Output format: `pretty` (TUI viewer when TTY, colorized text otherwise), `json` (one JSON object per event line). |
+
+**TUI mode** (TTY attached, default): Interactive event viewer with auto-scroll, module/type column highlighting, and `Tab` to cycle module filters. `q` or `Ctrl+c` to quit.
+
+**JSON mode** (`--output json` or piped): Emits one JSON line per event for scripting:
+
+```jsonl
+{"height":18234567,"module":"deployment","type":"MsgCreateDeployment","attributes":{"owner":"akash1abc...","dseq":"12345"}}
+{"height":18234567,"module":"market","type":"EventBidCreated","attributes":{"owner":"akash1abc...","dseq":"12345","provider":"akash1prov..."}}
+```
+
+**Data source**: RPC WebSocket subscription to `tm.event='Tx'` and `tm.event='NewBlock'` events. Events are parsed from ABCI event attributes and published through the shared event bus (`internal/events/`).
+
+**Standalone operation**: Like `akt monitor`, requires only an RPC endpoint. No keyring or default account needed.
+
+**Examples:**
+```bash
+# Stream all events (TUI viewer)
+akt events
+
+# Stream only deployment events
+akt events --module deployment
+
+# Stream as JSON for piping
+akt events --output json | jq '.attributes'
+
+# Stream market events for scripting
+akt events --module market --output json
+```
+
 ### 2.8 MCP Command
 
 #### `akt mcp`
@@ -1549,6 +1673,8 @@ By default, only read-only query tools are registered. This prevents AI agents f
 
 **Client implementation:** Uses `v1beta3.LightClient` from chain-sdk for read-only mode, `v1beta3.Client` for write mode.
 
+**Default account handling:** Tools that accept an `owner` parameter (e.g., `akash_list_deployments`, `akash_list_leases`) default to the context's `default-account` when the parameter is omitted. If no `default-account` is configured (e.g., a monitoring-only context), the `owner` parameter is **required** — the tool returns an error explaining that the owner must be specified explicitly when no default account is available.
+
 **Examples:**
 
 ```bash
@@ -1597,8 +1723,8 @@ Applied to every command via the root command's `PersistentFlags()`.
 | ----------- | ----- | ------ | ------------------------ | ---------------------------------------------------------------- |
 | `--home`    |       | string | `$AKT_HOME` or XDG default | Home directory for config, contexts, and keyrings             |
 | `--context` |       | string | config `current-context` | Active context name (overrides AKT_CONTEXT)                      |
-| `--output`  | `-o`  | string | `"pretty"`               | Output format: `pretty`, `json`, `yaml`. For workflows, also accepts `jsonl` (see 2.3.7). |
-| `--interactive` | `-i` | bool | `false`              | Force interactive (TUI) mode even when `defaults.interactive` is `false` in config. Has no effect when interactive mode is already enabled (the default). |
+| `--output`  | `-o`  | string | `"pretty"`               | Output format: `pretty`, `json`, `yaml`. For workflows, also accepts `jsonl` (see 2.3.8). |
+| `--interactive` | `-i` | bool | `false`              | Force interactive mode even when `defaults.interactive` is `false` in config or no TTY is detected. Has no effect when interactive mode is already enabled (the default). **Two effects**: (1) Workflow commands (`deploy`, `update`, `close`) use TUI progress display instead of JSONL. (2) Commands that auto-suppress prompts and spinners in non-TTY contexts will show them. Does **not** launch the root TUI application. |
 | `--verbose` | `-v`  | count  | `0`                      | Increase output verbosity. Stacks: `-v` (level 1) shows operational detail (gas estimates, endpoint selection, config resolution); `-vv` (level 2) adds debug diagnostics (RPC request/response dumps, full stack traces). Default (no flag) shows progress/status messages. Mutually exclusive with `--quiet`. |
 | `--quiet`   | `-q`  | bool   | `false`                  | Suppress all informational output (progress messages, status lines, confirmations). Only data output (query results, transaction results) and errors are emitted. Useful for scripting. Mutually exclusive with `-v`. |
 
@@ -1611,7 +1737,7 @@ Two flags control confirmation and safety bypass behavior across the CLI. They s
 | `--yes` | `-y` | Skip interactive confirmation prompts. The operation proceeds as if the user answered "yes" to all prompts. The operation itself is unchanged. | `akt tx deployment close --dseq 12345 --yes` |
 | `--force` | | Override a safety guard that would otherwise prevent the operation. The operation may behave differently or bypass a check. | `akt context network delete mainnet --force` (deletes even if contexts reference it) |
 
-`--yes` is the standard flag on all `tx` commands (§3.2) and workflow commands (§2.3). `--force` is used sparingly on specific commands where a structural safety check exists (e.g., deleting a network that is referenced by contexts). Commands should never use `--force` as a synonym for `--yes`.
+`--yes` / `-y` is **not a global flag**. It is added individually to commands that have confirmation prompts: all `tx` commands (via `AddTxFlagsToCmd()`, §3.2), workflow commands (`deploy`, `update`, `close`), and destructive context/store management commands (`context delete`, `store import --replace`). `--force` is used sparingly on specific commands where a structural safety check exists (e.g., deleting a network that is referenced by contexts). Commands should never use `--force` as a synonym for `--yes`.
 
 ### 3.2 Transaction Flags
 
@@ -1650,7 +1776,7 @@ Added to all `tx` commands via `AddTxFlagsToCmd()`.
 |---|---|---|
 | Gas simulation | `Simulating transaction...` | Shown when `--gas auto` (the default) triggers simulation |
 | Broadcast | `Broadcasting transaction...` | Shown immediately after signing |
-| Confirmation wait | `Waiting for tx to be included in block...` | Shown when `--broadcast-mode sync` (the default) waits for CheckTx |
+| Confirmation wait | `Waiting for mempool acceptance...` | Shown when `--broadcast-mode sync` (the default) waits for CheckTx (mempool acceptance). Note: `sync` does not wait for block inclusion — use `--broadcast-mode block` for that. |
 
 These status lines are written to stderr (see [§10.1.1](#1011-stream-separation-stdout-vs-stderr)) so they never interfere with piped data output. When the operation completes, the final transaction result is written to stdout in the format selected by `--output`. When `--quiet` is set or no TTY is attached, status lines are suppressed -- only the final result (stdout) and errors (stderr) are emitted. When `-v` is set, additional detail is shown (e.g., selected endpoint, simulated gas amount, raw CheckTx response).
 
@@ -1775,6 +1901,7 @@ Subsequent `/`-separated components are parsed positionally: after the leading a
 | `query market order`     | `[owner/]dseq[/gseq/oseq]`                     | no             |
 | `query market bid`       | `[owner/]dseq[/gseq/oseq[/provider]]`          | yes            |
 | `query market lease`     | `[owner/]dseq[/gseq/oseq[/provider]]`          | yes            |
+| `query provider`         | `[address]`                                     | no             |
 | `query cert`             | `[owner]`                                       | no             |
 | `query audit`            | `[owner]`                                       | no             |
 | `query escrow`           | `[owner[/dseq]]`                                | no             |
@@ -2198,7 +2325,23 @@ type ActionFilter struct {
 }
 ```
 
-### 5.6 Log Rotation
+### 5.6 Entry Writing Rules
+
+The action log records entries for the following command categories:
+
+| Command category | Logged | Entry type | When |
+|---|---|---|---|
+| `tx *` | Always | `tx` | After broadcast (success or failure). On success: includes tx hash, height, gas used. On failure: includes error message and result code. |
+| `query *` | Always | `query` | After query completes. Includes query path, duration. |
+| Workflow commands (`deploy`, `update`, `close`) | Always | `workflow` | One entry per workflow step. Each entry includes the step name, result, and workflow run ID. |
+| `provider *` | Always | `provider` | After provider gateway operation completes. |
+| `context *` | Always | `context` | After context management operation (switch, edit, create, delete). |
+| All commands | On failure | `error` | When any command fails. Includes original action type and error message. |
+| `query` (read-only, no side effects) | When `-v` is set | `query` | Verbose mode logs all queries for debugging. In default mode, only queries from interactive commands (not internal queries by the sync engine) are logged. |
+
+The action logger is opened in the root command's `PersistentPreRunE` and closed in `PersistentPostRunE`. Commands retrieve it via `cliutil.ActionLogFromContext(cmd.Context())`.
+
+### 5.7 Log Rotation
 
 - Log files are rotated when they exceed 10 MB.
 - Rotated logs are named `actions.log.1`, `actions.log.2`, etc.
@@ -2280,9 +2423,25 @@ Jitter: random value in `[0, 0.5 * delay)`.
 
 On reconnection, the engine reconciles all blocks missed during the disconnection period.
 
-### 6.6 Multi-Account Tracking
+### 6.6 Workflow-to-Store Integration
 
-The sync engine tracks all accounts present in the current context's keyring. When a new key is added, the engine re-reconciles to pick up deployments from the new account.
+Workflow commands (`akt deploy`, `akt update`, `akt close`) do **not** write to the local store directly. Instead, the sync engine detects the on-chain events produced by workflow transactions and updates the store through the normal event processing pipeline (§6.3).
+
+This means there is a brief delay (typically 1-2 seconds) between a workflow completing and the store reflecting the new state. The workflow's output (DSEQ, lease details, endpoint URLs) is displayed directly from the transaction results and provider responses — it does not depend on the store.
+
+If the sync engine is not running (e.g., no WebSocket connection), the store is reconciled on the next startup (§6.4).
+
+### 6.7 Multi-Account Tracking
+
+The sync engine tracks accounts configured in the context's `tracked-accounts` setting. By default, only the context's `default-account` is tracked. Users can add additional accounts to track deployments across multiple wallets within a single context.
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `tracked-accounts` | []string | `["<default-account>"]` | List of account names or addresses to sync. Default: only the default account. Set to `"*"` to track all accounts in the context's keyring. |
+
+When `tracked-accounts` is `["*"]`, the sync engine tracks all accounts present in the current context's keyring. When a new key is added, the engine re-reconciles to pick up deployments from the new account.
+
+The `tracked-accounts` field is context-specific (not shared via keyring or network). Each context can track a different subset of accounts.
 
 ---
 
@@ -2379,7 +2538,26 @@ Returns auto top-up configuration for a deployment. Settings are auto-created wi
 | `data.dseq`              | string  | yes      | Deployment sequence ID   |
 | `data.autoTopUpEnabled`  | boolean | no       | Enable auto top-up       |
 
-### 7.4 Command Routing
+### 7.4 Workflow Engine Integration
+
+When a workflow runs in a context with `auth-method: console-api`, the workflow engine automatically routes `type: tx` steps through the Console API instead of building and broadcasting chain transactions locally.
+
+**Routing rules for workflow steps:**
+
+| Step type | `keyring` auth | `console-api` auth |
+|---|---|---|
+| `tx` | Build, sign, and broadcast transaction locally via chain client | Map message type to Console API endpoint (see §7.5 table). If the message type has no Console API mapping, abort with an unsupported-command error. |
+| `query` | Query chain RPC/gRPC directly | Query chain RPC/gRPC directly (unchanged) |
+| `wait` | Poll chain query | Poll chain query (unchanged) |
+| `prompt` | Interactive prompt | Interactive prompt (unchanged) |
+| `provider` | Provider gateway call (JWT/mTLS) | Not supported — Console API contexts do not interact with provider gateways directly. The Console API handles manifest submission internally during lease creation. |
+| `foreach` | Iterate and execute nested step | Same, with nested step routing rules applied |
+
+**Deposit handling**: When `auth-method: console-api`, the `--deposit` flag is interpreted as USD (not uakt). The workflow engine passes the value directly to the Console API's `data.deposit` field.
+
+**Manifest handling**: The Console API's `POST /v1/deployments` returns a `manifest` field in the response. The workflow engine stores this value and passes it to `POST /v1/leases` when creating leases, instead of calling the provider's `send-manifest` endpoint directly.
+
+### 7.5 Command Routing
 
 When a context uses `console-api` auth, the following commands are routed through the Console API instead of direct chain transactions:
 
@@ -2400,7 +2578,7 @@ Error: command "tx gov vote" is not supported with console-api auth.
 Use a context with auth-method: keyring for this operation.
 ```
 
-### 7.5 Error Handling
+### 7.6 Error Handling
 
 | HTTP Status | Handling                                                          |
 | ----------- | ----------------------------------------------------------------- |
@@ -2410,7 +2588,7 @@ Use a context with auth-method: keyring for this operation.
 | 429         | Rate limited. Retry with backoff.                                 |
 | 5xx         | Console API server error. Retry with backoff (max 3 attempts).    |
 
-### 7.6 Differences from Keyring Auth
+### 7.7 Differences from Keyring Auth
 
 | Aspect             | `keyring` auth                      | `console-api` auth                        |
 | ------------------ | ----------------------------------- | ----------------------------------------- |
@@ -2436,11 +2614,32 @@ The TUI uses a three-region layout that fills the terminal:
 |--------|--------|---------|
 | **Header** | 1 line | App name, active context, chain-id, account, block height, sync status |
 | **Main area** | fills remaining | Active view (resource list or detail pane) |
-| **Status bar** | 1 line | Shortcut hints, command input, help |
+| **Status bar** | 1-3 lines (dynamic) | View-specific hints, connection info, global keybindings |
 
 Header example: `akt  Context: mainnet (akashnet-2)  Account: alice  Block: 18234567  Synced`
 
-Status bar example: `<1> Deployments  <2> Leases  <3> Providers  <:> Command  <?> Help  <q> Quit`
+**Status bar** is dynamically sized based on content. It renders up to three lines:
+
+| Line | Content | Shown when |
+|------|---------|------------|
+| **Line 1** | View-specific keybinding hints (e.g., `<j/k> Scroll  <Enter> Detail  <d> Close`) | Always (changes per active view/tab) |
+| **Line 2** | Connection info (RPC endpoint, WebSocket status) | Active view uses a network connection (e.g., monitor, sync) |
+| **Line 3** | Global keybindings (`<:> Command  <Esc> Back  <Ctrl+c> Quit`) | Always |
+
+Lines with no content are omitted — the status bar shrinks to 1 or 2 lines when Line 2 has nothing to show. The main area height adjusts accordingly.
+
+Status bar example (3-line, on monitor view):
+```
+<1> Overview  <2> Validators  <3> Governance  <j/k> Scroll  <r> Refresh
+RPC: rpc.akashnet.net:443  WS: connected
+<:> Command  <Esc> Back  <Ctrl+c> Quit
+```
+
+Status bar example (2-line, on deployments list):
+```
+<j/k> Scroll  <Enter> Detail  <d> Close  <u> Update  <l> Logs  </> Filter
+<:> Command  <Esc> Back  <Ctrl+c> Quit
+```
 
 ### 8.2 Navigation Model
 
@@ -2455,7 +2654,7 @@ Navigation stack example: `Dashboard → Deployments List → Deployment #12345 
 
 ### 8.3 Resource Views
 
-#### 7.3.1 Deployments List View
+#### 8.3.1 Deployments List View
 
 **Columns**: DSEQ, State, Provider, Price/Block, Escrow Balance, Age.
 
@@ -2469,7 +2668,7 @@ Navigation stack example: `Dashboard → Deployments List → Deployment #12345 
 
 **Sorting**: Click column header or press `s` then column key to sort. Default: DSEQ descending.
 
-#### 7.3.2 Deployment Detail View
+#### 8.3.2 Deployment Detail View
 
 Shows deployment metadata (owner, created, deposit, escrow balance, version, SDL path, labels, notes), active lease details (provider, price, endpoints), and bid table (provider, price, state, audited).
 
@@ -2482,19 +2681,19 @@ Shows deployment metadata (owner, created, deposit, escrow balance, version, SDL
 - `s` -- Open shell into active lease
 - `y` -- Toggle YAML/formatted view of raw on-chain data
 
-#### 7.3.3 Leases List View
+#### 8.3.3 Leases List View
 
 **Columns**: DSEQ, GSeq, OSeq, Provider, State, Price/Block, Age.
 
 **Actions**: Enter detail, l logs, e events, s shell, w withdraw, / filter.
 
-#### 7.3.4 Providers List View
+#### 8.3.4 Providers List View
 
 **Columns**: Address, Host URI, Audited, Active Leases.
 
 **Actions**: Enter detail, a attributes, / filter.
 
-#### 7.3.5 Governance Proposals View
+#### 8.3.5 Governance Proposals View
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -2512,7 +2711,7 @@ Shows deployment metadata (owner, created, deposit, escrow balance, version, SDL
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### 7.3.6 Validators View
+#### 8.3.6 Validators View
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -2530,7 +2729,7 @@ Shows deployment metadata (owner, created, deposit, escrow balance, version, SDL
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### 7.3.7 Log Viewer
+#### 8.3.7 Log Viewer
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -2556,7 +2755,7 @@ Shows deployment metadata (owner, created, deposit, escrow balance, version, SDL
 └──────────────────────────────────────────────────────────────────────────────┘
 ```
 
-#### 7.3.8 Consensus Monitor View (from aktop)
+#### 8.3.8 Consensus Monitor View (from aktop)
 
 Real-time consensus state monitoring. Polls the RPC `/consensus_state` endpoint at a configurable interval (default 1s).
 
@@ -2602,7 +2801,7 @@ Real-time consensus state monitoring. Polls the RPC `/consensus_state` endpoint 
 
 **Components:** bubbles/progress (vote progress bars), custom (vote grid, consensus state display).
 
-#### 7.3.9 Validator Voting View (from aktop)
+#### 8.3.9 Validator Voting View (from aktop)
 
 Detailed validator list with real-time vote status.
 
@@ -2641,7 +2840,7 @@ Detailed validator list with real-time vote status.
 
 **Components:** bubbles/table (validator list with selection), custom (signing history bar, proposer indicator).
 
-#### 7.3.10 Provider Fleet Monitor View (from aktop)
+#### 8.3.10 Provider Fleet Monitor View (from aktop)
 
 > This view is available both in the main TUI (`akt` with no subcommand) and as the Provider dashboard in `akt monitor` / `akt monitor provider`. See [§2.6](#26-monitor-command).
 
@@ -2720,7 +2919,7 @@ Real-time monitoring of all Akash providers -- version distribution, resource ut
 
 **Components:** bubbles/progress (scan progress bar), bubbles/table (provider list, node detail table), custom (version dot chart).
 
-#### 7.3.11 Governance Parameters View (from aktop)
+#### 8.3.11 Governance Parameters View (from aktop)
 
 Module-by-module governance parameter browsing. The right pane renders pretty-formatted key-value output (same `Render*Params()` functions as CLI `--output pretty`) instead of raw JSON. This follows the Pretty/TUI visual parity rule (§10.8).
 
@@ -2752,13 +2951,32 @@ Module-by-module governance parameter browsing. The right pane renders pretty-fo
 - Direct module endpoints: `/cosmos/gov/v1beta1/params/voting`, `/cosmos/mint/v1beta1/params`, etc.
 - Generic params subspace: `/cosmos/params/v1beta1/subspaces` + `/cosmos/params/v1beta1/params?subspace=...&key=...`
 
-**Modules displayed**: gov, mint, staking, slashing, distribution, auth, bank, deployment, market, transfer, ibc, crisis.
+**Modules displayed** (14 total):
+
+| Module | CLI `Render*Params()` | TUI governance tab | Source |
+|---|---|---|---|
+| Staking | yes | yes | `/cosmos/staking/v1beta1/params` |
+| Governance | yes | yes | `/cosmos/gov/v1/params` |
+| Minting | yes | yes | `/cosmos/mint/v1beta1/params` |
+| Slashing | yes | yes | `/cosmos/slashing/v1beta1/params` |
+| Distribution | yes | yes | `/cosmos/distribution/v1beta1/params` |
+| Auth | yes | yes | `/cosmos/auth/v1beta1/params` |
+| Deployment | yes | yes | `/akash/deployment/v1beta4/params` |
+| Market | yes | yes | `/akash/market/v1beta5/params` |
+| Wasm | yes | yes | `/cosmwasm/wasm/v1/codes/params` |
+| Oracle | yes | yes | `/akash/oracle/v2/params` |
+| Bank | TUI-only | yes | `/cosmos/bank/v1beta1/params` |
+| Transfer | TUI-only | yes | `/ibc/apps/transfer/v1/params` |
+| IBC | TUI-only | yes | `/ibc/core/client/v1/params` |
+| Crisis | TUI-only | yes | `/cosmos/params/v1beta1/params?subspace=crisis&key=ConstantFee` |
+
+"CLI `Render*Params()`" means the module has a registered `PrettyFormatter` for `akt query <module> params`. "TUI-only" modules are displayed in the TUI governance tab via `RenderModuleParamsFromJSON()` but don't have a standalone CLI query command in akt (their params are queried via the generic Cosmos SDK params subspace).
 
 **Refresh interval**: 5 minutes.
 
 **Components:** bubbles/list (module selector), bubbles/viewport (parameter display).
 
-#### 7.3.12 Oracle/BME Monitor View
+#### 8.3.12 Oracle/BME Monitor View
 
 Combined oracle price and BME state monitoring. Available as the Oracle/BME dashboard in `akt monitor`, `akt monitor oracle`, or `akt monitor bme` (the latter two are aliases). The dashboard uses a two-column layout: Oracle data on the left, BME data (status, vault, ledger) on the right.
 
@@ -2798,7 +3016,7 @@ Combined oracle price and BME state monitoring. Available as the Oracle/BME dash
 
 **Components:** bubbles/viewport (scrollable content panels), shared pretty.Render* functions for CLI/TUI parity.
 
-#### 7.3.13 Additional Views
+#### 8.3.13 Additional Views
 
 The following views follow the same list/detail pattern as above:
 
@@ -2850,24 +3068,24 @@ The palette is split into two parts:
 
 **Registered commands** (initial set, extensible):
 
-| Category | Name | Description | Aliases |
-|-----------|------|-------------|---------|
-| navigation | Dashboard | Go to dashboard | home |
-| navigation | Deployments | View all deployments | dep |
-| navigation | Leases | View leases | |
-| navigation | Providers | View providers | prov |
-| navigation | Validators | View validators | val |
-| navigation | Governance | View governance proposals | gov |
-| navigation | Certificates | View certificates | cert |
-| navigation | Escrow | View escrow accounts | |
-| navigation | Orders | View orders | |
-| navigation | Bids | View bids | |
-| navigation | Monitor | Real-time network monitor | monitor, top, consensus |
-| navigation | Query | Query commands panel | |
-| navigation | Tx | Transaction commands panel | |
-| action | Deploy | Create new deployment | |
-| app | Quit | Quit application | q, exit |
-| app | Help | Show help | ? |
+| Category | Name | Description | Aliases | Key |
+|-----------|------|-------------|---------|-----|
+| navigation | Dashboard | Go to dashboard | home | Esc |
+| navigation | Deployments | View all deployments | dep | 1 |
+| navigation | Leases | View leases | | 2 |
+| navigation | Providers | View providers | prov | 3 |
+| navigation | Monitor | Real-time network monitor | monitor, consensus | 4 |
+| navigation | Governance | View governance proposals | gov | 5 |
+| navigation | Staking | View validators and staking | val, validators | 6 |
+| navigation | Query | Query commands panel | | q |
+| navigation | Tx | Transaction commands panel | | t |
+| navigation | Certificates | View certificates | cert | |
+| navigation | Escrow | View escrow accounts | | |
+| navigation | Orders | View orders | | |
+| navigation | Bids | View bids | | |
+| action | Deploy | Create new deployment | | |
+| app | Quit | Quit application | exit | Ctrl+c |
+| app | Help | Show help | ? | ? |
 
 **Command dispatch**: When a command is selected, the TUI dispatches the corresponding action (navigate to a view, open a workflow, quit the application, etc.). Commands targeting views that are not yet implemented navigate to the dashboard.
 
@@ -2902,16 +3120,24 @@ Transaction actions (close, update, delegate, vote, etc.) show a confirmation di
 | Key           | Action                                  |
 | ------------- | --------------------------------------- |
 | `Ctrl+c`      | Quit application                        |
+| `1`           | Deployments view                        |
+| `2`           | Leases view                             |
+| `3`           | Providers view                          |
+| `4`           | Monitor view                            |
+| `5`           | Governance view                         |
+| `6`           | Staking view                            |
 | `q`           | Open query commands panel               |
 | `t`           | Open transaction commands panel         |
 | `Ctrl+p`      | Open command palette (same as `:`)      |
 | `:`           | Open command palette (same as `Ctrl+p`) |
 | `?`           | Toggle help overlay                     |
 | `Esc`         | Go back / close overlay / cancel        |
-| `1`-`9`       | Quick-switch to numbered resource views (or sub-tabs in monitor) |
+| `7`-`9`       | Reserved for future views               |
 | `Ctrl+r`      | Force refresh current view              |
 | `Tab`         | Cycle between monitor dashboards (in monitor view) or panes (in split view) |
 | `Shift-Tab`   | Cycle to previous monitor dashboard     |
+
+**Note:** When the monitor view (4) is active, `1`/`2`/`3` switch sub-tabs within the Network dashboard instead of navigating to global views. All other number keys retain their global behavior.
 
 **List Navigation**:
 | Key         | Action                             |
@@ -3047,7 +3273,7 @@ App (root model)
 ├── CommandPalette      (overlay: bubbles/textinput + bubbles/list, activated by : or Ctrl+P)
 ├── ConfirmDialog       (overlay: transaction confirmation)
 ├── HelpOverlay         (overlay: bubbles/help keybinding reference)
-└── StatusBar           (lipgloss styled string)
+└── StatusBar           (1-3 dynamic lines: view hints, connection info, global keys)
 ```
 
 ---
@@ -3293,8 +3519,11 @@ All state fields across Akash and Cosmos SDK types use a consistent color scheme
 
 | Input | Display |
 |-------|---------|
-| `5000000uakt` | `5.000000 AKT` |
-| `DecCoin{Amount: 12.5, Denom: "uakt"}` | `12.500000 uakt` (price context) |
+| `5000000uakt` | `5 AKT` |
+| `5300000uakt` | `5.3 AKT` |
+| `3000uakt` | `3 mAKT` |
+| `500uakt` | `500 uAKT` |
+| `DecCoin{Amount: 12.5, Denom: "uakt"}` | `12.5 uakt` (price context — DecCoins keep their precision, trailing zeros stripped) |
 | `[]Coin` (multiple denoms) | One row per denom |
 | Zero amounts | `0 AKT` (not omitted) |
 
@@ -4290,6 +4519,7 @@ Cobra provides this feature via `Command.SuggestionsMinimumDistance` and `Comman
 | 2.9  | Store status command    | Display store info, sync state, record counts                                                                                  | Accurate reporting of store contents                                      |
 | 2.10 | Events command          | Live blockchain event streaming                                                                                                | `akt events` shows real-time events                                       |
 | 2.11 | Console API client      | `auth-method: console-api` support, API key via env var, deployment CRUD via Console managed wallet API                        | Create, update, close deployments; list bids; create leases via Console API with `AKT_CONSOLE_API_KEY` |
+| 2.12 | MCP server              | `akt mcp` command with stdio JSON-RPC transport, 21 read-only tools, 4 write tools gated behind `--enable-writes`              | Read-only tools query chain state; write tools send transactions. Config resolved from active context. |
 
 ### Phase 3: TUI Mode
 

@@ -461,6 +461,14 @@ Each context can define multiple endpoints per transport type (RPC, API, gRPC). 
 3. On successful connection, promote that endpoint to the top of the list for subsequent requests within the session.
 4. Health checks run periodically (every 30s) to detect degraded endpoints proactively.
 
+**Transport-specific behavior:**
+
+- **RPC**: HTTP GET to `{endpoint}/health` (CometBFT health endpoint). Healthy = HTTP 200.
+- **API (REST)**: HTTP GET to `{endpoint}/cosmos/base/tendermint/v1beta1/node_info`. Healthy = HTTP 200 with valid JSON.
+- **gRPC**: gRPC health check protocol (`grpc.health.v1.Health/Check`). Healthy = `SERVING` status. Falls back to a lightweight unary RPC (e.g., `GetNodeInfo`) if the health service is not registered.
+
+Health check interval defaults to 30s and is not user-configurable in Phase 1. Failover state (endpoint ordering) is session-scoped and does not persist across sessions. All three transport types follow the same failover algorithm described above.
+
 This replaces the MVP's manual backup-endpoint approach with transparent, automatic resilience.
 
 ### 5.7 Transaction Result Pretty Output
@@ -652,11 +660,11 @@ Send
 | `akash query audit list`/`get`          | `akt query audit [owner]`                    | Filter by owner; no arg → list all                         |
 | `akash query escrow accounts`           | `akt query escrow [filter]`                  | Filter: `[owner[/dseq]]`                                   |
 | `akash query escrow payments`           | `akt query escrow payment [filter]`          | Filter: `[owner[/dseq]]`                                   |
-| `akash keys *`                | `akt keys *`                | Identical behavior                 |
+| `akash keys *`                | `akt context keys *`        | Identical behavior; moved under context |
 | (none)                        | `akt context *`             | New context management             |
-| (none)                        | `akt deploy`                | New workflow command               |
-| (none)                        | `akt update`                | New workflow command               |
-| (none)                        | `akt close`                 | New workflow command               |
+| (none)                        | `akt deploy <sdl-file>`     | New workflow command               |
+| (none)                        | `akt update <sdl-file> [dseq]` | New workflow command            |
+| (none)                        | `akt close [dseq]`          | New workflow command               |
 | (none)                        | `akt` (no subcommand)       | Launches TUI mode by default       |
 | (none)                        | `akt store *`               | New store management               |
 | (none)                        | `akt plugin *`              | New plugin management              |

@@ -59,7 +59,7 @@ Per-context append-only JSONL log recording all tx, query, workflow, provider, a
 
 ### Output Formatting
 
-All commands support `--output table|json|yaml` with pretty formatting by default:
+All commands support `--output pretty|json|yaml` with pretty formatting by default:
 
 - **Pretty** (default, `--output pretty`): Color-coded states (green=active, red=closed, yellow=warning), bold key identifiers, full addresses, `uakt→AKT` conversion, comma-grouped block heights.
 - **JSON** (`--output json`): Machine-readable JSON output.
@@ -390,7 +390,7 @@ Running `akt` with no subcommand launches the interactive TUI dashboard:
 akt
 ```
 
-Navigation: `q` query panel, `t` tx panel, `1` monitor, `:` command input, `ctrl+p` search, `?` help, `esc` back, `ctrl+c` quit.
+Navigation: `1`-`6` primary views (Deployments, Leases, Providers, Monitor, Governance, Staking), `q` query panel, `t` tx panel, `:` or `ctrl+p` command palette, `?` help, `esc` back, `ctrl+c` quit.
 
 ## Roadmap
 

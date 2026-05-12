@@ -1,4 +1,4 @@
-- [ ] make JWT the default client auth so there is no need to use mTLS certs
+- [x] make JWT the default client auth so there is no need to use mTLS certs (resolved: SPEC.md §1.4 sets `provider-defaults.auth-type: jwt` as default)
 - [ ] bid selection should accept a list of providers
 - [ ] use vim `/` for search rather than `ctrl+p`
 - [ ] allow import of networks from net repo post initial setup.
