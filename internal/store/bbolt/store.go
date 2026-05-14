@@ -324,15 +324,13 @@ func (s *BoltStore) Migrate(_ context.Context) error {
 // --- Import/Export ---
 
 // Export serializes the store contents to the given writer.
-// Placeholder — Task 5 fills this in.
-func (s *BoltStore) Export(_ context.Context, _ io.Writer, _ store.ExportFormat) error {
-	return fmt.Errorf("not implemented")
+func (s *BoltStore) Export(ctx context.Context, w io.Writer, format store.ExportFormat) error {
+	return s.export(ctx, w, format)
 }
 
 // Import deserializes store contents from the given reader.
-// Placeholder — Task 5 fills this in.
-func (s *BoltStore) Import(_ context.Context, _ io.Reader, _ store.ExportFormat, _ bool) error {
-	return fmt.Errorf("not implemented")
+func (s *BoltStore) Import(ctx context.Context, r io.Reader, format store.ExportFormat, merge bool) error {
+	return s.importData(ctx, r, format, merge)
 }
 
 // --- Stats ---
