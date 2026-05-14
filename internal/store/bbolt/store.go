@@ -317,9 +317,8 @@ func (s *BoltStore) SchemaVersion() uint64 {
 }
 
 // Migrate runs any pending schema migrations.
-// Placeholder — Task 4 fills this in.
 func (s *BoltStore) Migrate(_ context.Context) error {
-	return nil
+	return s.migrate()
 }
 
 // --- Import/Export ---
