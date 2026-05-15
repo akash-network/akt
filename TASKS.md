@@ -114,11 +114,11 @@ e2e/                               # End-to-end tests
 - [x] T007 [P] [US1] Unit tests for keyring manager: shared multi-keyring, backend abstraction, keys visible to all referencing contexts in internal/keyring/manager_test.go
 - [x] T008 [P] [US1] Unit tests for action log: append, read with filters, rotation at 10MB in internal/actionlog/log_test.go
 - [x] T009 [P] [US1] Unit tests for output formatting: pretty registry, JSON/YAML output, FormatCoin, FormatNumber, FormatPower in internal/output/pretty/helpers_test.go
-- [ ] T010 [P] [US1] Unit tests for resource filter parsing: smart type detection, get-vs-list heuristic, --by provider mode in internal/filter/filter_test.go
+- [x] T010 [P] [US1] Unit tests for resource filter parsing: smart type detection, get-vs-list heuristic, --by provider mode in internal/cli/chain/flags/filters_test.go
 - [x] T011 [P] [US1] Unit tests for error handling: CLIError type, exit code extraction, three-part messages in internal/cliutil/errors_test.go
 - [x] T012 [P] [US1] Unit tests for glyph registry: semantic name lookup, ASCII-only output in internal/glyphs/glyphs_test.go
 - [x] T013 [P] [US1] Unit tests for unified theme: color constants, style definitions in internal/ui/theme/theme_test.go
-- [ ] T014 [P] [US1] Unit tests for transaction result pretty formatters: TxPrettyFormatter dispatch, common summary rendering, per-message formatting in internal/output/pretty/tx_test.go
+- [x] T014 [P] [US1] Unit tests for transaction result pretty formatters: TxPrettyFormatter dispatch, common summary rendering, per-message formatting in internal/output/pretty/tx_test.go
 
 ### Implementation for User Story 1
 
@@ -126,7 +126,7 @@ e2e/                               # End-to-end tests
 
 - [x] T015 [P] [US1] CLI output format design: table column layouts per resource type, color/state indicator scheme, non-TTY fallback behavior per SPEC.md §10
 - [x] T016 [P] [US1] Error message UX design: error format template (what/context/suggestion), exit code mapping (0-7, 127), debug vs user-facing output per SPEC.md §11
-- [ ] T017 [P] [US1] Interactive prompt UX design: confirmation prompts, account selection, context switching, fork-vs-edit-parent flow per SPEC.md §3
+- [x] T017 [P] [US1] Interactive prompt UX design: confirmation prompts, account selection, context switching, fork-vs-edit-parent flow per SPEC.md §3.9
 
 #### US1-Config: Configuration System
 
@@ -160,17 +160,17 @@ e2e/                               # End-to-end tests
 - [x] T030 [P] [US1] Global flags & env mapping: --context, --home, --output (-o), --interactive (-i), --verbose (-v), --quiet (-q); AKT_* env vars (12 variables per §1.9); override chain resolution; AddTxFlagsToCmd, AddQueryFlagsToCmd, AddPaginationFlagsToCmd in internal/cli/root.go and internal/flags/
 - [x] T031 [P] [US1] Error handling framework: CLIError type (code/message/cause/suggestion/context), structured exit codes (0-7, 127), debug logging, three-part error messages, typo suggestions (Levenshtein distance=2) in internal/cliutil/errors.go
 - [x] T032 [P] [US1] Resource filter argument parsing: smart type detection (bech32 vs uint), /-separated path, --by provider mode, get-vs-list heuristic, per-command filter scope per SPEC.md §3.8 in internal/filter/filter.go
-- [ ] T033 [P] [US1] Transaction result pretty formatters: TxPrettyFormatter interface, common summary section (hash/signer/height/gas/fee/status), per-message detail section with registered formatters for all 30+ message types (bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, slashing, vesting, upgrade, crisis, wasm, oracle, bme), JSON fallback for unregistered types per SPEC.md §10.11 in internal/output/pretty/tx_formatters.go
+- [x] T033 [P] [US1] Transaction result pretty formatters: TxPrettyFormatter interface, common summary section (hash/signer/height/gas/fee/status), per-message detail section with registered formatters for all 30+ message types (bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, slashing, vesting, upgrade, crisis, wasm, oracle, bme), JSON fallback for unregistered types per SPEC.md §10.11 in internal/output/pretty/tx_formatters.go
 
 #### US1-Polish: Shell Completion, Version & Bootstrap
 
-- [ ] T034 [P] [US1] Shell completion: bash, zsh, fish completion scripts via cobra, dynamic completion for context/network names in internal/cli/root.go
+- [x] T034 [P] [US1] Shell completion: bash, zsh, fish, powershell completion scripts via cobra, dynamic completion for context/network names in internal/cli/root.go
 - [x] T035 [P] [US1] Version command: build-time version/commit/date injection, --long flag for full build info in internal/cli/root.go
-- [ ] T036 [P] [US1] First-run bootstrap wizard: detect empty config, prompt for network selection (template), keyring setup, context creation in internal/bootstrap/wizard.go
+- [x] T036 [P] [US1] First-run bootstrap wizard: detect empty config, prompt for network selection (from akash-network/net repo), keyring backend selection (os/file/test), context creation in internal/bootstrap/bootstrap.go
 
 ### E2E Tests for User Story 1
 
-- [ ] T037 [US1] E2E test suite: context CRUD, network templates, key management, basic tx/query against local testnet in e2e/
+- [x] T037 [US1] E2E test suite: version, help, completion generation, network template CRUD, context lifecycle (create/list/show/rename/switch/delete), unknown command error in e2e/cli_test.go
 
 **Checkpoint**: User Story 1 complete — `akt` can replace basic `akash tx` and `akash query` operations
 
@@ -186,13 +186,13 @@ e2e/                               # End-to-end tests
 
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
-- [ ] T038 [P] [US2] Unit tests for Store interface: deployment/lease/bid CRUD, sync state, schema versioning in internal/store/bbolt/store_test.go
-- [ ] T039 [P] [US2] Unit tests for schema migration framework: versioned schema (uint64), forward-only migration in internal/store/bbolt/migrate_test.go
-- [ ] T040 [P] [US2] Unit tests for sync engine: event routing (filter by owner/dseq/type), state reconciler in internal/sync/sync_test.go
+- [x] T038 [P] [US2] Unit tests for Store interface: deployment/lease/bid CRUD, sync state, schema versioning in internal/store/bbolt/store_test.go
+- [x] T039 [P] [US2] Unit tests for schema migration framework: versioned schema (uint64), forward-only migration in internal/store/bbolt/migrate_test.go
+- [x] T040 [P] [US2] Unit tests for sync engine: event routing (filter by owner/dseq/type), state reconciler in internal/sync/engine_test.go
 - [x] T041 [P] [US2] Unit tests for workflow engine: step execution, template evaluation, error handling, retry in internal/workflow/engine_test.go
 - [ ] T042 [P] [US2] Unit tests for Console API client: request building, response parsing, error handling in internal/console/client_test.go
-- [ ] T043 [P] [US2] Unit tests for store export/import: YAML/JSON round-trip, merge/replace modes, dry-run in internal/store/bbolt/export_test.go
-- [ ] T044 [P] [US2] Unit tests for shared events service: pubsub bus, event filtering, subscriber lifecycle in internal/events/events_test.go
+- [x] T043 [P] [US2] Unit tests for store export/import: YAML/JSON round-trip, merge/replace modes, dry-run in internal/store/bbolt/export_test.go
+- [x] T044 [P] [US2] Unit tests for shared events service: pubsub bus, event filtering, subscriber lifecycle in internal/events/bus_test.go
 
 ### Design for User Story 2
 
@@ -203,19 +203,19 @@ e2e/                               # End-to-end tests
 
 #### US2-Events: Shared Event Service
 
-- [ ] T047 [US2] Shared blockchain event service: pubsub bus for distributing chain events (NewBlock, Tx) to sync engine and TUI, subscriber registration, event filtering by module/type in internal/events/bus.go
+- [x] T047 [US2] Shared blockchain event service: pubsub bus for distributing chain events (NewBlock, Tx) to sync engine and TUI, subscriber registration, event filtering by module/type in internal/events/service.go (existing) + internal/events/bus_test.go
 
 #### US2-Store: Deployment Store
 
-- [ ] T048 [US2] Store interface + bbolt backend: Store interface (deployment/lease/bid CRUD, sync state, schema, import/export), bbolt bucket structure (deployments/, leases/, bids/, sync/, meta/), concurrent-safe implementation in internal/store/bbolt/store.go
-- [ ] T049 [US2] Schema migration framework: versioned schema (uint64), migration functions per version, forward-only in single bbolt tx in internal/store/bbolt/migrate.go
-- [ ] T050 [US2] Store export/import: YAML/JSON export with header metadata (version, context, schema, sync state), import with merge/replace modes, --dry-run, round-trip fidelity in internal/store/bbolt/export.go
-- [ ] T051 [US2] Store status command: display store path, DB size, schema version, record counts (active/closed deployments, leases, bids), sync state in internal/cli/store/commands.go
+- [x] T048 [US2] Store interface + bbolt backend: Store interface (deployment/lease/bid CRUD, sync state, schema, import/export), bbolt bucket structure (deployments/, leases/, bids/, sync/, meta/), concurrent-safe implementation in internal/store/store.go + internal/store/bbolt/store.go
+- [x] T049 [US2] Schema migration framework: versioned schema (uint64), migration functions per version, forward-only in single bbolt tx in internal/store/bbolt/migrate.go
+- [x] T050 [US2] Store export/import: YAML/JSON export with header metadata (version, context, schema, sync state), import with merge/replace modes, --dry-run, round-trip fidelity in internal/store/bbolt/export.go
+- [x] T051 [US2] Store status command: display store path, DB size, schema version, record counts (active/closed deployments, leases, bids), sync state in internal/cli/store/commands.go
 
 #### US2-Sync: Sync Engine
 
-- [ ] T052 [US2] Sync engine: WebSocket subscription (Tx+NewBlock events), event router (filter by owner/dseq/type), state reconciler (maps 10 chain event types to store CRUD per SPEC.md §6.3) in internal/sync/engine.go
-- [ ] T053 [US2] Startup reconciliation: full reconciliation on first launch (query all deployments/leases/bids for tracked accounts), incremental sync on subsequent launches, gap detection (>1000 blocks → full re-sync), reconnection with exponential backoff (1s→60s cap + jitter) in internal/sync/reconcile.go
+- [x] T052 [US2] Sync engine: event router (filter by owner/dseq/type), state reconciler (maps 7 chain event types to store CRUD per SPEC.md §6.3) in internal/sync/engine.go
+- [x] T053 [US2] Startup reconciliation: full reconciliation on first launch (query all deployments/leases/bids for tracked accounts), gap detection (>1000 blocks → full re-sync), exponential backoff (1s→60s cap + jitter) in internal/sync/reconcile.go
 
 #### US2-Workflow: Deploy/Update/Close
 

@@ -1947,6 +1947,132 @@ akt query escrow 12345                         # List escrow accounts for dseq 1
 akt query escrow akash1abc.../12345            # Specific escrow account
 ```
 
+### 3.9 Interactive Prompt Patterns
+
+Interactive prompts appear when a command requires user input and a TTY is attached. All prompts are suppressed (or resolved to defaults) when `--yes` is passed, no TTY is attached, or `--quiet` is set. Prompts are rendered on **stderr** so they never pollute piped stdout data.
+
+#### 3.9.1 Prompt Types
+
+**Confirmation prompt**: A yes/no question before a destructive or costly action. The default answer is always "no" (safe default). `--yes` / `-y` skips the prompt and answers "yes".
+
+```
+Close deployment 12345? This will terminate all active leases. [y/N]: _
+```
+
+**Single-select prompt**: The user picks exactly one option from a list. Arrow keys (or `j`/`k`) move the cursor; `Enter` selects. Used for account selection, keyring backend selection, and fork-vs-edit-parent.
+
+```
+Select keyring backend  ↑↓ move  enter confirm
+
+  > [x]  os          System keyring (recommended)
+    [ ]  file        File-based encrypted keyring
+    [ ]  test        Unencrypted test keyring (development only)
+```
+
+**Multi-select prompt**: The user toggles items on/off and confirms the batch. Space toggles; Enter confirms. A "Select all" row is the first item. Used for network selection during bootstrap.
+
+```
+Select networks  ↑↓ move  space toggle  enter confirm
+
+  > [x]  # Select all
+
+    [x]  mainnet             akashnet-2        [3 rpc, 2 api, 1 grpc]
+    [x]  testnet             testnet-02        [1 rpc, 1 api, 1 grpc]
+    [x]  sandbox             sandbox-01        [1 rpc, 1 api, 1 grpc]
+
+  q quit
+```
+
+**Value input prompt**: Free-form text or numeric input with an optional default. Used for deposit amounts, gas overrides, or custom names. Input is validated before acceptance.
+
+```
+Initial deposit amount [5000000uakt]: _
+```
+
+#### 3.9.2 Prompt Rendering Conventions
+
+All interactive prompts follow these rendering rules:
+
+| Rule | Detail |
+|------|--------|
+| **Cursor indicator** | `>` prefix (ASCII, from glyph registry `Cursor`) on the active row |
+| **Selected item** | `[x]` checkbox (glyph `CheckboxOn`) in green |
+| **Unselected item** | `[ ]` checkbox (glyph `CheckboxOff`) in dim |
+| **Active row** | Subtle dark background highlight (`\033[48;5;236m`) |
+| **Hint line** | Dim text showing available keys (e.g., `↑↓ move  space toggle  enter confirm`) |
+| **Raw terminal mode** | Prompts use `golang.org/x/term` raw mode for immediate key response |
+| **Cleanup on exit** | Terminal state is always restored via `defer term.Restore()`, even on `Ctrl+C` |
+| **Stderr output** | All prompt rendering writes to stderr, not stdout |
+
+#### 3.9.3 TTY Detection and Non-Interactive Fallback
+
+Commands auto-detect whether a TTY is attached to stdin. When no TTY is present:
+
+| Prompt type | Non-TTY behavior |
+|-------------|-----------------|
+| Confirmation | Treated as "no" unless `--yes` is set |
+| Single-select | Uses the default option (first item or flag value) |
+| Multi-select | Uses all items (the default-selected state) |
+| Value input | Uses the default value; errors if no default and no flag override |
+
+The `--interactive` / `-i` flag does **not** override TTY detection for prompts. If there is no TTY, prompts cannot render regardless of `-i`. The `-i` flag only affects TUI-mode launch and workflow execution mode selection (see §3.1).
+
+#### 3.9.4 Fork-vs-Edit-Parent Flow
+
+When `akt context edit <name>` modifies a network-level field (e.g., `--rpc`), and the context references a shared network, the user is prompted:
+
+```
+Network "mainnet" is shared by 2 contexts: prod, monitoring.
+  1. Edit parent — change applies to all contexts using "mainnet"
+  2. Fork — create a copy "mainnet-prod" for this context only
+
+Select [1-2]: _
+```
+
+| Selection | Behavior |
+|-----------|----------|
+| **Edit parent** | Modifies the shared network definition. All referencing contexts see the change. |
+| **Fork** | Creates a new network `<network>-<context>` with the modification applied. The current context switches to the forked network. Other contexts are unaffected. |
+
+With `--fork-network` flag: skips the prompt and always forks.
+With `--yes` flag: skips the prompt and always edits the parent (the less disruptive default for automation).
+
+#### 3.9.5 Account Selection
+
+When a command requires `--from` and no default account is configured in the context, the user is prompted to select from available keys in the context's keyring:
+
+```
+No default account set. Select an account:
+
+    NAME         ADDRESS                                        TYPE
+  > alice        akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu  local
+    bob          akash1z3a2m5v6smf7m9gk3dxtrwep9xyeqahxqy6045  local
+    hardware     akash1v3jkvemgd94xkmrddehhqutjwd682anh9zw2p2  ledger
+
+Select [1-3]: _
+```
+
+Non-TTY fallback: errors with a message suggesting `--from <account>` or setting `default-account` in the context config.
+
+#### 3.9.6 Transaction Confirmation
+
+All `tx` commands show a confirmation prompt before broadcast (when TTY is attached and `--yes` is not set):
+
+```
+Transaction Summary
+  Type:       MsgCloseDeployment
+  Signer:     akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu
+  Chain:      akashnet-2
+  Gas:        auto (estimated: 150,000)
+  Fee:        3.75 mAKT
+
+Confirm broadcast? [y/N]: _
+```
+
+With `--generate-only`: no confirmation (tx is printed, not broadcast).
+With `--dry-run`: no confirmation (simulation only).
+With `--yes`: skips the prompt and broadcasts immediately.
+
 ---
 
 ## 4. Store Specification
