@@ -19,6 +19,7 @@ import (
 	chaincli "pkg.akt.dev/akt/internal/cli/chain"
 
 	clicontext "pkg.akt.dev/akt/internal/cli/context"
+	clistore "pkg.akt.dev/akt/internal/cli/store"
 	aktclient "pkg.akt.dev/akt/internal/client"
 	"pkg.akt.dev/akt/internal/cliutil"
 	aktcodec "pkg.akt.dev/akt/internal/codec"
@@ -54,9 +55,10 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	// human-readable transaction results (SPEC §10.11).
 	pretty.RegisterAllTxFormatters()
 
-	// The manager and keyring manager are lazily initialized in PersistentPreRunE.
+	// The manager, keyring manager, and config root are lazily initialized in PersistentPreRunE.
 	var mgr *aktctx.Manager
 	var krMgr *aktkeyring.Manager
+	var resolvedCfgRoot string
 
 	mgrFn := func() *aktctx.Manager { return mgr }
 
@@ -137,6 +139,7 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			resolvedCfgRoot = cfgRoot
 
 			// First-run bootstrap: if no config file exists, offer to
 			// fetch networks from github.com/akash-network/net.
@@ -248,6 +251,15 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 
 	root.AddCommand(monitorCmd(v))
 	root.AddCommand(mcpCmd())
+	root.AddCommand(clistore.Commands(
+		func() string { return resolvedCfgRoot },
+		func() string {
+			if mgr != nil {
+				return mgr.CurrentContext()
+			}
+			return ""
+		},
+	))
 	root.AddCommand(versionCmd(bi))
 	root.AddCommand(completionCmd())
 
