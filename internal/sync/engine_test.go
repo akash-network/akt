@@ -4,6 +4,7 @@ import (
 	"context"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -240,4 +241,151 @@ func TestUnknownEventIgnored(t *testing.T) {
 	bids, err := s.ListBids(ctx, store.BidFilter{})
 	require.NoError(t, err)
 	assert.Empty(t, bids)
+}
+
+// --- Reconciliation Tests (T053) ---
+
+type mockQuerier struct {
+	height int64
+	deps   map[string][]*store.DeploymentRecord
+	leases map[string][]*store.LeaseRecord
+	bids   map[string][]*store.BidRecord
+}
+
+func (m *mockQuerier) CurrentHeight(_ context.Context) (int64, error) {
+	return m.height, nil
+}
+
+func (m *mockQuerier) Deployments(_ context.Context, owner string) ([]*store.DeploymentRecord, error) {
+	return m.deps[owner], nil
+}
+
+func (m *mockQuerier) Leases(_ context.Context, owner string, dseq uint64) ([]*store.LeaseRecord, error) {
+	key := owner + ":" + store.DeploymentKey(owner, dseq)
+	return m.leases[key], nil
+}
+
+func (m *mockQuerier) Bids(_ context.Context, owner string, dseq uint64) ([]*store.BidRecord, error) {
+	key := owner + ":" + store.DeploymentKey(owner, dseq)
+	return m.bids[key], nil
+}
+
+func TestReconcileFirstLaunch(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+	eng := syncpkg.New(s, []string{testOwner})
+
+	dep1 := &store.DeploymentRecord{Owner: testOwner, DSeq: 100, State: "active"}
+	dep2 := &store.DeploymentRecord{Owner: testOwner, DSeq: 200, State: "closed"}
+	lease1 := &store.LeaseRecord{
+		ID:    store.LeaseID{Owner: testOwner, DSeq: 100, GSeq: 1, OSeq: 1, Provider: "akash1prov"},
+		State: "active",
+	}
+
+	q := &mockQuerier{
+		height: 50000,
+		deps:   map[string][]*store.DeploymentRecord{testOwner: {dep1, dep2}},
+		leases: map[string][]*store.LeaseRecord{
+			testOwner + ":" + store.DeploymentKey(testOwner, 100): {lease1},
+		},
+		bids: map[string][]*store.BidRecord{},
+	}
+
+	err := eng.Reconcile(ctx, q)
+	require.NoError(t, err)
+
+	// Verify deployments stored.
+	deps, err := s.ListDeployments(ctx, store.DeploymentFilter{Owner: testOwner})
+	require.NoError(t, err)
+	assert.Len(t, deps, 2)
+
+	// Verify lease stored.
+	leases, err := s.ListLeases(ctx, store.LeaseFilter{Owner: testOwner})
+	require.NoError(t, err)
+	assert.Len(t, leases, 1)
+
+	// Verify sync state.
+	ss, err := s.GetSyncState(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, ss)
+	assert.Equal(t, int64(50000), ss.LastBlockHeight)
+	assert.Contains(t, ss.TrackedAccounts, testOwner)
+}
+
+func TestReconcileLargeGap(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	// Set existing sync state with old height.
+	require.NoError(t, s.PutSyncState(ctx, &store.SyncState{
+		LastBlockHeight: 1000,
+		LastSyncTime:    1000,
+	}))
+
+	eng := syncpkg.New(s, []string{testOwner})
+
+	dep := &store.DeploymentRecord{Owner: testOwner, DSeq: 300, State: "active"}
+	q := &mockQuerier{
+		height: 3000, // gap = 2000 > 1000 threshold
+		deps:   map[string][]*store.DeploymentRecord{testOwner: {dep}},
+		leases: map[string][]*store.LeaseRecord{},
+		bids:   map[string][]*store.BidRecord{},
+	}
+
+	err := eng.Reconcile(ctx, q)
+	require.NoError(t, err)
+
+	// Full reconcile should have stored the deployment.
+	d, err := s.GetDeployment(ctx, testOwner, 300)
+	require.NoError(t, err)
+	require.NotNil(t, d)
+	assert.Equal(t, "active", d.State)
+
+	// Sync state updated.
+	ss, err := s.GetSyncState(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(3000), ss.LastBlockHeight)
+}
+
+func TestReconcileSmallGap(t *testing.T) {
+	ctx := context.Background()
+	s := openTestStore(t)
+
+	// Set existing sync state with recent height.
+	require.NoError(t, s.PutSyncState(ctx, &store.SyncState{
+		LastBlockHeight: 1000,
+		LastSyncTime:    1000,
+	}))
+
+	eng := syncpkg.New(s, []string{testOwner})
+
+	q := &mockQuerier{
+		height: 1500, // gap = 500 ≤ 1000 threshold
+		deps:   map[string][]*store.DeploymentRecord{},
+		leases: map[string][]*store.LeaseRecord{},
+		bids:   map[string][]*store.BidRecord{},
+	}
+
+	err := eng.Reconcile(ctx, q)
+	require.NoError(t, err)
+
+	// Sync state updated to current height.
+	ss, err := s.GetSyncState(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, int64(1500), ss.LastBlockHeight)
+}
+
+func TestBackoffDelay(t *testing.T) {
+	// Verify exponential backoff with cap at 60s.
+	d0 := syncpkg.BackoffDelay(0) // 1s + jitter
+	assert.True(t, d0 >= 1*time.Second && d0 < 2*time.Second, "attempt 0: %v", d0)
+
+	d1 := syncpkg.BackoffDelay(1) // 2s + jitter
+	assert.True(t, d1 >= 2*time.Second && d1 < 3*time.Second, "attempt 1: %v", d1)
+
+	d6 := syncpkg.BackoffDelay(6) // 64s → capped to 60s + jitter
+	assert.True(t, d6 >= 60*time.Second && d6 < 90*time.Second, "attempt 6: %v", d6)
+
+	d10 := syncpkg.BackoffDelay(10) // still capped at 60s
+	assert.True(t, d10 >= 60*time.Second && d10 < 90*time.Second, "attempt 10: %v", d10)
 }
