@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -164,5 +166,128 @@ func TestUnknownCommand(t *testing.T) {
 	}
 	if !strings.Contains(stderr, "unknown command") {
 		t.Fatalf("expected stderr to contain 'unknown command', got:\n%s", stderr)
+	}
+}
+
+// --- Phase 4: Store, Workflow, and Provider E2E tests ---
+
+// setupContextHome creates a temp home with a network and active context,
+// which is required for store commands to resolve a store directory.
+func setupContextHome(t *testing.T) string {
+	t.Helper()
+	home := t.TempDir()
+	initHome(t, home)
+
+	// Create a network from the mainnet template.
+	_, stderr, exitCode := runAkt(t, home, "context", "network", "create", "mainnet", "--template", "mainnet")
+	if exitCode != 0 {
+		t.Fatalf("failed to create mainnet network (exit %d): %s", exitCode, stderr)
+	}
+
+	// Create a context using that network and set it as current.
+	_, stderr, exitCode = runAkt(t, home, "context", "create", "prod", "--network", "mainnet", "--set-current")
+	if exitCode != 0 {
+		t.Fatalf("failed to create context 'prod' (exit %d): %s", exitCode, stderr)
+	}
+
+	return home
+}
+
+func TestStoreStatusEmpty(t *testing.T) {
+	home := setupContextHome(t)
+
+	stdout, stderr, exitCode := runAkt(t, home, "store", "status")
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d\nstdout: %s\nstderr: %s", exitCode, stdout, stderr)
+	}
+
+	combined := stdout + stderr
+	if !strings.Contains(strings.ToLower(combined), "not synced") {
+		t.Fatalf("expected output to contain 'not synced', got:\n%s", combined)
+	}
+	if !strings.Contains(combined, "0") {
+		t.Fatalf("expected output to contain '0' (zero records), got:\n%s", combined)
+	}
+}
+
+func TestStoreExportImport(t *testing.T) {
+	home := setupContextHome(t)
+
+	// Export the (empty) store to a temp file.
+	exportFile := filepath.Join(t.TempDir(), "export.yaml")
+	stdout, stderr, exitCode := runAkt(t, home, "store", "export", "--file", exportFile)
+	if exitCode != 0 {
+		t.Fatalf("store export failed (exit %d)\nstdout: %s\nstderr: %s", exitCode, stdout, stderr)
+	}
+
+	// Verify the export file was created.
+	info, err := os.Stat(exportFile)
+	if err != nil {
+		t.Fatalf("export file not found: %v", err)
+	}
+	if info.Size() == 0 {
+		t.Fatal("export file is empty")
+	}
+
+	// Import the exported file into a fresh context.
+	home2 := setupContextHome(t)
+	stdout, stderr, exitCode = runAkt(t, home2, "store", "import", exportFile)
+	if exitCode != 0 {
+		t.Fatalf("store import failed (exit %d)\nstdout: %s\nstderr: %s", exitCode, stdout, stderr)
+	}
+}
+
+func TestDeployHelp(t *testing.T) {
+	stdout, stderr, exitCode := runAktNoHome(t, "deploy", "--help")
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d\nstderr: %s", exitCode, stderr)
+	}
+
+	if !strings.Contains(strings.ToLower(stdout), "deploy") {
+		t.Fatalf("expected help output to contain 'deploy', got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "sdl-file") {
+		t.Fatalf("expected help output to contain 'sdl-file', got:\n%s", stdout)
+	}
+}
+
+func TestUpdateHelp(t *testing.T) {
+	stdout, stderr, exitCode := runAktNoHome(t, "update", "--help")
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d\nstderr: %s", exitCode, stderr)
+	}
+
+	if !strings.Contains(strings.ToLower(stdout), "update") {
+		t.Fatalf("expected help output to contain 'update', got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "dseq") {
+		t.Fatalf("expected help output to contain 'dseq', got:\n%s", stdout)
+	}
+}
+
+func TestCloseHelp(t *testing.T) {
+	stdout, stderr, exitCode := runAktNoHome(t, "close", "--help")
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d\nstderr: %s", exitCode, stderr)
+	}
+
+	if !strings.Contains(strings.ToLower(stdout), "close") {
+		t.Fatalf("expected help output to contain 'close', got:\n%s", stdout)
+	}
+	if !strings.Contains(stdout, "dseq") {
+		t.Fatalf("expected help output to contain 'dseq', got:\n%s", stdout)
+	}
+}
+
+func TestProviderHelp(t *testing.T) {
+	stdout, stderr, exitCode := runAktNoHome(t, "provider", "--help")
+	if exitCode != 0 {
+		t.Fatalf("expected exit code 0, got %d\nstderr: %s", exitCode, stderr)
+	}
+
+	for _, sub := range []string{"status", "lease-logs", "send-manifest"} {
+		if !strings.Contains(stdout, sub) {
+			t.Fatalf("expected provider help to list %q subcommand, got:\n%s", sub, stdout)
+		}
 	}
 }
