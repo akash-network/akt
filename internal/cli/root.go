@@ -19,6 +19,7 @@ import (
 	chaincli "pkg.akt.dev/akt/internal/cli/chain"
 
 	clicontext "pkg.akt.dev/akt/internal/cli/context"
+	cliprovider "pkg.akt.dev/akt/internal/cli/provider"
 	clistore "pkg.akt.dev/akt/internal/cli/store"
 	aktclient "pkg.akt.dev/akt/internal/client"
 	"pkg.akt.dev/akt/internal/cliutil"
@@ -251,6 +252,7 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 
 	root.AddCommand(monitorCmd(v))
 	root.AddCommand(mcpCmd())
+	root.AddCommand(cliprovider.Commands())
 	root.AddCommand(clistore.Commands(
 		func() string { return resolvedCfgRoot },
 		func() string {
