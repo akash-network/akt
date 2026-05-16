@@ -1,0 +1,28 @@
+name: update
+description: Update a deployment and send the new manifest to providers
+version: 1
+
+params:
+  sdl-file:
+    type: file
+    required: true
+    description: Path to updated SDL deployment file
+  dseq:
+    type: int
+    required: true
+    description: Deployment sequence to update
+
+steps:
+  - name: update-deployment
+    type: tx
+    msg: deployment.MsgUpdateDeployment
+    params:
+      sdl: "{{ index .Params \"sdl-file\" }}"
+      dseq: "{{ .Params.dseq }}"
+    on-error: abort
+
+  - name: display-result
+    type: output
+    template: |
+      Deployment updated!
+        DSEQ: {{ .Params.dseq }}

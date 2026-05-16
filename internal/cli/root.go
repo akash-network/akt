@@ -21,6 +21,7 @@ import (
 	clicontext "pkg.akt.dev/akt/internal/cli/context"
 	cliprovider "pkg.akt.dev/akt/internal/cli/provider"
 	clistore "pkg.akt.dev/akt/internal/cli/store"
+	cliworkflow "pkg.akt.dev/akt/internal/cli/workflow"
 	aktclient "pkg.akt.dev/akt/internal/client"
 	"pkg.akt.dev/akt/internal/cliutil"
 	aktcodec "pkg.akt.dev/akt/internal/codec"
@@ -253,15 +254,18 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	root.AddCommand(monitorCmd(v))
 	root.AddCommand(mcpCmd())
 	root.AddCommand(cliprovider.Commands())
-	root.AddCommand(clistore.Commands(
-		func() string { return resolvedCfgRoot },
-		func() string {
-			if mgr != nil {
-				return mgr.CurrentContext()
-			}
-			return ""
-		},
-	))
+	homeFn := func() string { return resolvedCfgRoot }
+	ctxNameFn := func() string {
+		if mgr != nil {
+			return mgr.CurrentContext()
+		}
+		return ""
+	}
+
+	root.AddCommand(clistore.Commands(homeFn, ctxNameFn))
+	root.AddCommand(cliworkflow.DeployCmd(homeFn, ctxNameFn))
+	root.AddCommand(cliworkflow.UpdateCmd(homeFn, ctxNameFn))
+	root.AddCommand(cliworkflow.CloseCmd(homeFn, ctxNameFn))
 	root.AddCommand(versionCmd(bi))
 	root.AddCommand(completionCmd())
 

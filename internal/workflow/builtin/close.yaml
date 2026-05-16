@@ -1,0 +1,23 @@
+name: close
+description: Close a deployment and return remaining escrow balance
+version: 1
+
+params:
+  dseq:
+    type: int
+    required: true
+    description: Deployment sequence to close
+
+steps:
+  - name: close-deployment
+    type: tx
+    msg: deployment.MsgCloseDeployment
+    params:
+      dseq: "{{ .Params.dseq }}"
+    on-error: abort
+
+  - name: display-result
+    type: output
+    template: |
+      Deployment closed.
+        DSEQ: {{ .Params.dseq }}

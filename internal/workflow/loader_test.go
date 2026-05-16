@@ -120,7 +120,12 @@ steps:
 	loader := wf.NewLoader(root, "", builtin.Workflows())
 
 	names := loader.List()
-	if len(names) != 2 {
-		t.Errorf("expected 2 workflows, got %d: %v", len(names), names)
+
+	// Expect the 2 user-defined workflows plus the 3 built-in ones
+	// (deploy, update, close).
+	builtinCount := len(builtin.Workflows())
+	want := 2 + builtinCount
+	if len(names) != want {
+		t.Errorf("expected %d workflows, got %d: %v", want, len(names), names)
 	}
 }
