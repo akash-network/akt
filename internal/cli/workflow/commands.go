@@ -1,10 +1,11 @@
-// Package workflow implements the `akt deploy`, `akt update`, and `akt close`
-// CLI commands — thin wrappers that load embedded workflow YAML definitions
-// and run them through the workflow engine.
+// Package workflow generates CLI commands dynamically from workflow definitions.
+// Commands only appear when a corresponding workflow YAML file exists — either
+// as a built-in embedded definition or as a user-defined file in the config.
 package workflow
 
 import (
 	"fmt"
+	"strconv"
 
 	"github.com/spf13/cobra"
 
@@ -12,215 +13,182 @@ import (
 	"pkg.akt.dev/akt/internal/workflow/builtin"
 )
 
-// DeployCmd returns the `akt deploy` command.
-func DeployCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "deploy <sdl-file>",
-		Short: "Deploy an application to the Akash Network",
-		Long: `Create a deployment from an SDL file, wait for provider bids,
-select a provider, create a lease, and send the manifest.
+// Commands discovers available workflow definitions and returns a cobra command
+// for each one. Only workflows that exist (built-in or user-defined) produce
+// commands. Returns nil if no workflows are found.
+func Commands(homeFn func() string, ctxNameFn func() string) []*cobra.Command {
+	loader := wf.NewLoader(homeFn(), ctxNameFn(), builtin.Workflows())
+	names := loader.List()
 
-This command orchestrates the full deployment workflow defined in
-the built-in deploy.yaml workflow definition.`,
-		Args: cobra.ExactArgs(1),
-		Example: `  # Deploy interactively (select bid from list)
-  akt deploy app.yaml
-
-  # Deploy with automatic cheapest bid selection
-  akt deploy app.yaml --bid-select cheapest
-
-  # Deploy to a specific provider
-  akt deploy app.yaml --bid-select provider=akash1abc...
-
-  # Dry run — show execution plan without broadcasting
-  akt deploy app.yaml --dry-run`,
-		RunE: workflowRunE("deploy", homeFn, ctxNameFn, func(cmd *cobra.Command, args []string) (map[string]any, error) {
-			params := make(map[string]any)
-			params["sdl-file"] = args[0]
-
-			deposit, _ := cmd.Flags().GetString("deposit")
-			params["deposit"] = deposit
-
-			bidTimeout, _ := cmd.Flags().GetString("bid-timeout")
-			params["bid-timeout"] = bidTimeout
-
-			bidSelect, _ := cmd.Flags().GetString("bid-select")
-			params["bid-select"] = bidSelect
-
-			return params, nil
-		}),
-	}
-
-	cmd.Flags().String("deposit", "auto", "Initial deposit amount (auto = chain minimum or SDL-specified)")
-	cmd.Flags().String("bid-timeout", "5m", "Maximum time to wait for bids")
-	cmd.Flags().String("bid-select", "interactive", "Bid selection: interactive, cheapest, provider=<addr>")
-	cmd.Flags().Int("min-bids", 1, "Minimum number of bids to collect before selection")
-	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompts")
-	cmd.Flags().Bool("dry-run", false, "Show execution plan without broadcasting transactions")
-
-	return cmd
-}
-
-// UpdateCmd returns the `akt update` command.
-func UpdateCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "update <sdl-file> [dseq]",
-		Short: "Update an existing deployment",
-		Long: `Update a deployment with a new SDL file and send the updated
-manifest to providers.
-
-The deployment sequence (dseq) can be provided as a positional argument
-or via the --dseq flag.`,
-		Args: cobra.RangeArgs(1, 2),
-		Example: `  # Update deployment 12345 with new SDL
-  akt update app.yaml 12345
-
-  # Update using --dseq flag
-  akt update app.yaml --dseq 12345
-
-  # Dry run — show execution plan
-  akt update app.yaml --dseq 12345 --dry-run`,
-		RunE: workflowRunE("update", homeFn, ctxNameFn, func(cmd *cobra.Command, args []string) (map[string]any, error) {
-			params := make(map[string]any)
-			params["sdl-file"] = args[0]
-
-			dseq, _ := cmd.Flags().GetInt("dseq")
-			if len(args) > 1 {
-				var parsed int
-				if _, err := fmt.Sscanf(args[1], "%d", &parsed); err != nil {
-					return nil, fmt.Errorf("invalid dseq %q: %w", args[1], err)
-				}
-				dseq = parsed
-			}
-
-			if dseq == 0 {
-				return nil, fmt.Errorf("deployment sequence (dseq) is required; provide as argument or --dseq flag")
-			}
-
-			params["dseq"] = dseq
-
-			return params, nil
-		}),
-	}
-
-	cmd.Flags().Int("dseq", 0, "Deployment sequence to update")
-	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompts")
-	cmd.Flags().Bool("dry-run", false, "Show execution plan without broadcasting transactions")
-
-	return cmd
-}
-
-// CloseCmd returns the `akt close` command.
-func CloseCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "close [dseq]",
-		Short: "Close a deployment",
-		Long: `Close a deployment and return the remaining escrow balance.
-
-The deployment sequence (dseq) can be provided as a positional argument
-or via the --dseq flag.`,
-		Args: cobra.MaximumNArgs(1),
-		Example: `  # Close deployment 12345
-  akt close 12345
-
-  # Close using --dseq flag
-  akt close --dseq 12345
-
-  # Dry run — show execution plan
-  akt close --dseq 12345 --dry-run`,
-		RunE: workflowRunE("close", homeFn, ctxNameFn, func(cmd *cobra.Command, args []string) (map[string]any, error) {
-			params := make(map[string]any)
-
-			dseq, _ := cmd.Flags().GetInt("dseq")
-			if len(args) > 0 {
-				var parsed int
-				if _, err := fmt.Sscanf(args[0], "%d", &parsed); err != nil {
-					return nil, fmt.Errorf("invalid dseq %q: %w", args[0], err)
-				}
-				dseq = parsed
-			}
-
-			if dseq == 0 {
-				return nil, fmt.Errorf("deployment sequence (dseq) is required; provide as argument or --dseq flag")
-			}
-
-			params["dseq"] = dseq
-
-			return params, nil
-		}),
-	}
-
-	cmd.Flags().Int("dseq", 0, "Deployment sequence to close")
-	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompts")
-	cmd.Flags().Bool("dry-run", false, "Show execution plan without broadcasting transactions")
-
-	return cmd
-}
-
-// paramsFn extracts workflow parameters from cobra flags and positional args.
-type paramsFn func(cmd *cobra.Command, args []string) (map[string]any, error)
-
-// workflowRunE returns a RunE function that loads a named workflow,
-// validates it, and prints an execution plan.
-//
-// TODO(T057+): Wire ChainClient and ProviderClient implementations to
-// enable full workflow execution via the Engine. Currently the commands
-// load and validate the workflow definition, then print a summary of
-// what would be executed.
-func workflowRunE(name string, homeFn func() string, ctxNameFn func() string, pFn paramsFn) func(*cobra.Command, []string) error {
-	return func(cmd *cobra.Command, args []string) error {
-		params, err := pFn(cmd, args)
-		if err != nil {
-			return err
-		}
-
-		loader := wf.NewLoader(homeFn(), ctxNameFn(), builtin.Workflows())
-
+	var cmds []*cobra.Command
+	for _, name := range names {
 		def, err := loader.Load(name)
 		if err != nil {
-			return fmt.Errorf("load workflow %q: %w", name, err)
+			continue // skip workflows that fail to parse
 		}
+		cmds = append(cmds, commandFromDef(def, homeFn, ctxNameFn))
+	}
 
-		dryRun, _ := cmd.Flags().GetBool("dry-run")
+	return cmds
+}
 
-		out := cmd.OutOrStdout()
-
-		fmt.Fprintf(out, "Workflow: %s (v%d)\n", def.Name, def.Version)
-		fmt.Fprintf(out, "  %s\n\n", def.Description)
-
-		fmt.Fprintln(out, "Parameters:")
-		for k, v := range params {
-			fmt.Fprintf(out, "  %-16s %v\n", k+":", v)
+// commandFromDef generates a cobra command from a workflow definition.
+// Flags are auto-generated from the workflow's declared params.
+func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() string) *cobra.Command {
+	// Determine positional arg usage from params.
+	use := def.Name
+	var fileParam string
+	for pname, p := range def.Params {
+		if p.Type == wf.ParamFile && p.Required {
+			use += " <" + pname + ">"
+			fileParam = pname
 		}
-		fmt.Fprintln(out)
+	}
 
-		fmt.Fprintf(out, "Steps (%d):\n", len(def.Steps))
-		for i, step := range def.Steps {
-			fmt.Fprintf(out, "  %d. [%s] %s", i+1, step.Type, step.Name)
-			if step.Msg != "" {
-				fmt.Fprintf(out, " -> %s", step.Msg)
+	// If the workflow has an optional int param (like dseq), allow it as positional.
+	var dseqParam string
+	for pname, p := range def.Params {
+		if p.Type == wf.ParamInt && pname == "dseq" {
+			use += " [dseq]"
+			dseqParam = pname
+		}
+	}
+
+	cmd := &cobra.Command{
+		Use:   use,
+		Short: def.Description,
+		Example: fmt.Sprintf("  akt %s --help", def.Name),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			// Reload the workflow at runtime (config may have changed).
+			rtLoader := wf.NewLoader(homeFn(), ctxNameFn(), builtin.Workflows())
+			rtDef, err := rtLoader.Load(def.Name)
+			if err != nil {
+				return fmt.Errorf("load workflow %q: %w", def.Name, err)
 			}
-			if step.Action != "" {
-				fmt.Fprintf(out, " -> %s", step.Action)
+
+			params := make(map[string]any)
+
+			// Resolve file param from positional arg.
+			argIdx := 0
+			if fileParam != "" && argIdx < len(args) {
+				params[fileParam] = args[argIdx]
+				argIdx++
 			}
-			if step.OnError != "" {
-				fmt.Fprintf(out, " (on-error: %s)", step.OnError)
+
+			// Resolve dseq from positional or flag.
+			if dseqParam != "" {
+				dseq, _ := cmd.Flags().GetInt(dseqParam)
+				if argIdx < len(args) {
+					parsed, parseErr := strconv.Atoi(args[argIdx])
+					if parseErr != nil {
+						return fmt.Errorf("invalid dseq %q: %w", args[argIdx], parseErr)
+					}
+					dseq = parsed
+				}
+				if dseq != 0 {
+					params[dseqParam] = dseq
+				}
 			}
-			if step.Retry != nil {
-				fmt.Fprintf(out, " (retry: %dx, %s delay)", step.Retry.Max, step.Retry.Delay)
+
+			// Resolve remaining flag-based params.
+			for pname, pdef := range rtDef.Params {
+				if pname == fileParam || pname == dseqParam {
+					continue // already handled
+				}
+				switch pdef.Type {
+				case wf.ParamString:
+					v, _ := cmd.Flags().GetString(pname)
+					params[pname] = v
+				case wf.ParamInt:
+					v, _ := cmd.Flags().GetInt(pname)
+					params[pname] = v
+				case wf.ParamBool:
+					v, _ := cmd.Flags().GetBool(pname)
+					params[pname] = v
+				case wf.ParamDuration:
+					v, _ := cmd.Flags().GetString(pname)
+					params[pname] = v
+				}
+			}
+
+			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			out := cmd.OutOrStdout()
+
+			fmt.Fprintf(out, "Workflow: %s (v%d)\n", rtDef.Name, rtDef.Version)
+			fmt.Fprintf(out, "  %s\n\n", rtDef.Description)
+
+			fmt.Fprintln(out, "Parameters:")
+			for k, v := range params {
+				fmt.Fprintf(out, "  %-16s %v\n", k+":", v)
 			}
 			fmt.Fprintln(out)
-		}
 
-		if dryRun {
-			fmt.Fprintln(out, "\nDry run — no transactions broadcast.")
+			fmt.Fprintf(out, "Steps (%d):\n", len(rtDef.Steps))
+			for i, step := range rtDef.Steps {
+				fmt.Fprintf(out, "  %d. [%s] %s", i+1, step.Type, step.Name)
+				if step.Msg != "" {
+					fmt.Fprintf(out, " -> %s", step.Msg)
+				}
+				if step.Action != "" {
+					fmt.Fprintf(out, " -> %s", step.Action)
+				}
+				if step.OnError != "" {
+					fmt.Fprintf(out, " (on-error: %s)", step.OnError)
+				}
+				if step.Retry != nil {
+					fmt.Fprintf(out, " (retry: %dx, %s delay)", step.Retry.Max, step.Retry.Delay)
+				}
+				fmt.Fprintln(out)
+			}
+
+			if dryRun {
+				fmt.Fprintln(out, "\nDry run — no transactions broadcast.")
+				return nil
+			}
+
+			// TODO: Execute the workflow via Engine.Run() once
+			// ChainClient and ProviderClient are wired.
+			fmt.Fprintln(out, "\nExecution requires chain client (not yet wired). Use --dry-run to preview.")
 			return nil
-		}
-
-		// TODO(T057+): Execute the workflow via Engine.Run() once
-		// ChainClient and ProviderClient are wired.
-		fmt.Fprintln(out, "\nExecution requires chain client (not yet wired). Use --dry-run to preview.")
-
-		return nil
+		},
 	}
+
+	// Auto-generate flags from workflow params.
+	for pname, pdef := range def.Params {
+		if pdef.Type == wf.ParamFile {
+			continue // positional, not a flag
+		}
+		switch pdef.Type {
+		case wf.ParamString:
+			cmd.Flags().String(pname, pdef.Default, pdef.Description)
+		case wf.ParamInt:
+			def := 0
+			if pdef.Default != "" {
+				def, _ = strconv.Atoi(pdef.Default)
+			}
+			cmd.Flags().Int(pname, def, pdef.Description)
+		case wf.ParamBool:
+			cmd.Flags().Bool(pname, pdef.Default == "true", pdef.Description)
+		case wf.ParamDuration:
+			cmd.Flags().String(pname, pdef.Default, pdef.Description)
+		}
+	}
+
+	// Common workflow flags.
+	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompts")
+	cmd.Flags().Bool("dry-run", false, "Show execution plan without broadcasting transactions")
+
+	// Set args validation based on what we expect.
+	minArgs := 0
+	maxArgs := 0
+	if fileParam != "" {
+		minArgs++
+		maxArgs++
+	}
+	if dseqParam != "" {
+		maxArgs++ // optional positional
+	}
+	cmd.Args = cobra.RangeArgs(minArgs, maxArgs)
+
+	return cmd
 }

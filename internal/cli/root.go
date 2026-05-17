@@ -263,9 +263,12 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	}
 
 	root.AddCommand(clistore.Commands(homeFn, ctxNameFn))
-	root.AddCommand(cliworkflow.DeployCmd(homeFn, ctxNameFn))
-	root.AddCommand(cliworkflow.UpdateCmd(homeFn, ctxNameFn))
-	root.AddCommand(cliworkflow.CloseCmd(homeFn, ctxNameFn))
+
+	// Workflow commands are discovered dynamically from workflow definitions.
+	// Only workflows that exist (built-in or user-defined YAML) produce commands.
+	for _, wfCmd := range cliworkflow.Commands(homeFn, ctxNameFn) {
+		root.AddCommand(wfCmd)
+	}
 	root.AddCommand(versionCmd(bi))
 	root.AddCommand(completionCmd())
 
