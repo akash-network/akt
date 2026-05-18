@@ -165,12 +165,7 @@ func (v DeploymentDetailView) renderHeader(w int) string {
 	dseq := theme.Heading.Render(strconv.FormatUint(d.DSeq, 10))
 	state := components.StateTag(d.State)
 
-	// Truncate owner for display
-	owner := d.Owner
-	if len(owner) > 20 {
-		owner = owner[:10] + "…" + owner[len(owner)-8:]
-	}
-	ownerStr := theme.Muted.Render(owner)
+	ownerStr := theme.Muted.Render(d.Owner)
 
 	header := fmt.Sprintf("  %s  %s  %s  %s",
 		theme.Secondary.Render(name), dseq, state, ownerStr)
@@ -262,7 +257,7 @@ func (v DeploymentDetailView) renderLeaseTab(w int) string {
 	} else {
 		l := v.leases[0] // primary lease
 		sections = append(sections, components.SectionWithKV("Active Lease", w, []components.KVPair{
-			{Label: "provider", Value: truncAddr(l.ID.Provider)},
+			{Label: "provider", Value: l.ID.Provider},
 			{Label: "state", Value: components.StateTag(l.State)},
 			{Label: "price", Value: valOrDash(l.Price)},
 			{Label: "opened", Value: fmtTimestamp(l.CreatedAt)},
@@ -278,7 +273,7 @@ func (v DeploymentDetailView) renderLeaseTab(w int) string {
 	} else {
 		var bidLines []string
 		for _, bid := range v.bids {
-			provider := truncAddr(bid.ID.Provider)
+			provider := bid.ID.Provider
 			price := valOrDash(bid.Price)
 			state := components.StateTag(bid.State)
 			bidLines = append(bidLines,
@@ -367,14 +362,6 @@ func valOrDash(s string) string {
 	return s
 }
 
-// truncAddr truncates a long address for display.
-func truncAddr(addr string) string {
-	if len(addr) > 20 {
-		return addr[:10] + "…" + addr[len(addr)-8:]
-	}
-	return addr
-}
-
 // fmtTimestamp formats a Unix timestamp for display.
 func fmtTimestamp(ts int64) string {
 	if ts == 0 {
@@ -386,7 +373,7 @@ func fmtTimestamp(ts int64) string {
 // providerAddr returns the provider address from the first lease, or "—".
 func (v DeploymentDetailView) providerAddr() string {
 	if len(v.leases) > 0 {
-		return truncAddr(v.leases[0].ID.Provider)
+		return v.leases[0].ID.Provider
 	}
 	return "—"
 }
