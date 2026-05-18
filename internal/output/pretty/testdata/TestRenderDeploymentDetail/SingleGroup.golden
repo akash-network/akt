@@ -1,24 +1,24 @@
 [1;4;4mD[m[1;4;4me[m[1;4;4mp[m[1;4;4ml[m[1;4;4mo[m[1;4;4my[m[1;4;4mm[m[1;4;4me[m[1;4;4mn[m[1;4;4mt[m
-  [38;5;245mDSEQ:[m                [1m100[m
-  [38;5;245mOwner:[m               akash1qwerty
-  [38;5;245mState:[m               [38;5;78mactive[m
-  [38;5;245mHash:[m                abcdef0123
-  [38;5;245mCreated At:[m          18,234,567
+  [38;2;113;113;122mDSEQ:[m                [1m100[m
+  [38;2;113;113;122mOwner:[m               akash1qwerty
+  [38;2;113;113;122mState:[m               [38;2;34;197;94mactive[m
+  [38;2;113;113;122mHash:[m                abcdef0123
+  [38;2;113;113;122mCreated At:[m          18,234,567
 
 [1;4;4mG[m[1;4;4mr[m[1;4;4mo[m[1;4;4mu[m[1;4;4mp[m[4m [m[1;4;4m1[m[1;4;4m:[m [1mweb[m
-  [38;5;245mGSeq:[m                1
-  [38;5;245mState:[m               [38;5;78mopen[m
+  [38;2;113;113;122mGSeq:[m                1
+  [38;2;113;113;122mState:[m               [38;2;34;197;94mopen[m
 
   [1;4;4mR[m[1;4;4me[m[1;4;4ms[m[1;4;4mo[m[1;4;4mu[m[1;4;4mr[m[1;4;4mc[m[1;4;4me[m[4m [m[1;4;4m1[m
-  [38;5;245m  Count:[m             1
-  [38;5;245m  Price:[m             [1m12.5 uAKT[m
-  [38;5;245m  CPU:[m               4
-  [38;5;245m  Memory:[m            8 Gi
-  [38;5;245m  Storage (default):[m 50 Gi
+  [38;2;113;113;122m  Count:[m             1
+  [38;2;113;113;122m  Price:[m             [1m12.5 uAKT[m
+  [38;2;113;113;122m  CPU:[m               4
+  [38;2;113;113;122m  Memory:[m            8 Gi
+  [38;2;113;113;122m  Storage (default):[m 50 Gi
 
 [1;4;4mE[m[1;4;4ms[m[1;4;4mc[m[1;4;4mr[m[1;4;4mo[m[1;4;4mw[m
-  [38;5;245mAccount ID:[m          deployment/akash1qwerty/100
-  [38;5;245mState:[m               [38;5;78mopen[m
-  [38;5;245mOwner:[m               akash1qwerty
-  [38;5;245mBalance:[m             500.25 uAKT
-  [38;5;245mSpent:[m               100.5 uAKT
+  [38;2;113;113;122mAccount ID:[m          deployment/akash1qwerty/100
+  [38;2;113;113;122mState:[m               [38;2;34;197;94mopen[m
+  [38;2;113;113;122mOwner:[m               akash1qwerty
+  [38;2;113;113;122mBalance:[m             500.25 uAKT
+  [38;2;113;113;122mSpent:[m               100.5 uAKT

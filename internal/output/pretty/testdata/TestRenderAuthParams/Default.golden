@@ -1,6 +1,6 @@
 [1;4;4mA[m[1;4;4mu[m[1;4;4mt[m[1;4;4mh[m[4m [m[1;4;4mP[m[1;4;4ma[m[1;4;4mr[m[1;4;4ma[m[1;4;4mm[m[1;4;4me[m[1;4;4mt[m[1;4;4me[m[1;4;4mr[m[1;4;4ms[m
-  [38;5;245mMax Memo Chars:[m  256
-  [38;5;245mTx Sig Limit:[m    7
-  [38;5;245mTx Size/Byte:[m    10
-  [38;5;245mVerify ED25519:[m  590
-  [38;5;245mVerify Secp256k:[m 1000
+  [38;2;113;113;122mMax Memo Chars:[m  256
+  [38;2;113;113;122mTx Sig Limit:[m    7
+  [38;2;113;113;122mTx Size/Byte:[m    10
+  [38;2;113;113;122mVerify ED25519:[m  590
+  [38;2;113;113;122mVerify Secp256k:[m 1000

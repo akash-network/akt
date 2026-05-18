@@ -1,2 +1,2 @@
-[1;38;5;240mACCOUNT SCOPE[m    [1;38;5;240mACCOUNT XID[m       [1;38;5;240mPAYMENT XID[m        [1;38;5;240mOWNER[m      [1;38;5;240mSTATE[m   [1;38;5;240mRATE[m    [1;38;5;240mBALANCE[m  [1;38;5;240mWITHDRAWN[m
-deployment     akash1abc123/100  [1m1/1/akash1prov01[m  akash1prov01  [38;5;78mopen[m   10 uAKT  2 AKT    500 mAKT 
+[1;38;2;113;113;122mACCOUNT SCOPE[m    [1;38;2;113;113;122mACCOUNT XID[m       [1;38;2;113;113;122mPAYMENT XID[m        [1;38;2;113;113;122mOWNER[m      [1;38;2;113;113;122mSTATE[m   [1;38;2;113;113;122mRATE[m    [1;38;2;113;113;122mBALANCE[m  [1;38;2;113;113;122mWITHDRAWN[m
+deployment     akash1abc123/100  [1m1/1/akash1prov01[m  akash1prov01  [38;2;34;197;94mopen[m   10 uAKT  2 AKT    500 mAKT 

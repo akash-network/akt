@@ -1,15 +1,15 @@
 [1;4;4mN[m[1;4;4me[m[1;4;4mt[m[1;4;4mw[m[1;4;4mo[m[1;4;4mr[m[1;4;4mk[m
-  [38;5;245mName:[m                [1mmainnet[m
-  [38;5;245mChain ID:[m            akashnet-2
-  [38;5;245mGas Prices:[m          0.025uakt
-  [38;5;245mGas Adjustment:[m      1.5
+  [38;2;113;113;122mName:[m                [1mmainnet[m
+  [38;2;113;113;122mChain ID:[m            akashnet-2
+  [38;2;113;113;122mGas Prices:[m          0.025uakt
+  [38;2;113;113;122mGas Adjustment:[m      1.5
 
-  [38;5;245mRPC Endpoints:[m
-      [38;5;245m-:[m               https://rpc.akash.network:443
-      [38;5;245m-:[m               https://rpc-backup.akash.network:443
-  [38;5;245mAPI Endpoints:[m
-      [38;5;245m-:[m               https://api.akash.network:443
-  [38;5;245mgRPC Endpoints:[m
-      [38;5;245m-:[m               grpc.akash.network:9090
+  [38;2;113;113;122mRPC Endpoints:[m
+      [38;2;113;113;122m-:[m               https://rpc.akash.network:443
+      [38;2;113;113;122m-:[m               https://rpc-backup.akash.network:443
+  [38;2;113;113;122mAPI Endpoints:[m
+      [38;2;113;113;122m-:[m               https://api.akash.network:443
+  [38;2;113;113;122mgRPC Endpoints:[m
+      [38;2;113;113;122m-:[m               grpc.akash.network:9090
 
-  [38;5;245mUsed by:[m             production, staging
+  [38;2;113;113;122mUsed by:[m             production, staging
