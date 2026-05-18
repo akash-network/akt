@@ -13,12 +13,15 @@ import (
 	cmthttp "github.com/cometbft/cometbft/rpc/client/http"
 	"github.com/spf13/viper"
 
+	aktctx "pkg.akt.dev/akt/internal/context"
 	aktevents "pkg.akt.dev/akt/internal/events"
 	monitorcache "pkg.akt.dev/akt/internal/monitor/cache"
 	monitorrpc "pkg.akt.dev/akt/internal/monitor/rpc"
 	monitorui "pkg.akt.dev/akt/internal/monitor/ui"
+	"pkg.akt.dev/akt/internal/store"
 	"pkg.akt.dev/akt/internal/tui/commands"
 	"pkg.akt.dev/akt/internal/tui/components"
+	"pkg.akt.dev/akt/internal/tui/messages"
 	"pkg.akt.dev/akt/internal/tui/views"
 	"pkg.akt.dev/akt/internal/ui/theme"
 
@@ -50,6 +53,10 @@ type Config struct {
 	Insecure         bool   // skip TLS verification for provider queries
 	Standalone       bool   // when true, disables command palette and view switching (e.g. akt monitor)
 	InitialDashboard string // which monitor dashboard to start on: "network" (default), "provider", "bme"
+
+	// Data sources (optional — TUI works in degraded mode without them)
+	Store       store.Store     // local deployment store (nil = no store)
+	ResolvedCtx *aktctx.Context // resolved akt context (nil = no context info)
 }
 
 // App is the root bubbletea model for the akt TUI.
@@ -73,6 +80,14 @@ type App struct {
 	// It is nil when no RPC endpoint is available.
 	monitorModel tea.Model
 	monitorReady bool // true after monitorModel.Init() cmds have been dispatched
+
+	// Data sources
+	dataStore   store.Store
+	resolvedCtx *aktctx.Context
+
+	// Cached data
+	storeStats *store.StoreStats
+	syncState  *store.SyncState
 }
 
 // newApp returns a new App model. monitorModel may be nil when the
@@ -82,9 +97,11 @@ func newApp(cfg Config, topModel tea.Model) App {
 	reg := commands.DefaultRegistry()
 
 	return App{
-		keys:       km,
-		view:       viewDashboard,
-		standalone: cfg.Standalone,
+		keys:        km,
+		view:        viewDashboard,
+		standalone:  cfg.Standalone,
+		dataStore:   cfg.Store,
+		resolvedCtx: cfg.ResolvedCtx,
 		deployments: views.NewListView(views.ListViewConfig{
 			Title:   "Deployments",
 			Columns: []views.ListColumn{{Header: "ID"}, {Header: "STATE", Width: 12}, {Header: "GROUPS", Width: 8}, {Header: "CREATED AT", Width: 14}},
@@ -123,11 +140,18 @@ func newApp(cfg Config, topModel tea.Model) App {
 
 // Init implements tea.Model.
 func (a App) Init() tea.Cmd {
+	var cmds []tea.Cmd
+
 	if a.monitorModel != nil {
 		a.monitorReady = true
-		return a.monitorModel.Init()
+		cmds = append(cmds, a.monitorModel.Init())
 	}
-	return nil
+
+	// Load initial data from the store.
+	cmds = append(cmds, loadStoreStats(a.dataStore))
+	cmds = append(cmds, loadSyncState(a.dataStore))
+
+	return tea.Batch(cmds...)
 }
 
 // Update implements tea.Model.
@@ -137,6 +161,30 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// ── App-level messages (always handled) ──────────────────────────
 
 	switch msg := msg.(type) {
+	case messages.DeploymentsLoadedMsg:
+		if msg.Err == nil {
+			// Will be handled by views in subsequent tasks
+		}
+		return a, nil
+
+	case messages.LeasesLoadedMsg:
+		if msg.Err == nil {
+			// Will be handled by views in subsequent tasks
+		}
+		return a, nil
+
+	case messages.StoreStatsMsg:
+		if msg.Err == nil {
+			a.storeStats = msg.Stats
+		}
+		return a, nil
+
+	case messages.SyncStateMsg:
+		if msg.Err == nil {
+			a.syncState = msg.State
+		}
+		return a, nil
+
 	case views.CommandSubmitMsg:
 		return a.handleCommand(msg.Value)
 
@@ -474,19 +522,47 @@ func (a App) renderHeader() string {
 	appName := theme.HeaderAppName.Render("akt")
 	sep := theme.HeaderMeta.Render(" · ")
 
-	ctx := theme.HeaderContext.Render("prod") +
-		theme.HeaderMeta.Render(":akashnet-2")
+	// Context name and chain ID from resolved context.
+	ctxName := "\u2014" // em dash fallback
+	chainID := ""
+	account := ""
+	if a.resolvedCtx != nil {
+		if a.resolvedCtx.Name != "" {
+			ctxName = a.resolvedCtx.Name
+		}
+		chainID = a.resolvedCtx.Network.ChainID
+		account = a.resolvedCtx.DefaultAccount
+	}
 
-	acct := theme.HeaderContext.Render("alice") +
-		theme.HeaderMeta.Render(" akash1abc…def")
+	ctx := theme.HeaderContext.Render(ctxName)
+	if chainID != "" {
+		ctx += theme.HeaderMeta.Render(":" + chainID)
+	}
 
-	block := theme.HeaderMeta.Render("⎡ ") +
-		theme.HeaderValue.Render("18,234,567") +
-		theme.HeaderMeta.Render(" ⎤")
+	var left string
+	if account != "" {
+		acct := theme.HeaderContext.Render(account)
+		left = appName + sep + ctx + sep + acct
+	} else {
+		left = appName + sep + ctx
+	}
 
-	sync := theme.SyncOK.Render("● synced")
+	// Block height from sync state.
+	blockStr := "\u2014" // em dash fallback
+	if a.syncState != nil && a.syncState.LastBlockHeight > 0 {
+		blockStr = fmt.Sprintf("%d", a.syncState.LastBlockHeight)
+	}
+	block := theme.HeaderMeta.Render("\u23a1 ") +
+		theme.HeaderValue.Render(blockStr) +
+		theme.HeaderMeta.Render(" \u23a4")
 
-	left := appName + sep + ctx + sep + acct
+	var sync string
+	if a.syncState != nil {
+		sync = theme.SyncOK.Render("\u25cf synced")
+	} else {
+		sync = theme.HeaderMeta.Render("\u25cb no sync")
+	}
+
 	right := block + "  " + sync
 
 	innerW := a.width - 2 // account for HeaderStyle Padding(0,1)
@@ -582,6 +658,48 @@ func (a App) renderCentered(h int, text string) string {
 		Align(lipgloss.Center, lipgloss.Center)
 
 	return style.Render(text)
+}
+
+// ─── Data loading commands ───────────────────────────────────────────
+
+func loadDeployments(s store.Store, owner string) tea.Cmd {
+	return func() tea.Msg {
+		if s == nil {
+			return messages.DeploymentsLoadedMsg{Err: fmt.Errorf("no store available")}
+		}
+		depls, err := s.ListDeployments(context.Background(), store.DeploymentFilter{Owner: owner})
+		return messages.DeploymentsLoadedMsg{Deployments: depls, Err: err}
+	}
+}
+
+func loadLeases(s store.Store, owner string) tea.Cmd {
+	return func() tea.Msg {
+		if s == nil {
+			return messages.LeasesLoadedMsg{Err: fmt.Errorf("no store available")}
+		}
+		leases, err := s.ListLeases(context.Background(), store.LeaseFilter{Owner: owner})
+		return messages.LeasesLoadedMsg{Leases: leases, Err: err}
+	}
+}
+
+func loadStoreStats(s store.Store) tea.Cmd {
+	return func() tea.Msg {
+		if s == nil {
+			return messages.StoreStatsMsg{Err: fmt.Errorf("no store available")}
+		}
+		stats, err := s.Stats(context.Background())
+		return messages.StoreStatsMsg{Stats: stats, Err: err}
+	}
+}
+
+func loadSyncState(s store.Store) tea.Cmd {
+	return func() tea.Msg {
+		if s == nil {
+			return messages.SyncStateMsg{Err: fmt.Errorf("no store available")}
+		}
+		state, err := s.GetSyncState(context.Background())
+		return messages.SyncStateMsg{State: state, Err: err}
+	}
 }
 
 // ─── Entry points ────────────────────────────────────────────────────
