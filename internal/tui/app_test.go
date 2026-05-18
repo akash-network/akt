@@ -20,14 +20,18 @@ func newTestApp(view activeView, standalone bool) App {
 	km := KeyMapFromConfig(v)
 	reg := commands.DefaultRegistry()
 
+	dash := views.NewDashboard()
+	dash.SetSize(testAppWidth, testAppHeight-chromeHeight)
+
 	return App{
 		keys:        km,
 		view:        view,
 		standalone:  standalone,
 		width:       testAppWidth,
 		height:      testAppHeight,
-		deployments: views.NewListView(views.ListViewConfig{Title: "Deployments", Empty: "No deployments"}),
-		leases:      views.NewListView(views.ListViewConfig{Title: "Leases", Empty: "No leases"}),
+		dashboard:   dash,
+		deployments: views.NewDeploymentsView(),
+		leases:      views.NewLeasesView(),
 		providers:   views.NewListView(views.ListViewConfig{Title: "Providers", Empty: "No providers"}),
 		governance:  views.NewListView(views.ListViewConfig{Title: "Governance", Empty: "No proposals"}),
 		staking:     views.NewListView(views.ListViewConfig{Title: "Staking", Empty: "No validators"}),
@@ -48,7 +52,7 @@ func TestAppRenderHeader(t *testing.T) {
 
 func TestAppRenderDashboard(t *testing.T) {
 	a := newTestApp(viewDashboard, false)
-	golden.RequireEqual(t, a.renderDashboard(20))
+	golden.RequireEqual(t, a.dashboard.View())
 }
 
 func TestAppRenderFooter(t *testing.T) {

@@ -68,9 +68,10 @@ type App struct {
 	width      int
 	height     int
 
-	// Primary view components — reusable ListView for each resource type.
-	deployments views.ListView
-	leases      views.ListView
+	// Primary view components.
+	dashboard   views.Dashboard
+	deployments views.DeploymentsView
+	leases      views.LeasesView
 	providers   views.ListView
 	governance  views.ListView
 	staking     views.ListView
@@ -96,22 +97,20 @@ func newApp(cfg Config, topModel tea.Model) App {
 	km := KeyMapFromConfig(cfg.Viper)
 	reg := commands.DefaultRegistry()
 
+	dash := views.NewDashboard()
+	if cfg.ResolvedCtx != nil {
+		dash.SetContext(cfg.ResolvedCtx.Name, cfg.ResolvedCtx.Network.ChainID, cfg.ResolvedCtx.DefaultAccount)
+	}
+
 	return App{
 		keys:        km,
 		view:        viewDashboard,
 		standalone:  cfg.Standalone,
 		dataStore:   cfg.Store,
 		resolvedCtx: cfg.ResolvedCtx,
-		deployments: views.NewListView(views.ListViewConfig{
-			Title:   "Deployments",
-			Columns: []views.ListColumn{{Header: "ID"}, {Header: "STATE", Width: 12}, {Header: "GROUPS", Width: 8}, {Header: "CREATED AT", Width: 14}},
-			Empty:   "No deployments. Use 'akt deploy <sdl>' to create one.",
-		}),
-		leases: views.NewListView(views.ListViewConfig{
-			Title:   "Leases",
-			Columns: []views.ListColumn{{Header: "ID"}, {Header: "PRICE/BLOCK", Width: 16}, {Header: "STATE", Width: 12}},
-			Empty:   "No active leases.",
-		}),
+		dashboard:   dash,
+		deployments: views.NewDeploymentsView(),
+		leases:      views.NewLeasesView(),
 		providers: views.NewListView(views.ListViewConfig{
 			Title:   "Providers",
 			Columns: []views.ListColumn{{Header: "OWNER"}, {Header: "HOST URI"}, {Header: "EMAIL", Width: 20}},
@@ -151,6 +150,13 @@ func (a App) Init() tea.Cmd {
 	cmds = append(cmds, loadStoreStats(a.dataStore))
 	cmds = append(cmds, loadSyncState(a.dataStore))
 
+	// Load deployments for the dashboard.
+	var owner string
+	if a.resolvedCtx != nil {
+		owner = a.resolvedCtx.DefaultAccount
+	}
+	cmds = append(cmds, loadDeployments(a.dataStore, owner))
+
 	return tea.Batch(cmds...)
 }
 
@@ -163,25 +169,35 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case messages.DeploymentsLoadedMsg:
 		if msg.Err == nil {
-			// Will be handled by views in subsequent tasks
+			a.deployments.SetData(msg.Deployments)
+			// Filter active deployments for the dashboard summary.
+			var active []*store.DeploymentRecord
+			for _, d := range msg.Deployments {
+				if d.State == "active" {
+					active = append(active, d)
+				}
+			}
+			a.dashboard.SetActiveDeployments(active)
 		}
 		return a, nil
 
 	case messages.LeasesLoadedMsg:
 		if msg.Err == nil {
-			// Will be handled by views in subsequent tasks
+			a.leases.SetData(msg.Leases)
 		}
 		return a, nil
 
 	case messages.StoreStatsMsg:
 		if msg.Err == nil {
 			a.storeStats = msg.Stats
+			a.dashboard.SetStats(msg.Stats)
 		}
 		return a, nil
 
 	case messages.SyncStateMsg:
 		if msg.Err == nil {
 			a.syncState = msg.State
+			a.dashboard.SetSyncState(msg.State)
 		}
 		return a, nil
 
@@ -277,14 +293,40 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, topCmd
 		}
 
+		// Cursor navigation for list views.
+		switch {
+		case key.Matches(kmsg, a.keys.CursorUp):
+			switch a.view {
+			case viewDeployments:
+				a.deployments.CursorUp()
+			case viewLeases:
+				a.leases.CursorUp()
+			}
+			return a, nil
+		case key.Matches(kmsg, a.keys.CursorDown):
+			switch a.view {
+			case viewDeployments:
+				a.deployments.CursorDown()
+			case viewLeases:
+				a.leases.CursorDown()
+			}
+			return a, nil
+		}
+
+		// Resolve owner for data loading.
+		owner := ""
+		if a.resolvedCtx != nil {
+			owner = a.resolvedCtx.DefaultAccount
+		}
+
 		// App-level key dispatch (non-top views).
 		switch {
 		case key.Matches(kmsg, a.keys.Deployments):
 			a.view = viewDeployments
-			return a, nil
+			return a, loadDeployments(a.dataStore, owner)
 		case key.Matches(kmsg, a.keys.Leases):
 			a.view = viewLeases
-			return a, nil
+			return a, loadLeases(a.dataStore, owner)
 		case key.Matches(kmsg, a.keys.Providers):
 			a.view = viewProviders
 			return a, nil
@@ -358,7 +400,7 @@ func (a App) View() tea.View {
 	case viewMonitor:
 		main = a.renderCentered(contentH, "No RPC endpoint configured.\nUse :consensus after setting up a context.")
 	default:
-		main = a.renderDashboard(contentH)
+		main = a.dashboard.View()
 	}
 
 	if a.palette.Active() {
@@ -475,6 +517,11 @@ func (a App) renderPaletteFooter() string {
 // ─── Helpers ─────────────────────────────────────────────────────────
 
 func (a App) handleCommand(cmd string) (tea.Model, tea.Cmd) {
+	owner := ""
+	if a.resolvedCtx != nil {
+		owner = a.resolvedCtx.DefaultAccount
+	}
+
 	switch strings.ToLower(cmd) {
 	case "quit", "q", "exit":
 		return a, tea.Quit
@@ -485,8 +532,10 @@ func (a App) handleCommand(cmd string) (tea.Model, tea.Cmd) {
 		a.view = viewMonitor
 	case "deployments", "dep":
 		a.view = viewDeployments
+		return a, loadDeployments(a.dataStore, owner)
 	case "leases":
 		a.view = viewLeases
+		return a, loadLeases(a.dataStore, owner)
 	case "providers", "prov":
 		a.view = viewProviders
 	case "governance", "gov":
@@ -509,6 +558,7 @@ func (a *App) resize() {
 		mainH = 1
 	}
 
+	a.dashboard.SetSize(a.width, mainH)
 	a.deployments.SetSize(a.width, mainH)
 	a.leases.SetSize(a.width, mainH)
 	a.providers.SetSize(a.width, mainH)
@@ -645,10 +695,6 @@ func (a App) renderBreadcrumb() string {
 	// When detail views are added, non-active parent segments will precede.
 	_ = sep // used when multi-segment breadcrumbs are added
 	return " " + theme.BreadcrumbActive.Render(name)
-}
-
-func (a App) renderDashboard(h int) string {
-	return a.renderCentered(h, "akt - Akash Network")
 }
 
 func (a App) renderCentered(h int, text string) string {
