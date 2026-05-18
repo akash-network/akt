@@ -18,7 +18,9 @@ import (
 	monitorrpc "pkg.akt.dev/akt/internal/monitor/rpc"
 	monitorui "pkg.akt.dev/akt/internal/monitor/ui"
 	"pkg.akt.dev/akt/internal/tui/commands"
+	"pkg.akt.dev/akt/internal/tui/components"
 	"pkg.akt.dev/akt/internal/tui/views"
+	"pkg.akt.dev/akt/internal/ui/theme"
 
 	"pkg.akt.dev/go/util/pubsub"
 )
@@ -258,39 +260,40 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return a, tea.Batch(appCmds...)
 }
 
+// chromeHeight is the number of lines consumed by the shell chrome
+// (header, nav bar + hrule, breadcrumb, footer hrule + hints).
+// header=1, navBar=2 (tabs + hrule), breadcrumb=1, footer=2 (hrule + hints), newlines=4.
+const chromeHeight = 10
+
 // View implements tea.Model.
 func (a App) View() tea.View {
-	status := a.renderStatusBar()
+	footer := a.renderFooter()
 
-	// Height available for content above the status bar.
-	contentH := a.height - statusBarHeight
+	// Height available for content between chrome.
+	contentH := a.height - chromeHeight
 	if contentH < 1 {
 		contentH = 1
 	}
 
-	// Pin content to a fixed height so the status bar is always at
+	// Pin content to a fixed height so the footer is always at
 	// the very bottom of the terminal, regardless of how much (or
 	// how little) the active view renders.
 	pin := lipgloss.NewStyle().Height(contentH).MaxHeight(contentH)
 
-	// When the top view is active the embedded model renders its own
+	// When the monitor view is active the embedded model renders its own
 	// title/tab chrome. It already accounts for the reduced height
-	// (terminal - statusBarHeight). Append the unified status bar.
+	// (terminal - statusBarHeight). Append the unified footer.
 	if a.view == viewMonitor && a.monitorModel != nil && !a.palette.Active() {
 		monView := a.monitorModel.View()
-		content := pin.Render(monView.Content) + "\n" + status
+		content := pin.Render(monView.Content) + "\n" + footer
 		v := tea.NewView(content)
 		v.AltScreen = true
 		return v
 	}
 
 	header := a.renderHeader()
-
-	// Main area height = content minus header (1) and its newline (1).
-	mainH := contentH - 2
-	if mainH < 1 {
-		mainH = 1
-	}
+	navBar := a.renderNavBar()
+	breadcrumb := a.renderBreadcrumb()
 
 	var main string
 	switch a.view {
@@ -305,77 +308,79 @@ func (a App) View() tea.View {
 	case viewStaking:
 		main = a.staking.View()
 	case viewMonitor:
-		main = a.renderCentered(mainH, "No RPC endpoint configured.\nUse :consensus after setting up a context.")
+		main = a.renderCentered(contentH, "No RPC endpoint configured.\nUse :consensus after setting up a context.")
 	default:
-		main = a.renderDashboard(mainH)
+		main = a.renderDashboard(contentH)
 	}
 
 	if a.palette.Active() {
 		main = a.palette.View()
-		status = a.renderPaletteStatusBar()
+		footer = a.renderPaletteFooter()
 	}
 
-	v := tea.NewView(pin.Render(header+"\n"+main) + "\n" + status)
+	chrome := header + "\n" + navBar + "\n" + breadcrumb + "\n" + main
+	v := tea.NewView(pin.Render(chrome) + "\n" + footer)
 	v.AltScreen = true
 	return v
 }
 
-// ─── Status bar (3 lines, always at bottom) ──────────────────────────
+// ─── Footer (horizontal rule + hint pairs, always at bottom) ─────────
 
-func (a App) renderStatusBar() string {
-	line1Style := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252")).
-		Width(a.width)
-
-	line2Style := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240")).
-		Width(a.width)
-
-	line3Style := lipgloss.NewStyle().
-		Background(lipgloss.Color("236")).
-		Foreground(lipgloss.Color("252")).
-		Width(a.width).
-		Padding(0, 1)
-
-	var line1, line2 string
+func (a App) renderFooter() string {
+	var hints []components.HintPair
 
 	switch a.view {
-	case viewMonitor:
-		line1, line2 = a.monitorStatusLines()
+	case viewDashboard:
+		hints = []components.HintPair{
+			{Key: "1-6", Desc: "navigate"},
+			{Key: ":", Desc: "command"},
+			{Key: "?", Desc: "help"},
+			{Key: "D", Desc: "deploy", Accent: true},
+		}
 	case viewDeployments:
-		line1 = "Deployments"
-		line2 = "enter: detail  j/k: navigate"
+		hints = []components.HintPair{
+			{Key: "j/k", Desc: "move"},
+			{Key: "↵", Desc: "open"},
+			{Key: "l", Desc: "logs"},
+			{Key: "d", Desc: "close"},
+			{Key: "/", Desc: "search"},
+			{Key: "D", Desc: "new", Accent: true},
+		}
 	case viewLeases:
-		line1 = "Leases"
-		line2 = "enter: detail  j/k: navigate"
+		hints = []components.HintPair{
+			{Key: "j/k", Desc: "move"},
+			{Key: "↵", Desc: "detail"},
+			{Key: "esc", Desc: "back"},
+		}
 	case viewProviders:
-		line1 = "Providers"
-		line2 = "enter: detail  j/k: navigate"
+		hints = []components.HintPair{
+			{Key: "j/k", Desc: "move"},
+			{Key: "↵", Desc: "detail"},
+			{Key: "esc", Desc: "back"},
+		}
+	case viewMonitor:
+		hints = []components.HintPair{
+			{Key: "j/k", Desc: "move"},
+			{Key: "tab", Desc: "switch"},
+			{Key: "esc", Desc: "back"},
+		}
 	case viewGovernance:
-		line1 = "Governance"
-		line2 = "enter: detail  j/k: navigate"
+		hints = []components.HintPair{
+			{Key: "j/k", Desc: "move"},
+			{Key: "↵", Desc: "detail"},
+			{Key: "v", Desc: "vote", Accent: true},
+			{Key: "esc", Desc: "back"},
+		}
 	case viewStaking:
-		line1 = "Staking"
-		line2 = "enter: detail  j/k: navigate"
-	default:
-		line1 = "1: deployments  2: leases  3: providers  " +
-			a.keys.Monitor.Help().Key + ": monitor  5: governance  6: staking"
-		line2 = ""
+		hints = []components.HintPair{
+			{Key: "j/k", Desc: "move"},
+			{Key: "↵", Desc: "detail"},
+			{Key: "d", Desc: "delegate", Accent: true},
+			{Key: "esc", Desc: "back"},
+		}
 	}
 
-	// Line 3: global keybindings (omit palette hint in standalone mode).
-	var line3 string
-	if a.standalone {
-		line3 = "q: quit  " + a.keys.Quit.Help().Key + ": quit"
-	} else {
-		line3 = a.keys.Command.Help().Key + ": command  " +
-			a.keys.Back.Help().Key + ": back  " +
-			a.keys.Quit.Help().Key + ": quit"
-	}
-
-	return line1Style.Render(line1) + "\n" +
-		line2Style.Render(line2) + "\n" +
-		line3Style.Render(line3)
+	return components.Footer(a.width, hints)
 }
 
 // monitorStatusLines returns lines 1 and 2 for the status bar when the
@@ -410,28 +415,13 @@ func (a App) monitorStatusLines() (string, string) {
 	return line1, line2
 }
 
-func (a App) renderPaletteStatusBar() string {
-	line1Style := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252")).
-		Width(a.width)
-
-	line2Style := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240")).
-		Width(a.width)
-
-	line3Style := lipgloss.NewStyle().
-		Background(lipgloss.Color("236")).
-		Foreground(lipgloss.Color("252")).
-		Width(a.width).
-		Padding(0, 1)
-
-	line1 := a.keys.CursorDown.Help().Key + "/" + a.keys.CursorUp.Help().Key + ": navigate  " +
-		a.keys.Select.Help().Key + ": select"
-	line3 := a.keys.Back.Help().Key + ": close"
-
-	return line1Style.Render(line1) + "\n" +
-		line2Style.Render("") + "\n" +
-		line3Style.Render(line3)
+func (a App) renderPaletteFooter() string {
+	hints := []components.HintPair{
+		{Key: "↑/↓", Desc: "navigate"},
+		{Key: "↵", Desc: "select"},
+		{Key: "esc", Desc: "close"},
+	}
+	return components.Footer(a.width, hints)
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
@@ -465,8 +455,8 @@ func (a App) handleCommand(cmd string) (tea.Model, tea.Cmd) {
 }
 
 func (a *App) resize() {
-	// Main area for non-top views: total - header (1) - status (3) - newlines (2).
-	mainH := a.height - statusBarHeight - 3
+	// Main area for non-monitor views: total height minus chrome.
+	mainH := a.height - chromeHeight
 	if mainH < 1 {
 		mainH = 1
 	}
@@ -481,14 +471,104 @@ func (a *App) resize() {
 }
 
 func (a App) renderHeader() string {
-	style := lipgloss.NewStyle().
-		Bold(true).
-		Background(lipgloss.Color("62")).
-		Foreground(lipgloss.Color("230")).
-		Width(a.width).
-		Padding(0, 1)
+	appName := theme.HeaderAppName.Render("akt")
+	sep := theme.HeaderMeta.Render(" · ")
 
-	return style.Render("akt")
+	ctx := theme.HeaderContext.Render("prod") +
+		theme.HeaderMeta.Render(":akashnet-2")
+
+	acct := theme.HeaderContext.Render("alice") +
+		theme.HeaderMeta.Render(" akash1abc…def")
+
+	block := theme.HeaderMeta.Render("⎡ ") +
+		theme.HeaderValue.Render("18,234,567") +
+		theme.HeaderMeta.Render(" ⎤")
+
+	sync := theme.SyncOK.Render("● synced")
+
+	left := appName + sep + ctx + sep + acct
+	right := block + "  " + sync
+
+	innerW := a.width - 2 // account for HeaderStyle Padding(0,1)
+	gap := innerW - lipgloss.Width(left) - lipgloss.Width(right)
+	if gap < 1 {
+		gap = 1
+	}
+
+	return theme.HeaderStyle.Width(a.width).Render(
+		left + strings.Repeat(" ", gap) + right,
+	)
+}
+
+// navItems defines the primary navigation tabs.
+var navItems = []struct {
+	key  string
+	name string
+	view activeView
+}{
+	{"1", "Deployments", viewDeployments},
+	{"2", "Leases", viewLeases},
+	{"3", "Providers", viewProviders},
+	{"4", "Monitor", viewMonitor},
+	{"5", "Governance", viewGovernance},
+	{"6", "Staking", viewStaking},
+}
+
+func (a App) renderNavBar() string {
+	var parts []string
+	for _, nav := range navItems {
+		label := nav.key + " " + nav.name
+		if a.view == nav.view {
+			parts = append(parts, theme.NavTabActive.Render(label))
+		} else {
+			parts = append(parts, theme.NavTabInactive.Render(label))
+		}
+	}
+
+	// When on Dashboard, show "Dashboard" as active highlight instead of any tab.
+	if a.view == viewDashboard {
+		parts = append([]string{theme.NavTabActive.Render("Dashboard")}, parts...)
+	}
+
+	deployBtn := lipgloss.NewStyle().Foreground(theme.AccentRed).Render("D deploy")
+
+	bar := " " + strings.Join(parts, " ")
+	gap := a.width - lipgloss.Width(bar) - lipgloss.Width(deployBtn) - 1
+	if gap < 1 {
+		gap = 1
+	}
+	bar = bar + strings.Repeat(" ", gap) + deployBtn
+
+	return bar + "\n" + components.HRule(a.width)
+}
+
+func (a App) renderBreadcrumb() string {
+	sep := theme.BreadcrumbSeparator.Render(" / ")
+
+	var name string
+	switch a.view {
+	case viewDashboard:
+		name = "Dashboard"
+	case viewDeployments:
+		name = "Deployments"
+	case viewLeases:
+		name = "Leases"
+	case viewProviders:
+		name = "Providers"
+	case viewMonitor:
+		name = "Monitor"
+	case viewGovernance:
+		name = "Governance"
+	case viewStaking:
+		name = "Staking"
+	default:
+		name = "Dashboard"
+	}
+
+	// For now, single-segment breadcrumb (active).
+	// When detail views are added, non-active parent segments will precede.
+	_ = sep // used when multi-segment breadcrumbs are added
+	return " " + theme.BreadcrumbActive.Render(name)
 }
 
 func (a App) renderDashboard(h int) string {

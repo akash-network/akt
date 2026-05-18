@@ -51,31 +51,61 @@ func TestAppRenderDashboard(t *testing.T) {
 	golden.RequireEqual(t, a.renderDashboard(20))
 }
 
-func TestAppRenderStatusBar(t *testing.T) {
+func TestAppRenderFooter(t *testing.T) {
 	tests := map[string]struct {
-		view       activeView
-		standalone bool
+		view activeView
 	}{
-		"Dashboard":   {viewDashboard, false},
-		"Deployments": {viewDeployments, false},
-		"Leases":      {viewLeases, false},
-		"Providers":   {viewProviders, false},
-		"Monitor":     {viewMonitor, false},
-		"Governance":  {viewGovernance, false},
-		"Staking":     {viewStaking, false},
-		"Standalone":  {viewDashboard, true},
+		"Dashboard":   {viewDashboard},
+		"Deployments": {viewDeployments},
+		"Leases":      {viewLeases},
+		"Providers":   {viewProviders},
+		"Monitor":     {viewMonitor},
+		"Governance":  {viewGovernance},
+		"Staking":     {viewStaking},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			a := newTestApp(tc.view, tc.standalone)
-			golden.RequireEqual(t, a.renderStatusBar())
+			a := newTestApp(tc.view, false)
+			golden.RequireEqual(t, a.renderFooter())
 		})
 	}
 }
 
-func TestAppRenderPaletteStatusBar(t *testing.T) {
+func TestAppRenderPaletteFooter(t *testing.T) {
 	a := newTestApp(viewDashboard, false)
-	golden.RequireEqual(t, a.renderPaletteStatusBar())
+	golden.RequireEqual(t, a.renderPaletteFooter())
+}
+
+func TestAppRenderNavBar(t *testing.T) {
+	tests := map[string]struct {
+		view activeView
+	}{
+		"Dashboard":   {viewDashboard},
+		"Deployments": {viewDeployments},
+		"Monitor":     {viewMonitor},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			a := newTestApp(tc.view, false)
+			golden.RequireEqual(t, a.renderNavBar())
+		})
+	}
+}
+
+func TestAppRenderBreadcrumb(t *testing.T) {
+	tests := map[string]struct {
+		view activeView
+	}{
+		"Dashboard":   {viewDashboard},
+		"Deployments": {viewDeployments},
+		"Governance":  {viewGovernance},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			a := newTestApp(tc.view, false)
+			golden.RequireEqual(t, a.renderBreadcrumb())
+		})
+	}
 }
 
 func TestAppRenderCentered(t *testing.T) {
