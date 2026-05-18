@@ -1,12 +1,10 @@
 package ui
 
 import (
-	"fmt"
-
 	"charm.land/bubbles/v2/progress"
-	"charm.land/lipgloss/v2"
 
 	"pkg.akt.dev/akt/internal/glyphs"
+	"pkg.akt.dev/akt/internal/tui/components"
 	"pkg.akt.dev/akt/internal/ui/theme"
 )
 
@@ -42,65 +40,22 @@ var (
 	precommitBarColor = theme.ProgressPrecommit
 )
 
-// ProgressBar renders a progress bar with the given percentage (0-1) using bubbles/progress.
+// ProgressBar renders a progress bar with the given percentage (0-1).
+// Delegates to the shared tui/components implementation.
 func ProgressBar(percent float64, width int) string {
-	p := progress.New(
-		progress.WithColors(theme.ProgressPrimary),
-		progress.WithoutPercentage(),
-	)
-	p.SetWidth(width)
-	if percent < 0 {
-		percent = 0
-	}
-	if percent > 1 {
-		percent = 1
-	}
-	return p.ViewAs(percent)
+	return components.ProgressBar(percent, width)
 }
 
-// FormatPercent formats a percentage with color based on threshold
+// FormatPercent formats a percentage with color based on threshold.
+// Delegates to the shared tui/components implementation.
 func FormatPercent(percent float64) string {
-	pctStr := lipgloss.NewStyle().Width(6).Render(
-		fmt.Sprintf("%5.1f%%", percent*100),
-	)
-
-	if percent >= 0.667 {
-		return percentHighStyle.Render(pctStr)
-	}
-	return percentLowStyle.Render(pctStr)
+	return components.FormatPercent(percent)
 }
 
 // ProgressBarWithLabel renders a progress bar with a text label centered inside it.
+// Delegates to the shared tui/components implementation.
 func ProgressBarWithLabel(percent float64, width int, label string) string {
-	if percent < 0 {
-		percent = 0
-	}
-	if percent > 1 {
-		percent = 1
-	}
-
-	p := progress.New(
-		progress.WithColors(theme.ProgressPrimary),
-		progress.WithoutPercentage(),
-	)
-	p.SetWidth(width)
-	bar := p.ViewAs(percent)
-
-	// Overlay centered label on top of the bar
-	if len(label) > 0 && len(label) < width {
-		labelStart := (width - len(label)) / 2
-		// Build the overlaid version character by character
-		barRunes := []rune(bar)
-		labelRunes := []rune(label)
-		for i, r := range labelRunes {
-			pos := labelStart + i
-			if pos < len(barRunes) {
-				barRunes[pos] = r
-			}
-		}
-		return string(barRunes)
-	}
-	return bar
+	return components.ProgressBarWithLabel(percent, width, label)
 }
 
 // DoubleProgressBar renders two stacked progress bars: top for prevotes (green),
