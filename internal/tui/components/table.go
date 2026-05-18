@@ -64,6 +64,11 @@ func (t *ResourceTable) SetRows(rows []TableRow) {
 	t.ensureVisible()
 }
 
+// Width returns the current table width.
+func (t *ResourceTable) Width() int {
+	return t.width
+}
+
 // SetSize updates the available width and height for rendering.
 func (t *ResourceTable) SetSize(w, h int) {
 	t.width = w
