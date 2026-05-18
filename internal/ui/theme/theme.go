@@ -3,139 +3,331 @@
 // renders styled text should import colors and styles from here instead of
 // defining its own.
 //
-// The palette uses 256-color values so rendering is consistent across
-// terminals regardless of the active color scheme.
+// The palette uses a Zinc/neutral scale with true-color hex values and a
+// single Red accent. State colors (green, yellow) are used exclusively in
+// status tags.
 package theme
 
-import "charm.land/lipgloss/v2"
+import (
+	"strings"
 
-// ─── Color palette ───────────────────────────────────────────────────
-//
-// 256-color values (16-255) give deterministic rendering that does not
-// shift when the user switches terminal themes.
-
-var (
-	// Brand
-	ColorPrimary = lipgloss.Color("168") // Rose — Akash brand accent
-	ColorAccent  = lipgloss.Color("205") // Bright pink
-
-	// Semantic
-	ColorSuccess = lipgloss.Color("78")  // Seafoam green
-	ColorWarning = lipgloss.Color("220") // Gold / amber
-	ColorError   = lipgloss.Color("203") // Coral red
-
-	// Text
-	ColorText       = lipgloss.Color("252") // Light gray (default body text)
-	ColorBrightText = lipgloss.Color("255") // Near-white (emphasis)
-	ColorMuted      = lipgloss.Color("245") // Medium gray (secondary)
-	ColorDim        = lipgloss.Color("240") // Dark gray (tertiary / faint)
-
-	// UI chrome
-	ColorBorder    = lipgloss.Color("238") // Borders and separators
-	ColorHighlight = lipgloss.Color("62")  // Selection / header backgrounds
-
-	// Data accent colors
-	ColorCyan    = lipgloss.Color("80")  // Teal — precommit bars, links
-	ColorMagenta = lipgloss.Color("176") // Soft purple — special fields
-	ColorBlue    = lipgloss.Color("75")  // Cornflower — informational
+	"charm.land/lipgloss/v2"
 )
 
-// ─── Base styles ─────────────────────────────────────────────────────
+// ─── Zinc Scale ──────────────────────────────────────────────────────
 //
-// These are the building blocks. Packages may compose them further but
-// should never redefine the colors — only the layout (width, padding, etc.).
+// Shadcn Zinc scale mapped to hex. Every neutral color in the UI comes
+// from this set. Brighter values = more visual emphasis.
 
 var (
-	// Text emphasis
-	Bold    = lipgloss.NewStyle().Bold(true)
-	Dim     = lipgloss.NewStyle().Foreground(ColorDim)
-	Faint   = lipgloss.NewStyle().Faint(true)
-	Muted   = lipgloss.NewStyle().Foreground(ColorMuted)
+	Slate950 = lipgloss.Color("#09090b") // App background
+	Slate900 = lipgloss.Color("#18181b") // Card / panel / overlay background
+	Slate800 = lipgloss.Color("#27272a") // Elevated surface, selected row
+	Slate700 = lipgloss.Color("#3f3f46") // Borders, horizontal rules
+	Slate600 = lipgloss.Color("#52525b") // Muted borders, subtle dividers
+	Slate500 = lipgloss.Color("#71717a") // Column headers, muted labels
+	Slate400 = lipgloss.Color("#a1a1aa") // Secondary text, inactive nav
+	Slate300 = lipgloss.Color("#d4d4d8") // Body text, table values
+	Slate200 = lipgloss.Color("#e4e4e7") // Primary text, bold values
+	Slate100 = lipgloss.Color("#f4f4f5") // Headings, section titles
+	Slate50  = lipgloss.Color("#fafafa") // Maximum emphasis
+)
+
+// ─── Accent ──────────────────────────────────────────────────────────
+
+var (
+	AccentRed = lipgloss.Color("#ff4136") // Primary accent
+	RedDim    = lipgloss.Color("#b91c1c") // Muted accent (destructive tag border)
+	RedBg     = lipgloss.Color("#1c0a09") // Destructive pill background
+)
+
+// ─── State Colors ────────────────────────────────────────────────────
+
+var (
+	GreenColor  = lipgloss.Color("#22c55e") // active, open, bonded, passed
+	GreenDim    = lipgloss.Color("#166534") // Green state tag border
+	YellowColor = lipgloss.Color("#eab308") // paused, insufficient_funds, unbonding
+	YellowDim   = lipgloss.Color("#854d0e") // Yellow state tag border
+	BlueColor   = lipgloss.Color("#65b3ff")
+	PurpleColor = lipgloss.Color("#c08cff")
+)
+
+// ─── Typography ──────────────────────────────────────────────────────
+
+var (
+	Heading      = lipgloss.NewStyle().Foreground(Slate100).Bold(true)
+	PrimaryValue = lipgloss.NewStyle().Foreground(Slate200).Bold(true)
+	Body         = lipgloss.NewStyle().Foreground(Slate300)
+	Secondary    = lipgloss.NewStyle().Foreground(Slate400)
+	// Muted is defined below in the backward-compat section (Slate500 foreground).
+)
+
+// ─── Header Bar ──────────────────────────────────────────────────────
+
+var (
+	HeaderStyle   = lipgloss.NewStyle().Background(Slate900).Padding(0, 1)
+	HeaderAppName = lipgloss.NewStyle().Foreground(AccentRed).Bold(true)
+	HeaderContext = lipgloss.NewStyle().Foreground(Slate200).Bold(true)
+	HeaderMeta    = lipgloss.NewStyle().Foreground(Slate500)
+	HeaderValue   = lipgloss.NewStyle().Foreground(Slate200)
+	SyncOK        = lipgloss.NewStyle().Foreground(GreenColor)
+)
+
+// ─── Nav Tabs ────────────────────────────────────────────────────────
+
+var (
+	NavTabActive = lipgloss.NewStyle().
+			Background(AccentRed).
+			Foreground(Slate950).
+			Bold(true).
+			Padding(0, 1)
+
+	NavTabInactive = lipgloss.NewStyle().
+			Foreground(Slate400).
+			Padding(0, 1)
+)
+
+// ─── Breadcrumb ──────────────────────────────────────────────────────
+
+var (
+	BreadcrumbSegment   = lipgloss.NewStyle().Foreground(Slate500)
+	BreadcrumbActive    = lipgloss.NewStyle().Foreground(Slate200).Bold(true)
+	BreadcrumbSeparator = lipgloss.NewStyle().Foreground(Slate600)
+)
+
+// ─── Footer ──────────────────────────────────────────────────────────
+
+var (
+	FooterKey  = lipgloss.NewStyle().Foreground(Slate400).Bold(true)
+	FooterDesc = lipgloss.NewStyle().Foreground(Slate600)
+)
+
+// ─── Table ───────────────────────────────────────────────────────────
+
+var (
+	TableHeader      = lipgloss.NewStyle().Foreground(Slate500)
+	TableRow         = lipgloss.NewStyle().Foreground(Slate300)
+	TableRowSelected = lipgloss.NewStyle().Background(Slate800).Foreground(Slate200).Bold(true)
+	TableCursor      = lipgloss.NewStyle().Foreground(AccentRed).Bold(true)
+)
+
+// ─── KV Detail ───────────────────────────────────────────────────────
+
+var (
+	SectionTitle = lipgloss.NewStyle().Foreground(Slate100).Bold(true)
+	SectionRule  = lipgloss.NewStyle().Foreground(AccentRed)
+	KVLabel      = lipgloss.NewStyle().Foreground(Slate500).Width(16)
+	KVValue      = lipgloss.NewStyle().Foreground(Slate200)
+)
+
+// ─── Panel / Card ────────────────────────────────────────────────────
+
+var (
+	PanelBorder = lipgloss.NewStyle().Foreground(Slate700)
+	PanelBg     = lipgloss.NewStyle().Background(Slate900)
+)
+
+// ─── State Tags ──────────────────────────────────────────────────────
+
+var (
+	StateGreen  = lipgloss.NewStyle().Foreground(GreenColor)
+	StateYellow = lipgloss.NewStyle().Foreground(YellowColor)
+	StateClosed = lipgloss.NewStyle().Foreground(Slate500)
+)
+
+// ─── Overlay ─────────────────────────────────────────────────────────
+
+var (
+	OverlayBg     = lipgloss.NewStyle().Background(Slate900)
+	OverlayBorder = lipgloss.NewStyle().Foreground(Slate700)
+)
+
+// ─── Buttons ─────────────────────────────────────────────────────────
+
+var (
+	ButtonPrimary   = lipgloss.NewStyle().Background(AccentRed).Foreground(Slate950).Bold(true)
+	ButtonSecondary = lipgloss.NewStyle().Background(Slate800).Foreground(Slate300)
+)
+
+// ─── Progress Bar Colors ─────────────────────────────────────────────
+
+var (
+	BarFilled = lipgloss.NewStyle().Foreground(Slate200)
+	BarEmpty  = lipgloss.NewStyle().Foreground(Slate700)
+)
+
+// ─── Spinner ─────────────────────────────────────────────────────────
+
+var (
+	SpinnerStyle = lipgloss.NewStyle().Foreground(AccentRed)
+)
+
+// ─── Layout Helpers ──────────────────────────────────────────────────
+
+// HRule renders a full-width horizontal rule in Slate700.
+func HRule(w int) string {
+	return lipgloss.NewStyle().Foreground(Slate700).Render(strings.Repeat("─", w))
+}
+
+// ─── Backward-Compatible Aliases ─────────────────────────────────────
+//
+// The names below were exported by the previous 256-color theme. They are
+// preserved so that existing packages (monitor, pretty output, TUI views)
+// continue to compile. Each alias maps to the closest Zinc-scale or accent
+// equivalent.
+
+var (
+	// Deprecated: use AccentRed instead.
+	ColorPrimary = AccentRed
+	// Deprecated: use AccentRed instead.
+	ColorAccent = AccentRed
+
+	// Deprecated: use GreenColor instead.
+	ColorSuccess = GreenColor
+	// Deprecated: use YellowColor instead.
+	ColorWarning = YellowColor
+	// Deprecated: use AccentRed instead.
+	ColorError = AccentRed
+
+	// Deprecated: use Slate300 instead.
+	ColorText = Slate300
+	// Deprecated: use Slate200 instead.
+	ColorBrightText = Slate200
+	// Deprecated: use Slate500 instead.
+	ColorMuted = Slate500
+	// Deprecated: use Slate400 instead.
+	ColorDim = Slate400
+
+	// Deprecated: use Slate700 instead.
+	ColorBorder = Slate700
+	// Deprecated: use Slate800 instead.
+	ColorHighlight = Slate800
+
+	// Deprecated: use BlueColor instead.
+	ColorCyan = BlueColor
+	// Deprecated: use PurpleColor instead.
+	ColorMagenta = PurpleColor
+	// Deprecated: use BlueColor instead.
+	ColorBlue = BlueColor
+)
+
+// ─── Backward-Compatible Style Aliases ───────────────────────────────
+
+var (
+	// Deprecated: use Heading instead.
+	Bold = lipgloss.NewStyle().Bold(true)
+	// Deprecated: use Secondary instead.
+	Dim = lipgloss.NewStyle().Foreground(Slate400)
+	// Deprecated: use Secondary instead.
+	Faint = lipgloss.NewStyle().Faint(true)
+	// Muted style — Foreground(Slate500). Also serves as the canonical
+	// "muted" typography level.
+	Muted = lipgloss.NewStyle().Foreground(Slate500)
+	// Deprecated: use SectionTitle instead.
 	Section = lipgloss.NewStyle().Bold(true).Underline(true)
 
-	// Semantic text
-	Success = lipgloss.NewStyle().Foreground(ColorSuccess)
-	Warning = lipgloss.NewStyle().Foreground(ColorWarning)
-	Error   = lipgloss.NewStyle().Foreground(ColorError).Bold(true)
+	// Deprecated: use StateGreen instead.
+	Success = lipgloss.NewStyle().Foreground(GreenColor)
+	// Deprecated: use StateYellow instead.
+	Warning = lipgloss.NewStyle().Foreground(YellowColor)
+	// Deprecated: use SectionRule or AccentRed instead.
+	Error = lipgloss.NewStyle().Foreground(AccentRed).Bold(true)
 
-	// Named color styles (for direct use in formatters)
-	Green   = lipgloss.NewStyle().Foreground(ColorSuccess)
-	Yellow  = lipgloss.NewStyle().Foreground(ColorWarning)
-	Red     = lipgloss.NewStyle().Foreground(ColorError)
-	Gray    = Dim
-	Cyan    = lipgloss.NewStyle().Foreground(ColorCyan)
-	Magenta = lipgloss.NewStyle().Foreground(ColorMagenta)
-	Blue    = lipgloss.NewStyle().Foreground(ColorBlue)
+	// Deprecated: use StateGreen instead.
+	Green = lipgloss.NewStyle().Foreground(GreenColor)
+	// Deprecated: use StateYellow instead.
+	Yellow = lipgloss.NewStyle().Foreground(YellowColor)
+	// Deprecated: use SectionRule or AccentRed-based styles instead.
+	Red = lipgloss.NewStyle().Foreground(AccentRed)
+	// Deprecated: use Dim instead.
+	Gray = lipgloss.NewStyle().Foreground(Slate400)
+	// Deprecated: use BlueColor-based style instead.
+	Cyan = lipgloss.NewStyle().Foreground(BlueColor)
+	// Deprecated: use PurpleColor-based style instead.
+	Magenta = lipgloss.NewStyle().Foreground(PurpleColor)
+	// Deprecated: use BlueColor-based style instead.
+	Blue = lipgloss.NewStyle().Foreground(BlueColor)
 
-	// KV / label styles (used by pretty.KV and monitor detail views)
-	Key   = lipgloss.NewStyle().Foreground(ColorMuted)
-	Label = lipgloss.NewStyle().Foreground(ColorMuted)
-	Value = lipgloss.NewStyle().Bold(true).Foreground(ColorBrightText)
+	// Deprecated: use KVLabel instead.
+	Key = lipgloss.NewStyle().Foreground(Slate500)
+	// Deprecated: use KVLabel instead.
+	Label = lipgloss.NewStyle().Foreground(Slate500)
+	// Deprecated: use KVValue instead.
+	Value = lipgloss.NewStyle().Bold(true).Foreground(Slate200)
 
-	// Table header
-	Header = lipgloss.NewStyle().Bold(true).Foreground(ColorDim)
+	// Deprecated: use TableHeader instead.
+	Header = lipgloss.NewStyle().Bold(true).Foreground(Slate500)
 
-	// Section / panel headers
+	// Deprecated: use SectionTitle instead.
 	SectionHeader = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(ColorPrimary).
+			Foreground(AccentRed).
 			BorderStyle(lipgloss.NormalBorder()).
 			BorderBottom(true).
-			BorderForeground(ColorBorder).
+			BorderForeground(Slate700).
 			PaddingBottom(1).
 			MarginBottom(1)
 
-	// Title bar
+	// Deprecated: use Heading instead.
 	Title = lipgloss.NewStyle().
 		Bold(true).
-		Foreground(ColorAccent).
+		Foreground(AccentRed).
 		MarginBottom(1)
 
-	// Tab bar
+	// Deprecated: use NavTabActive instead.
 	TabActive = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(ColorBrightText).
-			Background(ColorPrimary).
+			Foreground(Slate950).
+			Background(AccentRed).
 			Padding(0, 1)
 
+	// Deprecated: use NavTabInactive instead.
 	TabInactive = lipgloss.NewStyle().
-			Foreground(ColorMuted).
+			Foreground(Slate400).
 			Padding(0, 1)
 
-	// Selection / highlighting
+	// Deprecated: use PrimaryValue instead.
 	Highlight = lipgloss.NewStyle().
-			Foreground(ColorBrightText).
+			Foreground(Slate200).
 			Bold(true)
 
-	// Vote / signing indicators
-	VoteYes = lipgloss.NewStyle().Foreground(ColorSuccess)
-	VoteNo  = lipgloss.NewStyle().Foreground(ColorError)
+	// Deprecated: use StateGreen instead.
+	VoteYes = lipgloss.NewStyle().Foreground(GreenColor)
+	// Deprecated: use AccentRed-based style instead.
+	VoteNo = lipgloss.NewStyle().Foreground(AccentRed)
 
-	// Grid dots (version distribution, vote grid)
-	GridVoted    = lipgloss.NewStyle().Foreground(ColorSuccess)
-	GridNotVoted = lipgloss.NewStyle().Foreground(ColorMuted)
+	// Deprecated: use StateGreen instead.
+	GridVoted = lipgloss.NewStyle().Foreground(GreenColor)
+	// Deprecated: use Muted instead.
+	GridNotVoted = lipgloss.NewStyle().Foreground(Slate500)
 
-	// Proposer / special role
-	Proposer = lipgloss.NewStyle().Foreground(ColorWarning).Bold(true)
+	// Deprecated: use StateYellow instead.
+	Proposer = lipgloss.NewStyle().Foreground(YellowColor).Bold(true)
 
-	// Moniker / entity name
-	Moniker = lipgloss.NewStyle().Foreground(ColorText)
+	// Deprecated: use Body instead.
+	Moniker = lipgloss.NewStyle().Foreground(Slate300)
 
-	// Detail view
-	DetailHeader = lipgloss.NewStyle().Bold(true).Foreground(ColorPrimary)
-	DetailLabel  = lipgloss.NewStyle().Foreground(ColorMuted).Width(10)
-	DetailValue  = lipgloss.NewStyle().Foreground(ColorText)
+	// Deprecated: use SectionTitle instead.
+	DetailHeader = lipgloss.NewStyle().Bold(true).Foreground(AccentRed)
+	// Deprecated: use KVLabel instead.
+	DetailLabel = lipgloss.NewStyle().Foreground(Slate500).Width(10)
+	// Deprecated: use KVValue instead.
+	DetailValue = lipgloss.NewStyle().Foreground(Slate300)
 
-	// Progress bar colors (passed to bubbles/progress)
-	ProgressPrimary   = ColorPrimary
-	ProgressSuccess   = ColorSuccess
-	ProgressPrecommit = ColorCyan
+	// Deprecated: use AccentRed instead.
+	ProgressPrimary = AccentRed
+	// Deprecated: use GreenColor instead.
+	ProgressSuccess = GreenColor
+	// Deprecated: use BlueColor instead.
+	ProgressPrecommit = BlueColor
 
-	// Percentage thresholds
-	PercentHigh = lipgloss.NewStyle().Bold(true).Foreground(ColorSuccess)
-	PercentLow  = lipgloss.NewStyle().Foreground(ColorWarning)
+	// Deprecated: use StateGreen instead.
+	PercentHigh = lipgloss.NewStyle().Bold(true).Foreground(GreenColor)
+	// Deprecated: use StateYellow instead.
+	PercentLow = lipgloss.NewStyle().Foreground(YellowColor)
 
-	// Status bar
-	StatusBar = lipgloss.NewStyle().Foreground(ColorMuted).MarginTop(1)
-	HelpBar   = lipgloss.NewStyle().Foreground(ColorMuted).MarginTop(1)
+	// Deprecated: use FooterDesc instead.
+	StatusBar = lipgloss.NewStyle().Foreground(Slate500).MarginTop(1)
+	// Deprecated: use FooterDesc instead.
+	HelpBar = lipgloss.NewStyle().Foreground(Slate500).MarginTop(1)
 )
