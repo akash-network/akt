@@ -78,6 +78,14 @@ func DefaultRegistry() *Registry {
 
 	// Action commands.
 	r.Register(Command{Name: "Deploy", Description: "Create new deployment", Category: "action"})
+	r.Register(Command{Name: "Deploy from SDL", Description: "Create deployment from SDL file", Category: "action"})
+	r.Register(Command{Name: "Tail Logs", Description: "Tail logs for deployment", Category: "action", Aliases: []string{"logs"}})
+	r.Register(Command{Name: "Open Shell", Description: "Open shell in deployment", Category: "action", Aliases: []string{"shell"}})
+
+	// Context commands.
+	r.Register(Command{Name: "Wallet Balance", Description: "Show wallet balance", Category: "context"})
+	r.Register(Command{Name: "Switch Wallet", Description: "Switch wallet account", Category: "context"})
+	r.Register(Command{Name: "Switch RPC", Description: "Switch RPC endpoint", Category: "context"})
 
 	// Application commands.
 	r.Register(Command{Name: "Quit", Description: "Quit application", Category: "app", Aliases: []string{"q", "exit"}})

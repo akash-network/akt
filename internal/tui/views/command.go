@@ -10,6 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"pkg.akt.dev/akt/internal/tui/commands"
+	"pkg.akt.dev/akt/internal/ui/theme"
 )
 
 // CommandSubmitMsg is sent when the user selects a command from the palette.
@@ -44,10 +45,12 @@ type CommandPalette struct {
 // and using the provided keybindings.
 func NewCommandPalette(reg *commands.Registry, keys PaletteKeys) CommandPalette {
 	ti := textinput.New()
-	ti.Prompt = ":"
+	ti.Prompt = ": "
 	ti.CharLimit = 128
 	s := ti.Styles()
-	s.Focused.Placeholder = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+	s.Focused.Prompt = lipgloss.NewStyle().Foreground(theme.AccentRed).Bold(true)
+	s.Focused.Placeholder = lipgloss.NewStyle().Foreground(theme.Slate500)
+	s.Focused.Text = lipgloss.NewStyle().Foreground(theme.Slate200)
 	ti.SetStyles(s)
 
 	return CommandPalette{
@@ -170,7 +173,7 @@ func (p CommandPalette) View() string {
 	inputLine := p.input.View()
 
 	separator := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240")).
+		Foreground(theme.Slate700).
 		Width(innerW).
 		Render(strings.Repeat("─", innerW))
 
@@ -187,14 +190,14 @@ func (p CommandPalette) View() string {
 
 	selectedStyle := lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color("230")).
-		Background(lipgloss.Color("62"))
+		Foreground(theme.Slate100).
+		Background(theme.Slate800)
 
 	normalStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("252"))
+		Foreground(theme.Slate300)
 
 	dimStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("240"))
+		Foreground(theme.Slate500)
 
 	for i, cmd := range visible {
 		name := truncate(cmd.Name, nameW)
@@ -218,11 +221,19 @@ func (p CommandPalette) View() string {
 		listRows = append(listRows, dimStyle.Render("  no matching commands"))
 	}
 
-	content := inputLine + "\n" + separator + "\n" + strings.Join(listRows, "\n")
+	// Footer hints.
+	hintKey := lipgloss.NewStyle().Foreground(theme.Slate400).Bold(true)
+	hintDesc := lipgloss.NewStyle().Foreground(theme.Slate600)
+	footer := hintKey.Render("↑↓") + hintDesc.Render(" navigate  ") +
+		hintKey.Render("↵") + hintDesc.Render(" select  ") +
+		hintKey.Render("esc") + hintDesc.Render(" close")
+
+	content := inputLine + "\n" + separator + "\n" + strings.Join(listRows, "\n") + "\n" + separator + "\n" + footer
 
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
-		BorderForeground(lipgloss.Color("62")).
+		BorderForeground(theme.Slate700).
+		Background(theme.Slate900).
 		Padding(1, 2).
 		Width(boxW)
 
