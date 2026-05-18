@@ -15,10 +15,10 @@ import (
 // consistent.
 var (
 	// Styles — aliases into the shared theme.
-	titleStyle        = theme.Title
-	headerStyle       = theme.SectionHeader
-	labelStyle        = theme.Label.Width(12)
-	valueStyle        = theme.Value
+	titleStyle        = theme.Heading
+	headerStyle       = theme.SectionTitle
+	labelStyle        = theme.KVLabel.Width(12)
+	valueStyle        = theme.KVValue
 	percentLowStyle   = theme.PercentLow
 	percentHighStyle  = theme.PercentHigh
 	gridVotedStyle    = theme.GridVoted
@@ -28,13 +28,13 @@ var (
 	statusBarStyle    = theme.StatusBar
 	mutedStyle        = theme.Muted
 	proposerStyle     = theme.Proposer
-	tabActiveStyle    = theme.TabActive
-	tabInactiveStyle  = theme.TabInactive
+	tabActiveStyle    = theme.NavTabActive
+	tabInactiveStyle  = theme.NavTabInactive
 	monikerStyle      = theme.Moniker
 	highlightStyle    = theme.Highlight
-	detailHeaderStyle = theme.DetailHeader
-	detailLabelStyle  = theme.DetailLabel
-	detailValueStyle  = theme.DetailValue
+	detailHeaderStyle = theme.SectionTitle
+	detailLabelStyle  = theme.KVLabel
+	detailValueStyle  = theme.KVValue
 	voteYesStyle      = theme.VoteYes
 	voteNoStyle       = theme.VoteNo
 

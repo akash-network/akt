@@ -1,24 +1,17 @@
-                                              [1;38;5;205makt monitor - Akash Network[m                                               
-                                                                                                                        
- [38;5;245mNetwork[m   [48;5;168m [m[1;38;5;255;48;5;168mProvider[m[48;5;168m [m   [38;5;245mOracle/BME[m                                                                                      
+                                              [1;38;2;244;244;245makt monitor - Akash Network[m                                               
+ [38;2;161;161;170mNetwork[m   [48;2;255;65;54m [m[1;38;2;9;9;11;48;2;255;65;54mProvider[m[48;2;255;65;54m [m   [38;2;161;161;170mOracle/BME[m                                                                                      
 
-[1;38;5;168mProvider Version Distribution[m
-                             
-[38;5;238m─────────────────────────────[m
-                             
-[1;38;5;220m> [m0.6.4        [38;5;78m**[m   2 ( 40.0%)
-  0.6.3        [38;5;245moo[m   2 ( 40.0%)
-  0.6.2        [38;5;245mo[m   1 ( 20.0%)
+[1;38;2;244;244;245mProvider Version Distribution[m
+[1;38;2;234;179;8m> [m0.6.4        [38;2;34;197;94m**[m   2 ( 40.0%)
+  0.6.3        [38;2;113;113;122moo[m   2 ( 40.0%)
+  0.6.2        [38;2;113;113;122mo[m   1 ( 20.0%)
 
-[38;5;245m← / → or h/l: select version[m
+[38;2;113;113;122m← / → or h/l: select version[m
 
-[1;38;5;168mProviders (5 total, 2 on 0.6.4)[m
-                               
-[38;5;238m───────────────────────────────[m
-                               
-[38;5;245m#   [m[38;5;245mProvider                            [m[38;5;245mVersion       [m[38;5;245mCPU         [m[38;5;245mMemory      [m[38;5;245mGPU               [m[38;5;245mLoc [m
+[1;38;2;244;244;245mProviders (5 total, 2 on 0.6.4)[m
+[38;2;113;113;122m#   [m[38;2;113;113;122mProvider                            [m[38;2;113;113;122mVersion       [m[38;2;113;113;122mCPU         [m[38;2;113;113;122mMemory      [m[38;2;113;113;122mGPU               [m[38;2;113;113;122mLoc [m
 
                                                                                                                         
-[38;5;245mq: quit | Tab/1-3: switch | j/k: select | Enter: expand | Esc: collapse[m                                                 
+[38;2;113;113;122mq: quit | Tab/1-3: switch | j/k: select | Enter: expand | Esc: collapse[m                                                 
                                                                                                                         
-[38;5;245mRPC: https://rpc.akashnet.net:443 [WS][m                                                                                  
+[38;2;113;113;122mRPC: https://rpc.akashnet.net:443 [WS][m                                                                                  
