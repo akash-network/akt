@@ -9,7 +9,8 @@ import (
 	"pkg.akt.dev/akt/internal/ui/theme"
 )
 
-const toastDuration = 2500 * time.Millisecond
+// ToastDuration is how long a toast notification is displayed before expiring.
+const ToastDuration = 2500 * time.Millisecond
 
 // ToastTone controls the icon and border color of a toast notification.
 type ToastTone int
@@ -41,7 +42,7 @@ func NewToast(message string, tone ToastTone) Toast {
 
 // Expired reports whether the toast has exceeded its display duration.
 func (t Toast) Expired() bool {
-	return time.Since(t.CreatedAt) >= toastDuration
+	return time.Since(t.CreatedAt) >= ToastDuration
 }
 
 // toneStyle returns the icon string and border color for the toast's tone.
