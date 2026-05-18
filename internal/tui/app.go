@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
@@ -80,6 +81,7 @@ type App struct {
 	deploymentDetail views.DeploymentDetailView
 	logViewer        views.LogViewer
 	confirmDialog    components.ConfirmDialog
+	helpOverlay      views.HelpOverlay
 	toast            *components.Toast
 
 	// monitorModel is the real-time monitor from internal/monitor/ui.
@@ -122,6 +124,7 @@ func newApp(cfg Config, topModel tea.Model) App {
 		detail:           views.NewDetailView(),
 		deploymentDetail: views.NewDeploymentDetailView(),
 		logViewer:        views.NewLogViewer(),
+		helpOverlay:      views.NewHelpOverlay(),
 		palette: views.NewCommandPalette(reg, views.PaletteKeys{
 			CursorUp:   km.CursorUp,
 			CursorDown: km.CursorDown,
@@ -213,6 +216,10 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case components.CancelMsg:
 		// Dialog cancelled — no action needed, dialog already closed itself.
+		return a, nil
+
+	case components.ToastExpiredMsg:
+		a.toast = nil
 		return a, nil
 
 	case views.CommandSubmitMsg:
@@ -313,6 +320,20 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tea.Batch(appCmds...)
 	}
 
+	// Help overlay intercepts keys when active.
+	if a.helpOverlay.Active() {
+		if kmsg, ok := msg.(tea.KeyPressMsg); ok {
+			if key.Matches(kmsg, a.keys.Quit) {
+				return a, tea.Quit
+			}
+			if kmsg.String() == "esc" {
+				a.helpOverlay.Close()
+			}
+			return a, tea.Batch(appCmds...)
+		}
+		return a, tea.Batch(appCmds...)
+	}
+
 	// Palette takes priority for key messages when active.
 	if a.palette.Active() {
 		if kmsg, ok := msg.(tea.KeyPressMsg); ok {
@@ -336,6 +357,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Command palette can always be opened.
 		if key.Matches(kmsg, a.keys.Command) || key.Matches(kmsg, a.keys.CommandSearch) {
 			a.palette.Open()
+			return a, nil
+		}
+
+		// Help overlay.
+		if key.Matches(kmsg, a.keys.Help) {
+			a.helpOverlay.Open(a.viewName())
 			return a, nil
 		}
 
@@ -547,9 +574,19 @@ func (a App) View() tea.View {
 		main = a.confirmDialog.View()
 	}
 
+	// Overlay: help overlay renders on top of content when active.
+	if a.helpOverlay.Active() {
+		main = a.helpOverlay.View()
+	}
+
 	if a.palette.Active() {
 		main = a.palette.View()
 		footer = a.renderPaletteFooter()
+	}
+
+	// Toast notification overlays the bottom of the content area.
+	if a.toast != nil && !a.toast.Expired() {
+		main = main + "\n" + a.toast.View()
 	}
 
 	chrome := header + "\n" + navBar + "\n" + breadcrumb + "\n" + main
@@ -719,6 +756,7 @@ func (a *App) resize() {
 	a.deploymentDetail.SetSize(a.width, mainH)
 	a.logViewer.SetSize(a.width, mainH)
 	a.confirmDialog.SetSize(a.width, mainH)
+	a.helpOverlay.SetSize(a.width, mainH)
 	a.palette.SetSize(a.width, mainH)
 }
 
@@ -850,6 +888,39 @@ func (a App) renderBreadcrumb() string {
 	}
 
 	return " " + theme.BreadcrumbActive.Render(name)
+}
+
+// showToast creates a toast notification and returns the expiry tick command.
+func (a *App) showToast(msg string, tone components.ToastTone) tea.Cmd {
+	t := components.NewToast(msg, tone)
+	a.toast = &t
+	return tea.Tick(components.ToastDuration, func(time.Time) tea.Msg {
+		return components.ToastExpiredMsg{}
+	})
+}
+
+// viewName returns a human-readable name for the current view.
+func (a App) viewName() string {
+	switch a.view {
+	case viewDashboard:
+		return "Dashboard"
+	case viewDeployments:
+		return "Deployments"
+	case viewLeases:
+		return "Leases"
+	case viewProviders:
+		return "Providers"
+	case viewMonitor:
+		return "Monitor"
+	case viewGovernance:
+		return "Governance"
+	case viewStaking:
+		return "Staking"
+	case viewDeploymentDetail:
+		return "Deployment Detail"
+	default:
+		return ""
+	}
 }
 
 func (a App) renderCentered(h int, text string) string {

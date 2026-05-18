@@ -38,6 +38,7 @@ func newTestApp(view activeView, standalone bool) App {
 		detail:           views.NewDetailView(),
 		deploymentDetail: views.NewDeploymentDetailView(),
 		logViewer:        views.NewLogViewer(),
+		helpOverlay:      views.NewHelpOverlay(),
 		palette: views.NewCommandPalette(reg, views.PaletteKeys{
 			CursorUp:   km.CursorUp,
 			CursorDown: km.CursorDown,
