@@ -72,9 +72,9 @@ type App struct {
 	dashboard   views.Dashboard
 	deployments views.DeploymentsView
 	leases      views.LeasesView
-	providers   views.ListView
-	governance  views.ListView
-	staking     views.ListView
+	providers   views.ProvidersView
+	governance  views.GovernanceView
+	staking     views.StakingView
 	detail      views.DetailView
 
 	// monitorModel is the real-time monitor from internal/monitor/ui.
@@ -111,21 +111,9 @@ func newApp(cfg Config, topModel tea.Model) App {
 		dashboard:   dash,
 		deployments: views.NewDeploymentsView(),
 		leases:      views.NewLeasesView(),
-		providers: views.NewListView(views.ListViewConfig{
-			Title:   "Providers",
-			Columns: []views.ListColumn{{Header: "OWNER"}, {Header: "HOST URI"}, {Header: "EMAIL", Width: 20}},
-			Empty:   "No providers found.",
-		}),
-		governance: views.NewListView(views.ListViewConfig{
-			Title:   "Governance Proposals",
-			Columns: []views.ListColumn{{Header: "ID", Width: 6}, {Header: "TITLE"}, {Header: "STATUS", Width: 16}, {Header: "VOTING END", Width: 18}},
-			Empty:   "No proposals.",
-		}),
-		staking: views.NewListView(views.ListViewConfig{
-			Title:   "Validators",
-			Columns: []views.ListColumn{{Header: "MONIKER"}, {Header: "STATUS", Width: 12}, {Header: "VOTING POWER", Width: 16}, {Header: "COMMISSION", Width: 12}},
-			Empty:   "No validators found.",
-		}),
+		providers:  views.NewProvidersView(),
+		governance: views.NewGovernanceView(),
+		staking:    views.NewStakingView(),
 		detail: views.NewDetailView(),
 		palette: views.NewCommandPalette(reg, views.PaletteKeys{
 			CursorUp:   km.CursorUp,
@@ -301,6 +289,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.deployments.CursorUp()
 			case viewLeases:
 				a.leases.CursorUp()
+			case viewProviders:
+				a.providers.CursorUp()
+			case viewGovernance:
+				a.governance.CursorUp()
+			case viewStaking:
+				a.staking.CursorUp()
 			}
 			return a, nil
 		case key.Matches(kmsg, a.keys.CursorDown):
@@ -309,6 +303,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.deployments.CursorDown()
 			case viewLeases:
 				a.leases.CursorDown()
+			case viewProviders:
+				a.providers.CursorDown()
+			case viewGovernance:
+				a.governance.CursorDown()
+			case viewStaking:
+				a.staking.CursorDown()
 			}
 			return a, nil
 		}

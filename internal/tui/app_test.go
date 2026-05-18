@@ -32,9 +32,9 @@ func newTestApp(view activeView, standalone bool) App {
 		dashboard:   dash,
 		deployments: views.NewDeploymentsView(),
 		leases:      views.NewLeasesView(),
-		providers:   views.NewListView(views.ListViewConfig{Title: "Providers", Empty: "No providers"}),
-		governance:  views.NewListView(views.ListViewConfig{Title: "Governance", Empty: "No proposals"}),
-		staking:     views.NewListView(views.ListViewConfig{Title: "Staking", Empty: "No validators"}),
+		providers:   views.NewProvidersView(),
+		governance:  views.NewGovernanceView(),
+		staking:     views.NewStakingView(),
 		detail:      views.NewDetailView(),
 		palette: views.NewCommandPalette(reg, views.PaletteKeys{
 			CursorUp:   km.CursorUp,
