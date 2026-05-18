@@ -28,6 +28,17 @@ type KeyMap struct {
 	Monitor     key.Binding
 	Governance  key.Binding
 	Staking     key.Binding
+
+	// View-specific actions
+	Close   key.Binding // d — close deployment/unbond
+	Update  key.Binding // u — update deployment/undelegate
+	Logs    key.Binding // l — view logs
+	Shell   key.Binding // s — open shell
+	Vote    key.Binding // v — vote on proposal
+	Deploy  key.Binding // D — new deployment
+	Filter  key.Binding // f — cycle state filter
+	Search  key.Binding // / — fuzzy search
+	TabNext key.Binding // Tab — next sub-tab (detail view)
 }
 
 // DefaultKeyMap returns the vim-style default keybindings.
@@ -89,6 +100,42 @@ func DefaultKeyMap() KeyMap {
 			key.WithKeys("6"),
 			key.WithHelp("6", "staking"),
 		),
+		Close: key.NewBinding(
+			key.WithKeys("d"),
+			key.WithHelp("d", "close"),
+		),
+		Update: key.NewBinding(
+			key.WithKeys("u"),
+			key.WithHelp("u", "update"),
+		),
+		Logs: key.NewBinding(
+			key.WithKeys("l"),
+			key.WithHelp("l", "logs"),
+		),
+		Shell: key.NewBinding(
+			key.WithKeys("s"),
+			key.WithHelp("s", "shell"),
+		),
+		Vote: key.NewBinding(
+			key.WithKeys("v"),
+			key.WithHelp("v", "vote"),
+		),
+		Deploy: key.NewBinding(
+			key.WithKeys("D"),
+			key.WithHelp("D", "deploy"),
+		),
+		Filter: key.NewBinding(
+			key.WithKeys("f"),
+			key.WithHelp("f", "filter"),
+		),
+		Search: key.NewBinding(
+			key.WithKeys("/"),
+			key.WithHelp("/", "search"),
+		),
+		TabNext: key.NewBinding(
+			key.WithKeys("tab"),
+			key.WithHelp("tab", "next tab"),
+		),
 	}
 }
 
@@ -122,6 +169,15 @@ func KeyMapFromConfig(v *viper.Viper) KeyMap {
 		"monitor":         {&km.Monitor, "monitor"},
 		"governance":      {&km.Governance, "governance"},
 		"staking":         {&km.Staking, "staking"},
+		"close":           {&km.Close, "close"},
+		"update":          {&km.Update, "update"},
+		"logs":            {&km.Logs, "logs"},
+		"shell":           {&km.Shell, "shell"},
+		"vote":            {&km.Vote, "vote"},
+		"deploy":          {&km.Deploy, "deploy"},
+		"filter":          {&km.Filter, "filter"},
+		"search":          {&km.Search, "search"},
+		"tab-next":        {&km.TabNext, "next tab"},
 	}
 
 	for name, e := range entries {

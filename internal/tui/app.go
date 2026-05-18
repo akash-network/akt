@@ -39,6 +39,7 @@ const (
 	viewMonitor
 	viewGovernance
 	viewStaking
+	viewDeploymentDetail
 )
 
 // statusBarHeight is the number of lines reserved for the bottom status bar.
@@ -69,13 +70,17 @@ type App struct {
 	height     int
 
 	// Primary view components.
-	dashboard   views.Dashboard
-	deployments views.DeploymentsView
-	leases      views.LeasesView
-	providers   views.ProvidersView
-	governance  views.GovernanceView
-	staking     views.StakingView
-	detail      views.DetailView
+	dashboard        views.Dashboard
+	deployments      views.DeploymentsView
+	leases           views.LeasesView
+	providers        views.ProvidersView
+	governance       views.GovernanceView
+	staking          views.StakingView
+	detail           views.DetailView
+	deploymentDetail views.DeploymentDetailView
+	logViewer        views.LogViewer
+	confirmDialog    components.ConfirmDialog
+	toast            *components.Toast
 
 	// monitorModel is the real-time monitor from internal/monitor/ui.
 	// It is nil when no RPC endpoint is available.
@@ -103,18 +108,20 @@ func newApp(cfg Config, topModel tea.Model) App {
 	}
 
 	return App{
-		keys:        km,
-		view:        viewDashboard,
-		standalone:  cfg.Standalone,
-		dataStore:   cfg.Store,
-		resolvedCtx: cfg.ResolvedCtx,
-		dashboard:   dash,
-		deployments: views.NewDeploymentsView(),
-		leases:      views.NewLeasesView(),
-		providers:  views.NewProvidersView(),
-		governance: views.NewGovernanceView(),
-		staking:    views.NewStakingView(),
-		detail: views.NewDetailView(),
+		keys:             km,
+		view:             viewDashboard,
+		standalone:       cfg.Standalone,
+		dataStore:        cfg.Store,
+		resolvedCtx:      cfg.ResolvedCtx,
+		dashboard:        dash,
+		deployments:      views.NewDeploymentsView(),
+		leases:           views.NewLeasesView(),
+		providers:        views.NewProvidersView(),
+		governance:       views.NewGovernanceView(),
+		staking:          views.NewStakingView(),
+		detail:           views.NewDetailView(),
+		deploymentDetail: views.NewDeploymentDetailView(),
+		logViewer:        views.NewLogViewer(),
 		palette: views.NewCommandPalette(reg, views.PaletteKeys{
 			CursorUp:   km.CursorUp,
 			CursorDown: km.CursorDown,
@@ -172,6 +179,16 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case messages.LeasesLoadedMsg:
 		if msg.Err == nil {
 			a.leases.SetData(msg.Leases)
+			// Also populate the deployment detail view if it's active.
+			if a.view == viewDeploymentDetail {
+				a.deploymentDetail.SetLeases(msg.Leases)
+			}
+		}
+		return a, nil
+
+	case messages.BidsLoadedMsg:
+		if msg.Err == nil {
+			a.deploymentDetail.SetBids(msg.Bids)
 		}
 		return a, nil
 
@@ -187,6 +204,15 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.syncState = msg.State
 			a.dashboard.SetSyncState(msg.State)
 		}
+		return a, nil
+
+	case components.ConfirmMsg:
+		// Action confirmed — for now just return to the previous view.
+		// Actual transaction dispatch will be added in a future task.
+		return a, nil
+
+	case components.CancelMsg:
+		// Dialog cancelled — no action needed, dialog already closed itself.
 		return a, nil
 
 	case views.CommandSubmitMsg:
@@ -247,8 +273,47 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, tea.Batch(appCmds...)
 	}
 
-	// ── Palette takes priority for key messages when active ──────────
+	// ── Overlays take priority for key messages when active ─────────
 
+	// Confirm dialog intercepts all keys when active.
+	if a.confirmDialog.Active() {
+		if kmsg, ok := msg.(tea.KeyPressMsg); ok {
+			if key.Matches(kmsg, a.keys.Quit) {
+				return a, tea.Quit
+			}
+			cmd := a.confirmDialog.Update(msg)
+			return a, tea.Batch(append(appCmds, cmd)...)
+		}
+		return a, tea.Batch(appCmds...)
+	}
+
+	// Log viewer intercepts keys when active.
+	if a.logViewer.Active() {
+		if kmsg, ok := msg.(tea.KeyPressMsg); ok {
+			if key.Matches(kmsg, a.keys.Quit) {
+				return a, tea.Quit
+			}
+			k := kmsg.String()
+			switch k {
+			case "esc":
+				a.logViewer.Close()
+			case " ":
+				a.logViewer.TogglePause()
+			case "c":
+				a.logViewer.Clear()
+			case "k", "up":
+				a.logViewer.ScrollUp()
+			case "j", "down":
+				a.logViewer.ScrollDown()
+			case "G":
+				a.logViewer.ScrollToBottom()
+			}
+			return a, tea.Batch(appCmds...)
+		}
+		return a, tea.Batch(appCmds...)
+	}
+
+	// Palette takes priority for key messages when active.
 	if a.palette.Active() {
 		if kmsg, ok := msg.(tea.KeyPressMsg); ok {
 			if key.Matches(kmsg, a.keys.Quit) {
@@ -279,6 +344,31 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			var topCmd tea.Cmd
 			a.monitorModel, topCmd = a.monitorModel.Update(msg)
 			return a, topCmd
+		}
+
+		// Deployment detail view key handling.
+		if a.view == viewDeploymentDetail {
+			switch {
+			case key.Matches(kmsg, a.keys.Back):
+				a.view = viewDeployments
+				return a, nil
+			case key.Matches(kmsg, a.keys.TabNext):
+				a.deploymentDetail.NextTab()
+				return a, nil
+			case key.Matches(kmsg, a.keys.CursorUp):
+				a.deploymentDetail.ScrollUp()
+				return a, nil
+			case key.Matches(kmsg, a.keys.CursorDown):
+				a.deploymentDetail.ScrollDown()
+				return a, nil
+			}
+			// Number keys 1-4 for direct tab jump.
+			k := kmsg.String()
+			if len(k) == 1 && k[0] >= '1' && k[0] <= '4' {
+				a.deploymentDetail.SetTab(int(k[0] - '1'))
+				return a, nil
+			}
+			return a, nil
 		}
 
 		// Cursor navigation for list views.
@@ -317,6 +407,48 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		owner := ""
 		if a.resolvedCtx != nil {
 			owner = a.resolvedCtx.DefaultAccount
+		}
+
+		// View-specific actions on deployments list.
+		if a.view == viewDeployments {
+			switch {
+			case key.Matches(kmsg, a.keys.Select):
+				// Enter → open deployment detail.
+				rec := a.deployments.SelectedRecord()
+				if rec != nil {
+					a.deploymentDetail.SetDeployment(rec)
+					a.view = viewDeploymentDetail
+					return a, tea.Batch(
+						loadDeploymentLeases(a.dataStore, rec.Owner, rec.DSeq),
+						loadBids(a.dataStore, rec.Owner, rec.DSeq),
+					)
+				}
+				return a, nil
+			case key.Matches(kmsg, a.keys.Logs):
+				// l → open log viewer overlay.
+				rec := a.deployments.SelectedRecord()
+				if rec != nil {
+					dseq := fmt.Sprintf("%d", rec.DSeq)
+					a.logViewer.Open(rec.SDLPath, dseq, "")
+				}
+				return a, nil
+			case key.Matches(kmsg, a.keys.Close):
+				// d → open confirm dialog for closing deployment.
+				rec := a.deployments.SelectedRecord()
+				if rec != nil {
+					a.confirmDialog = components.NewConfirmDialog(
+						components.ConfirmClose,
+						components.ConfirmData{
+							Title:  "Close Deployment",
+							Body:   fmt.Sprintf("Close deployment %d? This action is irreversible.", rec.DSeq),
+							Danger: true,
+						},
+					)
+					a.confirmDialog.SetSize(a.width, a.height)
+					a.confirmDialog.Open()
+				}
+				return a, nil
+			}
 		}
 
 		// App-level key dispatch (non-top views).
@@ -397,10 +529,22 @@ func (a App) View() tea.View {
 		main = a.governance.View()
 	case viewStaking:
 		main = a.staking.View()
+	case viewDeploymentDetail:
+		main = a.deploymentDetail.View()
 	case viewMonitor:
 		main = a.renderCentered(contentH, "No RPC endpoint configured.\nUse :consensus after setting up a context.")
 	default:
 		main = a.dashboard.View()
+	}
+
+	// Overlay: log viewer renders on top of content when active.
+	if a.logViewer.Active() {
+		main = a.logViewer.View()
+	}
+
+	// Overlay: confirm dialog renders on top of content when active.
+	if a.confirmDialog.Active() {
+		main = a.confirmDialog.View()
 	}
 
 	if a.palette.Active() {
@@ -466,6 +610,13 @@ func (a App) renderFooter() string {
 			{Key: "j/k", Desc: "move"},
 			{Key: "↵", Desc: "detail"},
 			{Key: "d", Desc: "delegate", Accent: true},
+			{Key: "esc", Desc: "back"},
+		}
+	case viewDeploymentDetail:
+		hints = []components.HintPair{
+			{Key: "j/k", Desc: "scroll"},
+			{Key: "1-4", Desc: "tabs"},
+			{Key: "tab", Desc: "next tab"},
 			{Key: "esc", Desc: "back"},
 		}
 	}
@@ -565,6 +716,9 @@ func (a *App) resize() {
 	a.governance.SetSize(a.width, mainH)
 	a.staking.SetSize(a.width, mainH)
 	a.detail.SetSize(a.width, mainH)
+	a.deploymentDetail.SetSize(a.width, mainH)
+	a.logViewer.SetSize(a.width, mainH)
+	a.confirmDialog.SetSize(a.width, mainH)
 	a.palette.SetSize(a.width, mainH)
 }
 
@@ -687,13 +841,14 @@ func (a App) renderBreadcrumb() string {
 		name = "Governance"
 	case viewStaking:
 		name = "Staking"
+	case viewDeploymentDetail:
+		parent := theme.BreadcrumbActive.Render("Deployments")
+		detail := theme.BreadcrumbActive.Render("Detail")
+		return " " + parent + sep + detail
 	default:
 		name = "Dashboard"
 	}
 
-	// For now, single-segment breadcrumb (active).
-	// When detail views are added, non-active parent segments will precede.
-	_ = sep // used when multi-segment breadcrumbs are added
 	return " " + theme.BreadcrumbActive.Render(name)
 }
 
@@ -735,6 +890,26 @@ func loadStoreStats(s store.Store) tea.Cmd {
 		}
 		stats, err := s.Stats(context.Background())
 		return messages.StoreStatsMsg{Stats: stats, Err: err}
+	}
+}
+
+func loadDeploymentLeases(s store.Store, owner string, dseq uint64) tea.Cmd {
+	return func() tea.Msg {
+		if s == nil {
+			return messages.LeasesLoadedMsg{Err: fmt.Errorf("no store available")}
+		}
+		leases, err := s.ListLeases(context.Background(), store.LeaseFilter{Owner: owner, DSeq: dseq})
+		return messages.LeasesLoadedMsg{Leases: leases, Err: err}
+	}
+}
+
+func loadBids(s store.Store, owner string, dseq uint64) tea.Cmd {
+	return func() tea.Msg {
+		if s == nil {
+			return messages.BidsLoadedMsg{Err: fmt.Errorf("no store available")}
+		}
+		bids, err := s.ListBids(context.Background(), store.BidFilter{Owner: owner, DSeq: dseq})
+		return messages.BidsLoadedMsg{DSeq: dseq, Bids: bids, Err: err}
 	}
 }
 

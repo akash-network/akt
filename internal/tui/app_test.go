@@ -24,18 +24,20 @@ func newTestApp(view activeView, standalone bool) App {
 	dash.SetSize(testAppWidth, testAppHeight-chromeHeight)
 
 	return App{
-		keys:        km,
-		view:        view,
-		standalone:  standalone,
-		width:       testAppWidth,
-		height:      testAppHeight,
-		dashboard:   dash,
-		deployments: views.NewDeploymentsView(),
-		leases:      views.NewLeasesView(),
-		providers:   views.NewProvidersView(),
-		governance:  views.NewGovernanceView(),
-		staking:     views.NewStakingView(),
-		detail:      views.NewDetailView(),
+		keys:             km,
+		view:             view,
+		standalone:       standalone,
+		width:            testAppWidth,
+		height:           testAppHeight,
+		dashboard:        dash,
+		deployments:      views.NewDeploymentsView(),
+		leases:           views.NewLeasesView(),
+		providers:        views.NewProvidersView(),
+		governance:       views.NewGovernanceView(),
+		staking:          views.NewStakingView(),
+		detail:           views.NewDetailView(),
+		deploymentDetail: views.NewDeploymentDetailView(),
+		logViewer:        views.NewLogViewer(),
 		palette: views.NewCommandPalette(reg, views.PaletteKeys{
 			CursorUp:   km.CursorUp,
 			CursorDown: km.CursorDown,
@@ -59,13 +61,14 @@ func TestAppRenderFooter(t *testing.T) {
 	tests := map[string]struct {
 		view activeView
 	}{
-		"Dashboard":   {viewDashboard},
-		"Deployments": {viewDeployments},
-		"Leases":      {viewLeases},
-		"Providers":   {viewProviders},
-		"Monitor":     {viewMonitor},
-		"Governance":  {viewGovernance},
-		"Staking":     {viewStaking},
+		"Dashboard":        {viewDashboard},
+		"Deployments":      {viewDeployments},
+		"Leases":           {viewLeases},
+		"Providers":        {viewProviders},
+		"Monitor":          {viewMonitor},
+		"Governance":       {viewGovernance},
+		"Staking":          {viewStaking},
+		"DeploymentDetail": {viewDeploymentDetail},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -100,9 +103,10 @@ func TestAppRenderBreadcrumb(t *testing.T) {
 	tests := map[string]struct {
 		view activeView
 	}{
-		"Dashboard":   {viewDashboard},
-		"Deployments": {viewDeployments},
-		"Governance":  {viewGovernance},
+		"Dashboard":        {viewDashboard},
+		"Deployments":      {viewDeployments},
+		"Governance":       {viewGovernance},
+		"DeploymentDetail": {viewDeploymentDetail},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
