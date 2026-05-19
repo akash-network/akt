@@ -3,10 +3,13 @@ package tui
 import (
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/exp/golden"
 	"github.com/spf13/viper"
 
 	"pkg.akt.dev/akt/internal/tui/commands"
+	"pkg.akt.dev/akt/internal/tui/components"
+	"pkg.akt.dev/akt/internal/tui/messages"
 	"pkg.akt.dev/akt/internal/tui/views"
 )
 
@@ -131,3 +134,103 @@ func TestAppRenderCentered(t *testing.T) {
 		})
 	}
 }
+
+// ── Navigation behavioral tests (T064) ─────────────────────────────
+
+func TestNavNumberKeys(t *testing.T) {
+	tests := []struct {
+		key  rune
+		want activeView
+	}{
+		{'1', viewDeployments},
+		{'2', viewLeases},
+		{'3', viewProviders},
+		{'4', viewMonitor},
+		{'5', viewGovernance},
+		{'6', viewStaking},
+	}
+
+	for _, tt := range tests {
+		a := newTestApp(viewDashboard, false)
+		result, _ := a.Update(tea.KeyPressMsg{Code: tt.key})
+		app := result.(App)
+		if app.view != tt.want {
+			t.Errorf("key %q: got view %d, want %d", tt.key, app.view, tt.want)
+		}
+	}
+}
+
+func TestNavEscBackToDashboard(t *testing.T) {
+	for _, v := range []activeView{viewDeployments, viewLeases, viewProviders, viewGovernance, viewStaking} {
+		a := newTestApp(v, false)
+		result, _ := a.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+		app := result.(App)
+		if app.view != viewDashboard {
+			t.Errorf("from view %d: Esc got view %d, want viewDashboard", v, app.view)
+		}
+	}
+}
+
+func TestNavEscFromDetailToDeployments(t *testing.T) {
+	a := newTestApp(viewDeploymentDetail, false)
+	result, _ := a.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+	app := result.(App)
+	if app.view != viewDeployments {
+		t.Errorf("from detail: Esc got view %d, want viewDeployments", app.view)
+	}
+}
+
+func TestNavCommandPaletteRouting(t *testing.T) {
+	tests := []struct {
+		cmd  string
+		want activeView
+	}{
+		{"deployments", viewDeployments},
+		{"leases", viewLeases},
+		{"providers", viewProviders},
+		{"monitor", viewMonitor},
+		{"governance", viewGovernance},
+		{"staking", viewStaking},
+	}
+
+	for _, tt := range tests {
+		a := newTestApp(viewDashboard, false)
+		result, _ := a.Update(views.CommandSubmitMsg{Value: tt.cmd})
+		app := result.(App)
+		if app.view != tt.want {
+			t.Errorf("command %q: got view %d, want %d", tt.cmd, app.view, tt.want)
+		}
+	}
+}
+
+func TestNavOverlayBlocksNavKeys(t *testing.T) {
+	a := newTestApp(viewDeployments, false)
+	a.confirmDialog = components.NewConfirmDialog(
+		components.ConfirmClose,
+		components.ConfirmData{Title: "Test", Body: "test"},
+	)
+	a.confirmDialog.SetSize(testAppWidth, testAppHeight)
+	a.confirmDialog.Open()
+
+	// Pressing '1' should NOT change view because confirm overlay intercepts.
+	result, _ := a.Update(tea.KeyPressMsg{Code: '1'})
+	app := result.(App)
+	if app.view != viewDeployments {
+		t.Errorf("with confirm overlay: key '1' changed view to %d, want viewDeployments", app.view)
+	}
+}
+
+func TestNavViewDataRefreshDispatches(t *testing.T) {
+	// ViewDataRefreshMsg from views with store data should return a non-nil cmd.
+	for _, v := range []activeView{viewDashboard, viewDeployments, viewLeases} {
+		a := newTestApp(v, false)
+		_, cmd := a.Update(messages.ViewDataRefreshMsg{})
+		if cmd == nil {
+			t.Errorf("view %d: ViewDataRefreshMsg returned nil cmd, want data reload", v)
+		}
+	}
+}
+
+// Ensure unused imports are exercised.
+var _ = components.ConfirmClose
+var _ = messages.ViewDataRefreshMsg{}
