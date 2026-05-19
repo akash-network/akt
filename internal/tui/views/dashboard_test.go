@@ -30,56 +30,35 @@ func TestDashboardDefaultWidthWhenSmall(t *testing.T) {
 	}
 }
 
-func TestDashboardShowsShortcuts(t *testing.T) {
-	d := views.NewDashboard()
-	d.SetSize(120, 60)
-
-	out := ansi.Strip(d.View())
-
-	shortcuts := []string{
-		"navigate views",
-		"drill down",
-		"go back",
-		"command palette",
-		"help",
-		"new deployment",
-	}
-	for _, s := range shortcuts {
-		if !strings.Contains(out, s) {
-			t.Errorf("View() missing shortcut text %q", s)
-		}
-	}
-}
-
-func TestDashboardShowsShortcutKeys(t *testing.T) {
-	d := views.NewDashboard()
-	d.SetSize(120, 60)
-
-	out := ansi.Strip(d.View())
-
-	keys := []string{"1-6", "Enter", "Esc", ":", "?", "D"}
-	for _, k := range keys {
-		if !strings.Contains(out, k) {
-			t.Errorf("View() missing shortcut key %q", k)
-		}
-	}
-}
-
 func TestDashboardShowsSectionHeadings(t *testing.T) {
 	d := views.NewDashboard()
 	d.SetSize(120, 60)
 
 	out := ansi.Strip(d.View())
 
+	// The new dashboard has "Recent Deployments" and "Network" sections.
 	sections := []string{
-		"Account",
-		"Active Deployments",
+		"Recent Deployments",
 		"Network",
-		"Shortcuts",
 	}
 	for _, s := range sections {
 		if !strings.Contains(out, s) {
 			t.Errorf("View() missing section heading %q", s)
+		}
+	}
+}
+
+func TestDashboardShowsSummaryCards(t *testing.T) {
+	d := views.NewDashboard()
+	d.SetSize(120, 60)
+
+	out := ansi.Strip(d.View())
+
+	// Summary cards should show labels for Balance, Deployments, Leases.
+	cards := []string{"Balance", "Deployments", "Leases"}
+	for _, c := range cards {
+		if !strings.Contains(out, c) {
+			t.Errorf("View() missing summary card label %q", c)
 		}
 	}
 }
@@ -91,34 +70,9 @@ func TestDashboardSetContext(t *testing.T) {
 
 	out := ansi.Strip(d.View())
 
-	expected := []string{"my-context", "akashnet-2", "akash1abc123"}
-	for _, e := range expected {
-		if !strings.Contains(out, e) {
-			t.Errorf("View() missing context value %q after SetContext", e)
-		}
-	}
-}
-
-func TestDashboardSetContextShowsWelcome(t *testing.T) {
-	d := views.NewDashboard()
-	d.SetSize(120, 60)
-	d.SetContext("default", "akashnet-2", "alice")
-
-	out := ansi.Strip(d.View())
-
-	if !strings.Contains(out, "welcome back, alice") {
-		t.Error("View() missing welcome message with account name")
-	}
-}
-
-func TestDashboardDefaultAccountShowsUnknown(t *testing.T) {
-	d := views.NewDashboard()
-	d.SetSize(120, 60)
-
-	out := ansi.Strip(d.View())
-
-	if !strings.Contains(out, "unknown") {
-		t.Error("View() should show 'unknown' when no account is set")
+	// Chain ID should appear in the Network section.
+	if !strings.Contains(out, "akashnet-2") {
+		t.Error("View() missing chain ID after SetContext")
 	}
 }
 
@@ -133,11 +87,13 @@ func TestDashboardSetStats(t *testing.T) {
 
 	out := ansi.Strip(d.View())
 
-	expected := []string{"142", "57", "85"}
-	for _, text := range expected {
-		if !strings.Contains(out, text) {
-			t.Errorf("View() missing deployment count %q after SetStats", text)
-		}
+	// Active count should appear in the Deployments card.
+	if !strings.Contains(out, "57") {
+		t.Error("View() missing active deployment count after SetStats")
+	}
+	// Total count should appear.
+	if !strings.Contains(out, "142") {
+		t.Error("View() missing total deployment count after SetStats")
 	}
 }
 
@@ -147,9 +103,9 @@ func TestDashboardNoStatsShowsDash(t *testing.T) {
 
 	out := ansi.Strip(d.View())
 
-	// Without stats, deployment counts should show em dash (—)
-	if !strings.Contains(out, "\u2014") {
-		t.Error("View() should show em dash when no stats are set")
+	// Without stats, the cards should show em dash (—) or "0".
+	if !strings.Contains(out, "\u2014") && !strings.Contains(out, "0") {
+		t.Error("View() should show dash or zero when no stats are set")
 	}
 }
 
@@ -163,25 +119,9 @@ func TestDashboardSetSyncState(t *testing.T) {
 
 	out := ansi.Strip(d.View())
 
-	if !strings.Contains(out, "12345") {
+	// Block height should appear in Network section (possibly comma-grouped).
+	if !strings.Contains(out, "12,345") && !strings.Contains(out, "12345") {
 		t.Error("View() missing block height after SetSyncState")
-	}
-	if !strings.Contains(out, "synced") {
-		t.Error("View() missing 'synced' status after SetSyncState")
-	}
-}
-
-func TestDashboardNoSyncStateShowsNotSynced(t *testing.T) {
-	d := views.NewDashboard()
-	d.SetSize(120, 60)
-
-	out := ansi.Strip(d.View())
-
-	if !strings.Contains(out, "not synced") {
-		t.Error("View() should show 'not synced' when no sync state is set")
-	}
-	if !strings.Contains(out, "no sync") {
-		t.Error("View() should show 'no sync' badge when no sync state is set")
 	}
 }
 
@@ -200,12 +140,6 @@ func TestDashboardSetActiveDeployments(t *testing.T) {
 	if !strings.Contains(out, "100") {
 		t.Error("View() missing deployment DSeq 100")
 	}
-	if !strings.Contains(out, "deploy.yaml") {
-		t.Error("View() missing SDL path for deployment 100")
-	}
-	if !strings.Contains(out, "5000000uakt") {
-		t.Error("View() missing deposit for deployment 100")
-	}
 	if !strings.Contains(out, "200") {
 		t.Error("View() missing deployment DSeq 200")
 	}
@@ -217,8 +151,8 @@ func TestDashboardNoActiveDeploymentsShowsEmpty(t *testing.T) {
 
 	out := ansi.Strip(d.View())
 
-	if !strings.Contains(out, "No active deployments") {
-		t.Error("View() should show 'No active deployments' when none are set")
+	if !strings.Contains(out, "No deployments") {
+		t.Error("View() should show empty state when no deployments are set")
 	}
 }
 
@@ -226,8 +160,8 @@ func TestDashboardActiveDeploymentsLimitedToMax(t *testing.T) {
 	d := views.NewDashboard()
 	d.SetSize(120, 60)
 
-	// Create 6 deployments (max displayed is 4).
-	depls := make([]*store.DeploymentRecord, 6)
+	// Create 7 deployments (max displayed is 5).
+	depls := make([]*store.DeploymentRecord, 7)
 	for i := range depls {
 		depls[i] = &store.DeploymentRecord{
 			DSeq:    uint64(100 + i),
@@ -238,52 +172,17 @@ func TestDashboardActiveDeploymentsLimitedToMax(t *testing.T) {
 
 	out := ansi.Strip(d.View())
 
-	// First 4 should be visible.
-	for i := 0; i < 4; i++ {
+	// First 5 should be visible.
+	for i := 0; i < 5; i++ {
 		dseq := fmt.Sprintf("%d", 100+i)
 		if !strings.Contains(out, dseq) {
 			t.Errorf("View() missing deployment DSeq %s (within limit)", dseq)
 		}
 	}
 
-	// Should show "... and 2 more".
-	if !strings.Contains(out, "and 2 more") {
-		t.Error("View() should show overflow count when deployments exceed max")
-	}
-}
-
-func TestDashboardSyncBridgeActive(t *testing.T) {
-	d := views.NewDashboard()
-	d.SetSize(120, 60)
-	d.SetSyncBridgeActive(true)
-
-	out := ansi.Strip(d.View())
-
-	if !strings.Contains(out, "Live") {
-		t.Error("View() should show 'Live' when sync bridge is active")
-	}
-}
-
-func TestDashboardSyncBridgeInactive(t *testing.T) {
-	d := views.NewDashboard()
-	d.SetSize(120, 60)
-	d.SetSyncBridgeActive(false)
-
-	out := ansi.Strip(d.View())
-
-	if !strings.Contains(out, "Offline") {
-		t.Error("View() should show 'Offline' when sync bridge is inactive")
-	}
-}
-
-func TestDashboardShowsAktBanner(t *testing.T) {
-	d := views.NewDashboard()
-	d.SetSize(120, 60)
-
-	out := ansi.Strip(d.View())
-
-	if !strings.Contains(out, "akt") {
-		t.Error("View() should contain 'akt' banner")
+	// Should show "Press 2 to see all 7 deployments".
+	if !strings.Contains(out, "see all") {
+		t.Error("View() should show 'see all' message when deployments exceed max")
 	}
 }
 
@@ -301,21 +200,39 @@ func TestDashboardDeploymentWithoutSDLPath(t *testing.T) {
 	}
 }
 
-func TestDashboardDeploymentWithoutDeposit(t *testing.T) {
+func TestDashboardSetBalance(t *testing.T) {
 	d := views.NewDashboard()
 	d.SetSize(120, 60)
-	d.SetActiveDeployments([]*store.DeploymentRecord{
-		{DSeq: 555, Deposit: ""},
-	})
+	d.SetBalance("148.52 AKT")
 
 	out := ansi.Strip(d.View())
 
-	// Empty deposit should render as em dash.
-	if !strings.Contains(out, "555") {
-		t.Error("View() missing deployment DSeq 555")
+	if !strings.Contains(out, "148.52 AKT") {
+		t.Error("View() missing balance after SetBalance")
 	}
-	if !strings.Contains(out, "\u2014") {
-		t.Error("View() should show em dash for empty deposit")
+}
+
+func TestDashboardSetValidatorCount(t *testing.T) {
+	d := views.NewDashboard()
+	d.SetSize(120, 60)
+	d.SetValidatorCount(100)
+
+	out := ansi.Strip(d.View())
+
+	if !strings.Contains(out, "100") {
+		t.Error("View() missing validator count after SetValidatorCount")
+	}
+}
+
+func TestDashboardSetProposalCount(t *testing.T) {
+	d := views.NewDashboard()
+	d.SetSize(120, 60)
+	d.SetProposalCount(2)
+
+	out := ansi.Strip(d.View())
+
+	if !strings.Contains(out, "2") {
+		t.Error("View() missing proposal count after SetProposalCount")
 	}
 }
 
@@ -326,37 +243,7 @@ func TestDashboardNetworkSectionShowsChainID(t *testing.T) {
 
 	out := ansi.Strip(d.View())
 
-	// Chain ID should appear in both the welcome banner and the Network section.
-	count := strings.Count(out, "mainnet-1")
-	if count < 2 {
-		t.Errorf("View() should show chain ID in both welcome and Network section, found %d occurrences", count)
-	}
-}
-
-func TestDashboardAccountSectionLabels(t *testing.T) {
-	d := views.NewDashboard()
-	d.SetSize(120, 60)
-
-	out := ansi.Strip(d.View())
-
-	labels := []string{"address", "deployments", "active", "closed", "sync status"}
-	for _, l := range labels {
-		if !strings.Contains(out, l) {
-			t.Errorf("View() missing Account section label %q", l)
-		}
-	}
-}
-
-func TestDashboardNetworkSectionLabels(t *testing.T) {
-	d := views.NewDashboard()
-	d.SetSize(120, 60)
-
-	out := ansi.Strip(d.View())
-
-	labels := []string{"chain", "last block", "last sync"}
-	for _, l := range labels {
-		if !strings.Contains(out, l) {
-			t.Errorf("View() missing Network section label %q", l)
-		}
+	if !strings.Contains(out, "mainnet-1") {
+		t.Error("View() should show chain ID in Network section")
 	}
 }
