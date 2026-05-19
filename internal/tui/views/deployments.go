@@ -32,6 +32,7 @@ func NewDeploymentsView() DeploymentsView {
 				{Header: "GPU", Width: 10, Align: components.AlignLeft},
 				{Header: "PROVIDER", Width: 0, Align: components.AlignLeft},
 				{Header: "AGE", Width: 10, Align: components.AlignRight},
+				{Header: "ESCROW", Width: 14, Align: components.AlignRight},
 				{Header: "COST", Width: 14, Align: components.AlignRight},
 			},
 			EmptyText: "No deployments. Use 'akt deploy <sdl>' to create one.",
@@ -153,13 +154,19 @@ func deploymentCells(r *store.DeploymentRecord) []string {
 		age = relativeTime(r.CreatedAt)
 	}
 
+	// ESCROW: escrow balance or "—"
+	escrow := "—"
+	if r.EscrowBalance != "" {
+		escrow = r.EscrowBalance
+	}
+
 	// COST: deposit or "—"
 	cost := "—"
 	if r.Deposit != "" {
 		cost = r.Deposit
 	}
 
-	return []string{dseq, image, state, cpu, memory, gpu, provider, age, cost}
+	return []string{dseq, image, state, cpu, memory, gpu, provider, age, escrow, cost}
 }
 
 // labelOrDash returns the label value for key, or "—" if not present.

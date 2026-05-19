@@ -596,6 +596,21 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.confirmDialog.Open()
 				}
 				return a, nil
+			case key.Matches(kmsg, a.keys.Filter):
+				// f → cycle state filter (all → active → closed → all).
+				a.deployments.CycleFilter()
+				return a, nil
+			case key.Matches(kmsg, a.keys.Update):
+				// u → update deployment (placeholder).
+				rec := a.deployments.SelectedRecord()
+				if rec != nil {
+					cmd := a.showToast(
+						fmt.Sprintf("Update deployment %d — requires SDL file input (coming in Phase 4)", rec.DSeq),
+						components.ToastInfo,
+					)
+					return a, cmd
+				}
+				return a, nil
 			}
 		}
 
