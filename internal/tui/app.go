@@ -1190,18 +1190,21 @@ var navItems = []struct {
 
 func (a App) renderNavBar() string {
 	var parts []string
+
+	// Dashboard pseudo-tab is always shown; active when on dashboard.
+	if a.view == viewDashboard {
+		parts = append(parts, theme.NavTabActive.Render("Dashboard"))
+	} else {
+		parts = append(parts, theme.NavTabInactive.Render("Dashboard"))
+	}
+
 	for _, nav := range navItems {
 		label := nav.key + " " + nav.name
-		if a.view == nav.view {
+		if a.navTabIsActive(nav.view) {
 			parts = append(parts, theme.NavTabActive.Render(label))
 		} else {
 			parts = append(parts, theme.NavTabInactive.Render(label))
 		}
-	}
-
-	// When on Dashboard, show "Dashboard" as active highlight instead of any tab.
-	if a.view == viewDashboard {
-		parts = append([]string{theme.NavTabActive.Render("Dashboard")}, parts...)
 	}
 
 	deployBtn := lipgloss.NewStyle().Foreground(theme.AccentRed).Render("D deploy")
@@ -1214,6 +1217,27 @@ func (a App) renderNavBar() string {
 	bar = bar + strings.Repeat(" ", gap) + deployBtn
 
 	return bar + "\n" + components.HRule(a.width)
+}
+
+// navTabIsActive returns true if the given nav tab should be highlighted.
+// Detail views highlight their parent list tab.
+func (a App) navTabIsActive(tabView activeView) bool {
+	if a.view == tabView {
+		return true
+	}
+	switch a.view {
+	case viewDeploymentDetail:
+		return tabView == viewDeployments
+	case viewLeaseDetail:
+		return tabView == viewLeases
+	case viewProviderDetail:
+		return tabView == viewProviders
+	case viewProposalDetail:
+		return tabView == viewGovernance
+	case viewValidatorDetail:
+		return tabView == viewStaking
+	}
+	return false
 }
 
 func (a App) renderBreadcrumb() string {
