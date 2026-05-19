@@ -25,6 +25,7 @@ import (
 	monitorrpc "pkg.akt.dev/akt/internal/monitor/rpc"
 	monitorui "pkg.akt.dev/akt/internal/monitor/ui"
 	"pkg.akt.dev/akt/internal/store"
+	synce "pkg.akt.dev/akt/internal/sync"
 	"pkg.akt.dev/akt/internal/tui/commands"
 	"pkg.akt.dev/akt/internal/tui/components"
 	"pkg.akt.dev/akt/internal/tui/messages"
@@ -98,6 +99,9 @@ type App struct {
 	monitorModel tea.Model
 	monitorReady bool // true after monitorModel.Init() cmds have been dispatched
 
+	// Sync bridge — connects pubsub events to the sync engine.
+	syncBridge *syncBridge
+
 	// Data sources
 	dataStore   store.Store
 	resolvedCtx *aktctx.Context
@@ -153,6 +157,11 @@ func (a App) Init() tea.Cmd {
 	if a.monitorModel != nil {
 		a.monitorReady = true
 		cmds = append(cmds, a.monitorModel.Init())
+	}
+
+	// Arm the sync bridge so the TUI reacts to chain events.
+	if a.syncBridge != nil {
+		cmds = append(cmds, a.syncBridge.waitForEvent())
 	}
 
 	// Load initial data from the store.
@@ -237,6 +246,39 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			a.dashboard.SetSyncState(msg.State)
 		}
 		return a, nil
+
+	case messages.ViewDataRefreshMsg:
+		// The sync engine has persisted new data — re-read the store
+		// for the current view and re-arm the bridge for the next event.
+		var refreshCmds []tea.Cmd
+		owner := ""
+		if a.resolvedCtx != nil {
+			owner = a.resolvedCtx.DefaultAccount
+		}
+		switch a.view {
+		case viewDashboard:
+			refreshCmds = append(refreshCmds,
+				loadDeployments(a.dataStore, owner),
+				loadStoreStats(a.dataStore),
+				loadSyncState(a.dataStore),
+			)
+		case viewDeployments:
+			refreshCmds = append(refreshCmds, loadDeployments(a.dataStore, owner))
+		case viewLeases:
+			refreshCmds = append(refreshCmds, loadLeases(a.dataStore, owner))
+		case viewDeploymentDetail:
+			rec := a.deploymentDetail.Deployment()
+			if rec != nil {
+				refreshCmds = append(refreshCmds,
+					loadDeploymentLeases(a.dataStore, rec.Owner, rec.DSeq),
+					loadBids(a.dataStore, rec.Owner, rec.DSeq),
+				)
+			}
+		}
+		if a.syncBridge != nil {
+			refreshCmds = append(refreshCmds, a.syncBridge.waitForEvent())
+		}
+		return a, tea.Batch(refreshCmds...)
 
 	case components.ConfirmMsg:
 		// Action confirmed — for now just return to the previous view.
@@ -1101,12 +1143,21 @@ func buildLightClient(cfg *Config) {
 func Run(cfg Config) error {
 	buildLightClient(&cfg)
 
-	model, cleanup := buildMonitorModel(cfg)
+	model, bus, cleanup := buildMonitorModel(cfg)
 	if cleanup != nil {
 		defer cleanup()
 	}
 
 	app := newApp(cfg, model)
+
+	if bus != nil && cfg.Store != nil && cfg.ResolvedCtx != nil {
+		eng := synce.New(cfg.Store, []string{cfg.ResolvedCtx.DefaultAccount})
+		if bridge, err := newSyncBridge(bus, eng); err == nil {
+			app.syncBridge = bridge
+			defer bridge.close()
+		}
+	}
+
 	p := tea.NewProgram(app)
 	_, err := p.Run()
 	return err
@@ -1118,25 +1169,34 @@ func Run(cfg Config) error {
 func RunMonitor(cfg Config) error {
 	buildLightClient(&cfg)
 
-	model, cleanup := buildMonitorModel(cfg)
+	model, bus, cleanup := buildMonitorModel(cfg)
 	if cleanup != nil {
 		defer cleanup()
 	}
 
 	app := newApp(cfg, model)
 	app.view = viewMonitor
+
+	if bus != nil && cfg.Store != nil && cfg.ResolvedCtx != nil {
+		eng := synce.New(cfg.Store, []string{cfg.ResolvedCtx.DefaultAccount})
+		if bridge, err := newSyncBridge(bus, eng); err == nil {
+			app.syncBridge = bridge
+			defer bridge.close()
+		}
+	}
+
 	p := tea.NewProgram(app)
 	_, err := p.Run()
 	return err
 }
 
-func buildMonitorModel(cfg Config) (tea.Model, func()) {
+func buildMonitorModel(cfg Config) (tea.Model, pubsub.Bus, func()) {
 	if cfg.RPCEndpoint == "" || cfg.CacheDir == "" {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	if err := os.MkdirAll(cfg.CacheDir, 0o755); err != nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// Prefer monitor.db; fall back to legacy top.db for migration.
@@ -1150,19 +1210,19 @@ func buildMonitorModel(cfg Config) (tea.Model, func()) {
 
 	db, err := monitorcache.OpenDB(dbPath)
 	if err != nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	provCache, err := monitorcache.Open(db)
 	if err != nil {
 		db.Close()
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	monCache, err := monitorcache.OpenMonikerCache(db)
 	if err != nil {
 		db.Close()
-		return nil, nil
+		return nil, nil, nil
 	}
 
 	// ── Shared event bus ────────────────────────────────────────────
@@ -1208,5 +1268,5 @@ func buildMonitorModel(cfg Config) (tea.Model, func()) {
 		db.Close()
 	}
 
-	return model, cleanup
+	return model, bus, cleanup
 }

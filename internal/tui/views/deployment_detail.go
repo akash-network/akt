@@ -35,6 +35,11 @@ func NewDeploymentDetailView() DeploymentDetailView {
 	return DeploymentDetailView{}
 }
 
+// Deployment returns the currently displayed deployment record, or nil.
+func (v DeploymentDetailView) Deployment() *store.DeploymentRecord {
+	return v.deployment
+}
+
 // SetDeployment sets the deployment record to display.
 func (v *DeploymentDetailView) SetDeployment(d *store.DeploymentRecord) {
 	v.deployment = d
