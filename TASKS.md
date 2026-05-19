@@ -259,11 +259,11 @@ e2e/                               # End-to-end tests
 > **NOTE: Write these tests FIRST, ensure they FAIL before implementation**
 
 - [x] T063 [P] [US3] Unit tests for TUI application shell: root model init, header render, status bar render, window resize in internal/tui/app_test.go
-- [ ] T064 [P] [US3] Unit tests for navigation system: view stack push/pop, breadcrumb trail, number-key dispatch in internal/tui/nav_test.go
+- [x] T064 [P] [US3] Unit tests for navigation system: view stack push/pop, breadcrumb trail, number-key dispatch in internal/tui/nav_test.go
 - [x] T065 [P] [US3] Unit tests for theme system: dark/light themes, color token resolution, NO_COLOR support in internal/ui/theme/theme_test.go
 - [x] T066 [P] [US3] Unit tests for configurable keybindings: vim/default/custom keymap loading in internal/tui/keymap_test.go
-- [ ] T067 [P] [US3] Unit tests for command palette: fuzzy matching, category grouping, keyboard navigation in internal/tui/views/palette_test.go
-- [ ] T068 [P] [US3] Unit tests for ListView and DetailView components: cursor, scroll, selection in internal/tui/views/listview_test.go and internal/tui/views/detailview_test.go
+- [x] T067 [P] [US3] Unit tests for command palette: fuzzy matching, category grouping, keyboard navigation in internal/tui/views/palette_test.go
+- [x] T068 [P] [US3] Unit tests for ListView and DetailView components: cursor, scroll, selection in internal/tui/views/listview_test.go and internal/tui/views/detailview_test.go
 - [x] T069 [P] [US3] Unit tests for monitor model: consensus state parsing, vote grid rendering, progress bars in internal/monitor/ui/view_test.go
 - [x] T070 [P] [US3] Unit tests for provider cache: smart scheduling, priority queue, disk persistence in internal/monitor/cache/cache_test.go
 
@@ -292,7 +292,7 @@ e2e/                               # End-to-end tests
 
 #### US3-Components: Reusable TUI Components
 
-- [ ] T086 [P] [US3] Resource table component: generic sortable/filterable table (bubbles/table), column configuration per resource type, pagination, terminal-width-aware column sizing in internal/tui/components/table.go
+- [x] T086 [P] [US3] Resource table component: generic sortable/filterable table (bubbles/table), column configuration per resource type, pagination, terminal-width-aware column sizing in internal/tui/components/table.go
 - [x] T087 [P] [US3] Detail pane component: scrollable viewport (bubbles/viewport), YAML/JSON toggle, syntax highlighting in internal/tui/views/detailview.go
 - [x] T088 [P] [US3] Command palette: centered floating overlay with text input (bubbles/textinput) + scrollable list (bubbles/list), case-insensitive substring fuzzy matching, category grouping (navigation/action/app), keyboard-driven selection (j/k/Enter/Esc), 17 registered commands per SPEC.md §8.4 in internal/tui/views/palette.go
 - [x] T089 [P] [US3] Confirmation dialog: modal overlay for destructive actions, transaction summary (owner/balance/gas/fees), Cancel (Esc) / Confirm (Enter) buttons in internal/tui/components/confirm.go
@@ -301,7 +301,7 @@ e2e/                               # End-to-end tests
 
 #### US3-Views: Resource Views
 
-- [ ] T092 [US3] Dashboard view: home/landing view, summary stats (active deployments, total spend, sync status), quick actions in internal/tui/views/dashboard.go
+- [x] T092 [US3] Dashboard view: home/landing view, summary stats (active deployments, total spend, sync status), quick actions in internal/tui/views/dashboard.go
 - [ ] T093 [P] [US3] Deployments view: list (DSEQ/State/Provider/Price/Balance/Age), detail (full info + lease + bids), actions (d=close, u=update, l=logs, /=filter, f=state filter) in internal/tui/views/deployments.go
 - [ ] T094 [P] [US3] Leases view: list (DSEQ/GSeq/OSeq/Provider/State/Price/Age), detail (lease info + endpoints), actions (l=logs, e=events, s=shell, w=withdraw) in internal/tui/views/leases.go
 - [ ] T095 [P] [US3] Providers view: list (Address/URI/Audited/Active Leases), detail (attributes, resources) in internal/tui/views/providers.go
