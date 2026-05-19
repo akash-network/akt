@@ -14,6 +14,7 @@ import (
 type GovernanceView struct {
 	table     components.ResourceTable
 	proposals []*govv1.Proposal
+	tallies   map[uint64]*govv1.TallyResult
 	width     int
 	height    int
 }
@@ -54,18 +55,40 @@ func (v *GovernanceView) CursorDown() {
 	v.table.CursorDown()
 }
 
+// SetTallies stores the tally results and rebuilds the table rows.
+func (v *GovernanceView) SetTallies(tallies map[uint64]*govv1.TallyResult) {
+	v.tallies = tallies
+	// Rebuild rows with tally data
+	v.SetData(v.proposals)
+}
+
+// Tallies returns the current tally results.
+func (v *GovernanceView) Tallies() map[uint64]*govv1.TallyResult {
+	return v.tallies
+}
+
 // SetData stores the proposals and rebuilds the table rows.
 func (v *GovernanceView) SetData(proposals []*govv1.Proposal) {
 	v.proposals = proposals
 	rows := make([]components.TableRow, len(proposals))
 	for i, p := range proposals {
+		yesPct, noPct, abstainPct, vetoPct := "—", "—", "—", "—"
+		if v.tallies != nil {
+			if t, ok := v.tallies[p.Id]; ok && t != nil {
+				yes, no, abstain, veto := tallyPercentages(t)
+				yesPct = fmt.Sprintf("%.1f%%", yes)
+				noPct = fmt.Sprintf("%.1f%%", no)
+				abstainPct = fmt.Sprintf("%.1f%%", abstain)
+				vetoPct = fmt.Sprintf("%.1f%%", veto)
+			}
+		}
 		rows[i] = components.TableRow{
 			ID: fmt.Sprintf("%d", p.Id),
 			Cells: []string{
 				fmt.Sprintf("%d", p.Id),
 				truncateTitle(p.Title, 40),
 				govStatusLabel(p.Status.String()),
-				"—", "—", "—", "—", // tally TBD
+				yesPct, noPct, abstainPct, vetoPct,
 				formatVotingEnd(p.VotingEndTime),
 			},
 		}

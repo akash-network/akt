@@ -11,10 +11,11 @@ import (
 
 // StakingView renders a table of validator records.
 type StakingView struct {
-	table      components.ResourceTable
-	validators []stakingtypes.Validator
-	width      int
-	height     int
+	table       components.ResourceTable
+	validators  []stakingtypes.Validator
+	totalBonded math.Int
+	width       int
+	height      int
 }
 
 // NewStakingView creates a new StakingView with the standard column layout.
@@ -52,18 +53,35 @@ func (v *StakingView) CursorDown() {
 	v.table.CursorDown()
 }
 
+// SetTotalBonded stores the total bonded tokens and rebuilds the table rows.
+func (v *StakingView) SetTotalBonded(total math.Int) {
+	v.totalBonded = total
+	// Rebuild rows with VP% data
+	v.SetData(v.validators)
+}
+
+// SelectedIndex returns the current cursor position.
+func (v *StakingView) SelectedIndex() int {
+	return v.table.SelectedIndex()
+}
+
 // SetData stores the validators and rebuilds the table rows.
 func (v *StakingView) SetData(validators []stakingtypes.Validator) {
 	v.validators = validators
 	rows := make([]components.TableRow, len(validators))
 	for i, val := range validators {
+		vpPct := "—"
+		if !v.totalBonded.IsNil() && !v.totalBonded.IsZero() {
+			pct := val.Tokens.ToLegacyDec().Quo(v.totalBonded.ToLegacyDec()).MulInt64(100)
+			vpPct = fmt.Sprintf("%.2f%%", pct.MustFloat64())
+		}
 		rows[i] = components.TableRow{
 			ID: val.OperatorAddress,
 			Cells: []string{
 				fmt.Sprintf("%d", i+1),
 				val.GetMoniker(),
 				formatTokens(val.Tokens),
-				"—", // VP% TBD
+				vpPct,
 				formatCommissionRate(val.Commission.CommissionRates.Rate),
 				"—", "—", // uptime, signed TBD
 			},
