@@ -2,8 +2,8 @@ package views
 
 import (
 	"fmt"
-	"path/filepath"
 	"strings"
+	"time"
 
 	"charm.land/lipgloss/v2"
 
@@ -12,33 +12,64 @@ import (
 	"pkg.akt.dev/akt/internal/ui/theme"
 )
 
-// maxRecentDeployments is the number of deployments shown in the dashboard mini-table.
-const maxRecentDeployments = 5
+// maxActiveDeployments is the number of active deployments shown in the dashboard panel.
+const maxActiveDeployments = 4
+
+// maxActivityEntries is the number of recent activity entries shown.
+const maxActivityEntries = 8
+
+// ActivityEntry represents a single recent activity event.
+type ActivityEntry struct {
+	Time string // "14:02:11"
+	Kind string // "tx", "evt", "gov"
+	Text string // description
+}
 
 // Dashboard is the landing view that shows a summary of the user's Akash state.
 type Dashboard struct {
 	width  int
 	height int
 
-	// Data
+	// Context
 	contextName string
 	chainID     string
 	account     string
+	rpcEndpoint string
+	version     string
+
+	// Store data
 	stats       *store.StoreStats
 	syncState   *store.SyncState
 	deployments []*store.DeploymentRecord // active only
 	syncActive  bool                      // true when the sync bridge is running
 
-	// New card data
+	// Legacy card data (kept for backward compat with existing setters)
 	balance        string // formatted balance (e.g., "148.52 AKT")
 	validatorCount int    // active validators
 	proposalCount  int    // proposals in voting
+
+	// Wallet
+	liquid, staked, rewards, escrow string
+	price, priceChange              string
+	priceHistory                    []float64
+
+	// Network
+	blockTime                  string
+	activeProv                 int
+	bonded, inflation          string
+	blockTimes                 []float64
+	blockTimeAvg, blockTimeMax string
+
+	// Activity
+	activity []ActivityEntry
 }
 
 // NewDashboard returns a new empty Dashboard.
 func NewDashboard() Dashboard {
 	return Dashboard{}
 }
+
+// ─── Existing Setters (unchanged) ────────────────────────────────────
 
 // SetContext sets the context name, chain ID, and account address.
 func (d *Dashboard) SetContext(name, chainID, account string) {
@@ -88,202 +119,543 @@ func (d *Dashboard) SetSize(w, h int) {
 	d.height = h
 }
 
+// ─── New Setters ─────────────────────────────────────────────────────
+
+// SetWallet sets the wallet balance fields.
+func (d *Dashboard) SetWallet(liquid, staked, rewards, escrow string) {
+	d.liquid = liquid
+	d.staked = staked
+	d.rewards = rewards
+	d.escrow = escrow
+}
+
+// SetPrice sets the current price and 24h change.
+func (d *Dashboard) SetPrice(price, change string) {
+	d.price = price
+	d.priceChange = change
+}
+
+// SetPriceHistory sets the sparkline data for price history.
+func (d *Dashboard) SetPriceHistory(data []float64) {
+	d.priceHistory = data
+}
+
+// SetBlockTimes sets the block time sparkline data and summary stats.
+func (d *Dashboard) SetBlockTimes(data []float64, avg, max string) {
+	d.blockTimes = data
+	d.blockTimeAvg = avg
+	d.blockTimeMax = max
+}
+
+// SetNetworkInfo sets network-level statistics.
+func (d *Dashboard) SetNetworkInfo(blockTime string, activeProv int, bonded, inflation string) {
+	d.blockTime = blockTime
+	d.activeProv = activeProv
+	d.bonded = bonded
+	d.inflation = inflation
+}
+
+// SetRecentActivity sets the recent activity entries.
+func (d *Dashboard) SetRecentActivity(entries []ActivityEntry) {
+	d.activity = entries
+}
+
+// SetRPCEndpoint sets the RPC endpoint string.
+func (d *Dashboard) SetRPCEndpoint(endpoint string) {
+	d.rpcEndpoint = endpoint
+}
+
+// SetVersion sets the version badge string.
+func (d *Dashboard) SetVersion(version string) {
+	d.version = version
+}
+
+// ─── View ────────────────────────────────────────────────────────────
+
 // View renders the dashboard.
 func (d Dashboard) View() string {
 	w := d.width
-	if w < 20 {
+	if w < 40 {
 		w = 80
 	}
 
-	var lines []string
+	colW := (w - 4) / 3 // 3 columns with gaps
+	wideW := colW*2 + 2 // 2-column span for activity panel
 
-	lines = append(lines, "")
-	lines = append(lines, d.renderSummaryCards(w))
-	lines = append(lines, "")
-	lines = append(lines, d.renderRecentDeployments(w)...)
-	lines = append(lines, "")
-	lines = append(lines, d.renderNetwork(w)...)
+	var sections []string
 
-	return strings.Join(lines, "\n")
+	// Row 1: Welcome banner (full width)
+	sections = append(sections, d.renderWelcome(w))
+
+	// Row 2: Wallet | Active | Network (3 columns)
+	row2 := lipgloss.JoinHorizontal(lipgloss.Top,
+		d.renderWallet(colW), " ",
+		d.renderActive(colW), " ",
+		d.renderNetworkPanel(colW))
+	sections = append(sections, row2)
+
+	// Row 3: Recent Activity (2 cols) | Shortcuts (1 col)
+	row3 := lipgloss.JoinHorizontal(lipgloss.Top,
+		d.renderActivity(wideW), " ",
+		d.renderShortcuts(colW))
+	sections = append(sections, row3)
+
+	return strings.Join(sections, "\n")
 }
 
-// ─── Summary Cards ───────────────────────────────────────────────────
+// ─── Welcome Banner ──────────────────────────────────────────────────
 
-func (d Dashboard) renderSummaryCards(w int) string {
-	cardW := (w - 6) / 3
-	if cardW < 18 {
-		cardW = 18
+func (d Dashboard) renderWelcome(w int) string {
+	artStyle := lipgloss.NewStyle().Foreground(theme.AccentRed).Bold(true)
+	art := artStyle.Render(" ▄▀█ █▄▀ ▀█▀") + "\n" +
+		artStyle.Render(" █▀█ █ █  █ ")
+
+	account := d.account
+	if account == "" {
+		account = "unknown"
 	}
+	greeting := lipgloss.NewStyle().Foreground(theme.Slate200).Bold(true).
+		Render("welcome back, " + account)
 
-	cardStyle := lipgloss.NewStyle().
-		Width(cardW).
-		BorderStyle(lipgloss.RoundedBorder()).
-		BorderForeground(theme.Slate700).
-		Padding(0, 1)
-
-	// Balance card
-	bal := d.balance
-	if bal == "" {
-		bal = "\u2014"
+	// Subtitle line
+	ctx := d.contextName
+	if ctx == "" {
+		ctx = "—"
 	}
-	balanceCard := cardStyle.Render(
-		theme.KVLabel.Render("Balance") + "\n" +
-			theme.KVValueBold.Render(bal))
+	endpoint := d.rpcEndpoint
+	if endpoint == "" {
+		endpoint = "—"
+	}
+	syncAgo := "—"
+	if d.syncState != nil && d.syncState.LastSyncTime > 0 {
+		elapsed := time.Since(time.Unix(d.syncState.LastSyncTime, 0))
+		if elapsed < time.Minute {
+			syncAgo = fmt.Sprintf("%ds ago", int(elapsed.Seconds()))
+		} else {
+			syncAgo = fmt.Sprintf("%dm ago", int(elapsed.Minutes()))
+		}
+	}
+	subtitle := lipgloss.NewStyle().Foreground(theme.Slate500).
+		Render("connected to " + ctx + " · rpc " + endpoint + " · last sync " + syncAgo)
 
-	// Deployments card
-	var activeCount, totalCount string
-	if d.stats != nil {
-		activeCount = fmt.Sprintf("%d", d.stats.ActiveDeployments)
-		totalCount = fmt.Sprintf("  %d total", d.stats.Deployments)
+	leftContent := art + "\n" + greeting + "\n" + subtitle
+
+	// Right side: sync status + version
+	var syncBadge string
+	if d.syncActive {
+		syncBadge = lipgloss.NewStyle().Foreground(theme.GreenColor).Render("● SYNCED")
 	} else {
-		activeCount = "\u2014"
-		totalCount = ""
+		syncBadge = lipgloss.NewStyle().Foreground(theme.Slate500).Render("○ no sync")
 	}
-	deplCard := cardStyle.Render(
-		theme.KVLabel.Render("Deployments") + "\n" +
-			theme.KVValueBold.Render(activeCount) +
-			theme.KVValue.Render(" active") +
-			theme.KVValueMuted.Render(totalCount))
-
-	// Leases card
-	var leaseCount, leaseRate string
-	if d.stats != nil {
-		leaseCount = fmt.Sprintf("%d", d.stats.Leases)
-	} else {
-		leaseCount = "\u2014"
+	ver := d.version
+	if ver == "" {
+		ver = "—"
 	}
-	leaseRate = ""
-	leaseCard := cardStyle.Render(
-		theme.KVLabel.Render("Leases") + "\n" +
-			theme.KVValueBold.Render(leaseCount) +
-			theme.KVValue.Render(" active") +
-			theme.KVValueMuted.Render(leaseRate))
+	versionBadge := lipgloss.NewStyle().Foreground(theme.Slate400).Render(ver)
+	rightContent := syncBadge + "  " + versionBadge
 
-	return lipgloss.JoinHorizontal(lipgloss.Top,
-		" "+balanceCard, " ", deplCard, " ", leaseCard)
+	// Calculate spacing
+	leftW := lipgloss.Width(leftContent)
+	_ = leftW // used below for line-by-line layout
+
+	// Build the banner as a titled panel with empty title
+	// We'll build it manually for the side-by-side layout
+	innerW := w - 4 // border chars
+
+	// Split left content into lines
+	leftLines := strings.Split(leftContent, "\n")
+	rightLines := []string{rightContent}
+
+	// Pad to same number of lines
+	maxLines := len(leftLines)
+	if len(rightLines) > maxLines {
+		maxLines = len(rightLines)
+	}
+	for len(leftLines) < maxLines {
+		leftLines = append(leftLines, "")
+	}
+	for len(rightLines) < maxLines {
+		rightLines = append(rightLines, "")
+	}
+
+	// Build content with right-aligned status on first line
+	var contentLines []string
+	for i, left := range leftLines {
+		right := ""
+		if i < len(rightLines) {
+			right = rightLines[i]
+		}
+		lw := lipgloss.Width(left)
+		rw := lipgloss.Width(right)
+		gap := innerW - lw - rw
+		if gap < 1 {
+			gap = 1
+		}
+		contentLines = append(contentLines, left+strings.Repeat(" ", gap)+right)
+	}
+
+	content := strings.Join(contentLines, "\n")
+	return components.TitledPanel("", content, w)
 }
 
-// ─── Recent Deployments Mini-Table ───────────────────────────────────
+// ─── Wallet Panel ────────────────────────────────────────────────────
 
-func (d Dashboard) renderRecentDeployments(w int) []string {
+func (d Dashboard) renderWallet(colW int) string {
+	innerW := colW - 4
+
 	var lines []string
 
-	lines = append(lines, " "+theme.SectionTitle.Render("Recent Deployments"))
-	lines = append(lines, " "+theme.HRule(w-2))
+	// Address
+	addr := d.account
+	if addr == "" {
+		addr = "—"
+	}
+	// Truncate address if too long for the panel
+	maxAddrLen := innerW - 10
+	if maxAddrLen < 6 {
+		maxAddrLen = 6
+	}
+	if len(addr) > maxAddrLen {
+		addr = addr[:maxAddrLen-1] + "…"
+	}
+	lines = append(lines, kvRight("address", lipgloss.NewStyle().Foreground(theme.Slate200).Render(addr), innerW))
+
+	// Liquid balance — use legacy balance field as fallback
+	liq := d.liquid
+	if liq == "" {
+		liq = d.balance
+	}
+	if liq == "" {
+		liq = "—"
+	}
+	lines = append(lines, kvRight("liquid", lipgloss.NewStyle().Foreground(theme.Slate200).Render(liq), innerW))
+
+	// Staked
+	stk := d.staked
+	if stk == "" {
+		stk = "—"
+	}
+	lines = append(lines, kvRight("staked", lipgloss.NewStyle().Foreground(theme.Slate200).Render(stk), innerW))
+
+	// Rewards
+	rew := d.rewards
+	if rew == "" {
+		rew = "—"
+	}
+	rewStyle := lipgloss.NewStyle().Foreground(theme.Slate200)
+	if strings.HasPrefix(rew, "+") {
+		rewStyle = lipgloss.NewStyle().Foreground(theme.GreenColor)
+	}
+	lines = append(lines, kvRight("rewards", rewStyle.Render(rew), innerW))
+
+	// Escrow
+	esc := d.escrow
+	if esc == "" {
+		esc = "—"
+	}
+	lines = append(lines, kvRight("escrow", lipgloss.NewStyle().Foreground(theme.Slate200).Render(esc), innerW))
+
+	// Blank line
+	lines = append(lines, "")
+
+	// Price section
+	lines = append(lines, lipgloss.NewStyle().Foreground(theme.Slate500).Render("price (24h)"))
+
+	// Sparkline
+	if len(d.priceHistory) > 0 {
+		lines = append(lines, components.Sparkline(d.priceHistory, innerW, theme.GreenColor))
+	}
+
+	// Price + change
+	pr := d.price
+	if pr == "" {
+		pr = "—"
+	}
+	chg := d.priceChange
+	priceStr := lipgloss.NewStyle().Foreground(theme.Slate200).Render(pr)
+	if chg != "" {
+		changeStyle := lipgloss.NewStyle().Foreground(theme.GreenColor)
+		priceStr += " " + changeStyle.Render("▲ "+chg)
+	}
+	lines = append(lines, priceStr)
+
+	content := strings.Join(lines, "\n")
+	return components.TitledPanel("WALLET", content, colW)
+}
+
+// ─── Active Deployments Panel ────────────────────────────────────────
+
+func (d Dashboard) renderActive(colW int) string {
+	innerW := colW - 4
+
+	activeCount := len(d.deployments)
+	title := fmt.Sprintf("ACTIVE · %d", activeCount)
+
+	var lines []string
 
 	if len(d.deployments) == 0 {
-		lines = append(lines, "  "+theme.ColMuted.Render(
-			"No deployments. Use 'akt deploy <sdl>' to create one."))
-		return lines
+		lines = append(lines, lipgloss.NewStyle().Foreground(theme.Slate500).
+			Render("No deployments"))
+	} else {
+		limit := len(d.deployments)
+		if limit > maxActiveDeployments {
+			limit = maxActiveDeployments
+		}
+
+		var totalCost string
+		for _, dep := range d.deployments[:limit] {
+			name := "—"
+			if dep.SDLPath != "" {
+				name = strings.TrimSuffix(
+					strings.TrimSuffix(dep.SDLPath, ".yaml"),
+					".yml")
+				// Use just the base name
+				parts := strings.Split(name, "/")
+				name = parts[len(parts)-1]
+			} else {
+				name = fmt.Sprintf("dseq-%d", dep.DSeq)
+			}
+
+			cost := "—"
+			if dep.Deposit != "" {
+				cost = dep.Deposit
+			}
+
+			nameRendered := lipgloss.NewStyle().Foreground(theme.Slate300).Render(name)
+			costRendered := lipgloss.NewStyle().Foreground(theme.Slate500).Render(cost)
+			nameW := lipgloss.Width(nameRendered)
+			costW := lipgloss.Width(costRendered)
+			gap := innerW - nameW - costW
+			if gap < 1 {
+				gap = 1
+			}
+			lines = append(lines, nameRendered+strings.Repeat(" ", gap)+costRendered)
+		}
+
+		// Dashed separator
+		lines = append(lines, lipgloss.NewStyle().Foreground(theme.Slate700).
+			Render(strings.Repeat("·", innerW)))
+
+		// Monthly burn
+		if totalCost == "" {
+			totalCost = "—"
+		}
+		burnLabel := lipgloss.NewStyle().Foreground(theme.Slate500).Render("monthly burn")
+		burnValue := lipgloss.NewStyle().Foreground(theme.Slate200).Bold(true).Render(totalCost)
+		burnLabelW := lipgloss.Width(burnLabel)
+		burnValueW := lipgloss.Width(burnValue)
+		burnGap := innerW - burnLabelW - burnValueW
+		if burnGap < 1 {
+			burnGap = 1
+		}
+		lines = append(lines, burnLabel+strings.Repeat(" ", burnGap)+burnValue)
 	}
 
-	// Column widths
-	const (
-		colDSeq   = 7
-		colState  = 13
-		colImage  = 20
-		colPrice  = 12
-		colEscrow = 10
-	)
+	// Blank line
+	lines = append(lines, "")
 
-	// Header row
-	lines = append(lines, "  "+
-		col(theme.ColHeader, colDSeq, "DSEQ")+
-		col(theme.ColHeader, colState, "STATE")+
-		col(theme.ColHeader, colImage, "IMAGE")+
-		col(theme.ColHeader, colPrice, "PRICE/BLK")+
-		col(theme.ColHeader, colEscrow, "ESCROW")+
-		theme.ColHeader.Render("AGE"))
+	// Hint
+	hint := lipgloss.NewStyle().Foreground(theme.Slate500).Render("press ") +
+		keyPill("1", false) +
+		lipgloss.NewStyle().Foreground(theme.Slate500).Render(" full list · ") +
+		keyPill("D", true) +
+		lipgloss.NewStyle().Foreground(theme.Slate500).Render(" new")
+	lines = append(lines, hint)
 
-	limit := len(d.deployments)
-	if limit > maxRecentDeployments {
-		limit = maxRecentDeployments
-	}
-
-	for _, dep := range d.deployments[:limit] {
-		tag := components.StateTag(dep.State)
-		tagW := components.StateTagWidth(dep.State)
-		tagPad := ""
-		if tagW < colState {
-			tagPad = strings.Repeat(" ", colState-tagW)
-		}
-
-		image := "\u2014"
-		if dep.SDLPath != "" {
-			image = filepath.Base(dep.SDLPath)
-		}
-
-		price := "\u2014"
-		if dep.Deposit != "" {
-			price = dep.Deposit
-		}
-
-		escrow := "\u2014"
-		if dep.EscrowBalance != "" {
-			escrow = dep.EscrowBalance
-		}
-
-		age := "\u2014"
-		if dep.CreatedAt > 0 {
-			age = relativeTime(dep.CreatedAt)
-		}
-
-		row := "  " +
-			col(theme.ColBold, colDSeq, fmt.Sprintf("%d", dep.DSeq)) +
-			tag + tagPad +
-			col(theme.Col, colImage, image) +
-			col(theme.Col, colPrice, price) +
-			col(theme.Col, colEscrow, escrow) +
-			theme.ColMuted.Render(age)
-		lines = append(lines, row)
-	}
-
-	lines = append(lines, "  "+theme.ColMuted.Render(
-		fmt.Sprintf("Press 2 to see all %d deployments", len(d.deployments))))
-
-	return lines
+	content := strings.Join(lines, "\n")
+	return components.TitledPanel(title, content, colW)
 }
 
-// ─── Network Status Strip ────────────────────────────────────────────
+// ─── Network Panel ───────────────────────────────────────────────────
 
-func (d Dashboard) renderNetwork(w int) []string {
+func (d Dashboard) renderNetworkPanel(colW int) string {
+	innerW := colW - 4
+
 	var lines []string
 
-	lines = append(lines, " "+theme.SectionTitle.Render("Network"))
-	lines = append(lines, " "+theme.HRule(w-2))
-
-	chain := d.chainID
-	if chain == "" {
-		chain = "\u2014"
-	}
-
+	// Block height
 	var blockHeight string
 	if d.syncState != nil && d.syncState.LastBlockHeight > 0 {
 		blockHeight = commaGroup(d.syncState.LastBlockHeight)
 	} else {
-		blockHeight = "\u2014"
+		blockHeight = "—"
+	}
+	lines = append(lines, kvRight("height",
+		lipgloss.NewStyle().Foreground(theme.Slate200).Bold(true).Render(blockHeight), innerW))
+
+	// Block time
+	bt := d.blockTime
+	if bt == "" {
+		bt = "—"
+	}
+	lines = append(lines, kvRight("block time",
+		lipgloss.NewStyle().Foreground(theme.Slate200).Render(bt), innerW))
+
+	// Active providers
+	var provStr string
+	if d.activeProv > 0 {
+		provStr = fmt.Sprintf("%d", d.activeProv)
+	} else if d.validatorCount > 0 {
+		provStr = fmt.Sprintf("%d", d.validatorCount)
+	} else {
+		provStr = "—"
+	}
+	lines = append(lines, kvRight("active prov.",
+		lipgloss.NewStyle().Foreground(theme.Slate200).Render(provStr), innerW))
+
+	// Bonded
+	bnd := d.bonded
+	if bnd == "" {
+		bnd = "—"
+	}
+	lines = append(lines, kvRight("bonded",
+		lipgloss.NewStyle().Foreground(theme.Slate200).Render(bnd), innerW))
+
+	// Inflation
+	inf := d.inflation
+	if inf == "" {
+		inf = "—"
+	}
+	lines = append(lines, kvRight("inflation",
+		lipgloss.NewStyle().Foreground(theme.Slate200).Render(inf), innerW))
+
+	// Chain ID (show in network panel for backward compat with tests)
+	chain := d.chainID
+	if chain == "" {
+		chain = "—"
+	}
+	lines = append(lines, kvRight("chain",
+		lipgloss.NewStyle().Foreground(theme.Slate200).Render(chain), innerW))
+
+	// Blank line
+	lines = append(lines, "")
+
+	// Block times sparkline
+	lines = append(lines, lipgloss.NewStyle().Foreground(theme.Slate500).Render("block times (last 60)"))
+
+	if len(d.blockTimes) > 0 {
+		lines = append(lines, components.Sparkline(d.blockTimes, innerW, theme.AccentRed))
 	}
 
-	validators := "\u2014"
-	if d.validatorCount > 0 {
-		validators = fmt.Sprintf("%d active", d.validatorCount)
+	// Avg / max
+	avg := d.blockTimeAvg
+	if avg == "" {
+		avg = "—"
+	}
+	mx := d.blockTimeMax
+	if mx == "" {
+		mx = "—"
+	}
+	statsLine := lipgloss.NewStyle().Foreground(theme.Slate500).Render("avg ") +
+		lipgloss.NewStyle().Foreground(theme.Slate300).Render(avg) +
+		lipgloss.NewStyle().Foreground(theme.Slate500).Render(" · max ") +
+		lipgloss.NewStyle().Foreground(theme.Slate300).Render(mx)
+	lines = append(lines, statsLine)
+
+	content := strings.Join(lines, "\n")
+	return components.TitledPanel("NETWORK", content, colW)
+}
+
+// ─── Recent Activity Panel ───────────────────────────────────────────
+
+func (d Dashboard) renderActivity(w int) string {
+	innerW := w - 4
+	_ = innerW
+
+	var lines []string
+
+	if len(d.activity) == 0 {
+		lines = append(lines, lipgloss.NewStyle().Foreground(theme.Slate500).
+			Render("No recent activity"))
+	} else {
+		limit := len(d.activity)
+		if limit > maxActivityEntries {
+			limit = maxActivityEntries
+		}
+		for _, entry := range d.activity[:limit] {
+			timeStr := lipgloss.NewStyle().Foreground(theme.Slate500).Render(entry.Time)
+
+			var kindBadge string
+			switch strings.ToLower(entry.Kind) {
+			case "tx":
+				kindBadge = lipgloss.NewStyle().Foreground(theme.GreenColor).Bold(true).Render("TX ")
+			case "evt":
+				kindBadge = lipgloss.NewStyle().Foreground(theme.BlueColor).Bold(true).Render("EVT")
+			case "gov":
+				kindBadge = lipgloss.NewStyle().Foreground(theme.PurpleColor).Bold(true).Render("GOV")
+			default:
+				kindBadge = lipgloss.NewStyle().Foreground(theme.Slate400).Render(fmt.Sprintf("%-3s", entry.Kind))
+			}
+
+			text := lipgloss.NewStyle().Foreground(theme.Slate300).Render(entry.Text)
+			lines = append(lines, timeStr+"  "+kindBadge+"  "+text)
+		}
 	}
 
-	proposals := "\u2014"
-	if d.proposalCount > 0 {
-		proposals = fmt.Sprintf("%d voting", d.proposalCount)
+	content := strings.Join(lines, "\n")
+	return components.TitledPanel("RECENT ACTIVITY", content, w)
+}
+
+// ─── Shortcuts Panel ─────────────────────────────────────────────────
+
+func (d Dashboard) renderShortcuts(colW int) string {
+	type shortcut struct {
+		key   string
+		desc  string
+		isRed bool
 	}
 
-	lines = append(lines,
-		"  "+theme.KVLabel.Width(8).Render("Chain")+theme.KVValue.Render(chain)+
-			"   "+theme.KVLabel.Width(8).Render("Height")+theme.KVValueBold.Render(blockHeight)+
-			"   "+theme.KVLabel.Width(12).Render("Validators")+theme.KVValue.Render(validators)+
-			"   "+theme.KVLabel.Width(12).Render("Proposals")+theme.KVValue.Render(proposals))
+	shortcuts := []shortcut{
+		{"1-6", "primary nav", false},
+		{"↵", "drill down", false},
+		{"esc", "pop back", false},
+		{":", "command palette", false},
+		{"?", "help overlay", false},
+		{"D", "new deployment", true},
+	}
 
-	return lines
+	var lines []string
+	for _, sc := range shortcuts {
+		pill := keyPill(sc.key, sc.isRed)
+		desc := lipgloss.NewStyle().Foreground(theme.Slate400).Render("  " + sc.desc)
+		lines = append(lines, pill+desc)
+	}
+
+	content := strings.Join(lines, "\n")
+	return components.TitledPanel("SHORTCUTS", content, colW)
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
+
+// kvRight renders a right-justified key-value row: label on the left (muted),
+// value on the right, filling the gap with spaces.
+func kvRight(label, value string, width int) string {
+	labelRendered := theme.Muted.Render(label)
+	labelW := lipgloss.Width(labelRendered)
+	valueW := lipgloss.Width(value)
+	gap := width - labelW - valueW
+	if gap < 1 {
+		gap = 1
+	}
+	return labelRendered + strings.Repeat(" ", gap) + value
+}
+
+// keyPill renders a keyboard shortcut pill like [key].
+func keyPill(key string, accent bool) string {
+	if accent {
+		return lipgloss.NewStyle().
+			Foreground(theme.Slate950).
+			Background(theme.AccentRed).
+			Bold(true).
+			Padding(0, 0).
+			Render(key)
+	}
+	return lipgloss.NewStyle().
+		Foreground(theme.Slate300).
+		Background(theme.Slate800).
+		Padding(0, 0).
+		Render(key)
+}
 
 // col renders text into a fixed-width column using a lipgloss style.
 func col(style lipgloss.Style, width int, text string) string {
