@@ -205,6 +205,163 @@ func TestResourceTableScrolling(t *testing.T) {
 	}
 }
 
+func TestResourceTableSort(t *testing.T) {
+	cfg := components.ResourceTableConfig{
+		Columns: []components.TableColumn{
+			{Header: "NAME", Width: 10},
+			{Header: "AGE", Width: 6},
+		},
+	}
+	tbl := components.NewResourceTable(cfg)
+	tbl.SetRows([]components.TableRow{
+		{Cells: []string{"charlie", "3"}, ID: "c"},
+		{Cells: []string{"alice", "1"}, ID: "a"},
+		{Cells: []string{"bob", "2"}, ID: "b"},
+	})
+	tbl.SetSize(40, 20)
+
+	// Sort ascending by column 0 (NAME)
+	tbl.Sort(0, true)
+	row := tbl.SelectedRow()
+	if row == nil || row.ID != "a" {
+		t.Errorf("sort asc: first row ID = %v, want 'a'", row)
+	}
+	tbl.CursorDown()
+	row = tbl.SelectedRow()
+	if row == nil || row.ID != "b" {
+		t.Errorf("sort asc: second row ID = %v, want 'b'", row)
+	}
+	tbl.CursorDown()
+	row = tbl.SelectedRow()
+	if row == nil || row.ID != "c" {
+		t.Errorf("sort asc: third row ID = %v, want 'c'", row)
+	}
+
+	// Sort descending by column 0 (NAME)
+	tbl.Sort(0, false)
+	tbl.CursorTop()
+	row = tbl.SelectedRow()
+	if row == nil || row.ID != "c" {
+		t.Errorf("sort desc: first row ID = %v, want 'c'", row)
+	}
+	tbl.CursorBottom()
+	row = tbl.SelectedRow()
+	if row == nil || row.ID != "a" {
+		t.Errorf("sort desc: last row ID = %v, want 'a'", row)
+	}
+}
+
+func TestResourceTableFilter(t *testing.T) {
+	cfg := components.ResourceTableConfig{
+		Columns: []components.TableColumn{
+			{Header: "NAME", Width: 10},
+			{Header: "STATUS", Width: 10},
+		},
+	}
+	tbl := components.NewResourceTable(cfg)
+	tbl.SetRows([]components.TableRow{
+		{Cells: []string{"deploy-1", "active"}, ID: "1"},
+		{Cells: []string{"deploy-2", "closed"}, ID: "2"},
+		{Cells: []string{"service-1", "active"}, ID: "3"},
+	})
+	tbl.SetSize(40, 20)
+
+	// Filter by "deploy" — should match 2 rows
+	tbl.SetFilter("deploy")
+	if cnt := tbl.FilteredCount(); cnt != 2 {
+		t.Errorf("filter 'deploy': FilteredCount = %d, want 2", cnt)
+	}
+
+	// Case-insensitive filter
+	tbl.SetFilter("ACTIVE")
+	if cnt := tbl.FilteredCount(); cnt != 2 {
+		t.Errorf("filter 'ACTIVE': FilteredCount = %d, want 2", cnt)
+	}
+
+	// Filter that matches nothing
+	tbl.SetFilter("nonexistent")
+	if cnt := tbl.FilteredCount(); cnt != 0 {
+		t.Errorf("filter 'nonexistent': FilteredCount = %d, want 0", cnt)
+	}
+	if row := tbl.SelectedRow(); row != nil {
+		t.Error("filter with no matches: SelectedRow should be nil")
+	}
+
+	// ClearFilter restores all rows
+	tbl.ClearFilter()
+	if cnt := tbl.FilteredCount(); cnt != 3 {
+		t.Errorf("after ClearFilter: FilteredCount = %d, want 3", cnt)
+	}
+}
+
+func TestResourceTableFilterEmpty(t *testing.T) {
+	cfg := components.ResourceTableConfig{
+		Columns: []components.TableColumn{
+			{Header: "NAME", Width: 10},
+		},
+	}
+	tbl := components.NewResourceTable(cfg)
+	tbl.SetRows([]components.TableRow{
+		{Cells: []string{"row-0"}, ID: "0"},
+		{Cells: []string{"row-1"}, ID: "1"},
+	})
+	tbl.SetSize(40, 20)
+
+	// Empty filter shows all rows
+	tbl.SetFilter("")
+	if cnt := tbl.FilteredCount(); cnt != 2 {
+		t.Errorf("empty filter: FilteredCount = %d, want 2", cnt)
+	}
+}
+
+func TestResourceTableSortWithFilter(t *testing.T) {
+	cfg := components.ResourceTableConfig{
+		Columns: []components.TableColumn{
+			{Header: "NAME", Width: 10},
+			{Header: "STATUS", Width: 10},
+		},
+	}
+	tbl := components.NewResourceTable(cfg)
+	tbl.SetRows([]components.TableRow{
+		{Cells: []string{"charlie", "active"}, ID: "c"},
+		{Cells: []string{"alice", "closed"}, ID: "a"},
+		{Cells: []string{"bob", "active"}, ID: "b"},
+		{Cells: []string{"dave", "closed"}, ID: "d"},
+	})
+	tbl.SetSize(40, 20)
+
+	// Filter to "active" rows, then sort by name ascending
+	tbl.SetFilter("active")
+	tbl.Sort(0, true)
+
+	if cnt := tbl.FilteredCount(); cnt != 2 {
+		t.Fatalf("filter+sort: FilteredCount = %d, want 2", cnt)
+	}
+
+	// First should be bob (active, alphabetically before charlie)
+	tbl.CursorTop()
+	row := tbl.SelectedRow()
+	if row == nil || row.ID != "b" {
+		t.Errorf("filter+sort: first row ID = %v, want 'b'", row)
+	}
+	tbl.CursorDown()
+	row = tbl.SelectedRow()
+	if row == nil || row.ID != "c" {
+		t.Errorf("filter+sort: second row ID = %v, want 'c'", row)
+	}
+
+	// Clear filter, sort should still apply to all rows
+	tbl.ClearFilter()
+	if cnt := tbl.FilteredCount(); cnt != 4 {
+		t.Fatalf("after clear filter: FilteredCount = %d, want 4", cnt)
+	}
+	tbl.CursorTop()
+	row = tbl.SelectedRow()
+	if row == nil || row.ID != "a" {
+		t.Errorf("after clear filter+sort: first row ID = %v, want 'a'", row)
+	}
+}
+
 func TestResourceTableRenderFunc(t *testing.T) {
 	called := false
 	cfg := components.ResourceTableConfig{

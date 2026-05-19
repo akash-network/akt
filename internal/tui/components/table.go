@@ -2,6 +2,7 @@ package components
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 
 	"charm.land/lipgloss/v2"
@@ -42,26 +43,27 @@ type ResourceTableConfig struct {
 // ResourceTable is a reusable table component for list views. It renders
 // fixed-width columns using fmt.Sprintf("%-*s") to prevent row wrapping.
 type ResourceTable struct {
-	config  ResourceTableConfig
-	rows    []TableRow
-	cursor  int
-	offset  int // scroll offset for visible window
-	width   int
-	height  int
+	config   ResourceTableConfig
+	rows     []TableRow
+	filtered []TableRow
+	cursor   int
+	offset   int // scroll offset for visible window
+	width    int
+	height   int
+	sortCol  int  // column to sort by (-1 = no sort)
+	sortAsc  bool // sort direction
+	filter   string
 }
 
 // NewResourceTable creates a new ResourceTable with the given configuration.
 func NewResourceTable(cfg ResourceTableConfig) ResourceTable {
-	return ResourceTable{config: cfg}
+	return ResourceTable{config: cfg, sortCol: -1}
 }
 
-// SetRows replaces the table rows and clamps the cursor.
+// SetRows replaces the table rows and rebuilds the filtered/sorted view.
 func (t *ResourceTable) SetRows(rows []TableRow) {
 	t.rows = rows
-	if t.cursor >= len(rows) {
-		t.cursor = maxInt(0, len(rows)-1)
-	}
-	t.ensureVisible()
+	t.applyFilterAndSort()
 }
 
 // Width returns the current table width.
@@ -83,15 +85,15 @@ func (t *ResourceTable) SelectedIndex() int {
 
 // SelectedRow returns the currently highlighted row, or nil if empty.
 func (t *ResourceTable) SelectedRow() *TableRow {
-	if len(t.rows) == 0 || t.cursor >= len(t.rows) {
+	if len(t.filtered) == 0 || t.cursor >= len(t.filtered) {
 		return nil
 	}
-	return &t.rows[t.cursor]
+	return &t.filtered[t.cursor]
 }
 
 // CursorDown moves the cursor down one row.
 func (t *ResourceTable) CursorDown() {
-	if t.cursor < len(t.rows)-1 {
+	if t.cursor < len(t.filtered)-1 {
 		t.cursor++
 		t.ensureVisible()
 	}
@@ -113,8 +115,8 @@ func (t *ResourceTable) CursorTop() {
 
 // CursorBottom moves the cursor to the last row.
 func (t *ResourceTable) CursorBottom() {
-	if len(t.rows) > 0 {
-		t.cursor = len(t.rows) - 1
+	if len(t.filtered) > 0 {
+		t.cursor = len(t.filtered) - 1
 		t.ensureVisible()
 	}
 }
@@ -171,7 +173,7 @@ func (t ResourceTable) View() string {
 	b.WriteByte('\n')
 
 	// Empty state
-	if len(t.rows) == 0 {
+	if len(t.filtered) == 0 {
 		emptyText := t.config.EmptyText
 		if emptyText == "" {
 			emptyText = "No items"
@@ -196,8 +198,8 @@ func (t ResourceTable) View() string {
 	vis := t.visibleRows()
 	startIdx := t.offset
 	endIdx := startIdx + vis
-	if endIdx > len(t.rows) {
-		endIdx = len(t.rows)
+	if endIdx > len(t.filtered) {
+		endIdx = len(t.filtered)
 	}
 
 	cursorStyle := lipgloss.NewStyle().Foreground(theme.AccentRed).Bold(true)
@@ -205,7 +207,7 @@ func (t ResourceTable) View() string {
 	normalStyle := lipgloss.NewStyle().Foreground(theme.Slate300)
 
 	for i := startIdx; i < endIdx; i++ {
-		row := t.rows[i]
+		row := t.filtered[i]
 		isSelected := i == t.cursor
 
 		// Cursor prefix
@@ -250,9 +252,81 @@ func (t ResourceTable) View() string {
 	b.WriteByte('\n')
 
 	// Row count
-	b.WriteString(countStyle.Render(fmt.Sprintf("  %d items", len(t.rows))))
+	b.WriteString(countStyle.Render(fmt.Sprintf("  %d items", len(t.filtered))))
 
 	return b.String()
+}
+
+// Sort sets the sort column and direction, then re-applies filtering and sorting.
+func (t *ResourceTable) Sort(col int, ascending bool) {
+	t.sortCol = col
+	t.sortAsc = ascending
+	t.applyFilterAndSort()
+}
+
+// SetFilter sets a case-insensitive substring filter across all cells.
+func (t *ResourceTable) SetFilter(query string) {
+	t.filter = query
+	t.applyFilterAndSort()
+}
+
+// ClearFilter removes the active filter.
+func (t *ResourceTable) ClearFilter() {
+	t.filter = ""
+	t.applyFilterAndSort()
+}
+
+// FilteredCount returns the number of visible (filtered) rows.
+func (t *ResourceTable) FilteredCount() int {
+	return len(t.filtered)
+}
+
+// applyFilterAndSort rebuilds the filtered slice from rows, applying the
+// current filter and sort settings, then clamps the cursor.
+func (t *ResourceTable) applyFilterAndSort() {
+	// Filter
+	if t.filter == "" {
+		t.filtered = make([]TableRow, len(t.rows))
+		copy(t.filtered, t.rows)
+	} else {
+		t.filtered = t.filtered[:0]
+		q := strings.ToLower(t.filter)
+		for _, row := range t.rows {
+			for _, cell := range row.Cells {
+				if strings.Contains(strings.ToLower(cell), q) {
+					t.filtered = append(t.filtered, row)
+					break
+				}
+			}
+		}
+	}
+
+	// Sort
+	if t.sortCol >= 0 {
+		col := t.sortCol
+		asc := t.sortAsc
+		sort.SliceStable(t.filtered, func(i, j int) bool {
+			a, b := "", ""
+			if col < len(t.filtered[i].Cells) {
+				a = t.filtered[i].Cells[col]
+			}
+			if col < len(t.filtered[j].Cells) {
+				b = t.filtered[j].Cells[col]
+			}
+			if asc {
+				return a < b
+			}
+			return a > b
+		})
+	}
+
+	// Clamp cursor
+	if len(t.filtered) == 0 {
+		t.cursor = 0
+	} else if t.cursor >= len(t.filtered) {
+		t.cursor = len(t.filtered) - 1
+	}
+	t.ensureVisible()
 }
 
 // fmtCell formats a cell value to a fixed width, truncating with "…" if needed.
