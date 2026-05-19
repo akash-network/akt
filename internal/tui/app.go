@@ -16,6 +16,7 @@ import (
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/spf13/viper"
@@ -149,6 +150,10 @@ func newApp(cfg Config, topModel tea.Model) App {
 	if cfg.ResolvedCtx != nil {
 		dash.SetContext(cfg.ResolvedCtx.Name, cfg.ResolvedCtx.Network.ChainID, cfg.ResolvedCtx.DefaultAccount)
 	}
+	if cfg.RPCEndpoint != "" {
+		dash.SetRPCEndpoint(cfg.RPCEndpoint)
+	}
+	dash.SetVersion("dev")
 
 	return App{
 		keys:             km,
@@ -207,6 +212,9 @@ func (a App) Init() tea.Cmd {
 		owner = a.resolvedCtx.DefaultAccount
 	}
 	cmds = append(cmds, loadDeployments(a.dataStore, owner))
+
+	// Load wallet balance for the dashboard.
+	cmds = append(cmds, loadBalance(a.lightClient, owner))
 
 	return tea.Batch(cmds...)
 }
@@ -291,6 +299,17 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Err == nil {
 			a.syncState = msg.State
 			a.dashboard.SetSyncState(msg.State)
+			// Signal that sync data is available.
+			if msg.State != nil {
+				a.dashboard.SetSyncBridgeActive(true)
+			}
+		}
+		return a, nil
+
+	case messages.BalanceLoadedMsg:
+		if msg.Err == nil {
+			a.dashboard.SetBalance(msg.Amount)
+			a.dashboard.SetWallet(msg.Amount, "", "", "")
 		}
 		return a, nil
 
@@ -308,6 +327,7 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				loadDeployments(a.dataStore, owner),
 				loadStoreStats(a.dataStore),
 				loadSyncState(a.dataStore),
+				loadBalance(a.lightClient, owner),
 			)
 		case viewDeployments:
 			refreshCmds = append(refreshCmds, loadDeployments(a.dataStore, owner))
@@ -1532,6 +1552,27 @@ func loadSyncState(s store.Store) tea.Cmd {
 		}
 		state, err := s.GetSyncState(context.Background())
 		return messages.SyncStateMsg{State: state, Err: err}
+	}
+}
+
+func loadBalance(client aclient.LightClient, account string) tea.Cmd {
+	return func() tea.Msg {
+		if client == nil || account == "" {
+			return messages.BalanceLoadedMsg{Err: fmt.Errorf("no client or account")}
+		}
+		resp, err := client.Query().Bank().AllBalances(context.Background(), &banktypes.QueryAllBalancesRequest{
+			Address: account,
+		})
+		if err != nil {
+			return messages.BalanceLoadedMsg{Err: err}
+		}
+		for _, coin := range resp.Balances {
+			if coin.Denom == "uakt" {
+				amt := coin.Amount.ToLegacyDec().QuoInt64(1_000_000)
+				return messages.BalanceLoadedMsg{Amount: fmt.Sprintf("%.2f AKT", amt.MustFloat64())}
+			}
+		}
+		return messages.BalanceLoadedMsg{Amount: "0 AKT"}
 	}
 }
 
