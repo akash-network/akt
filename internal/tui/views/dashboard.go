@@ -188,16 +188,38 @@ func (d Dashboard) View() string {
 	sections = append(sections, d.renderWelcome(w))
 
 	// Row 2: Wallet | Active | Network (3 columns)
+	// Build content for each panel first, then equalize heights.
+	walletContent := d.walletContent(colW - 4)
+	activeContent := d.activeContent(colW - 4)
+	networkContent := d.networkContent(colW - 4)
+
+	// Find max content lines across all three panels.
+	maxLines := components.ContentLineCount(walletContent)
+	if n := components.ContentLineCount(activeContent); n > maxLines {
+		maxLines = n
+	}
+	if n := components.ContentLineCount(networkContent); n > maxLines {
+		maxLines = n
+	}
+
 	row2 := lipgloss.JoinHorizontal(lipgloss.Top,
-		d.renderWallet(colW), " ",
-		d.renderActive(colW), " ",
-		d.renderNetworkPanel(colW))
+		components.TitledPanelHeight("WALLET", walletContent, colW, maxLines), " ",
+		components.TitledPanelHeight(fmt.Sprintf("ACTIVE · %d", len(d.deployments)), activeContent, colW, maxLines), " ",
+		components.TitledPanelHeight("NETWORK", networkContent, colW, maxLines))
 	sections = append(sections, row2)
 
 	// Row 3: Recent Activity (2 cols) | Shortcuts (1 col)
+	activityContent := d.activityContent(wideW - 4)
+	shortcutsContent := d.shortcutsContent()
+
+	maxLines3 := components.ContentLineCount(activityContent)
+	if n := components.ContentLineCount(shortcutsContent); n > maxLines3 {
+		maxLines3 = n
+	}
+
 	row3 := lipgloss.JoinHorizontal(lipgloss.Top,
-		d.renderActivity(wideW), " ",
-		d.renderShortcuts(colW))
+		components.TitledPanelHeight("RECENT ACTIVITY", activityContent, wideW, maxLines3), " ",
+		components.TitledPanelHeight("SHORTCUTS", shortcutsContent, colW, maxLines3))
 	sections = append(sections, row3)
 
 	return strings.Join(sections, "\n")
@@ -300,8 +322,8 @@ func (d Dashboard) renderWelcome(w int) string {
 
 // ─── Wallet Panel ────────────────────────────────────────────────────
 
-func (d Dashboard) renderWallet(colW int) string {
-	innerW := colW - 4
+// walletContent returns the inner content for the WALLET panel.
+func (d Dashboard) walletContent(innerW int) string {
 
 	var lines []string
 
@@ -379,18 +401,13 @@ func (d Dashboard) renderWallet(colW int) string {
 	}
 	lines = append(lines, priceStr)
 
-	content := strings.Join(lines, "\n")
-	return components.TitledPanel("WALLET", content, colW)
+	return strings.Join(lines, "\n")
 }
 
 // ─── Active Deployments Panel ────────────────────────────────────────
 
-func (d Dashboard) renderActive(colW int) string {
-	innerW := colW - 4
-
-	activeCount := len(d.deployments)
-	title := fmt.Sprintf("ACTIVE · %d", activeCount)
-
+// activeContent returns the inner content for the ACTIVE panel.
+func (d Dashboard) activeContent(innerW int) string {
 	var lines []string
 
 	if len(d.deployments) == 0 {
@@ -462,15 +479,13 @@ func (d Dashboard) renderActive(colW int) string {
 		lipgloss.NewStyle().Foreground(theme.Slate500).Render(" new")
 	lines = append(lines, hint)
 
-	content := strings.Join(lines, "\n")
-	return components.TitledPanel(title, content, colW)
+	return strings.Join(lines, "\n")
 }
 
 // ─── Network Panel ───────────────────────────────────────────────────
 
-func (d Dashboard) renderNetworkPanel(colW int) string {
-	innerW := colW - 4
-
+// networkContent returns the inner content for the NETWORK panel.
+func (d Dashboard) networkContent(innerW int) string {
 	var lines []string
 
 	// Block height
@@ -519,14 +534,6 @@ func (d Dashboard) renderNetworkPanel(colW int) string {
 	lines = append(lines, kvRight("inflation",
 		lipgloss.NewStyle().Foreground(theme.Slate200).Render(inf), innerW))
 
-	// Chain ID (show in network panel for backward compat with tests)
-	chain := d.chainID
-	if chain == "" {
-		chain = "—"
-	}
-	lines = append(lines, kvRight("chain",
-		lipgloss.NewStyle().Foreground(theme.Slate200).Render(chain), innerW))
-
 	// Blank line
 	lines = append(lines, "")
 
@@ -552,16 +559,13 @@ func (d Dashboard) renderNetworkPanel(colW int) string {
 		lipgloss.NewStyle().Foreground(theme.Slate300).Render(mx)
 	lines = append(lines, statsLine)
 
-	content := strings.Join(lines, "\n")
-	return components.TitledPanel("NETWORK", content, colW)
+	return strings.Join(lines, "\n")
 }
 
 // ─── Recent Activity Panel ───────────────────────────────────────────
 
-func (d Dashboard) renderActivity(w int) string {
-	innerW := w - 4
-	_ = innerW
-
+// activityContent returns the inner content for the RECENT ACTIVITY panel.
+func (d Dashboard) activityContent(innerW int) string {
 	var lines []string
 
 	if len(d.activity) == 0 {
@@ -592,13 +596,13 @@ func (d Dashboard) renderActivity(w int) string {
 		}
 	}
 
-	content := strings.Join(lines, "\n")
-	return components.TitledPanel("RECENT ACTIVITY", content, w)
+	return strings.Join(lines, "\n")
 }
 
 // ─── Shortcuts Panel ─────────────────────────────────────────────────
 
-func (d Dashboard) renderShortcuts(colW int) string {
+// shortcutsContent returns the inner content for the SHORTCUTS panel.
+func (d Dashboard) shortcutsContent() string {
 	type shortcut struct {
 		key   string
 		desc  string
@@ -621,8 +625,7 @@ func (d Dashboard) renderShortcuts(colW int) string {
 		lines = append(lines, pill+desc)
 	}
 
-	content := strings.Join(lines, "\n")
-	return components.TitledPanel("SHORTCUTS", content, colW)
+	return strings.Join(lines, "\n")
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────

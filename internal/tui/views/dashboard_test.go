@@ -74,9 +74,9 @@ func TestDashboardSetContext(t *testing.T) {
 
 	out := ansi.Strip(d.View())
 
-	// Chain ID should appear in the Network panel.
-	if !strings.Contains(out, "akashnet-2") {
-		t.Error("View() missing chain ID after SetContext")
+	// Context name should appear in the welcome banner ("connected to my-context").
+	if !strings.Contains(out, "my-context") {
+		t.Error("View() missing context name after SetContext")
 	}
 	// Account should appear in the welcome banner and wallet.
 	if !strings.Contains(out, "akash1abc123") {
@@ -243,15 +243,16 @@ func TestDashboardSetProposalCount(t *testing.T) {
 	}
 }
 
-func TestDashboardNetworkPanelShowsChainID(t *testing.T) {
+func TestDashboardWelcomeBannerShowsContext(t *testing.T) {
 	d := views.NewDashboard()
 	d.SetSize(120, 60)
 	d.SetContext("ctx", "mainnet-1", "akash1xyz")
 
 	out := ansi.Strip(d.View())
 
-	if !strings.Contains(out, "mainnet-1") {
-		t.Error("View() should show chain ID in Network panel")
+	// Context name appears in the welcome banner ("connected to ctx").
+	if !strings.Contains(out, "ctx") {
+		t.Error("View() should show context name in welcome banner")
 	}
 }
 
