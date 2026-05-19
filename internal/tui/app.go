@@ -12,8 +12,13 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	cmthttp "github.com/cometbft/cometbft/rpc/client/http"
+	"github.com/cosmos/cosmos-sdk/types/query"
+	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/spf13/viper"
 
+	aktclient "pkg.akt.dev/akt/internal/client"
+	aktcodec "pkg.akt.dev/akt/internal/codec"
 	aktctx "pkg.akt.dev/akt/internal/context"
 	aktevents "pkg.akt.dev/akt/internal/events"
 	monitorcache "pkg.akt.dev/akt/internal/monitor/cache"
@@ -26,6 +31,9 @@ import (
 	"pkg.akt.dev/akt/internal/tui/views"
 	"pkg.akt.dev/akt/internal/ui/theme"
 
+	aclient "pkg.akt.dev/go/node/client"
+	aclientv1beta3 "pkg.akt.dev/go/node/client/v1beta3"
+	ptypes "pkg.akt.dev/go/node/provider/v1beta4"
 	"pkg.akt.dev/go/util/pubsub"
 )
 
@@ -57,8 +65,9 @@ type Config struct {
 	InitialDashboard string // which monitor dashboard to start on: "network" (default), "provider", "bme"
 
 	// Data sources (optional — TUI works in degraded mode without them)
-	Store       store.Store     // local deployment store (nil = no store)
-	ResolvedCtx *aktctx.Context // resolved akt context (nil = no context info)
+	Store       store.Store            // local deployment store (nil = no store)
+	ResolvedCtx *aktctx.Context        // resolved akt context (nil = no context info)
+	LightClient aclient.LightClient // chain query client; nil = no chain queries
 }
 
 // App is the root bubbletea model for the akt TUI.
@@ -92,6 +101,7 @@ type App struct {
 	// Data sources
 	dataStore   store.Store
 	resolvedCtx *aktctx.Context
+	lightClient aclient.LightClient
 
 	// Cached data
 	storeStats *store.StoreStats
@@ -115,6 +125,7 @@ func newApp(cfg Config, topModel tea.Model) App {
 		standalone:       cfg.Standalone,
 		dataStore:        cfg.Store,
 		resolvedCtx:      cfg.ResolvedCtx,
+		lightClient:      cfg.LightClient,
 		dashboard:        dash,
 		deployments:      views.NewDeploymentsView(),
 		leases:           views.NewLeasesView(),
@@ -192,6 +203,24 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case messages.BidsLoadedMsg:
 		if msg.Err == nil {
 			a.deploymentDetail.SetBids(msg.Bids)
+		}
+		return a, nil
+
+	case messages.ProposalsLoadedMsg:
+		if msg.Err == nil {
+			a.governance.SetData(msg.Proposals)
+		}
+		return a, nil
+
+	case messages.ValidatorsLoadedMsg:
+		if msg.Err == nil {
+			a.staking.SetData(msg.Validators)
+		}
+		return a, nil
+
+	case messages.ProvidersLoadedMsg:
+		if msg.Err == nil {
+			a.providers.SetData(msg.Providers)
 		}
 		return a, nil
 
@@ -488,16 +517,16 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, loadLeases(a.dataStore, owner)
 		case key.Matches(kmsg, a.keys.Providers):
 			a.view = viewProviders
-			return a, nil
+			return a, loadChainProviders(a.lightClient)
 		case key.Matches(kmsg, a.keys.Monitor):
 			a.view = viewMonitor
 			return a, nil
 		case key.Matches(kmsg, a.keys.Governance):
 			a.view = viewGovernance
-			return a, nil
+			return a, loadProposals(a.lightClient)
 		case key.Matches(kmsg, a.keys.Staking):
 			a.view = viewStaking
-			return a, nil
+			return a, loadValidators(a.lightClient)
 		case key.Matches(kmsg, a.keys.Back):
 			a.view = viewDashboard
 			return a, nil
@@ -726,10 +755,13 @@ func (a App) handleCommand(cmd string) (tea.Model, tea.Cmd) {
 		return a, loadLeases(a.dataStore, owner)
 	case "providers", "prov":
 		a.view = viewProviders
+		return a, loadChainProviders(a.lightClient)
 	case "governance", "gov":
 		a.view = viewGovernance
+		return a, loadProposals(a.lightClient)
 	case "staking", "validators", "val":
 		a.view = viewStaking
+		return a, loadValidators(a.lightClient)
 
 	case "certificates", "escrow", "orders", "bids",
 		"deploy", "help":
@@ -994,9 +1026,81 @@ func loadSyncState(s store.Store) tea.Cmd {
 	}
 }
 
+// ─── Chain data loading commands ─────────────────────────────────────
+
+func loadProposals(cl aclient.LightClient) tea.Cmd {
+	return func() tea.Msg {
+		if cl == nil {
+			return messages.ProposalsLoadedMsg{Err: fmt.Errorf("no chain client available")}
+		}
+		res, err := cl.Query().Gov().Proposals(context.Background(), &govv1.QueryProposalsRequest{
+			Pagination: &query.PageRequest{Limit: 100, Reverse: true},
+		})
+		if err != nil {
+			return messages.ProposalsLoadedMsg{Err: err}
+		}
+		return messages.ProposalsLoadedMsg{Proposals: res.Proposals}
+	}
+}
+
+func loadValidators(cl aclient.LightClient) tea.Cmd {
+	return func() tea.Msg {
+		if cl == nil {
+			return messages.ValidatorsLoadedMsg{Err: fmt.Errorf("no chain client available")}
+		}
+		res, err := cl.Query().Staking().Validators(context.Background(), &stakingtypes.QueryValidatorsRequest{
+			Pagination: &query.PageRequest{Limit: 200},
+		})
+		if err != nil {
+			return messages.ValidatorsLoadedMsg{Err: err}
+		}
+		return messages.ValidatorsLoadedMsg{Validators: res.Validators}
+	}
+}
+
+func loadChainProviders(cl aclient.LightClient) tea.Cmd {
+	return func() tea.Msg {
+		if cl == nil {
+			return messages.ProvidersLoadedMsg{Err: fmt.Errorf("no chain client available")}
+		}
+		res, err := cl.Query().Provider().Providers(context.Background(), &ptypes.QueryProvidersRequest{
+			Pagination: &query.PageRequest{Limit: 200},
+		})
+		if err != nil {
+			return messages.ProvidersLoadedMsg{Err: err}
+		}
+		return messages.ProvidersLoadedMsg{Providers: res.Providers}
+	}
+}
+
+// buildLightClient attempts to create a LightClient from the resolved context
+// and RPC endpoint when one is not already provided. The TUI only performs
+// queries so no keyring is needed.
+func buildLightClient(cfg *Config) {
+	if cfg.LightClient != nil || cfg.ResolvedCtx == nil || cfg.RPCEndpoint == "" {
+		return
+	}
+
+	cctx := aktclient.BuildClientContext(cfg.ResolvedCtx, nil, aktcodec.MakeEncodingConfig())
+
+	rpcClient, err := aclient.NewClient(context.Background(), cfg.RPCEndpoint)
+	if err != nil {
+		return
+	}
+	cctx = cctx.WithClient(rpcClient)
+
+	cl, err := aclientv1beta3.NewLightClient(cctx)
+	if err != nil {
+		return
+	}
+	cfg.LightClient = cl
+}
+
 // ─── Entry points ────────────────────────────────────────────────────
 
 func Run(cfg Config) error {
+	buildLightClient(&cfg)
+
 	model, cleanup := buildMonitorModel(cfg)
 	if cleanup != nil {
 		defer cleanup()
@@ -1012,6 +1116,8 @@ func Run(cfg Config) error {
 // cfg.InitialDashboard selects which dashboard is shown first
 // ("network", "provider", "bme", or "" for the default network).
 func RunMonitor(cfg Config) error {
+	buildLightClient(&cfg)
+
 	model, cleanup := buildMonitorModel(cfg)
 	if cleanup != nil {
 		defer cleanup()

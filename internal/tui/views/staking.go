@@ -1,6 +1,11 @@
 package views
 
 import (
+	"fmt"
+
+	"cosmossdk.io/math"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+
 	"pkg.akt.dev/akt/internal/tui/components"
 )
 
@@ -48,7 +53,46 @@ func (v *StakingView) CursorDown() {
 	v.table.CursorDown()
 }
 
+// SetData stores the validators and rebuilds the table rows.
+func (v *StakingView) SetData(validators []stakingtypes.Validator) {
+	rows := make([]components.TableRow, len(validators))
+	for i, val := range validators {
+		rows[i] = components.TableRow{
+			ID: val.OperatorAddress,
+			Cells: []string{
+				fmt.Sprintf("%d", i+1),
+				val.GetMoniker(),
+				formatTokens(val.Tokens),
+				"—", // VP% TBD
+				formatCommissionRate(val.Commission.CommissionRates.Rate),
+				"—", "—", // uptime, signed TBD
+			},
+		}
+	}
+	v.table.SetRows(rows)
+}
+
 // View renders the staking table.
 func (v StakingView) View() string {
 	return v.table.View()
+}
+
+// formatTokens formats a token amount as a human-readable string with M/K suffixes.
+func formatTokens(tokens math.Int) string {
+	f := tokens.ToLegacyDec().MustFloat64()
+	uakt := f / 1_000_000 // convert from uakt to AKT
+	switch {
+	case uakt >= 1_000_000:
+		return fmt.Sprintf("%.1fM", uakt/1_000_000)
+	case uakt >= 1_000:
+		return fmt.Sprintf("%.1fK", uakt/1_000)
+	default:
+		return fmt.Sprintf("%.0f", uakt)
+	}
+}
+
+// formatCommissionRate formats a commission rate as a percentage string.
+func formatCommissionRate(rate math.LegacyDec) string {
+	pct := rate.MustFloat64() * 100
+	return fmt.Sprintf("%.1f%%", pct)
 }

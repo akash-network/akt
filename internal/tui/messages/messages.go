@@ -1,7 +1,11 @@
 package messages
 
 import (
+	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
+	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+
 	"pkg.akt.dev/akt/internal/store"
+	ptypes "pkg.akt.dev/go/node/provider/v1beta4"
 )
 
 // DeploymentsLoadedMsg carries deployment data from the store.
@@ -37,3 +41,21 @@ type SyncStateMsg struct {
 
 // ViewDataRefreshMsg requests data refresh for the current view.
 type ViewDataRefreshMsg struct{}
+
+// ProposalsLoadedMsg carries governance proposals from a chain query.
+type ProposalsLoadedMsg struct {
+	Proposals []*govv1.Proposal
+	Err       error
+}
+
+// ValidatorsLoadedMsg carries validator data from a chain query.
+type ValidatorsLoadedMsg struct {
+	Validators []stakingtypes.Validator
+	Err        error
+}
+
+// ProvidersLoadedMsg carries on-chain provider data from a chain query.
+type ProvidersLoadedMsg struct {
+	Providers ptypes.Providers
+	Err       error
+}

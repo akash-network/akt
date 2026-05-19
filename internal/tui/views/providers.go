@@ -1,6 +1,10 @@
 package views
 
 import (
+	attrtypes "pkg.akt.dev/go/node/types/attributes/v1"
+
+	ptypes "pkg.akt.dev/go/node/provider/v1beta4"
+
 	"pkg.akt.dev/akt/internal/tui/components"
 )
 
@@ -49,7 +53,38 @@ func (v *ProvidersView) CursorDown() {
 	v.table.CursorDown()
 }
 
+// SetData stores the providers and rebuilds the table rows.
+func (v *ProvidersView) SetData(providers ptypes.Providers) {
+	rows := make([]components.TableRow, len(providers))
+	for i, p := range providers {
+		rows[i] = components.TableRow{
+			ID: p.Owner,
+			Cells: []string{
+				p.HostURI,
+				attrValue(p.Attributes, "region"),
+				"—", // GPU TBD
+				"—", // CPU TBD
+				"—", // Memory TBD
+				"—", // Leases TBD
+				"—", // Audit TBD
+				"—", // Version TBD
+			},
+		}
+	}
+	v.table.SetRows(rows)
+}
+
 // View renders the providers table.
 func (v ProvidersView) View() string {
 	return v.table.View()
+}
+
+// attrValue returns the value of the first attribute matching key, or "—".
+func attrValue(attrs attrtypes.Attributes, key string) string {
+	for _, a := range attrs {
+		if a.Key == key {
+			return a.Value
+		}
+	}
+	return "—"
 }
