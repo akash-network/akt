@@ -13,6 +13,7 @@ import (
 // defines the full column layout and shows an empty-state message.
 type ProvidersView struct {
 	table  components.ResourceTable
+	items  ptypes.Providers
 	width  int
 	height int
 }
@@ -55,6 +56,7 @@ func (v *ProvidersView) CursorDown() {
 
 // SetData stores the providers and rebuilds the table rows.
 func (v *ProvidersView) SetData(providers ptypes.Providers) {
+	v.items = providers
 	rows := make([]components.TableRow, len(providers))
 	for i, p := range providers {
 		audit := "—"
@@ -77,6 +79,20 @@ func (v *ProvidersView) SetData(providers ptypes.Providers) {
 		}
 	}
 	v.table.SetRows(rows)
+}
+
+// SelectedProvider returns the provider record for the currently highlighted row, or nil.
+func (v *ProvidersView) SelectedProvider() *ptypes.Provider {
+	row := v.table.SelectedRow()
+	if row == nil {
+		return nil
+	}
+	for i := range v.items {
+		if v.items[i].Owner == row.ID {
+			return &v.items[i]
+		}
+	}
+	return nil
 }
 
 // View renders the providers table.

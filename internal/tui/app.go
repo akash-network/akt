@@ -56,6 +56,10 @@ const (
 	viewGovernance
 	viewStaking
 	viewDeploymentDetail
+	viewLeaseDetail
+	viewProviderDetail
+	viewProposalDetail
+	viewValidatorDetail
 )
 
 // statusBarHeight is the number of lines reserved for the bottom status bar.
@@ -99,6 +103,10 @@ type App struct {
 	staking          views.StakingView
 	detail           views.DetailView
 	deploymentDetail views.DeploymentDetailView
+	leaseDetail      views.LeaseDetailView
+	providerDetail   views.ProviderDetailView
+	proposalDetail   views.ProposalDetailView
+	validatorDetail  views.ValidatorDetailView
 	logViewer        views.LogViewer
 	confirmDialog    components.ConfirmDialog
 	helpOverlay      views.HelpOverlay
@@ -159,6 +167,10 @@ func newApp(cfg Config, topModel tea.Model) App {
 		staking:          views.NewStakingView(),
 		detail:           views.NewDetailView(),
 		deploymentDetail: views.NewDeploymentDetailView(),
+		leaseDetail:      views.NewLeaseDetailView(),
+		providerDetail:   views.NewProviderDetailView(),
+		proposalDetail:   views.NewProposalDetailView(),
+		validatorDetail:  views.NewValidatorDetailView(),
 		logViewer:        views.NewLogViewer(),
 		helpOverlay:      views.NewHelpOverlay(),
 		palette: views.NewCommandPalette(reg, views.PaletteKeys{
@@ -239,12 +251,26 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case messages.ProposalsLoadedMsg:
 		if msg.Err == nil {
 			a.governance.SetData(msg.Proposals)
+			return a, loadTallies(a.lightClient, msg.Proposals)
 		}
 		return a, nil
 
 	case messages.ValidatorsLoadedMsg:
 		if msg.Err == nil {
 			a.staking.SetData(msg.Validators)
+			return a, loadStakingPool(a.lightClient)
+		}
+		return a, nil
+
+	case messages.TallyLoadedMsg:
+		if msg.Err == nil {
+			a.governance.SetTallies(msg.Tallies)
+		}
+		return a, nil
+
+	case messages.StakingPoolMsg:
+		if msg.Err == nil {
+			a.staking.SetTotalBonded(msg.BondedTokens)
 		}
 		return a, nil
 
@@ -491,6 +517,50 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return a, topCmd
 		}
 
+		// Detail view key handling (lease, provider, proposal, validator).
+		if a.view == viewLeaseDetail || a.view == viewProviderDetail ||
+			a.view == viewProposalDetail || a.view == viewValidatorDetail {
+			switch {
+			case key.Matches(kmsg, a.keys.Back):
+				switch a.view {
+				case viewLeaseDetail:
+					a.view = viewLeases
+				case viewProviderDetail:
+					a.view = viewProviders
+				case viewProposalDetail:
+					a.view = viewGovernance
+				case viewValidatorDetail:
+					a.view = viewStaking
+				}
+				return a, nil
+			case key.Matches(kmsg, a.keys.CursorDown):
+				switch a.view {
+				case viewLeaseDetail:
+					a.leaseDetail.ScrollDown()
+				case viewProviderDetail:
+					a.providerDetail.ScrollDown()
+				case viewProposalDetail:
+					a.proposalDetail.ScrollDown()
+				case viewValidatorDetail:
+					a.validatorDetail.ScrollDown()
+				}
+				return a, nil
+			case key.Matches(kmsg, a.keys.CursorUp):
+				switch a.view {
+				case viewLeaseDetail:
+					a.leaseDetail.ScrollUp()
+				case viewProviderDetail:
+					a.providerDetail.ScrollUp()
+				case viewProposalDetail:
+					a.proposalDetail.ScrollUp()
+				case viewValidatorDetail:
+					a.validatorDetail.ScrollUp()
+				}
+				return a, nil
+			}
+			return a, nil
+		}
+
 		// Deployment detail view key handling.
 		if a.view == viewDeploymentDetail {
 			switch {
@@ -620,16 +690,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.view == viewLeases {
 			switch {
 			case key.Matches(kmsg, a.keys.Select):
-				// Enter → toast with lease info.
+				// Enter → open lease detail.
 				rec := a.leases.SelectedRecord()
 				if rec != nil {
-					cmd := a.showToast(
-						fmt.Sprintf("Lease %d/%d/%d — provider %s — %s",
-							rec.ID.DSeq, rec.ID.GSeq, rec.ID.OSeq,
-							rec.ID.Provider, rec.State),
-						components.ToastInfo,
-					)
-					return a, cmd
+					a.leaseDetail.SetLease(rec)
+					a.leaseDetail.SetSize(a.width, a.height-chromeHeight)
+					a.view = viewLeaseDetail
 				}
 				return a, nil
 			case key.Matches(kmsg, a.keys.Logs):
@@ -650,9 +716,35 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// View-specific actions on providers list.
+		if a.view == viewProviders {
+			switch {
+			case key.Matches(kmsg, a.keys.Select):
+				p := a.providers.SelectedProvider()
+				if p != nil {
+					a.providerDetail.SetProvider(p)
+					a.providerDetail.SetSize(a.width, a.height-chromeHeight)
+					a.view = viewProviderDetail
+				}
+				return a, nil
+			}
+		}
+
 		// View-specific actions on governance list.
 		if a.view == viewGovernance {
 			switch {
+			case key.Matches(kmsg, a.keys.Select):
+				// Enter → open proposal detail.
+				p := a.governance.SelectedProposal()
+				if p != nil {
+					a.proposalDetail.SetProposal(p)
+					if tallies := a.governance.Tallies(); tallies != nil {
+						a.proposalDetail.SetTally(tallies[p.Id])
+					}
+					a.proposalDetail.SetSize(a.width, a.height-chromeHeight)
+					a.view = viewProposalDetail
+				}
+				return a, nil
 			case key.Matches(kmsg, a.keys.Vote):
 				// v → open vote confirm dialog.
 				p := a.governance.SelectedProposal()
@@ -674,6 +766,16 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// View-specific actions on staking list.
 		if a.view == viewStaking {
 			switch {
+			case key.Matches(kmsg, a.keys.Select):
+				// Enter → open validator detail.
+				val := a.staking.SelectedValidator()
+				if val != nil {
+					rank := a.staking.SelectedIndex() + 1
+					a.validatorDetail.SetValidator(val, rank)
+					a.validatorDetail.SetSize(a.width, a.height-chromeHeight)
+					a.view = viewValidatorDetail
+				}
+				return a, nil
 			case key.Matches(kmsg, a.keys.Close):
 				// d → open delegate confirm dialog.
 				val := a.staking.SelectedValidator()
@@ -772,6 +874,14 @@ func (a App) View() tea.View {
 		main = a.staking.View()
 	case viewDeploymentDetail:
 		main = a.deploymentDetail.View()
+	case viewLeaseDetail:
+		main = a.leaseDetail.View()
+	case viewProviderDetail:
+		main = a.providerDetail.View()
+	case viewProposalDetail:
+		main = a.proposalDetail.View()
+	case viewValidatorDetail:
+		main = a.validatorDetail.View()
 	case viewMonitor:
 		main = a.renderCentered(contentH, "No RPC endpoint configured.\nUse :consensus after setting up a context.")
 	default:
@@ -870,6 +980,29 @@ func (a App) renderFooter() string {
 			{Key: "j/k", Desc: "scroll"},
 			{Key: "1-4", Desc: "tabs"},
 			{Key: "tab", Desc: "next tab"},
+			{Key: "esc", Desc: "back"},
+		}
+	case viewLeaseDetail:
+		hints = []components.HintPair{
+			{Key: "j/k", Desc: "scroll"},
+			{Key: "l", Desc: "logs"},
+			{Key: "esc", Desc: "back"},
+		}
+	case viewProviderDetail:
+		hints = []components.HintPair{
+			{Key: "j/k", Desc: "scroll"},
+			{Key: "esc", Desc: "back"},
+		}
+	case viewProposalDetail:
+		hints = []components.HintPair{
+			{Key: "j/k", Desc: "scroll"},
+			{Key: "v", Desc: "vote", Accent: true},
+			{Key: "esc", Desc: "back"},
+		}
+	case viewValidatorDetail:
+		hints = []components.HintPair{
+			{Key: "j/k", Desc: "scroll"},
+			{Key: "d", Desc: "delegate", Accent: true},
 			{Key: "esc", Desc: "back"},
 		}
 	}
@@ -973,6 +1106,10 @@ func (a *App) resize() {
 	a.staking.SetSize(a.width, mainH)
 	a.detail.SetSize(a.width, mainH)
 	a.deploymentDetail.SetSize(a.width, mainH)
+	a.leaseDetail.SetSize(a.width, mainH)
+	a.providerDetail.SetSize(a.width, mainH)
+	a.proposalDetail.SetSize(a.width, mainH)
+	a.validatorDetail.SetSize(a.width, mainH)
 	a.logViewer.SetSize(a.width, mainH)
 	a.confirmDialog.SetSize(a.width, mainH)
 	a.helpOverlay.SetSize(a.width, mainH)
@@ -1102,6 +1239,22 @@ func (a App) renderBreadcrumb() string {
 		parent := theme.BreadcrumbActive.Render("Deployments")
 		detail := theme.BreadcrumbActive.Render("Detail")
 		return " " + parent + sep + detail
+	case viewLeaseDetail:
+		parent := theme.BreadcrumbActive.Render("Leases")
+		detail := theme.BreadcrumbActive.Render("Detail")
+		return " " + parent + sep + detail
+	case viewProviderDetail:
+		parent := theme.BreadcrumbActive.Render("Providers")
+		detail := theme.BreadcrumbActive.Render("Detail")
+		return " " + parent + sep + detail
+	case viewProposalDetail:
+		parent := theme.BreadcrumbActive.Render("Governance")
+		detail := theme.BreadcrumbActive.Render("Detail")
+		return " " + parent + sep + detail
+	case viewValidatorDetail:
+		parent := theme.BreadcrumbActive.Render("Staking")
+		detail := theme.BreadcrumbActive.Render("Detail")
+		return " " + parent + sep + detail
 	default:
 		name = "Dashboard"
 	}
@@ -1137,6 +1290,14 @@ func (a App) viewName() string {
 		return "Staking"
 	case viewDeploymentDetail:
 		return "Deployment Detail"
+	case viewLeaseDetail:
+		return "Lease Detail"
+	case viewProviderDetail:
+		return "Provider Detail"
+	case viewProposalDetail:
+		return "Proposal Detail"
+	case viewValidatorDetail:
+		return "Validator Detail"
 	default:
 		return ""
 	}
@@ -1308,6 +1469,41 @@ func loadSyncState(s store.Store) tea.Cmd {
 		}
 		state, err := s.GetSyncState(context.Background())
 		return messages.SyncStateMsg{State: state, Err: err}
+	}
+}
+
+// ─── Chain data loading commands (tallies & staking pool) ────────────
+
+func loadTallies(client aclient.LightClient, proposals []*govv1.Proposal) tea.Cmd {
+	return func() tea.Msg {
+		if client == nil {
+			return messages.TallyLoadedMsg{Err: fmt.Errorf("no chain client")}
+		}
+		tallies := make(map[uint64]*govv1.TallyResult)
+		for _, p := range proposals {
+			if p.Status == govv1.StatusVotingPeriod {
+				resp, err := client.Query().Gov().TallyResult(context.Background(), &govv1.QueryTallyResultRequest{
+					ProposalId: p.Id,
+				})
+				if err == nil && resp != nil {
+					tallies[p.Id] = resp.Tally
+				}
+			}
+		}
+		return messages.TallyLoadedMsg{Tallies: tallies}
+	}
+}
+
+func loadStakingPool(client aclient.LightClient) tea.Cmd {
+	return func() tea.Msg {
+		if client == nil {
+			return messages.StakingPoolMsg{Err: fmt.Errorf("no chain client")}
+		}
+		resp, err := client.Query().Staking().Pool(context.Background(), &stakingtypes.QueryPoolRequest{})
+		if err != nil {
+			return messages.StakingPoolMsg{Err: err}
+		}
+		return messages.StakingPoolMsg{BondedTokens: resp.Pool.BondedTokens}
 	}
 }
 
