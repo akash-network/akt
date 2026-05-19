@@ -4,6 +4,9 @@
 
 ### Added
 
+- **Sync bridge status indicator on dashboard (T12)**: Added a "sync" row to the Network panel on the TUI dashboard showing "Live" (green) when the sync bridge is active or "Offline" (muted) when it is not. New `syncActive` field and `SetSyncBridgeActive()` method on `Dashboard` struct. Wired from `app.go` `Run()` and `RunMonitor()` after successful sync bridge creation.
+
+
 - **LightClient for TUI chain queries (T4-6)**: Added chain-sdk `LightClient` to the TUI for querying governance proposals, staking validators, and on-chain providers. New `LightClient` field on `Config` and `App` structs, built automatically in `Run()`/`RunMonitor()` from the resolved context and RPC endpoint (nil keyring — query-only mode). Three new message types (`ProposalsLoadedMsg`, `ValidatorsLoadedMsg`, `ProvidersLoadedMsg`) and corresponding `tea.Cmd` factories (`loadProposals`, `loadValidators`, `loadChainProviders`). Data is fetched on view switch (keys 3/5/6 and command palette equivalents) and routed to `SetData()` methods on `GovernanceView`, `StakingView`, and `ProvidersView`. Helper functions added for formatting proposal status, voting end times, token amounts, commission rates, and provider attributes.
 
 - **Phase 4 offline E2E tests (T062)**: Added 6 E2E tests to `e2e/cli_test.go` exercising Phase 4 features: `TestStoreStatusEmpty` (verifies empty store shows "not synced" and zero records), `TestStoreExportImport` (exports empty store to file, imports into fresh context), `TestDeployHelp`/`TestUpdateHelp`/`TestCloseHelp` (verify workflow command help output contains expected keywords), `TestProviderHelp` (verifies provider subcommands listed). Store tests use a shared `setupContextHome` helper that creates a network and active context. All tests work offline with no chain connection.

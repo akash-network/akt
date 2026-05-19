@@ -1154,6 +1154,7 @@ func Run(cfg Config) error {
 		eng := synce.New(cfg.Store, []string{cfg.ResolvedCtx.DefaultAccount})
 		if bridge, err := newSyncBridge(bus, eng); err == nil {
 			app.syncBridge = bridge
+			app.dashboard.SetSyncBridgeActive(true)
 			defer bridge.close()
 		}
 	}
@@ -1181,6 +1182,7 @@ func RunMonitor(cfg Config) error {
 		eng := synce.New(cfg.Store, []string{cfg.ResolvedCtx.DefaultAccount})
 		if bridge, err := newSyncBridge(bus, eng); err == nil {
 			app.syncBridge = bridge
+			app.dashboard.SetSyncBridgeActive(true)
 			defer bridge.close()
 		}
 	}

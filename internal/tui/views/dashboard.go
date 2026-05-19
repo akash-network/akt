@@ -27,6 +27,7 @@ type Dashboard struct {
 	stats       *store.StoreStats
 	syncState   *store.SyncState
 	deployments []*store.DeploymentRecord // active only
+	syncActive  bool                      // true when the sync bridge is running
 }
 
 // NewDashboard returns a new empty Dashboard.
@@ -54,6 +55,11 @@ func (d *Dashboard) SetSyncState(state *store.SyncState) {
 // SetActiveDeployments sets the active deployments to display.
 func (d *Dashboard) SetActiveDeployments(depls []*store.DeploymentRecord) {
 	d.deployments = depls
+}
+
+// SetSyncBridgeActive sets whether the sync bridge is running.
+func (d *Dashboard) SetSyncBridgeActive(active bool) {
+	d.syncActive = active
 }
 
 // SetSize sets the available width and height.
@@ -237,7 +243,18 @@ func (d Dashboard) renderNetwork(w int) string {
 		{Label: "last sync", Value: lastSync},
 	}
 
-	return components.SectionWithKV("Network", w, pairs)
+	section := components.SectionWithKV("Network", w, pairs)
+
+	// Sync bridge status row with colored value.
+	var syncValue string
+	if d.syncActive {
+		syncValue = lipgloss.NewStyle().Foreground(theme.GreenColor).Render("Live")
+	} else {
+		syncValue = theme.Muted.Render("Offline")
+	}
+	syncRow := theme.KVLabel.Render("sync") + syncValue
+
+	return section + "\n" + syncRow
 }
 
 // ─── Shortcuts Panel ─────────────────────────────────────────────────
