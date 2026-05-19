@@ -12,6 +12,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	cmthttp "github.com/cometbft/cometbft/rpc/client/http"
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
+	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
 	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
@@ -24,6 +27,7 @@ import (
 	monitorcache "pkg.akt.dev/akt/internal/monitor/cache"
 	monitorrpc "pkg.akt.dev/akt/internal/monitor/rpc"
 	monitorui "pkg.akt.dev/akt/internal/monitor/ui"
+	aktprovider "pkg.akt.dev/akt/internal/provider"
 	"pkg.akt.dev/akt/internal/store"
 	synce "pkg.akt.dev/akt/internal/sync"
 	"pkg.akt.dev/akt/internal/tui/commands"
@@ -34,7 +38,9 @@ import (
 
 	aclient "pkg.akt.dev/go/node/client"
 	aclientv1beta3 "pkg.akt.dev/go/node/client/v1beta3"
+	mtypes "pkg.akt.dev/go/node/market/v1"
 	ptypes "pkg.akt.dev/go/node/provider/v1beta4"
+	rest "pkg.akt.dev/go/provider/client"
 	"pkg.akt.dev/go/util/pubsub"
 )
 
@@ -66,9 +72,13 @@ type Config struct {
 	InitialDashboard string // which monitor dashboard to start on: "network" (default), "provider", "bme"
 
 	// Data sources (optional — TUI works in degraded mode without them)
-	Store       store.Store            // local deployment store (nil = no store)
-	ResolvedCtx *aktctx.Context        // resolved akt context (nil = no context info)
+	Store       store.Store         // local deployment store (nil = no store)
+	ResolvedCtx *aktctx.Context     // resolved akt context (nil = no context info)
 	LightClient aclient.LightClient // chain query client; nil = no chain queries
+
+	// Provider auth (optional — nil = no log streaming)
+	Keyring   sdkkeyring.Keyring // keyring for provider auth
+	ClientCtx sdkclient.Context  // SDK client context for provider auth
 }
 
 // App is the root bubbletea model for the akt TUI.
@@ -107,6 +117,15 @@ type App struct {
 	resolvedCtx *aktctx.Context
 	lightClient aclient.LightClient
 
+	// Provider auth for log streaming
+	keyring   sdkkeyring.Keyring
+	clientCtx sdkclient.Context
+
+	// Active log stream state
+	logCtx    context.Context
+	logCancel context.CancelFunc
+	logStream *rest.ServiceLogs
+
 	// Cached data
 	storeStats *store.StoreStats
 	syncState  *store.SyncState
@@ -130,6 +149,8 @@ func newApp(cfg Config, topModel tea.Model) App {
 		dataStore:        cfg.Store,
 		resolvedCtx:      cfg.ResolvedCtx,
 		lightClient:      cfg.LightClient,
+		keyring:          cfg.Keyring,
+		clientCtx:        cfg.ClientCtx,
 		dashboard:        dash,
 		deployments:      views.NewDeploymentsView(),
 		leases:           views.NewLeasesView(),
@@ -289,6 +310,24 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Dialog cancelled — no action needed, dialog already closed itself.
 		return a, nil
 
+	case messages.LogLineMsg:
+		if a.logViewer.Active() {
+			a.logViewer.AppendLine(views.LogLine{
+				Scope:   msg.Name,
+				Message: msg.Message,
+			})
+		}
+		if a.logStream != nil && a.logCancel != nil {
+			return a, streamLogs(a.logCtx, a.logStream)
+		}
+		return a, nil
+
+	case messages.LogStreamClosedMsg:
+		a.logCancel = nil
+		a.logCtx = nil
+		a.logStream = nil
+		return a, nil
+
 	case components.ToastExpiredMsg:
 		a.toast = nil
 		return a, nil
@@ -374,6 +413,12 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			k := kmsg.String()
 			switch k {
 			case "esc":
+				if a.logCancel != nil {
+					a.logCancel()
+					a.logCancel = nil
+					a.logCtx = nil
+					a.logStream = nil
+				}
 				a.logViewer.Close()
 			case " ":
 				a.logViewer.TogglePause()
@@ -523,11 +568,16 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 				return a, nil
 			case key.Matches(kmsg, a.keys.Logs):
-				// l → open log viewer overlay.
+				// l → open log viewer overlay with live log streaming.
 				rec := a.deployments.SelectedRecord()
 				if rec != nil {
 					dseq := fmt.Sprintf("%d", rec.DSeq)
 					a.logViewer.Open(rec.SDLPath, dseq, "")
+
+					// Start log streaming if we have the required auth and store.
+					if cmd := a.startLogStream(rec.Owner, rec.DSeq); cmd != nil {
+						return a, cmd
+					}
 				}
 				return a, nil
 			case key.Matches(kmsg, a.keys.Close):
@@ -1004,6 +1054,93 @@ func (a App) renderCentered(h int, text string) string {
 		Align(lipgloss.Center, lipgloss.Center)
 
 	return style.Render(text)
+}
+
+// ─── Log streaming ───────────────────────────────────────────────────
+
+// streamLogs returns a tea.Cmd that reads the next message from a log stream.
+func streamLogs(ctx context.Context, logs *rest.ServiceLogs) tea.Cmd {
+	return func() tea.Msg {
+		select {
+		case <-ctx.Done():
+			return messages.LogStreamClosedMsg{Reason: "cancelled"}
+		case msg, ok := <-logs.Stream:
+			if !ok {
+				return messages.LogStreamClosedMsg{Reason: "stream ended"}
+			}
+			return messages.LogLineMsg{Name: msg.Name, Message: msg.Message}
+		case reason := <-logs.OnClose:
+			return messages.LogStreamClosedMsg{Reason: reason}
+		}
+	}
+}
+
+// startLogStream looks up the active lease for a deployment and starts
+// streaming logs from the provider. Returns a tea.Cmd to arm the first
+// read, or nil if streaming is not possible.
+func (a *App) startLogStream(owner string, dseq uint64) tea.Cmd {
+	if a.keyring == nil || a.dataStore == nil {
+		return nil
+	}
+
+	leases, err := a.dataStore.ListLeases(context.Background(), store.LeaseFilter{
+		Owner: owner,
+		DSeq:  dseq,
+		State: "active",
+	})
+	if err != nil || len(leases) == 0 {
+		return nil
+	}
+
+	lease := leases[0]
+	if lease.ProviderURI == "" {
+		return nil
+	}
+
+	ownerAddr, err := sdk.AccAddressFromBech32(lease.ID.Owner)
+	if err != nil {
+		return nil
+	}
+
+	authType := ""
+	if a.resolvedCtx != nil {
+		authType = a.resolvedCtx.ProviderDefaults.AuthType
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	cl, err := aktprovider.NewGatewayClient(
+		ctx,
+		a.clientCtx,
+		ownerAddr,
+		lease.ProviderURI,
+		authType,
+		a.keyring,
+	)
+	if err != nil {
+		cancel()
+		return nil
+	}
+
+	leaseID := mtypes.LeaseID{
+		Owner:    lease.ID.Owner,
+		DSeq:     lease.ID.DSeq,
+		GSeq:     lease.ID.GSeq,
+		OSeq:     lease.ID.OSeq,
+		Provider: lease.ID.Provider,
+	}
+
+	logs, err := cl.LeaseLogs(ctx, leaseID, "", true, 100)
+	if err != nil {
+		cancel()
+		return nil
+	}
+
+	a.logCtx = ctx
+	a.logCancel = cancel
+	a.logStream = logs
+
+	return streamLogs(ctx, logs)
 }
 
 // ─── Data loading commands ───────────────────────────────────────────

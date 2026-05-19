@@ -59,3 +59,14 @@ type ProvidersLoadedMsg struct {
 	Providers ptypes.Providers
 	Err       error
 }
+
+// LogLineMsg carries a single log line from a provider log stream.
+type LogLineMsg struct {
+	Name    string // service name
+	Message string // log content
+}
+
+// LogStreamClosedMsg signals that the log stream has ended.
+type LogStreamClosedMsg struct {
+	Reason string
+}
