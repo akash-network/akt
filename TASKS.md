@@ -302,10 +302,10 @@ e2e/                               # End-to-end tests
 #### US3-Views: Resource Views
 
 - [x] T092 [US3] Dashboard view: home/landing view, summary stats (active deployments, total spend, sync status), quick actions in internal/tui/views/dashboard.go
-- [ ] T093 [P] [US3] Deployments view: list (DSEQ/State/Provider/Price/Balance/Age), detail (full info + lease + bids), actions (d=close, u=update, l=logs, /=filter, f=state filter) in internal/tui/views/deployments.go
-- [ ] T094 [P] [US3] Leases view: list (DSEQ/GSeq/OSeq/Provider/State/Price/Age), detail (lease info + endpoints), actions (l=logs, e=events, s=shell, w=withdraw) in internal/tui/views/leases.go
-- [ ] T095 [P] [US3] Providers view: list (Address/URI/Audited/Active Leases), detail (attributes, resources) in internal/tui/views/providers.go
-- [ ] T096 [P] [US3] Log viewer: streaming viewport with auto-scroll, --service filter, /search, wrap toggle (w), follow toggle (f) in internal/tui/views/logviewer.go
+- [x] T093 [P] [US3] Deployments view: list (DSEQ/State/Provider/Price/Balance/Age), detail (full info + lease + bids), actions (d=close, u=update, l=logs, /=filter, f=state filter) in internal/tui/views/deployments.go
+- [x] T094 [P] [US3] Leases view: list (DSEQ/GSeq/OSeq/Provider/State/Price/Age), detail (lease info + endpoints), actions (l=logs, e=events, s=shell, w=withdraw) in internal/tui/views/leases.go
+- [x] T095 [P] [US3] Providers view: list (Address/URI/Audited/Active Leases), detail (attributes, resources) in internal/tui/views/providers.go
+- [x] T096 [P] [US3] Log viewer: streaming viewport with auto-scroll, --service filter, /search, wrap toggle (w), follow toggle (f) in internal/tui/views/logviewer.go
 
 #### US3-Monitor: Monitor Hub (Network, Provider, Oracle/BME)
 
