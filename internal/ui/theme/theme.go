@@ -65,12 +65,13 @@ var (
 // ─── Header Bar ──────────────────────────────────────────────────────
 
 var (
-	HeaderStyle   = lipgloss.NewStyle().Background(Slate900).Padding(0, 1)
+	HeaderStyle   = lipgloss.NewStyle().Background(Slate900).Foreground(Slate300).Padding(0, 1)
 	HeaderAppName = lipgloss.NewStyle().Foreground(AccentRed).Bold(true)
-	HeaderContext = lipgloss.NewStyle().Foreground(Slate200).Bold(true)
+	HeaderContext = lipgloss.NewStyle().Foreground(Slate100).Bold(true)
 	HeaderMeta    = lipgloss.NewStyle().Foreground(Slate500)
-	HeaderValue   = lipgloss.NewStyle().Foreground(Slate200)
-	SyncOK        = lipgloss.NewStyle().Foreground(GreenColor)
+	HeaderValue   = lipgloss.NewStyle().Foreground(Slate300)
+	SyncOK        = lipgloss.NewStyle().Foreground(Slate300)
+	SyncFail      = lipgloss.NewStyle().Foreground(AccentRed)
 )
 
 // ─── Nav Tabs ────────────────────────────────────────────────────────
@@ -105,10 +106,27 @@ var (
 // ─── Table ───────────────────────────────────────────────────────────
 
 var (
-	TableHeader      = lipgloss.NewStyle().Foreground(Slate500)
+	TableHeader      = lipgloss.NewStyle().Foreground(Slate500).Padding(0, 1)
 	TableRow         = lipgloss.NewStyle().Foreground(Slate300)
-	TableRowSelected = lipgloss.NewStyle().Background(Slate800).Foreground(Slate200).Bold(true)
+	TableRowSelected = lipgloss.NewStyle().Background(Slate800)
 	TableCursor      = lipgloss.NewStyle().Foreground(AccentRed).Bold(true)
+)
+
+// Table (inline — no padding, use with fixed-width col() helper in views).
+var (
+	ColHeader = lipgloss.NewStyle().Foreground(Slate500)
+	Col       = lipgloss.NewStyle().Foreground(Slate300)
+	ColBold   = lipgloss.NewStyle().Foreground(Slate200).Bold(true)
+	ColMuted  = lipgloss.NewStyle().Foreground(Slate500)
+	ColAccent = lipgloss.NewStyle().Foreground(AccentRed).Bold(true)
+)
+
+// ─── Padded Table Cells ─────────────────────────────────────────────
+
+var (
+	TableCell      = lipgloss.NewStyle().Foreground(Slate300).Padding(0, 1)
+	TableCellBold  = lipgloss.NewStyle().Foreground(Slate200).Bold(true).Padding(0, 1)
+	TableCellMuted = lipgloss.NewStyle().Foreground(Slate500).Padding(0, 1)
 )
 
 // ─── KV Detail ───────────────────────────────────────────────────────
@@ -118,6 +136,8 @@ var (
 	SectionRule  = lipgloss.NewStyle().Foreground(AccentRed)
 	KVLabel      = lipgloss.NewStyle().Foreground(Slate500).Width(16)
 	KVValue      = lipgloss.NewStyle().Foreground(Slate200)
+	KVValueBold  = lipgloss.NewStyle().Foreground(Slate100).Bold(true)
+	KVValueMuted = lipgloss.NewStyle().Foreground(Slate500)
 )
 
 // ─── Panel / Card ────────────────────────────────────────────────────
@@ -135,6 +155,29 @@ var (
 	StateClosed = lipgloss.NewStyle().Foreground(Slate500)
 )
 
+// ─── Status Badges (inline text, no border) ─────────────────────────
+
+var (
+	BadgeActive      = lipgloss.NewStyle().Foreground(Slate200).Bold(true)
+	BadgeClosed      = lipgloss.NewStyle().Foreground(Slate500)
+	BadgeDestructive = lipgloss.NewStyle().Foreground(AccentRed).Bold(true)
+	BadgeWarning     = lipgloss.NewStyle().Foreground(Slate400)
+)
+
+// StateBadge returns a badge style for a given state string.
+func StateBadge(state string) lipgloss.Style {
+	switch state {
+	case "active", "open", "bonded", "passed", "valid":
+		return BadgeActive
+	case "closed", "lost", "unbonded", "rejected", "failed", "revoked":
+		return BadgeClosed
+	case "paused", "insufficient_funds", "overdrawn", "unbonding":
+		return BadgeWarning
+	default:
+		return BadgeClosed
+	}
+}
+
 // ─── Overlay ─────────────────────────────────────────────────────────
 
 var (
@@ -149,17 +192,50 @@ var (
 	ButtonSecondary = lipgloss.NewStyle().Background(Slate800).Foreground(Slate300)
 )
 
+// ─── Command Palette ─────────────────────────────────────────────────
+
+var (
+	PaletteBorder       = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).BorderForeground(Slate700).Background(Slate900)
+	PaletteInput        = lipgloss.NewStyle().Foreground(Slate200).Background(Slate900).Padding(0, 1)
+	PalettePrompt       = lipgloss.NewStyle().Foreground(AccentRed).Bold(true)
+	PaletteItemNormal   = lipgloss.NewStyle().Foreground(Slate300).Padding(0, 1)
+	PaletteItemSelected = lipgloss.NewStyle().Foreground(Slate100).Background(Slate800).Bold(true).Padding(0, 1)
+	PaletteItemDesc     = lipgloss.NewStyle().Foreground(Slate500)
+)
+
+// ─── Dialog ──────────────────────────────────────────────────────────
+
+var (
+	DialogBorder          = lipgloss.NewStyle().BorderStyle(lipgloss.RoundedBorder()).BorderForeground(Slate600).Background(Slate900).Padding(1, 2)
+	DialogTitle           = lipgloss.NewStyle().Foreground(Slate100).Bold(true)
+	DialogBody            = lipgloss.NewStyle().Foreground(Slate400)
+	DialogButtonPrimary   = lipgloss.NewStyle().Foreground(Slate950).Background(AccentRed).Bold(true).Padding(0, 2)
+	DialogButtonSecondary = lipgloss.NewStyle().Foreground(Slate300).Background(Slate800).Padding(0, 2)
+)
+
+// ─── Error Display ──────────────────────────────────────────────────
+
+var (
+	ErrorLabel      = lipgloss.NewStyle().Foreground(AccentRed).Bold(true)
+	ErrorMessage    = lipgloss.NewStyle().Foreground(Slate300)
+	ErrorSuggestion = lipgloss.NewStyle().Foreground(Slate400)
+	ErrorCommand    = lipgloss.NewStyle().Foreground(Slate200).Bold(true)
+)
+
 // ─── Progress Bar Colors ─────────────────────────────────────────────
 
 var (
-	BarFilled = lipgloss.NewStyle().Foreground(Slate200)
-	BarEmpty  = lipgloss.NewStyle().Foreground(Slate700)
+	BarFilled     = lipgloss.NewStyle().Foreground(Slate200)
+	BarEmpty      = lipgloss.NewStyle().Foreground(Slate700)
+	ProgressLabel = lipgloss.NewStyle().Foreground(Slate500).Width(14)
+	ProgressPct   = lipgloss.NewStyle().Foreground(Slate200).Bold(true)
 )
 
 // ─── Spinner ─────────────────────────────────────────────────────────
 
 var (
 	SpinnerStyle = lipgloss.NewStyle().Foreground(AccentRed)
+	SpinnerText  = lipgloss.NewStyle().Foreground(Slate400)
 )
 
 // ─── Layout Helpers ──────────────────────────────────────────────────
@@ -167,6 +243,11 @@ var (
 // HRule renders a full-width horizontal rule in Slate700.
 func HRule(w int) string {
 	return lipgloss.NewStyle().Foreground(Slate700).Render(strings.Repeat("─", w))
+}
+
+// HRuleAccent renders a full-width horizontal rule in AccentRed.
+func HRuleAccent(w int) string {
+	return lipgloss.NewStyle().Foreground(AccentRed).Render(strings.Repeat("─", w))
 }
 
 // ─── Backward-Compatible Aliases ─────────────────────────────────────
