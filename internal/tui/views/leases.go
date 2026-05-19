@@ -1,6 +1,7 @@
 package views
 
 import (
+	"fmt"
 	"strconv"
 
 	"pkg.akt.dev/akt/internal/store"
@@ -22,6 +23,8 @@ func NewLeasesView() LeasesView {
 		table: components.NewResourceTable(components.ResourceTableConfig{
 			Columns: []components.TableColumn{
 				{Header: "DSEQ", Width: 10, Align: components.AlignLeft},
+				{Header: "GSEQ", Width: 6, Align: components.AlignRight},
+				{Header: "OSEQ", Width: 6, Align: components.AlignRight},
 				{Header: "PROVIDER", Width: 0, Align: components.AlignLeft},
 				{Header: "STATE", Width: 10, Align: components.AlignLeft, RenderFunc: components.StateTag},
 				{Header: "PRICE", Width: 18, Align: components.AlignRight},
@@ -57,6 +60,21 @@ func (v *LeasesView) CycleFilter() {
 		v.filter = ""
 	}
 	v.applyFilter()
+}
+
+// SelectedRecord returns the lease record at the cursor, or nil.
+func (v *LeasesView) SelectedRecord() *store.LeaseRecord {
+	row := v.table.SelectedRow()
+	if row == nil {
+		return nil
+	}
+	dseq, _ := strconv.ParseUint(row.ID, 10, 64)
+	for _, r := range v.data {
+		if r.ID.DSeq == dseq {
+			return r
+		}
+	}
+	return nil
 }
 
 // CursorUp moves the cursor up one row.
@@ -99,6 +117,12 @@ func leaseCells(r *store.LeaseRecord) []string {
 	// DSEQ
 	dseq := strconv.FormatUint(r.ID.DSeq, 10)
 
+	// GSEQ
+	gseq := fmt.Sprintf("%d", r.ID.GSeq)
+
+	// OSEQ
+	oseq := fmt.Sprintf("%d", r.ID.OSeq)
+
 	// PROVIDER
 	provider := r.ID.Provider
 	if provider == "" {
@@ -123,5 +147,5 @@ func leaseCells(r *store.LeaseRecord) []string {
 		opened = relativeTime(r.CreatedAt)
 	}
 
-	return []string{dseq, provider, state, price, escrow, opened}
+	return []string{dseq, gseq, oseq, provider, state, price, escrow, opened}
 }

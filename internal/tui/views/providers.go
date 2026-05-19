@@ -57,17 +57,22 @@ func (v *ProvidersView) CursorDown() {
 func (v *ProvidersView) SetData(providers ptypes.Providers) {
 	rows := make([]components.TableRow, len(providers))
 	for i, p := range providers {
+		audit := "—"
+		if len(p.Attributes) > 0 {
+			audit = "yes"
+		}
+
 		rows[i] = components.TableRow{
 			ID: p.Owner,
 			Cells: []string{
 				p.HostURI,
 				attrValue(p.Attributes, "region"),
-				"—", // GPU TBD
-				"—", // CPU TBD
-				"—", // Memory TBD
-				"—", // Leases TBD
-				"—", // Audit TBD
-				"—", // Version TBD
+				"—", // GPU: requires live provider status query
+				"—", // CPU: requires live provider status query
+				"—", // Memory: requires live provider status query
+				"—", // Leases: requires live provider status query
+				audit,
+				"—", // Version: requires live provider status query
 			},
 		}
 	}

@@ -430,6 +430,8 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				a.logViewer.ScrollDown()
 			case "G":
 				a.logViewer.ScrollToBottom()
+			case "s":
+				a.logViewer.CycleServiceFilter()
 			}
 			return a, tea.Batch(appCmds...)
 		}
@@ -614,6 +616,82 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
+		// View-specific actions on leases list.
+		if a.view == viewLeases {
+			switch {
+			case key.Matches(kmsg, a.keys.Select):
+				// Enter → toast with lease info.
+				rec := a.leases.SelectedRecord()
+				if rec != nil {
+					cmd := a.showToast(
+						fmt.Sprintf("Lease %d/%d/%d — provider %s — %s",
+							rec.ID.DSeq, rec.ID.GSeq, rec.ID.OSeq,
+							rec.ID.Provider, rec.State),
+						components.ToastInfo,
+					)
+					return a, cmd
+				}
+				return a, nil
+			case key.Matches(kmsg, a.keys.Logs):
+				// l → open log viewer with live log streaming.
+				rec := a.leases.SelectedRecord()
+				if rec != nil {
+					dseq := fmt.Sprintf("%d", rec.ID.DSeq)
+					a.logViewer.Open("lease", dseq, "")
+					if cmd := a.startLogStream(rec.ID.Owner, rec.ID.DSeq); cmd != nil {
+						return a, cmd
+					}
+				}
+				return a, nil
+			case key.Matches(kmsg, a.keys.Filter):
+				// f → cycle state filter.
+				a.leases.CycleFilter()
+				return a, nil
+			}
+		}
+
+		// View-specific actions on governance list.
+		if a.view == viewGovernance {
+			switch {
+			case key.Matches(kmsg, a.keys.Vote):
+				// v → open vote confirm dialog.
+				p := a.governance.SelectedProposal()
+				if p != nil {
+					a.confirmDialog = components.NewConfirmDialog(
+						components.ConfirmVote,
+						components.ConfirmData{
+							Title: "Vote on Proposal",
+							Body:  fmt.Sprintf("Vote on proposal #%d: %s", p.Id, truncateStr(p.Title, 40)),
+						},
+					)
+					a.confirmDialog.SetSize(a.width, a.height)
+					a.confirmDialog.Open()
+				}
+				return a, nil
+			}
+		}
+
+		// View-specific actions on staking list.
+		if a.view == viewStaking {
+			switch {
+			case key.Matches(kmsg, a.keys.Close):
+				// d → open delegate confirm dialog.
+				val := a.staking.SelectedValidator()
+				if val != nil {
+					a.confirmDialog = components.NewConfirmDialog(
+						components.ConfirmDelegate,
+						components.ConfirmData{
+							Title: "Delegate Tokens",
+							Body:  fmt.Sprintf("Delegate to %s (%s)?", val.GetMoniker(), val.OperatorAddress),
+						},
+					)
+					a.confirmDialog.SetSize(a.width, a.height)
+					a.confirmDialog.Open()
+				}
+				return a, nil
+			}
+		}
+
 		// App-level key dispatch (non-top views).
 		switch {
 		case key.Matches(kmsg, a.keys.Deployments):
@@ -757,6 +835,8 @@ func (a App) renderFooter() string {
 		hints = []components.HintPair{
 			{Key: "j/k", Desc: "move"},
 			{Key: "↵", Desc: "detail"},
+			{Key: "l", Desc: "logs"},
+			{Key: "f", Desc: "filter"},
 			{Key: "esc", Desc: "back"},
 		}
 	case viewProviders:
@@ -1069,6 +1149,17 @@ func (a App) renderCentered(h int, text string) string {
 		Align(lipgloss.Center, lipgloss.Center)
 
 	return style.Render(text)
+}
+
+// truncateStr shortens a string to maxLen characters, appending "…" if truncated.
+func truncateStr(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen > 1 {
+		return s[:maxLen-1] + "…"
+	}
+	return "…"
 }
 
 // ─── Log streaming ───────────────────────────────────────────────────

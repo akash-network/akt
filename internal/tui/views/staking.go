@@ -10,12 +10,11 @@ import (
 )
 
 // StakingView renders a table of validator records.
-// Data binding is not yet implemented — this is a placeholder that
-// defines the full column layout and shows an empty-state message.
 type StakingView struct {
-	table  components.ResourceTable
-	width  int
-	height int
+	table      components.ResourceTable
+	validators []stakingtypes.Validator
+	width      int
+	height     int
 }
 
 // NewStakingView creates a new StakingView with the standard column layout.
@@ -55,6 +54,7 @@ func (v *StakingView) CursorDown() {
 
 // SetData stores the validators and rebuilds the table rows.
 func (v *StakingView) SetData(validators []stakingtypes.Validator) {
+	v.validators = validators
 	rows := make([]components.TableRow, len(validators))
 	for i, val := range validators {
 		rows[i] = components.TableRow{
@@ -70,6 +70,20 @@ func (v *StakingView) SetData(validators []stakingtypes.Validator) {
 		}
 	}
 	v.table.SetRows(rows)
+}
+
+// SelectedValidator returns the validator at the cursor, or nil.
+func (v *StakingView) SelectedValidator() *stakingtypes.Validator {
+	row := v.table.SelectedRow()
+	if row == nil {
+		return nil
+	}
+	for i := range v.validators {
+		if v.validators[i].OperatorAddress == row.ID {
+			return &v.validators[i]
+		}
+	}
+	return nil
 }
 
 // View renders the staking table.

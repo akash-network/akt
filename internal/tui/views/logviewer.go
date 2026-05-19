@@ -32,6 +32,10 @@ type LogViewer struct {
 	width   int
 	height  int
 	active  bool
+
+	// Service filter: cycles through known services.
+	serviceFilter string
+	knownServices []string
 }
 
 // NewLogViewer returns a new inactive LogViewer.
@@ -48,6 +52,8 @@ func (v *LogViewer) Open(title, dseq, service string) {
 	v.lines = nil
 	v.scroll = 0
 	v.paused = false
+	v.serviceFilter = ""
+	v.knownServices = nil
 }
 
 // Close deactivates the log viewer.
@@ -61,8 +67,9 @@ func (v LogViewer) Active() bool {
 }
 
 // AppendLine adds a single log line. When not paused, auto-scrolls to bottom.
-// Trims to maxLogLines.
+// Trims to maxLogLines. Tracks unique service names for filtering.
 func (v *LogViewer) AppendLine(line LogLine) {
+	v.trackService(line.Scope)
 	v.lines = append(v.lines, line)
 	if len(v.lines) > maxLogLines {
 		v.lines = v.lines[len(v.lines)-maxLogLines:]
@@ -95,6 +102,48 @@ func (v *LogViewer) TogglePause() {
 func (v *LogViewer) Clear() {
 	v.lines = nil
 	v.scroll = 0
+}
+
+// trackService adds a service name to knownServices if not already present.
+func (v *LogViewer) trackService(scope string) {
+	if scope == "" {
+		return
+	}
+	for _, s := range v.knownServices {
+		if s == scope {
+			return
+		}
+	}
+	v.knownServices = append(v.knownServices, scope)
+}
+
+// CycleServiceFilter cycles through: "" (all) → service1 → service2 → ... → "" (all).
+func (v *LogViewer) CycleServiceFilter() {
+	if len(v.knownServices) == 0 {
+		v.serviceFilter = ""
+		return
+	}
+	if v.serviceFilter == "" {
+		v.serviceFilter = v.knownServices[0]
+		return
+	}
+	for i, s := range v.knownServices {
+		if s == v.serviceFilter {
+			if i+1 < len(v.knownServices) {
+				v.serviceFilter = v.knownServices[i+1]
+			} else {
+				v.serviceFilter = ""
+			}
+			return
+		}
+	}
+	// Current filter not found in known services; reset.
+	v.serviceFilter = ""
+}
+
+// ServiceFilter returns the current service filter value.
+func (v *LogViewer) ServiceFilter() string {
+	return v.serviceFilter
 }
 
 // SetSize sets the available width and height for the overlay.
@@ -233,15 +282,30 @@ const (
 	colScope     = 10
 )
 
+// filteredLines returns the log lines matching the current service filter.
+func (v LogViewer) filteredLines() []LogLine {
+	if v.serviceFilter == "" {
+		return v.lines
+	}
+	var out []LogLine
+	for _, line := range v.lines {
+		if line.Scope == v.serviceFilter {
+			out = append(out, line)
+		}
+	}
+	return out
+}
+
 // renderLogArea renders the scrollable log lines.
 func (v LogViewer) renderLogArea(w int) string {
 	visible := v.logAreaHeight()
+	lines := v.filteredLines()
 
 	// Determine the visible slice.
 	start := v.scroll
 	end := start + visible
-	if end > len(v.lines) {
-		end = len(v.lines)
+	if end > len(lines) {
+		end = len(lines)
 	}
 	if start > end {
 		start = end
@@ -257,7 +321,7 @@ func (v LogViewer) renderLogArea(w int) string {
 	}
 
 	var rows []string
-	for _, line := range v.lines[start:end] {
+	for _, line := range lines[start:end] {
 		ts := tsStyle.Render(fmt.Sprintf("%-*s", colTimestamp, line.Timestamp))
 		lvl := v.renderLevel(line.Level)
 		scope := scopeStyle.Render(fmt.Sprintf("%-*s", colScope, line.Scope))
@@ -292,10 +356,14 @@ func (v LogViewer) renderFooter(w int) string {
 	if v.paused {
 		pauseDesc = "resume"
 	}
+	filterDesc := "filter svc"
+	if v.serviceFilter != "" {
+		filterDesc = "svc:" + v.serviceFilter
+	}
 	hints := []components.HintPair{
 		{Key: "space", Desc: pauseDesc},
 		{Key: "c", Desc: "clear"},
-		{Key: "/", Desc: "filter"},
+		{Key: "s", Desc: filterDesc},
 		{Key: "esc", Desc: "back"},
 	}
 	return components.Footer(w, hints)

@@ -11,12 +11,11 @@ import (
 )
 
 // GovernanceView renders a table of governance proposals.
-// Data binding is not yet implemented — this is a placeholder that
-// defines the full column layout and shows an empty-state message.
 type GovernanceView struct {
-	table  components.ResourceTable
-	width  int
-	height int
+	table     components.ResourceTable
+	proposals []*govv1.Proposal
+	width     int
+	height    int
 }
 
 // NewGovernanceView creates a new GovernanceView with the standard column layout.
@@ -57,6 +56,7 @@ func (v *GovernanceView) CursorDown() {
 
 // SetData stores the proposals and rebuilds the table rows.
 func (v *GovernanceView) SetData(proposals []*govv1.Proposal) {
+	v.proposals = proposals
 	rows := make([]components.TableRow, len(proposals))
 	for i, p := range proposals {
 		rows[i] = components.TableRow{
@@ -71,6 +71,21 @@ func (v *GovernanceView) SetData(proposals []*govv1.Proposal) {
 		}
 	}
 	v.table.SetRows(rows)
+}
+
+// SelectedProposal returns the proposal at the cursor, or nil.
+func (v *GovernanceView) SelectedProposal() *govv1.Proposal {
+	row := v.table.SelectedRow()
+	if row == nil {
+		return nil
+	}
+	id := row.ID
+	for _, p := range v.proposals {
+		if fmt.Sprintf("%d", p.Id) == id {
+			return p
+		}
+	}
+	return nil
 }
 
 // View renders the governance table.
