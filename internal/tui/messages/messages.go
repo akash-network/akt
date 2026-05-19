@@ -1,6 +1,7 @@
 package messages
 
 import (
+	"cosmossdk.io/math"
 	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
@@ -69,4 +70,23 @@ type LogLineMsg struct {
 // LogStreamClosedMsg signals that the log stream has ended.
 type LogStreamClosedMsg struct {
 	Reason string
+}
+
+// TallyLoadedMsg carries vote tally results for proposals.
+type TallyLoadedMsg struct {
+	// Tallies maps proposal ID to its tally result.
+	Tallies map[uint64]*govv1.TallyResult
+	Err     error
+}
+
+// StakingPoolMsg carries the staking pool info (total bonded tokens).
+type StakingPoolMsg struct {
+	BondedTokens math.Int
+	Err          error
+}
+
+// BalanceLoadedMsg carries the account balance.
+type BalanceLoadedMsg struct {
+	Amount string // formatted balance string like "148.52 AKT"
+	Err    error
 }
