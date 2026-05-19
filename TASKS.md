@@ -319,11 +319,11 @@ e2e/                               # End-to-end tests
 
 #### US3-Integration: Live Data
 
-- [ ] T104 [US3] Live sync integration: store change notifications trigger TUI re-renders, view updates within 2s of chain state change, sync status indicator in header in internal/tui/app.go
+- [x] T104 [US3] Live sync integration: store change notifications trigger TUI re-renders, view updates within 2s of chain state change, sync status indicator in header in internal/tui/app.go
 
 ### E2E Tests for User Story 3
 
-- [ ] T105 [US3] E2E test suite: TUI smoke tests (launch, navigate, resize), component unit tests, view rendering tests in e2e/
+- [x] T105 [US3] E2E test suite: TUI smoke tests (launch, navigate, resize), component unit tests, view rendering tests in e2e/
 
 **Checkpoint**: User Story 3 complete — full interactive TUI with live data, `akt monitor` hub operational
 
