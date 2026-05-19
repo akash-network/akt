@@ -1,4 +1,4 @@
-package tui
+package keys
 
 import (
 	"charm.land/bubbles/v2/key"

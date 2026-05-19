@@ -3,73 +3,154 @@ package views
 import (
 	"fmt"
 
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	"cosmossdk.io/math"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	"pkg.akt.dev/akt/internal/tui/components"
+	"pkg.akt.dev/akt/internal/tui/data"
+	"pkg.akt.dev/akt/internal/tui/keys"
+	"pkg.akt.dev/akt/internal/tui/messages"
 )
 
-// StakingView renders a table of validator records.
+var _ ViewComponent = (*StakingView)(nil)
+
+// StakingView is a full tea.Model list view for validator records.
+// It embeds BaseListView for cursor/scroll handling and satisfies the
+// ViewComponent interface so the App shell can push it onto the nav stack.
 type StakingView struct {
-	table       components.ResourceTable
+	BaseListView
+	svc         data.Service
 	validators  []stakingtypes.Validator
 	totalBonded math.Int
-	width       int
-	height      int
 }
 
-// NewStakingView creates a new StakingView with the standard column layout.
-func NewStakingView() StakingView {
-	return StakingView{
-		table: components.NewResourceTable(components.ResourceTableConfig{
-			Columns: []components.TableColumn{
-				{Header: "#", Width: 5, Align: components.AlignRight},
-				{Header: "MONIKER", Width: 0, Align: components.AlignLeft},
-				{Header: "POWER", Width: 10, Align: components.AlignRight},
-				{Header: "VP%", Width: 8, Align: components.AlignRight},
-				{Header: "COMMISSION", Width: 12, Align: components.AlignRight},
-				{Header: "UPTIME", Width: 10, Align: components.AlignRight},
-				{Header: "SIGNED", Width: 8, Align: components.AlignRight},
-			},
-			EmptyText: "Validator data requires chain connection.\nUse akt monitor network for real-time validator monitoring.",
-		}),
+// NewStakingView creates a StakingView wired to the given data service.
+func NewStakingView(svc data.Service, km keys.KeyMap) *StakingView {
+	cfg := components.ResourceTableConfig{
+		Columns: []components.TableColumn{
+			{Header: "#", Width: 5, Align: components.AlignRight},
+			{Header: "MONIKER", Width: 0, Align: components.AlignLeft},
+			{Header: "POWER", Width: 10, Align: components.AlignRight},
+			{Header: "VP%", Width: 8, Align: components.AlignRight},
+			{Header: "COMMISSION", Width: 12, Align: components.AlignRight},
+			{Header: "UPTIME", Width: 10, Align: components.AlignRight},
+			{Header: "SIGNED", Width: 8, Align: components.AlignRight},
+		},
+		EmptyText: "Validator data requires chain connection.\nUse akt monitor network for real-time validator monitoring.",
+	}
+	return &StakingView{
+		BaseListView: NewBaseListView(cfg, km),
+		svc:          svc,
 	}
 }
 
-// SetSize updates the available width and height for rendering.
+// ─── tea.Model ───────────────────────────────────────────────────────
+
+// Init kicks off the initial data load.
+func (v *StakingView) Init() tea.Cmd {
+	return v.svc.LoadValidators()
+}
+
+// Update handles messages for the staking list.
+func (v *StakingView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case messages.ValidatorsLoadedMsg:
+		if msg.Err == nil {
+			v.validators = msg.Validators
+			v.rebuildRows()
+			// Fire staking pool load for VP% calculation
+			return v, v.svc.LoadStakingPool()
+		}
+		return v, nil
+	case messages.StakingPoolMsg:
+		if msg.Err == nil {
+			v.totalBonded = msg.BondedTokens
+			v.rebuildRows()
+		}
+		return v, nil
+	}
+
+	if kmsg, ok := msg.(tea.KeyPressMsg); ok {
+		switch {
+		case key.Matches(kmsg, v.Keys.Select):
+			val := v.selectedValidator()
+			if val != nil {
+				rank := v.BaseListView.Cursor() + 1
+				detail := NewValidatorDetailView(v.Keys, val, rank)
+				return v, CmdFunc(messages.PushViewMsg{View: detail})
+			}
+		case key.Matches(kmsg, v.Keys.Close):
+			val := v.selectedValidator()
+			if val != nil {
+				return v, CmdFunc(messages.ShowConfirmMsg{
+					Kind: components.ConfirmDelegate,
+					Data: components.ConfirmData{
+						Title: "Delegate Tokens",
+						Body:  fmt.Sprintf("Delegate to %s?", val.GetMoniker()),
+					},
+				})
+			}
+		}
+		// Fall through to BaseListView for cursor keys
+		v.BaseListView.Update(msg)
+	}
+	return v, nil
+}
+
+// View delegates rendering to the embedded BaseListView table.
+func (v *StakingView) View() tea.View {
+	return v.BaseListView.View()
+}
+
+// ─── ViewComponent ───────────────────────────────────────────────────
+
+// SetSize delegates to the embedded BaseListView.
 func (v *StakingView) SetSize(w, h int) {
-	v.width = w
-	v.height = h
-	v.table.SetSize(w, h)
+	v.BaseListView.SetSize(w, h)
 }
 
-// CursorUp moves the cursor up one row.
-func (v *StakingView) CursorUp() {
-	v.table.CursorUp()
+// Breadcrumb returns the navigation label for this view.
+func (v *StakingView) Breadcrumb() string {
+	return "Staking"
 }
 
-// CursorDown moves the cursor down one row.
-func (v *StakingView) CursorDown() {
-	v.table.CursorDown()
+// ShortHelp returns the footer hint pairs for the staking list.
+func (v *StakingView) ShortHelp() []components.HintPair {
+	return []components.HintPair{
+		{Key: "j/k", Desc: "navigate"},
+		{Key: "↵", Desc: "detail"},
+		{Key: "d", Desc: "delegate", Accent: true},
+		{Key: "esc", Desc: "back"},
+	}
 }
 
-// SetTotalBonded stores the total bonded tokens and rebuilds the table rows.
-func (v *StakingView) SetTotalBonded(total math.Int) {
-	v.totalBonded = total
-	// Rebuild rows with VP% data
-	v.SetData(v.validators)
+// Refresh re-fires the data load for this view.
+func (v *StakingView) Refresh() tea.Cmd {
+	return v.svc.LoadValidators()
 }
 
-// SelectedIndex returns the current cursor position.
-func (v *StakingView) SelectedIndex() int {
-	return v.table.SelectedIndex()
+// ─── Internal ────────────────────────────────────────────────────────
+
+// selectedValidator returns the validator at the cursor, or nil.
+func (v *StakingView) selectedValidator() *stakingtypes.Validator {
+	row := v.BaseListView.SelectedRow()
+	if row == nil {
+		return nil
+	}
+	for i := range v.validators {
+		if v.validators[i].OperatorAddress == row.ID {
+			return &v.validators[i]
+		}
+	}
+	return nil
 }
 
-// SetData stores the validators and rebuilds the table rows.
-func (v *StakingView) SetData(validators []stakingtypes.Validator) {
-	v.validators = validators
-	rows := make([]components.TableRow, len(validators))
-	for i, val := range validators {
+// rebuildRows rebuilds the table rows from the current validators and totalBonded.
+func (v *StakingView) rebuildRows() {
+	rows := make([]components.TableRow, len(v.validators))
+	for i, val := range v.validators {
 		vpPct := "—"
 		if !v.totalBonded.IsNil() && !v.totalBonded.IsZero() {
 			pct := val.Tokens.ToLegacyDec().Quo(v.totalBonded.ToLegacyDec()).MulInt64(100)
@@ -87,26 +168,7 @@ func (v *StakingView) SetData(validators []stakingtypes.Validator) {
 			},
 		}
 	}
-	v.table.SetRows(rows)
-}
-
-// SelectedValidator returns the validator at the cursor, or nil.
-func (v *StakingView) SelectedValidator() *stakingtypes.Validator {
-	row := v.table.SelectedRow()
-	if row == nil {
-		return nil
-	}
-	for i := range v.validators {
-		if v.validators[i].OperatorAddress == row.ID {
-			return &v.validators[i]
-		}
-	}
-	return nil
-}
-
-// View renders the staking table.
-func (v StakingView) View() string {
-	return v.table.View()
+	v.BaseListView.SetRows(rows)
 }
 
 // formatTokens formats a token amount as a human-readable string with M/K suffixes.

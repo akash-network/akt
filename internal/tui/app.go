@@ -15,10 +15,6 @@ import (
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/cosmos/cosmos-sdk/types/query"
-	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
-	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
-	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/spf13/viper"
 
 	aktclient "pkg.akt.dev/akt/internal/client"
@@ -33,6 +29,8 @@ import (
 	synce "pkg.akt.dev/akt/internal/sync"
 	"pkg.akt.dev/akt/internal/tui/commands"
 	"pkg.akt.dev/akt/internal/tui/components"
+	"pkg.akt.dev/akt/internal/tui/data"
+	"pkg.akt.dev/akt/internal/tui/keys"
 	"pkg.akt.dev/akt/internal/tui/messages"
 	"pkg.akt.dev/akt/internal/tui/views"
 	"pkg.akt.dev/akt/internal/ui/theme"
@@ -40,31 +38,18 @@ import (
 	aclient "pkg.akt.dev/go/node/client"
 	aclientv1beta3 "pkg.akt.dev/go/node/client/v1beta3"
 	mtypes "pkg.akt.dev/go/node/market/v1"
-	ptypes "pkg.akt.dev/go/node/provider/v1beta4"
 	rest "pkg.akt.dev/go/provider/client"
 	"pkg.akt.dev/go/util/pubsub"
 )
 
-// activeView tracks which panel is displayed in the main area.
-type activeView int
-
-const (
-	viewDashboard activeView = iota
-	viewDeployments
-	viewLeases
-	viewProviders
-	viewMonitor
-	viewGovernance
-	viewStaking
-	viewDeploymentDetail
-	viewLeaseDetail
-	viewProviderDetail
-	viewProposalDetail
-	viewValidatorDetail
-)
-
 // statusBarHeight is the number of lines reserved for the bottom status bar.
 const statusBarHeight = 3
+
+// chromeHeight is the number of lines consumed by the shell chrome
+// (header, nav bar + hrule, breadcrumb, plus newlines between them).
+// header=1, "\n"=1, navBar=2 (tabs + hrule), "\n"=1, breadcrumb=1, "\n"=1.
+// No separate footer — hints live in the nav bar per design.
+const chromeHeight = 7
 
 // Config holds the parameters needed to start the TUI.
 type Config struct {
@@ -88,280 +73,248 @@ type Config struct {
 
 // App is the root bubbletea model for the akt TUI.
 type App struct {
-	keys       KeyMap
-	view       activeView
-	palette    views.CommandPalette
-	standalone bool // disables command palette and view switching
-	width      int
-	height     int
+	keys       keys.KeyMap
+	router     Router
+	palette    *views.Palette       // will be nil until palette.go is created
+	confirm    *components.ConfirmDialog
+	help       *views.HelpOverlay
+	logView    *views.LogViewer
+	toast      *components.Toast
+	standalone bool
 
-	// Primary view components.
-	dashboard        views.Dashboard
-	deployments      views.DeploymentsView
-	leases           views.LeasesView
-	providers        views.ProvidersView
-	governance       views.GovernanceView
-	staking          views.StakingView
-	detail           views.DetailView
-	deploymentDetail views.DeploymentDetailView
-	leaseDetail      views.LeaseDetailView
-	providerDetail   views.ProviderDetailView
-	proposalDetail   views.ProposalDetailView
-	validatorDetail  views.ValidatorDetailView
-	logViewer        views.LogViewer
-	confirmDialog    components.ConfirmDialog
-	helpOverlay      views.HelpOverlay
-	toast            *components.Toast
+	// Monitor model (nil if no RPC). Non-key messages forwarded to it
+	// regardless of active view to keep WS/tick chains alive.
+	// The monitor is NOT placed on the router stack — it's a special case
+	// because its tick/WS chains must always run via a.monitor, and placing
+	// it on the stack would create a duplicate that forks those chains.
+	monitor       tea.Model
+	monitorActive bool // true when the monitor view is displayed
 
-	// monitorModel is the real-time monitor from internal/monitor/ui.
-	// It is nil when no RPC endpoint is available.
-	monitorModel tea.Model
-	monitorReady bool // true after monitorModel.Init() cmds have been dispatched
+	// Sync bridge
+	bridge *syncBridge
 
-	// Sync bridge — connects pubsub events to the sync engine.
-	syncBridge *syncBridge
+	// Data service — injected into views for data loading.
+	data data.Service
 
-	// Data sources
-	dataStore   store.Store
+	// Chrome state
 	resolvedCtx *aktctx.Context
-	lightClient aclient.LightClient
+	syncState   *store.SyncState
+	storeStats  *store.StoreStats
 
-	// Provider auth for log streaming
-	keyring   sdkkeyring.Keyring
-	clientCtx sdkclient.Context
-
-	// Active log stream state
+	// Log stream lifecycle (requires keyring/provider auth)
 	logCtx    context.Context
 	logCancel context.CancelFunc
 	logStream *rest.ServiceLogs
+	keyring   sdkkeyring.Keyring
+	clientCtx sdkclient.Context
+	dataStore store.Store
 
-	// Cached data
-	storeStats *store.StoreStats
-	syncState  *store.SyncState
+	width, height int
 }
 
 // newApp returns a new App model. monitorModel may be nil when the
 // monitor is not available (e.g. no RPC endpoint configured).
-func newApp(cfg Config, topModel tea.Model) App {
-	km := KeyMapFromConfig(cfg.Viper)
+func newApp(cfg Config, monitorModel tea.Model) App {
+	km := keys.KeyMapFromConfig(cfg.Viper)
+	svc := data.NewLoader(cfg.Store, cfg.LightClient)
+
+	helpOverlay := views.NewHelpOverlay()
+	logViewer := views.NewLogViewer()
 	reg := commands.DefaultRegistry()
+	pal := views.NewCommandPalette(reg, views.PaletteKeys{
+		CursorUp:   km.CursorUp,
+		CursorDown: km.CursorDown,
+		Select:     km.Select,
+		Close:      km.Back,
+	})
 
-	dash := views.NewDashboard()
+	a := App{
+		keys:        km,
+		standalone:  cfg.Standalone,
+		monitor:     monitorModel,
+		data:        svc,
+		resolvedCtx: cfg.ResolvedCtx,
+		dataStore:   cfg.Store,
+		keyring:     cfg.Keyring,
+		clientCtx:   cfg.ClientCtx,
+		help:        &helpOverlay,
+		logView:     &logViewer,
+		palette:     &pal,
+	}
+
+	// Build dashboard context from config.
+	dctx := views.DashboardContext{}
 	if cfg.ResolvedCtx != nil {
-		dash.SetContext(cfg.ResolvedCtx.Name, cfg.ResolvedCtx.Network.ChainID, cfg.ResolvedCtx.DefaultAccount)
+		dctx.ContextName = cfg.ResolvedCtx.Name
+		dctx.ChainID = cfg.ResolvedCtx.Network.ChainID
+		dctx.Account = cfg.ResolvedCtx.DefaultAccount
+		if len(cfg.ResolvedCtx.Network.Endpoints.RPC) > 0 {
+			dctx.RPCEndpoint = cfg.ResolvedCtx.Network.Endpoints.RPC[0]
+		}
 	}
-	if cfg.RPCEndpoint != "" {
-		dash.SetRPCEndpoint(cfg.RPCEndpoint)
-	}
-	dash.SetVersion("dev")
+	dctx.Version = "dev"
 
-	return App{
-		keys:             km,
-		view:             viewDashboard,
-		standalone:       cfg.Standalone,
-		dataStore:        cfg.Store,
-		resolvedCtx:      cfg.ResolvedCtx,
-		lightClient:      cfg.LightClient,
-		keyring:          cfg.Keyring,
-		clientCtx:        cfg.ClientCtx,
-		dashboard:        dash,
-		deployments:      views.NewDeploymentsView(),
-		leases:           views.NewLeasesView(),
-		providers:        views.NewProvidersView(),
-		governance:       views.NewGovernanceView(),
-		staking:          views.NewStakingView(),
-		detail:           views.NewDetailView(),
-		deploymentDetail: views.NewDeploymentDetailView(),
-		leaseDetail:      views.NewLeaseDetailView(),
-		providerDetail:   views.NewProviderDetailView(),
-		proposalDetail:   views.NewProposalDetailView(),
-		validatorDetail:  views.NewValidatorDetailView(),
-		logViewer:        views.NewLogViewer(),
-		helpOverlay:      views.NewHelpOverlay(),
-		palette: views.NewCommandPalette(reg, views.PaletteKeys{
-			CursorUp:   km.CursorUp,
-			CursorDown: km.CursorDown,
-			Select:     km.Select,
-			Close:      km.Back,
-		}),
-		monitorModel: topModel,
-	}
+	// Push initial dashboard view onto router.
+	dash := views.NewDashboard(svc, dctx, km)
+	a.router.Push(dash)
+
+	return a
 }
 
 // Init implements tea.Model.
 func (a App) Init() tea.Cmd {
 	var cmds []tea.Cmd
 
-	if a.monitorModel != nil {
-		a.monitorReady = true
-		cmds = append(cmds, a.monitorModel.Init())
+	if a.monitor != nil {
+		cmds = append(cmds, a.monitor.Init())
 	}
 
-	// Arm the sync bridge so the TUI reacts to chain events.
-	if a.syncBridge != nil {
-		cmds = append(cmds, a.syncBridge.waitForEvent())
+	if a.bridge != nil {
+		cmds = append(cmds, a.bridge.waitForEvent())
 	}
 
-	// Load initial data from the store.
-	cmds = append(cmds, loadStoreStats(a.dataStore))
-	cmds = append(cmds, loadSyncState(a.dataStore))
+	// Initial data loads
+	cmds = append(cmds, a.data.LoadStoreStats())
+	cmds = append(cmds, a.data.LoadSyncState())
 
-	// Load deployments for the dashboard.
 	var owner string
 	if a.resolvedCtx != nil {
 		owner = a.resolvedCtx.DefaultAccount
 	}
-	cmds = append(cmds, loadDeployments(a.dataStore, owner))
-
-	// Load wallet balance for the dashboard.
-	cmds = append(cmds, loadBalance(a.lightClient, owner))
+	cmds = append(cmds, a.data.LoadDeployments(owner))
+	cmds = append(cmds, a.data.LoadBalance(owner))
 
 	return tea.Batch(cmds...)
 }
 
 // Update implements tea.Model.
 func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var appCmds []tea.Cmd
+	var cmds []tea.Cmd
 
-	// ── App-level messages (always handled) ──────────────────────────
+	// Non-key messages ALWAYS forwarded to monitor to keep WS/tick chains alive.
+	// This must happen BEFORE the type switch because many cases return early.
+	if _, isKey := msg.(tea.KeyPressMsg); !isKey && a.monitor != nil {
+		var topCmd tea.Cmd
+		a.monitor, topCmd = a.monitor.Update(msg)
+		cmds = append(cmds, topCmd)
+	}
 
 	switch msg := msg.(type) {
-	case messages.DeploymentsLoadedMsg:
-		if msg.Err == nil {
-			a.deployments.SetData(msg.Deployments)
-			// Filter active deployments for the dashboard summary.
-			var active []*store.DeploymentRecord
-			for _, d := range msg.Deployments {
-				if d.State == "active" {
-					active = append(active, d)
-				}
+	// ── 1. Window resize ────────────────────────────────────────────
+	case tea.WindowSizeMsg:
+		a.width = msg.Width
+		a.height = msg.Height
+		mainH := a.height - chromeHeight
+		if mainH < 1 {
+			mainH = 1
+		}
+		a.router.SetSize(a.width, mainH)
+		if a.help != nil {
+			a.help.SetSize(a.width, mainH)
+		}
+		if a.logView != nil {
+			a.logView.SetSize(a.width, mainH)
+		}
+		// Forward to monitor
+		if a.monitor != nil {
+			adjusted := tea.WindowSizeMsg{
+				Width:  msg.Width,
+				Height: msg.Height - statusBarHeight,
 			}
-			a.dashboard.SetActiveDeployments(active)
+			a.monitor, _ = a.monitor.Update(adjusted)
 		}
 		return a, nil
 
-	case messages.LeasesLoadedMsg:
-		if msg.Err == nil {
-			a.leases.SetData(msg.Leases)
-			// Also populate the deployment detail view if it's active.
-			if a.view == viewDeploymentDetail {
-				a.deploymentDetail.SetLeases(msg.Leases)
+	// ── 2. Navigation messages from views ───────────────────────────
+	case messages.PushViewMsg:
+		if vc, ok := msg.View.(views.ViewComponent); ok {
+			cmd := a.router.Push(vc)
+			return a, cmd
+		}
+		return a, nil
+
+	case messages.PopViewMsg:
+		cmd := a.router.Pop()
+		return a, cmd
+
+	// ── 3. Overlay messages ─────────────────────────────────────────
+	case messages.ShowConfirmMsg:
+		cd := components.NewConfirmDialog(msg.Kind, msg.Data)
+		cd.SetSize(a.width, a.height)
+		cd.Open()
+		a.confirm = &cd
+		return a, nil
+
+	case messages.ShowToastMsg:
+		cmd := a.showToast(msg.Message, components.ToastTone(msg.Tone))
+		return a, cmd
+
+	case messages.StartLogStreamMsg:
+		if a.logView != nil {
+			dseq := fmt.Sprintf("%d", msg.DSeq)
+			a.logView.Open("deployment", dseq, "")
+			if cmd := a.startLogStream(msg.Owner, msg.DSeq); cmd != nil {
+				return a, cmd
 			}
 		}
 		return a, nil
 
-	case messages.BidsLoadedMsg:
-		if msg.Err == nil {
-			a.deploymentDetail.SetBids(msg.Bids)
+	case messages.StopLogStreamMsg:
+		if a.logCancel != nil {
+			a.logCancel()
+			a.logCancel = nil
+			a.logCtx = nil
+			a.logStream = nil
+		}
+		if a.logView != nil {
+			a.logView.Close()
 		}
 		return a, nil
 
-	case messages.ProposalsLoadedMsg:
+	// ── 4. Chrome state updates ─────────────────────────────────────
+	case messages.SyncStateMsg:
 		if msg.Err == nil {
-			a.governance.SetData(msg.Proposals)
-			return a, loadTallies(a.lightClient, msg.Proposals)
+			a.syncState = msg.State
 		}
-		return a, nil
-
-	case messages.ValidatorsLoadedMsg:
-		if msg.Err == nil {
-			a.staking.SetData(msg.Validators)
-			return a, loadStakingPool(a.lightClient)
-		}
-		return a, nil
-
-	case messages.TallyLoadedMsg:
-		if msg.Err == nil {
-			a.governance.SetTallies(msg.Tallies)
-		}
-		return a, nil
-
-	case messages.StakingPoolMsg:
-		if msg.Err == nil {
-			a.staking.SetTotalBonded(msg.BondedTokens)
-		}
-		return a, nil
-
-	case messages.ProvidersLoadedMsg:
-		if msg.Err == nil {
-			a.providers.SetData(msg.Providers)
-		}
-		return a, nil
+		cmd := a.router.Update(msg)
+		cmds = append(cmds, cmd)
+		return a, tea.Batch(cmds...)
 
 	case messages.StoreStatsMsg:
 		if msg.Err == nil {
 			a.storeStats = msg.Stats
-			a.dashboard.SetStats(msg.Stats)
 		}
-		return a, nil
-
-	case messages.SyncStateMsg:
-		if msg.Err == nil {
-			a.syncState = msg.State
-			a.dashboard.SetSyncState(msg.State)
-			// Signal that sync data is available.
-			if msg.State != nil {
-				a.dashboard.SetSyncBridgeActive(true)
-			}
-		}
-		return a, nil
+		cmd := a.router.Update(msg)
+		cmds = append(cmds, cmd)
+		return a, tea.Batch(cmds...)
 
 	case messages.BalanceLoadedMsg:
-		if msg.Err == nil {
-			a.dashboard.SetBalance(msg.Amount)
-			a.dashboard.SetWallet(msg.Amount, "", "", "")
-		}
-		return a, nil
+		cmd := a.router.Update(msg)
+		return a, cmd
 
+	// ── 5. ViewDataRefreshMsg ───────────────────────────────────────
 	case messages.ViewDataRefreshMsg:
-		// The sync engine has persisted new data — re-read the store
-		// for the current view and re-arm the bridge for the next event.
-		var refreshCmds []tea.Cmd
-		owner := ""
-		if a.resolvedCtx != nil {
-			owner = a.resolvedCtx.DefaultAccount
+		if active := a.router.Active(); active != nil {
+			cmds = append(cmds, active.Refresh())
 		}
-		switch a.view {
-		case viewDashboard:
-			refreshCmds = append(refreshCmds,
-				loadDeployments(a.dataStore, owner),
-				loadStoreStats(a.dataStore),
-				loadSyncState(a.dataStore),
-				loadBalance(a.lightClient, owner),
-			)
-		case viewDeployments:
-			refreshCmds = append(refreshCmds, loadDeployments(a.dataStore, owner))
-		case viewLeases:
-			refreshCmds = append(refreshCmds, loadLeases(a.dataStore, owner))
-		case viewDeploymentDetail:
-			rec := a.deploymentDetail.Deployment()
-			if rec != nil {
-				refreshCmds = append(refreshCmds,
-					loadDeploymentLeases(a.dataStore, rec.Owner, rec.DSeq),
-					loadBids(a.dataStore, rec.Owner, rec.DSeq),
-				)
-			}
+		if a.bridge != nil {
+			cmds = append(cmds, a.bridge.waitForEvent())
 		}
-		if a.syncBridge != nil {
-			refreshCmds = append(refreshCmds, a.syncBridge.waitForEvent())
-		}
-		return a, tea.Batch(refreshCmds...)
+		return a, tea.Batch(cmds...)
 
+	// ── 6. Confirm / Cancel ─────────────────────────────────────────
 	case components.ConfirmMsg:
-		// Action confirmed — for now just return to the previous view.
-		// Actual transaction dispatch will be added in a future task.
+		a.confirm = nil
 		return a, nil
 
 	case components.CancelMsg:
-		// Dialog cancelled — no action needed, dialog already closed itself.
+		a.confirm = nil
 		return a, nil
 
+	// ── 7. Log line / close ─────────────────────────────────────────
 	case messages.LogLineMsg:
-		if a.logViewer.Active() {
-			a.logViewer.AppendLine(views.LogLine{
-				Scope:   msg.Name,
-				Message: msg.Message,
-			})
+		if a.logView != nil && a.logView.Active() {
+			a.logView.AppendLine(views.LogLine{Scope: msg.Name, Message: msg.Message})
 		}
 		if a.logStream != nil && a.logCancel != nil {
 			return a, streamLogs(a.logCtx, a.logStream)
@@ -385,73 +338,38 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if a.standalone {
 			return a, tea.Quit
 		}
-		a.view = viewDashboard
-		return a, nil
-
-	case tea.WindowSizeMsg:
-		a.width = msg.Width
-		a.height = msg.Height
-		a.resize()
-		// Forward a reduced-height WindowSizeMsg to the top model so it
-		// leaves room for the TUI's 3-line status bar.
-		if a.monitorModel != nil {
-			adjusted := tea.WindowSizeMsg{
-				Width:  msg.Width,
-				Height: msg.Height - statusBarHeight,
-			}
-			var topCmd tea.Cmd
-			a.monitorModel, topCmd = a.monitorModel.Update(adjusted)
-			appCmds = append(appCmds, topCmd)
+		a.monitorActive = false
+		for a.router.Depth() > 1 {
+			a.router.Pop()
 		}
-		return a, tea.Batch(appCmds...)
+		return a, nil
 	}
 
-	// ── Non-key messages: ALWAYS forward to top model first ─────────
-	// The top model's background goroutines (WebSocket, ticks, provider
-	// checks) produce internal messages that must be processed regardless
-	// of which view is active or whether the palette is open.  If these
-	// messages are swallowed, the tick/WS chains break permanently.
-
-	if _, isKey := msg.(tea.KeyPressMsg); !isKey && a.monitorModel != nil {
-		var topCmd tea.Cmd
-		a.monitorModel, topCmd = a.monitorModel.Update(msg)
-		appCmds = append(appCmds, topCmd)
-	}
-
-	// ── Standalone mode: all keys go directly to the sub-model ──────
-	// Commands like "akt monitor" run a single view without the command
-	// palette or view switching. Only Ctrl+C is intercepted.
-
+	// ── 8. Standalone mode: only Ctrl+C, rest to router ─────────────
 	if a.standalone {
 		if kmsg, ok := msg.(tea.KeyPressMsg); ok {
 			if key.Matches(kmsg, a.keys.Quit) {
 				return a, tea.Quit
 			}
-			if a.monitorModel != nil {
-				var topCmd tea.Cmd
-				a.monitorModel, topCmd = a.monitorModel.Update(msg)
-				return a, topCmd
-			}
+			cmd := a.router.Update(msg)
+			return a, cmd
 		}
-		return a, tea.Batch(appCmds...)
+		return a, tea.Batch(cmds...)
 	}
 
-	// ── Overlays take priority for key messages when active ─────────
-
-	// Confirm dialog intercepts all keys when active.
-	if a.confirmDialog.Active() {
+	// ── 10. Overlay priority for keys ───────────────────────────────
+	if a.confirm != nil && a.confirm.Active() {
 		if kmsg, ok := msg.(tea.KeyPressMsg); ok {
 			if key.Matches(kmsg, a.keys.Quit) {
 				return a, tea.Quit
 			}
-			cmd := a.confirmDialog.Update(msg)
-			return a, tea.Batch(append(appCmds, cmd)...)
+			cmd := a.confirm.Update(msg)
+			return a, tea.Batch(append(cmds, cmd)...)
 		}
-		return a, tea.Batch(appCmds...)
+		return a, tea.Batch(cmds...)
 	}
 
-	// Log viewer intercepts keys when active.
-	if a.logViewer.Active() {
+	if a.logView != nil && a.logView.Active() {
 		if kmsg, ok := msg.(tea.KeyPressMsg); ok {
 			if key.Matches(kmsg, a.keys.Quit) {
 				return a, tea.Quit
@@ -465,412 +383,173 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					a.logCtx = nil
 					a.logStream = nil
 				}
-				a.logViewer.Close()
+				a.logView.Close()
 			case " ":
-				a.logViewer.TogglePause()
+				a.logView.TogglePause()
 			case "c":
-				a.logViewer.Clear()
+				a.logView.Clear()
 			case "k", "up":
-				a.logViewer.ScrollUp()
+				a.logView.ScrollUp()
 			case "j", "down":
-				a.logViewer.ScrollDown()
+				a.logView.ScrollDown()
 			case "G":
-				a.logViewer.ScrollToBottom()
+				a.logView.ScrollToBottom()
 			case "s":
-				a.logViewer.CycleServiceFilter()
+				a.logView.CycleServiceFilter()
 			}
-			return a, tea.Batch(appCmds...)
+			return a, tea.Batch(cmds...)
 		}
-		return a, tea.Batch(appCmds...)
+		return a, tea.Batch(cmds...)
 	}
 
-	// Help overlay intercepts keys when active.
-	if a.helpOverlay.Active() {
+	if a.help != nil && a.help.Active() {
 		if kmsg, ok := msg.(tea.KeyPressMsg); ok {
 			if key.Matches(kmsg, a.keys.Quit) {
 				return a, tea.Quit
 			}
 			if kmsg.String() == "esc" {
-				a.helpOverlay.Close()
+				a.help.Close()
 			}
-			return a, tea.Batch(appCmds...)
+			return a, tea.Batch(cmds...)
 		}
-		return a, tea.Batch(appCmds...)
+		return a, tea.Batch(cmds...)
 	}
 
-	// Palette takes priority for key messages when active.
-	if a.palette.Active() {
+	if a.palette != nil && a.palette.Active() {
 		if kmsg, ok := msg.(tea.KeyPressMsg); ok {
 			if key.Matches(kmsg, a.keys.Quit) {
 				return a, tea.Quit
 			}
 			cmd := a.palette.Update(msg)
-			return a, tea.Batch(append(appCmds, cmd)...)
+			return a, tea.Batch(append(cmds, cmd)...)
 		}
-		return a, tea.Batch(appCmds...)
+		return a, tea.Batch(cmds...)
 	}
 
-	// ── Key handling ─────────────────────────────────────────────────
-
+	// ── 11. Global keys ─────────────────────────────────────────────
 	if kmsg, ok := msg.(tea.KeyPressMsg); ok {
-		// Ctrl+C always quits regardless of active view.
 		if key.Matches(kmsg, a.keys.Quit) {
 			return a, tea.Quit
 		}
 
-		// Command palette can always be opened.
+		// When monitor is active, forward keys to it (except global keys below).
+		if a.monitorActive && a.monitor != nil {
+			// Number keys and esc switch away from monitor — handled below.
+			// All other keys go to the monitor.
+			if !key.Matches(kmsg, a.keys.Command, a.keys.CommandSearch, a.keys.Help,
+				a.keys.Deployments, a.keys.Leases, a.keys.Providers,
+				a.keys.Monitor, a.keys.Governance, a.keys.Staking, a.keys.Back) {
+				var topCmd tea.Cmd
+				a.monitor, topCmd = a.monitor.Update(msg)
+				return a, topCmd
+			}
+		}
+
+		// Command palette
 		if key.Matches(kmsg, a.keys.Command) || key.Matches(kmsg, a.keys.CommandSearch) {
-			a.palette.Open()
+			if a.palette != nil {
+				a.palette.Open()
+			}
 			return a, nil
 		}
 
-		// Help overlay.
+		// Help
 		if key.Matches(kmsg, a.keys.Help) {
-			a.helpOverlay.Open(a.viewName())
-			return a, nil
-		}
-
-		// When the top view is active, forward keys to the real model.
-		if a.view == viewMonitor && a.monitorModel != nil {
-			var topCmd tea.Cmd
-			a.monitorModel, topCmd = a.monitorModel.Update(msg)
-			return a, topCmd
-		}
-
-		// Detail view key handling (lease, provider, proposal, validator).
-		if a.view == viewLeaseDetail || a.view == viewProviderDetail ||
-			a.view == viewProposalDetail || a.view == viewValidatorDetail {
-			switch {
-			case key.Matches(kmsg, a.keys.Back):
-				switch a.view {
-				case viewLeaseDetail:
-					a.view = viewLeases
-				case viewProviderDetail:
-					a.view = viewProviders
-				case viewProposalDetail:
-					a.view = viewGovernance
-				case viewValidatorDetail:
-					a.view = viewStaking
-				}
-				return a, nil
-			case key.Matches(kmsg, a.keys.CursorDown):
-				switch a.view {
-				case viewLeaseDetail:
-					a.leaseDetail.ScrollDown()
-				case viewProviderDetail:
-					a.providerDetail.ScrollDown()
-				case viewProposalDetail:
-					a.proposalDetail.ScrollDown()
-				case viewValidatorDetail:
-					a.validatorDetail.ScrollDown()
-				}
-				return a, nil
-			case key.Matches(kmsg, a.keys.CursorUp):
-				switch a.view {
-				case viewLeaseDetail:
-					a.leaseDetail.ScrollUp()
-				case viewProviderDetail:
-					a.providerDetail.ScrollUp()
-				case viewProposalDetail:
-					a.proposalDetail.ScrollUp()
-				case viewValidatorDetail:
-					a.validatorDetail.ScrollUp()
-				}
-				return a, nil
+			if a.help != nil {
+				bc := a.router.Breadcrumb()
+				a.help.Open(bc)
 			}
 			return a, nil
 		}
 
-		// Deployment detail view key handling.
-		if a.view == viewDeploymentDetail {
-			switch {
-			case key.Matches(kmsg, a.keys.Back):
-				a.view = viewDeployments
-				return a, nil
-			case key.Matches(kmsg, a.keys.TabNext):
-				a.deploymentDetail.NextTab()
-				return a, nil
-			case key.Matches(kmsg, a.keys.CursorUp):
-				a.deploymentDetail.ScrollUp()
-				return a, nil
-			case key.Matches(kmsg, a.keys.CursorDown):
-				a.deploymentDetail.ScrollDown()
-				return a, nil
-			}
-			// Number keys 1-4 for direct tab jump.
-			k := kmsg.String()
-			if len(k) == 1 && k[0] >= '1' && k[0] <= '4' {
-				a.deploymentDetail.SetTab(int(k[0] - '1'))
-				return a, nil
-			}
-			return a, nil
-		}
-
-		// Cursor navigation for list views.
-		switch {
-		case key.Matches(kmsg, a.keys.CursorUp):
-			switch a.view {
-			case viewDeployments:
-				a.deployments.CursorUp()
-			case viewLeases:
-				a.leases.CursorUp()
-			case viewProviders:
-				a.providers.CursorUp()
-			case viewGovernance:
-				a.governance.CursorUp()
-			case viewStaking:
-				a.staking.CursorUp()
-			}
-			return a, nil
-		case key.Matches(kmsg, a.keys.CursorDown):
-			switch a.view {
-			case viewDeployments:
-				a.deployments.CursorDown()
-			case viewLeases:
-				a.leases.CursorDown()
-			case viewProviders:
-				a.providers.CursorDown()
-			case viewGovernance:
-				a.governance.CursorDown()
-			case viewStaking:
-				a.staking.CursorDown()
-			}
-			return a, nil
-		}
-
-		// Resolve owner for data loading.
+		// Number keys 1-6 for view switching: pop to root, then replace with target view.
 		owner := ""
 		if a.resolvedCtx != nil {
 			owner = a.resolvedCtx.DefaultAccount
 		}
 
-		// View-specific actions on deployments list.
-		if a.view == viewDeployments {
-			switch {
-			case key.Matches(kmsg, a.keys.Select):
-				// Enter → open deployment detail.
-				rec := a.deployments.SelectedRecord()
-				if rec != nil {
-					a.deploymentDetail.SetDeployment(rec)
-					a.view = viewDeploymentDetail
-					return a, tea.Batch(
-						loadDeploymentLeases(a.dataStore, rec.Owner, rec.DSeq),
-						loadBids(a.dataStore, rec.Owner, rec.DSeq),
-					)
-				}
-				return a, nil
-			case key.Matches(kmsg, a.keys.Logs):
-				// l → open log viewer overlay with live log streaming.
-				rec := a.deployments.SelectedRecord()
-				if rec != nil {
-					dseq := fmt.Sprintf("%d", rec.DSeq)
-					a.logViewer.Open(rec.SDLPath, dseq, "")
-
-					// Start log streaming if we have the required auth and store.
-					if cmd := a.startLogStream(rec.Owner, rec.DSeq); cmd != nil {
-						return a, cmd
-					}
-				}
-				return a, nil
-			case key.Matches(kmsg, a.keys.Close):
-				// d → open confirm dialog for closing deployment.
-				rec := a.deployments.SelectedRecord()
-				if rec != nil {
-					a.confirmDialog = components.NewConfirmDialog(
-						components.ConfirmClose,
-						components.ConfirmData{
-							Title:  "Close Deployment",
-							Body:   fmt.Sprintf("Close deployment %d? This action is irreversible.", rec.DSeq),
-							Danger: true,
-						},
-					)
-					a.confirmDialog.SetSize(a.width, a.height)
-					a.confirmDialog.Open()
-				}
-				return a, nil
-			case key.Matches(kmsg, a.keys.Filter):
-				// f → cycle state filter (all → active → closed → all).
-				a.deployments.CycleFilter()
-				return a, nil
-			case key.Matches(kmsg, a.keys.Update):
-				// u → update deployment (placeholder).
-				rec := a.deployments.SelectedRecord()
-				if rec != nil {
-					cmd := a.showToast(
-						fmt.Sprintf("Update deployment %d — requires SDL file input (coming in Phase 4)", rec.DSeq),
-						components.ToastInfo,
-					)
-					return a, cmd
-				}
-				return a, nil
-			}
-		}
-
-		// View-specific actions on leases list.
-		if a.view == viewLeases {
-			switch {
-			case key.Matches(kmsg, a.keys.Select):
-				// Enter → open lease detail.
-				rec := a.leases.SelectedRecord()
-				if rec != nil {
-					a.leaseDetail.SetLease(rec)
-					a.leaseDetail.SetSize(a.width, a.height-chromeHeight)
-					a.view = viewLeaseDetail
-				}
-				return a, nil
-			case key.Matches(kmsg, a.keys.Logs):
-				// l → open log viewer with live log streaming.
-				rec := a.leases.SelectedRecord()
-				if rec != nil {
-					dseq := fmt.Sprintf("%d", rec.ID.DSeq)
-					a.logViewer.Open("lease", dseq, "")
-					if cmd := a.startLogStream(rec.ID.Owner, rec.ID.DSeq); cmd != nil {
-						return a, cmd
-					}
-				}
-				return a, nil
-			case key.Matches(kmsg, a.keys.Filter):
-				// f → cycle state filter.
-				a.leases.CycleFilter()
-				return a, nil
-			}
-		}
-
-		// View-specific actions on providers list.
-		if a.view == viewProviders {
-			switch {
-			case key.Matches(kmsg, a.keys.Select):
-				p := a.providers.SelectedProvider()
-				if p != nil {
-					a.providerDetail.SetProvider(p)
-					a.providerDetail.SetSize(a.width, a.height-chromeHeight)
-					a.view = viewProviderDetail
-				}
-				return a, nil
-			}
-		}
-
-		// View-specific actions on governance list.
-		if a.view == viewGovernance {
-			switch {
-			case key.Matches(kmsg, a.keys.Select):
-				// Enter → open proposal detail.
-				p := a.governance.SelectedProposal()
-				if p != nil {
-					a.proposalDetail.SetProposal(p)
-					if tallies := a.governance.Tallies(); tallies != nil {
-						a.proposalDetail.SetTally(tallies[p.Id])
-					}
-					a.proposalDetail.SetSize(a.width, a.height-chromeHeight)
-					a.view = viewProposalDetail
-				}
-				return a, nil
-			case key.Matches(kmsg, a.keys.Vote):
-				// v → open vote confirm dialog.
-				p := a.governance.SelectedProposal()
-				if p != nil {
-					a.confirmDialog = components.NewConfirmDialog(
-						components.ConfirmVote,
-						components.ConfirmData{
-							Title: "Vote on Proposal",
-							Body:  fmt.Sprintf("Vote on proposal #%d: %s", p.Id, truncateStr(p.Title, 40)),
-						},
-					)
-					a.confirmDialog.SetSize(a.width, a.height)
-					a.confirmDialog.Open()
-				}
-				return a, nil
-			}
-		}
-
-		// View-specific actions on staking list.
-		if a.view == viewStaking {
-			switch {
-			case key.Matches(kmsg, a.keys.Select):
-				// Enter → open validator detail.
-				val := a.staking.SelectedValidator()
-				if val != nil {
-					rank := a.staking.SelectedIndex() + 1
-					a.validatorDetail.SetValidator(val, rank)
-					a.validatorDetail.SetSize(a.width, a.height-chromeHeight)
-					a.view = viewValidatorDetail
-				}
-				return a, nil
-			case key.Matches(kmsg, a.keys.Close):
-				// d → open delegate confirm dialog.
-				val := a.staking.SelectedValidator()
-				if val != nil {
-					a.confirmDialog = components.NewConfirmDialog(
-						components.ConfirmDelegate,
-						components.ConfirmData{
-							Title: "Delegate Tokens",
-							Body:  fmt.Sprintf("Delegate to %s (%s)?", val.GetMoniker(), val.OperatorAddress),
-						},
-					)
-					a.confirmDialog.SetSize(a.width, a.height)
-					a.confirmDialog.Open()
-				}
-				return a, nil
-			}
-		}
-
-		// App-level key dispatch (non-top views).
 		switch {
 		case key.Matches(kmsg, a.keys.Deployments):
-			a.view = viewDeployments
-			return a, loadDeployments(a.dataStore, owner)
+			a.monitorActive = false
+			for a.router.Depth() > 1 {
+				a.router.Pop()
+			}
+			v := views.NewDeploymentsView(a.data, a.keys, owner)
+			return a, a.router.Replace(v)
 		case key.Matches(kmsg, a.keys.Leases):
-			a.view = viewLeases
-			return a, loadLeases(a.dataStore, owner)
+			a.monitorActive = false
+			for a.router.Depth() > 1 {
+				a.router.Pop()
+			}
+			v := views.NewLeasesView(a.data, a.keys, owner)
+			return a, a.router.Replace(v)
 		case key.Matches(kmsg, a.keys.Providers):
-			a.view = viewProviders
-			return a, loadChainProviders(a.lightClient)
+			a.monitorActive = false
+			for a.router.Depth() > 1 {
+				a.router.Pop()
+			}
+			v := views.NewProvidersView(a.data, a.keys)
+			return a, a.router.Replace(v)
 		case key.Matches(kmsg, a.keys.Monitor):
-			a.view = viewMonitor
+			for a.router.Depth() > 1 {
+				a.router.Pop()
+			}
+			a.monitorActive = a.monitor != nil
 			return a, nil
 		case key.Matches(kmsg, a.keys.Governance):
-			a.view = viewGovernance
-			return a, loadProposals(a.lightClient)
+			a.monitorActive = false
+			for a.router.Depth() > 1 {
+				a.router.Pop()
+			}
+			v := views.NewGovernanceView(a.data, a.keys)
+			return a, a.router.Replace(v)
 		case key.Matches(kmsg, a.keys.Staking):
-			a.view = viewStaking
-			return a, loadValidators(a.lightClient)
+			a.monitorActive = false
+			for a.router.Depth() > 1 {
+				a.router.Pop()
+			}
+			v := views.NewStakingView(a.data, a.keys)
+			return a, a.router.Replace(v)
 		case key.Matches(kmsg, a.keys.Back):
-			a.view = viewDashboard
+			a.monitorActive = false
+			if a.router.Depth() > 1 {
+				a.router.Pop()
+			}
 			return a, nil
 		}
 
-		return a, nil
+		// Delegate all other keys to active view
+		cmd := a.router.Update(msg)
+		return a, cmd
 	}
 
-	return a, tea.Batch(appCmds...)
+	// Forward remaining data messages to active view
+	cmd := a.router.Update(msg)
+	cmds = append(cmds, cmd)
+	return a, tea.Batch(cmds...)
 }
-
-// chromeHeight is the number of lines consumed by the shell chrome
-// (header, nav bar + hrule, breadcrumb, footer hrule + hints).
-// header=1, navBar=2 (tabs + hrule), breadcrumb=1, footer=2 (hrule + hints), newlines=4.
-const chromeHeight = 10
 
 // View implements tea.Model.
 func (a App) View() tea.View {
-	footer := a.renderFooter()
-
-	// Height available for content between chrome.
 	contentH := a.height - chromeHeight
 	if contentH < 1 {
 		contentH = 1
 	}
-
-	// Pin content to a fixed height so the footer is always at
-	// the very bottom of the terminal, regardless of how much (or
-	// how little) the active view renders.
 	pin := lipgloss.NewStyle().Height(contentH).MaxHeight(contentH)
 
-	// When the monitor view is active the embedded model renders its own
-	// title/tab chrome. It already accounts for the reduced height
-	// (terminal - statusBarHeight). Append the unified footer.
-	if a.view == viewMonitor && a.monitorModel != nil && !a.palette.Active() {
-		monView := a.monitorModel.View()
-		content := pin.Render(monView.Content) + "\n" + footer
+	// Standalone monitor mode
+	if a.standalone && a.monitor != nil {
+		monView := a.monitor.View()
+		content := pin.Render(monView.Content)
+		v := tea.NewView(content)
+		v.AltScreen = true
+		return v
+	}
+
+	// When the monitor is active, it renders its own chrome.
+	if a.monitorActive && a.monitor != nil && !a.paletteActive() {
+		monView := a.monitor.View()
+		content := pin.Render(monView.Content)
 		v := tea.NewView(content)
 		v.AltScreen = true
 		return v
@@ -881,307 +560,98 @@ func (a App) View() tea.View {
 	breadcrumb := a.renderBreadcrumb()
 
 	var main string
-	switch a.view {
-	case viewDeployments:
-		main = a.deployments.View()
-	case viewLeases:
-		main = a.leases.View()
-	case viewProviders:
-		main = a.providers.View()
-	case viewGovernance:
-		main = a.governance.View()
-	case viewStaking:
-		main = a.staking.View()
-	case viewDeploymentDetail:
-		main = a.deploymentDetail.View()
-	case viewLeaseDetail:
-		main = a.leaseDetail.View()
-	case viewProviderDetail:
-		main = a.providerDetail.View()
-	case viewProposalDetail:
-		main = a.proposalDetail.View()
-	case viewValidatorDetail:
-		main = a.validatorDetail.View()
-	case viewMonitor:
+	if a.monitorActive && a.monitor == nil {
 		main = a.renderCentered(contentH, "No RPC endpoint configured.\nUse :consensus after setting up a context.")
-	default:
-		main = a.dashboard.View()
+	} else {
+		main = a.router.View().Content
 	}
 
-	// Overlay: log viewer renders on top of content when active.
-	if a.logViewer.Active() {
-		main = a.logViewer.View()
+	// Overlay compositing
+	if a.logView != nil && a.logView.Active() {
+		main = a.logView.View().Content
+	}
+	if a.confirm != nil && a.confirm.Active() {
+		main = overlayCenter(main, a.confirm.View(), a.width, contentH)
+	}
+	if a.help != nil && a.help.Active() {
+		main = overlayCenter(main, a.help.View().Content, a.width, contentH)
+	}
+	if a.palette != nil && a.palette.Active() {
+		main = overlayCenter(main, a.palette.View().Content, a.width, contentH)
 	}
 
-	// Overlay: confirm dialog floats over base content when active.
-	if a.confirmDialog.Active() {
-		main = overlayCenter(main, a.confirmDialog.View(), a.width, contentH)
-	}
-
-	// Overlay: help overlay floats over base content when active.
-	if a.helpOverlay.Active() {
-		main = overlayCenter(main, a.helpOverlay.View(), a.width, contentH)
-	}
-
-	if a.palette.Active() {
-		main = overlayCenter(main, a.palette.View(), a.width, contentH)
-		footer = a.renderPaletteFooter()
-	}
-
-	// Toast notification overlays the bottom of the content area.
 	if a.toast != nil && !a.toast.Expired() {
 		main = main + "\n" + a.toast.View()
 	}
 
-	chrome := header + "\n" + navBar + "\n" + breadcrumb + "\n" + main
-	v := tea.NewView(pin.Render(chrome) + "\n" + footer)
+	pinnedMain := pin.Render(main)
+	chrome := header + "\n" + navBar + "\n" + breadcrumb + "\n" + pinnedMain
+	v := tea.NewView(chrome)
 	v.AltScreen = true
 	return v
 }
 
-// ─── Footer (horizontal rule + hint pairs, always at bottom) ─────────
-
-func (a App) renderFooter() string {
-	var hints []components.HintPair
-
-	switch a.view {
-	case viewDashboard:
-		hints = []components.HintPair{
-			{Key: "1-6", Desc: "navigate"},
-			{Key: ":", Desc: "command"},
-			{Key: "?", Desc: "help"},
-			{Key: "D", Desc: "deploy", Accent: true},
-		}
-	case viewDeployments:
-		hints = []components.HintPair{
-			{Key: "j/k", Desc: "move"},
-			{Key: "↵", Desc: "open"},
-			{Key: "l", Desc: "logs"},
-			{Key: "d", Desc: "close"},
-			{Key: "/", Desc: "search"},
-			{Key: "D", Desc: "new", Accent: true},
-		}
-	case viewLeases:
-		hints = []components.HintPair{
-			{Key: "j/k", Desc: "move"},
-			{Key: "↵", Desc: "detail"},
-			{Key: "l", Desc: "logs"},
-			{Key: "f", Desc: "filter"},
-			{Key: "esc", Desc: "back"},
-		}
-	case viewProviders:
-		hints = []components.HintPair{
-			{Key: "j/k", Desc: "move"},
-			{Key: "↵", Desc: "detail"},
-			{Key: "esc", Desc: "back"},
-		}
-	case viewMonitor:
-		hints = []components.HintPair{
-			{Key: "j/k", Desc: "move"},
-			{Key: "tab", Desc: "switch"},
-			{Key: "esc", Desc: "back"},
-		}
-	case viewGovernance:
-		hints = []components.HintPair{
-			{Key: "j/k", Desc: "move"},
-			{Key: "↵", Desc: "detail"},
-			{Key: "v", Desc: "vote", Accent: true},
-			{Key: "esc", Desc: "back"},
-		}
-	case viewStaking:
-		hints = []components.HintPair{
-			{Key: "j/k", Desc: "move"},
-			{Key: "↵", Desc: "detail"},
-			{Key: "d", Desc: "delegate", Accent: true},
-			{Key: "esc", Desc: "back"},
-		}
-	case viewDeploymentDetail:
-		hints = []components.HintPair{
-			{Key: "j/k", Desc: "scroll"},
-			{Key: "1-4", Desc: "tabs"},
-			{Key: "tab", Desc: "next tab"},
-			{Key: "esc", Desc: "back"},
-		}
-	case viewLeaseDetail:
-		hints = []components.HintPair{
-			{Key: "j/k", Desc: "scroll"},
-			{Key: "l", Desc: "logs"},
-			{Key: "esc", Desc: "back"},
-		}
-	case viewProviderDetail:
-		hints = []components.HintPair{
-			{Key: "j/k", Desc: "scroll"},
-			{Key: "esc", Desc: "back"},
-		}
-	case viewProposalDetail:
-		hints = []components.HintPair{
-			{Key: "j/k", Desc: "scroll"},
-			{Key: "v", Desc: "vote", Accent: true},
-			{Key: "esc", Desc: "back"},
-		}
-	case viewValidatorDetail:
-		hints = []components.HintPair{
-			{Key: "j/k", Desc: "scroll"},
-			{Key: "d", Desc: "delegate", Accent: true},
-			{Key: "esc", Desc: "back"},
-		}
-	}
-
-	return components.Footer(a.width, hints)
-}
-
-// monitorStatusLines returns lines 1 and 2 for the status bar when the
-// monitor is active.
-func (a App) monitorStatusLines() (string, string) {
-	if a.monitorModel == nil {
-		return "", ""
-	}
-
-	// Type-assert to get StatusInfo from the embedded top model.
-	type statusProvider interface {
-		StatusInfo() monitorui.StatusInfo
-	}
-
-	sp, ok := a.monitorModel.(statusProvider)
-	if !ok {
-		return "", ""
-	}
-
-	si := sp.StatusInfo()
-
-	// Line 1: tab-specific keybindings.
-	line1 := si.TabHelpText()
-
-	// Line 2: RPC endpoint + connection mode.
-	mode := "HTTP"
-	if si.WSConnected {
-		mode = "WS"
-	}
-	line2 := fmt.Sprintf("RPC: %s [%s]", si.Endpoint, mode)
-
-	return line1, line2
-}
-
-func (a App) renderPaletteFooter() string {
-	hints := []components.HintPair{
-		{Key: "↑/↓", Desc: "navigate"},
-		{Key: "↵", Desc: "select"},
-		{Key: "esc", Desc: "close"},
-	}
-	return components.Footer(a.width, hints)
-}
-
-// ─── Helpers ─────────────────────────────────────────────────────────
-
-func (a App) handleCommand(cmd string) (tea.Model, tea.Cmd) {
-	owner := ""
-	if a.resolvedCtx != nil {
-		owner = a.resolvedCtx.DefaultAccount
-	}
-
-	switch strings.ToLower(cmd) {
-	case "quit", "q", "exit":
-		return a, tea.Quit
-
-	case "dashboard", "home":
-		a.view = viewDashboard
-	case "monitor", "consensus", "top":
-		a.view = viewMonitor
-	case "deployments", "dep":
-		a.view = viewDeployments
-		return a, loadDeployments(a.dataStore, owner)
-	case "leases":
-		a.view = viewLeases
-		return a, loadLeases(a.dataStore, owner)
-	case "providers", "prov":
-		a.view = viewProviders
-		return a, loadChainProviders(a.lightClient)
-	case "governance", "gov":
-		a.view = viewGovernance
-		return a, loadProposals(a.lightClient)
-	case "staking", "validators", "val":
-		a.view = viewStaking
-		return a, loadValidators(a.lightClient)
-
-	case "certificates", "escrow", "orders", "bids",
-		"deploy", "help":
-		a.view = viewDashboard
-	}
-
-	return a, nil
-}
-
-func (a *App) resize() {
-	// Main area for non-monitor views: total height minus chrome.
-	mainH := a.height - chromeHeight
-	if mainH < 1 {
-		mainH = 1
-	}
-
-	a.dashboard.SetSize(a.width, mainH)
-	a.deployments.SetSize(a.width, mainH)
-	a.leases.SetSize(a.width, mainH)
-	a.providers.SetSize(a.width, mainH)
-	a.governance.SetSize(a.width, mainH)
-	a.staking.SetSize(a.width, mainH)
-	a.detail.SetSize(a.width, mainH)
-	a.deploymentDetail.SetSize(a.width, mainH)
-	a.leaseDetail.SetSize(a.width, mainH)
-	a.providerDetail.SetSize(a.width, mainH)
-	a.proposalDetail.SetSize(a.width, mainH)
-	a.validatorDetail.SetSize(a.width, mainH)
-	a.logViewer.SetSize(a.width, mainH)
-	a.confirmDialog.SetSize(a.width, mainH)
-	a.helpOverlay.SetSize(a.width, mainH)
-	a.palette.SetSize(a.width, mainH)
-}
+// ─── Chrome rendering ────────────────────────────────────────────────
 
 func (a App) renderHeader() string {
 	appName := theme.HeaderAppName.Render("akt")
-	sep := theme.HeaderMeta.Render(" · ")
 
-	// Context name and chain ID from resolved context.
-	ctxName := "\u2014" // em dash fallback
+	// Build left side: akt  v1.2.0  chain  akashnet-2  rpc  endpoint  block  height
+	var parts []string
+	parts = append(parts, appName)
+
+	// Version
+	ver := "dev"
+	parts = append(parts, theme.HeaderMeta.Render("v"+ver))
+
+	// Chain ID
 	chainID := ""
-	account := ""
 	if a.resolvedCtx != nil {
-		if a.resolvedCtx.Name != "" {
-			ctxName = a.resolvedCtx.Name
-		}
 		chainID = a.resolvedCtx.Network.ChainID
-		account = a.resolvedCtx.DefaultAccount
 	}
-
-	ctx := theme.HeaderContext.Render(ctxName)
 	if chainID != "" {
-		ctx += theme.HeaderMeta.Render(":" + chainID)
+		parts = append(parts, theme.HeaderMeta.Render("chain")+"  "+theme.HeaderContext.Render(chainID))
 	}
 
-	var left string
-	if account != "" {
-		acct := theme.HeaderContext.Render(account)
-		left = appName + sep + ctx + sep + acct
-	} else {
-		left = appName + sep + ctx
+	// RPC endpoint
+	rpcEndpoint := ""
+	if a.resolvedCtx != nil && len(a.resolvedCtx.Network.Endpoints.RPC) > 0 {
+		rpcEndpoint = a.resolvedCtx.Network.Endpoints.RPC[0]
+	}
+	if rpcEndpoint != "" {
+		parts = append(parts, theme.HeaderMeta.Render("rpc")+"  "+theme.HeaderContext.Render(rpcEndpoint))
 	}
 
-	// Block height from sync state.
-	blockStr := "\u2014" // em dash fallback
+	// Block height
+	blockStr := ""
 	if a.syncState != nil && a.syncState.LastBlockHeight > 0 {
 		blockStr = fmt.Sprintf("%d", a.syncState.LastBlockHeight)
+		// Comma-group the block height
+		if len(blockStr) > 3 {
+			var result []byte
+			for i, c := range blockStr {
+				if i > 0 && (len(blockStr)-i)%3 == 0 {
+					result = append(result, ',')
+				}
+				result = append(result, byte(c))
+			}
+			blockStr = string(result)
+		}
+		parts = append(parts, theme.HeaderMeta.Render("block")+"  "+theme.HeaderContext.Render(blockStr))
 	}
-	block := theme.HeaderMeta.Render("\u23a1 ") +
-		theme.HeaderValue.Render(blockStr) +
-		theme.HeaderMeta.Render(" \u23a4")
 
+	left := strings.Join(parts, "  ")
+
+	// Right side: sync status + time
 	var sync string
 	if a.syncState != nil {
-		sync = theme.SyncOK.Render("\u25cf synced")
+		sync = lipgloss.NewStyle().Foreground(theme.GreenColor).Render("●") +
+			"  " + theme.HeaderValue.Render("synced")
 	} else {
-		sync = theme.HeaderMeta.Render("\u25cb no sync")
+		sync = theme.HeaderMeta.Render("○  no sync")
 	}
 
-	right := block + "  " + sync
+	right := sync
 
 	innerW := a.width - 2 // account for HeaderStyle Padding(0,1)
 	gap := innerW - lipgloss.Width(left) - lipgloss.Width(right)
@@ -1198,21 +668,21 @@ func (a App) renderHeader() string {
 var navItems = []struct {
 	key  string
 	name string
-	view activeView
 }{
-	{"1", "Deployments", viewDeployments},
-	{"2", "Leases", viewLeases},
-	{"3", "Providers", viewProviders},
-	{"4", "Monitor", viewMonitor},
-	{"5", "Governance", viewGovernance},
-	{"6", "Staking", viewStaking},
+	{"1", "Deployments"},
+	{"2", "Leases"},
+	{"3", "Providers"},
+	{"4", "Monitor"},
+	{"5", "Governance"},
+	{"6", "Staking"},
 }
 
 func (a App) renderNavBar() string {
+	bc := a.router.Breadcrumb()
 	var parts []string
 
-	// Dashboard pseudo-tab is always shown; active when on dashboard.
-	if a.view == viewDashboard {
+	isDashboard := !a.monitorActive && (strings.HasPrefix(bc, "Dashboard") || bc == "")
+	if isDashboard {
 		parts = append(parts, theme.NavTabActive.Render("Dashboard"))
 	} else {
 		parts = append(parts, theme.NavTabInactive.Render("Dashboard"))
@@ -1220,131 +690,69 @@ func (a App) renderNavBar() string {
 
 	for _, nav := range navItems {
 		label := nav.key + " " + nav.name
-		if a.navTabIsActive(nav.view) {
+		active := false
+		if nav.name == "Monitor" {
+			active = a.monitorActive
+		} else {
+			active = !a.monitorActive && strings.Contains(bc, nav.name)
+		}
+		if active {
 			parts = append(parts, theme.NavTabActive.Render(label))
 		} else {
 			parts = append(parts, theme.NavTabInactive.Render(label))
 		}
 	}
 
-	deployBtn := lipgloss.NewStyle().Foreground(theme.AccentRed).Render("D deploy")
+	rightParts := a.navBarHints()
+	rightStr := strings.Join(rightParts, "  ")
 
 	bar := " " + strings.Join(parts, " ")
-	gap := a.width - lipgloss.Width(bar) - lipgloss.Width(deployBtn) - 1
+	gap := a.width - lipgloss.Width(bar) - lipgloss.Width(rightStr) - 1
 	if gap < 1 {
 		gap = 1
 	}
-	bar = bar + strings.Repeat(" ", gap) + deployBtn
+	bar = bar + strings.Repeat(" ", gap) + rightStr
 
 	return bar + "\n" + components.HRule(a.width)
 }
 
-// navTabIsActive returns true if the given nav tab should be highlighted.
-// Detail views highlight their parent list tab.
-func (a App) navTabIsActive(tabView activeView) bool {
-	if a.view == tabView {
-		return true
+// navBarHints returns the right-side shortcut hints for the nav bar.
+func (a App) navBarHints() []string {
+	accentStyle := lipgloss.NewStyle().Foreground(theme.AccentRed).Bold(true)
+	keyStyle := theme.FooterKey
+	descStyle := theme.FooterDesc
+
+	// Common global hints always shown.
+	hints := []string{
+		accentStyle.Render("D") + " " + descStyle.Render("deploy"),
+		keyStyle.Render(":") + " " + descStyle.Render("cmd"),
+		keyStyle.Render("?") + " " + descStyle.Render("help"),
 	}
-	switch a.view {
-	case viewDeploymentDetail:
-		return tabView == viewDeployments
-	case viewLeaseDetail:
-		return tabView == viewLeases
-	case viewProviderDetail:
-		return tabView == viewProviders
-	case viewProposalDetail:
-		return tabView == viewGovernance
-	case viewValidatorDetail:
-		return tabView == viewStaking
-	}
-	return false
+
+	return hints
 }
 
 func (a App) renderBreadcrumb() string {
+	var bc string
+	if a.monitorActive {
+		bc = "Monitor"
+	} else {
+		bc = a.router.Breadcrumb()
+		if bc == "" {
+			bc = "Dashboard"
+		}
+	}
+	parts := strings.Split(bc, " > ")
 	sep := theme.BreadcrumbSeparator.Render(" / ")
-
-	var name string
-	switch a.view {
-	case viewDashboard:
-		name = "Dashboard"
-	case viewDeployments:
-		name = "Deployments"
-	case viewLeases:
-		name = "Leases"
-	case viewProviders:
-		name = "Providers"
-	case viewMonitor:
-		name = "Monitor"
-	case viewGovernance:
-		name = "Governance"
-	case viewStaking:
-		name = "Staking"
-	case viewDeploymentDetail:
-		parent := theme.BreadcrumbActive.Render("Deployments")
-		detail := theme.BreadcrumbActive.Render("Detail")
-		return " " + parent + sep + detail
-	case viewLeaseDetail:
-		parent := theme.BreadcrumbActive.Render("Leases")
-		detail := theme.BreadcrumbActive.Render("Detail")
-		return " " + parent + sep + detail
-	case viewProviderDetail:
-		parent := theme.BreadcrumbActive.Render("Providers")
-		detail := theme.BreadcrumbActive.Render("Detail")
-		return " " + parent + sep + detail
-	case viewProposalDetail:
-		parent := theme.BreadcrumbActive.Render("Governance")
-		detail := theme.BreadcrumbActive.Render("Detail")
-		return " " + parent + sep + detail
-	case viewValidatorDetail:
-		parent := theme.BreadcrumbActive.Render("Staking")
-		detail := theme.BreadcrumbActive.Render("Detail")
-		return " " + parent + sep + detail
-	default:
-		name = "Dashboard"
+	var styled []string
+	for _, p := range parts {
+		styled = append(styled, theme.BreadcrumbActive.Render(p))
 	}
-
-	return " " + theme.BreadcrumbActive.Render(name)
+	return " " + strings.Join(styled, sep)
 }
 
-// showToast creates a toast notification and returns the expiry tick command.
-func (a *App) showToast(msg string, tone components.ToastTone) tea.Cmd {
-	t := components.NewToast(msg, tone)
-	a.toast = &t
-	return tea.Tick(components.ToastDuration, func(time.Time) tea.Msg {
-		return components.ToastExpiredMsg{}
-	})
-}
-
-// viewName returns a human-readable name for the current view.
-func (a App) viewName() string {
-	switch a.view {
-	case viewDashboard:
-		return "Dashboard"
-	case viewDeployments:
-		return "Deployments"
-	case viewLeases:
-		return "Leases"
-	case viewProviders:
-		return "Providers"
-	case viewMonitor:
-		return "Monitor"
-	case viewGovernance:
-		return "Governance"
-	case viewStaking:
-		return "Staking"
-	case viewDeploymentDetail:
-		return "Deployment Detail"
-	case viewLeaseDetail:
-		return "Lease Detail"
-	case viewProviderDetail:
-		return "Provider Detail"
-	case viewProposalDetail:
-		return "Proposal Detail"
-	case viewValidatorDetail:
-		return "Validator Detail"
-	default:
-		return ""
-	}
+func (a App) paletteActive() bool {
+	return a.palette != nil && a.palette.Active()
 }
 
 func (a App) renderCentered(h int, text string) string {
@@ -1395,15 +803,99 @@ func overlayCenter(base, overlay string, w, h int) string {
 	return strings.Join(baseLines, "\n")
 }
 
-// truncateStr shortens a string to maxLen characters, appending "…" if truncated.
-func truncateStr(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
+// ─── Helpers ─────────────────────────────────────────────────────────
+
+func (a App) handleCommand(cmd string) (tea.Model, tea.Cmd) {
+	owner := ""
+	if a.resolvedCtx != nil {
+		owner = a.resolvedCtx.DefaultAccount
 	}
-	if maxLen > 1 {
-		return s[:maxLen-1] + "…"
+	popToRoot := func() {
+		for a.router.Depth() > 1 {
+			a.router.Pop()
+		}
 	}
-	return "…"
+
+	switch strings.ToLower(cmd) {
+	case "quit", "q", "exit":
+		return a, tea.Quit
+	case "dashboard", "home":
+		popToRoot()
+		dctx := views.DashboardContext{Version: "dev"}
+		if a.resolvedCtx != nil {
+			dctx.ContextName = a.resolvedCtx.Name
+			dctx.ChainID = a.resolvedCtx.Network.ChainID
+			dctx.Account = a.resolvedCtx.DefaultAccount
+			if len(a.resolvedCtx.Network.Endpoints.RPC) > 0 {
+				dctx.RPCEndpoint = a.resolvedCtx.Network.Endpoints.RPC[0]
+			}
+		}
+		return a, a.router.Replace(views.NewDashboard(a.data, dctx, a.keys))
+	case "deployments", "dep":
+		popToRoot()
+		return a, a.router.Replace(views.NewDeploymentsView(a.data, a.keys, owner))
+	case "leases":
+		popToRoot()
+		return a, a.router.Replace(views.NewLeasesView(a.data, a.keys, owner))
+	case "providers", "prov":
+		popToRoot()
+		return a, a.router.Replace(views.NewProvidersView(a.data, a.keys))
+	case "governance", "gov":
+		popToRoot()
+		return a, a.router.Replace(views.NewGovernanceView(a.data, a.keys))
+	case "staking", "validators", "val":
+		popToRoot()
+		return a, a.router.Replace(views.NewStakingView(a.data, a.keys))
+	case "monitor", "consensus", "top":
+		popToRoot()
+		a.monitorActive = a.monitor != nil
+		return a, nil
+	case "certificates", "escrow", "orders", "bids", "deploy", "help":
+		// Not yet implemented
+		return a, nil
+	}
+	return a, nil
+}
+
+// showToast creates a toast notification and returns the expiry tick command.
+func (a *App) showToast(msg string, tone components.ToastTone) tea.Cmd {
+	t := components.NewToast(msg, tone)
+	a.toast = &t
+	return tea.Tick(components.ToastDuration, func(time.Time) tea.Msg {
+		return components.ToastExpiredMsg{}
+	})
+}
+
+// monitorStatusLines returns lines 1 and 2 for the status bar when the
+// monitor is active.
+func (a App) monitorStatusLines() (string, string) {
+	if a.monitor == nil {
+		return "", ""
+	}
+
+	// Type-assert to get StatusInfo from the embedded top model.
+	type statusProvider interface {
+		StatusInfo() monitorui.StatusInfo
+	}
+
+	sp, ok := a.monitor.(statusProvider)
+	if !ok {
+		return "", ""
+	}
+
+	si := sp.StatusInfo()
+
+	// Line 1: tab-specific keybindings.
+	line1 := si.TabHelpText()
+
+	// Line 2: RPC endpoint + connection mode.
+	mode := "HTTP"
+	if si.WSConnected {
+		mode = "WS"
+	}
+	line2 := fmt.Sprintf("RPC: %s [%s]", si.Endpoint, mode)
+
+	return line1, line2
 }
 
 // ─── Log streaming ───────────────────────────────────────────────────
@@ -1493,170 +985,7 @@ func (a *App) startLogStream(owner string, dseq uint64) tea.Cmd {
 	return streamLogs(ctx, logs)
 }
 
-// ─── Data loading commands ───────────────────────────────────────────
-
-func loadDeployments(s store.Store, owner string) tea.Cmd {
-	return func() tea.Msg {
-		if s == nil {
-			return messages.DeploymentsLoadedMsg{Err: fmt.Errorf("no store available")}
-		}
-		depls, err := s.ListDeployments(context.Background(), store.DeploymentFilter{Owner: owner})
-		return messages.DeploymentsLoadedMsg{Deployments: depls, Err: err}
-	}
-}
-
-func loadLeases(s store.Store, owner string) tea.Cmd {
-	return func() tea.Msg {
-		if s == nil {
-			return messages.LeasesLoadedMsg{Err: fmt.Errorf("no store available")}
-		}
-		leases, err := s.ListLeases(context.Background(), store.LeaseFilter{Owner: owner})
-		return messages.LeasesLoadedMsg{Leases: leases, Err: err}
-	}
-}
-
-func loadStoreStats(s store.Store) tea.Cmd {
-	return func() tea.Msg {
-		if s == nil {
-			return messages.StoreStatsMsg{Err: fmt.Errorf("no store available")}
-		}
-		stats, err := s.Stats(context.Background())
-		return messages.StoreStatsMsg{Stats: stats, Err: err}
-	}
-}
-
-func loadDeploymentLeases(s store.Store, owner string, dseq uint64) tea.Cmd {
-	return func() tea.Msg {
-		if s == nil {
-			return messages.LeasesLoadedMsg{Err: fmt.Errorf("no store available")}
-		}
-		leases, err := s.ListLeases(context.Background(), store.LeaseFilter{Owner: owner, DSeq: dseq})
-		return messages.LeasesLoadedMsg{Leases: leases, Err: err}
-	}
-}
-
-func loadBids(s store.Store, owner string, dseq uint64) tea.Cmd {
-	return func() tea.Msg {
-		if s == nil {
-			return messages.BidsLoadedMsg{Err: fmt.Errorf("no store available")}
-		}
-		bids, err := s.ListBids(context.Background(), store.BidFilter{Owner: owner, DSeq: dseq})
-		return messages.BidsLoadedMsg{DSeq: dseq, Bids: bids, Err: err}
-	}
-}
-
-func loadSyncState(s store.Store) tea.Cmd {
-	return func() tea.Msg {
-		if s == nil {
-			return messages.SyncStateMsg{Err: fmt.Errorf("no store available")}
-		}
-		state, err := s.GetSyncState(context.Background())
-		return messages.SyncStateMsg{State: state, Err: err}
-	}
-}
-
-func loadBalance(client aclient.LightClient, account string) tea.Cmd {
-	return func() tea.Msg {
-		if client == nil || account == "" {
-			return messages.BalanceLoadedMsg{Err: fmt.Errorf("no client or account")}
-		}
-		resp, err := client.Query().Bank().AllBalances(context.Background(), &banktypes.QueryAllBalancesRequest{
-			Address: account,
-		})
-		if err != nil {
-			return messages.BalanceLoadedMsg{Err: err}
-		}
-		for _, coin := range resp.Balances {
-			if coin.Denom == "uakt" {
-				amt := coin.Amount.ToLegacyDec().QuoInt64(1_000_000)
-				return messages.BalanceLoadedMsg{Amount: fmt.Sprintf("%.2f AKT", amt.MustFloat64())}
-			}
-		}
-		return messages.BalanceLoadedMsg{Amount: "0 AKT"}
-	}
-}
-
-// ─── Chain data loading commands (tallies & staking pool) ────────────
-
-func loadTallies(client aclient.LightClient, proposals []*govv1.Proposal) tea.Cmd {
-	return func() tea.Msg {
-		if client == nil {
-			return messages.TallyLoadedMsg{Err: fmt.Errorf("no chain client")}
-		}
-		tallies := make(map[uint64]*govv1.TallyResult)
-		for _, p := range proposals {
-			if p.Status == govv1.StatusVotingPeriod {
-				resp, err := client.Query().Gov().TallyResult(context.Background(), &govv1.QueryTallyResultRequest{
-					ProposalId: p.Id,
-				})
-				if err == nil && resp != nil {
-					tallies[p.Id] = resp.Tally
-				}
-			}
-		}
-		return messages.TallyLoadedMsg{Tallies: tallies}
-	}
-}
-
-func loadStakingPool(client aclient.LightClient) tea.Cmd {
-	return func() tea.Msg {
-		if client == nil {
-			return messages.StakingPoolMsg{Err: fmt.Errorf("no chain client")}
-		}
-		resp, err := client.Query().Staking().Pool(context.Background(), &stakingtypes.QueryPoolRequest{})
-		if err != nil {
-			return messages.StakingPoolMsg{Err: err}
-		}
-		return messages.StakingPoolMsg{BondedTokens: resp.Pool.BondedTokens}
-	}
-}
-
-// ─── Chain data loading commands ─────────────────────────────────────
-
-func loadProposals(cl aclient.LightClient) tea.Cmd {
-	return func() tea.Msg {
-		if cl == nil {
-			return messages.ProposalsLoadedMsg{Err: fmt.Errorf("no chain client available")}
-		}
-		res, err := cl.Query().Gov().Proposals(context.Background(), &govv1.QueryProposalsRequest{
-			Pagination: &query.PageRequest{Limit: 100, Reverse: true},
-		})
-		if err != nil {
-			return messages.ProposalsLoadedMsg{Err: err}
-		}
-		return messages.ProposalsLoadedMsg{Proposals: res.Proposals}
-	}
-}
-
-func loadValidators(cl aclient.LightClient) tea.Cmd {
-	return func() tea.Msg {
-		if cl == nil {
-			return messages.ValidatorsLoadedMsg{Err: fmt.Errorf("no chain client available")}
-		}
-		res, err := cl.Query().Staking().Validators(context.Background(), &stakingtypes.QueryValidatorsRequest{
-			Pagination: &query.PageRequest{Limit: 200},
-		})
-		if err != nil {
-			return messages.ValidatorsLoadedMsg{Err: err}
-		}
-		return messages.ValidatorsLoadedMsg{Validators: res.Validators}
-	}
-}
-
-func loadChainProviders(cl aclient.LightClient) tea.Cmd {
-	return func() tea.Msg {
-		if cl == nil {
-			return messages.ProvidersLoadedMsg{Err: fmt.Errorf("no chain client available")}
-		}
-		res, err := cl.Query().Provider().Providers(context.Background(), &ptypes.QueryProvidersRequest{
-			Pagination: &query.PageRequest{Limit: 200},
-		})
-		if err != nil {
-			return messages.ProvidersLoadedMsg{Err: err}
-		}
-		return messages.ProvidersLoadedMsg{Providers: res.Providers}
-	}
-}
+// ─── Entry points ────────────────────────────────────────────────────
 
 // buildLightClient attempts to create a LightClient from the resolved context
 // and RPC endpoint when one is not already provided. The TUI only performs
@@ -1681,8 +1010,6 @@ func buildLightClient(cfg *Config) {
 	cfg.LightClient = cl
 }
 
-// ─── Entry points ────────────────────────────────────────────────────
-
 func Run(cfg Config) error {
 	buildLightClient(&cfg)
 
@@ -1696,8 +1023,7 @@ func Run(cfg Config) error {
 	if bus != nil && cfg.Store != nil && cfg.ResolvedCtx != nil {
 		eng := synce.New(cfg.Store, []string{cfg.ResolvedCtx.DefaultAccount})
 		if bridge, err := newSyncBridge(bus, eng); err == nil {
-			app.syncBridge = bridge
-			app.dashboard.SetSyncBridgeActive(true)
+			app.bridge = bridge
 			defer bridge.close()
 		}
 	}
@@ -1719,13 +1045,13 @@ func RunMonitor(cfg Config) error {
 	}
 
 	app := newApp(cfg, model)
-	app.view = viewMonitor
+	// In standalone mode, show monitor directly
+	app.monitorActive = model != nil
 
 	if bus != nil && cfg.Store != nil && cfg.ResolvedCtx != nil {
 		eng := synce.New(cfg.Store, []string{cfg.ResolvedCtx.DefaultAccount})
 		if bridge, err := newSyncBridge(bus, eng); err == nil {
-			app.syncBridge = bridge
-			app.dashboard.SetSyncBridgeActive(true)
+			app.bridge = bridge
 			defer bridge.close()
 		}
 	}

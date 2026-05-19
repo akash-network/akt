@@ -3,6 +3,7 @@ package views
 import (
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"pkg.akt.dev/akt/internal/ui/theme"
@@ -38,6 +39,16 @@ func (h *HelpOverlay) Close() {
 	h.active = false
 }
 
+// Update handles key events for the help overlay.
+func (h *HelpOverlay) Update(msg tea.Msg) tea.Cmd {
+	if kmsg, ok := msg.(tea.KeyPressMsg); ok {
+		if kmsg.String() == "esc" {
+			h.Close()
+		}
+	}
+	return nil
+}
+
 // SetSize updates dimensions.
 func (h *HelpOverlay) SetSize(w, ht int) {
 	h.width = w
@@ -45,9 +56,9 @@ func (h *HelpOverlay) SetSize(w, ht int) {
 }
 
 // View renders the help overlay.
-func (h HelpOverlay) View() string {
+func (h HelpOverlay) View() tea.View {
 	if !h.active {
-		return ""
+		return tea.NewView("")
 	}
 
 	boxW := h.width * 60 / 100
@@ -141,7 +152,7 @@ func (h HelpOverlay) View() string {
 
 	dialog := box.Render(content)
 
-	return lipgloss.Place(h.width, h.height,
+	return tea.NewView(lipgloss.Place(h.width, h.height,
 		lipgloss.Center, lipgloss.Center,
-		dialog)
+		dialog))
 }

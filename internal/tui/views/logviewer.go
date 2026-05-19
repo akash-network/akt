@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"pkg.akt.dev/akt/internal/tui/components"
+	"pkg.akt.dev/akt/internal/tui/messages"
 	"pkg.akt.dev/akt/internal/ui/theme"
 )
 
@@ -59,6 +61,29 @@ func (v *LogViewer) Open(title, dseq, service string) {
 // Close deactivates the log viewer.
 func (v *LogViewer) Close() {
 	v.active = false
+}
+
+// Update handles key events for the log viewer overlay.
+func (lv *LogViewer) Update(msg tea.Msg) tea.Cmd {
+	if kmsg, ok := msg.(tea.KeyPressMsg); ok {
+		switch kmsg.String() {
+		case "esc":
+			return CmdFunc(messages.StopLogStreamMsg{})
+		case " ":
+			lv.TogglePause()
+		case "c":
+			lv.Clear()
+		case "k", "up":
+			lv.ScrollUp()
+		case "j", "down":
+			lv.ScrollDown()
+		case "G":
+			lv.ScrollToBottom()
+		case "s":
+			lv.CycleServiceFilter()
+		}
+	}
+	return nil
 }
 
 // Active returns whether the log viewer overlay is visible.
@@ -205,9 +230,9 @@ func (v *LogViewer) maxScroll() int {
 }
 
 // View renders the log viewer overlay.
-func (v LogViewer) View() string {
+func (v LogViewer) View() tea.View {
 	if !v.active {
-		return ""
+		return tea.NewView("")
 	}
 
 	// Inner width: total width minus border (2) and padding (4).
@@ -234,7 +259,7 @@ func (v LogViewer) View() string {
 		Padding(1, 2).
 		Width(v.width - 2)
 
-	return box.Render(content)
+	return tea.NewView(box.Render(content))
 }
 
 // renderHeader renders the header bar with badge, deployment info, and status.
@@ -325,7 +350,7 @@ func (v LogViewer) renderLogArea(w int) string {
 		ts := tsStyle.Render(fmt.Sprintf("%-*s", colTimestamp, line.Timestamp))
 		lvl := v.renderLevel(line.Level)
 		scope := scopeStyle.Render(fmt.Sprintf("%-*s", colScope, line.Scope))
-		msg := msgStyle.Render(truncate(line.Message, msgW))
+		msg := msgStyle.Render(Truncate(line.Message, msgW))
 		rows = append(rows, ts+" "+lvl+" "+scope+" "+msg)
 	}
 

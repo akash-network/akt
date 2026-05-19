@@ -32,7 +32,7 @@ func TestHelpOverlayOpenCloseLifecycle(t *testing.T) {
 
 func TestHelpOverlayInactiveViewEmpty(t *testing.T) {
 	h := views.NewHelpOverlay()
-	if out := h.View(); out != "" {
+	if out := h.View().Content; out != "" {
 		t.Errorf("inactive View() = %q, want empty string", out)
 	}
 }
@@ -42,7 +42,7 @@ func TestHelpOverlayViewContainsSectionHeaders(t *testing.T) {
 	h.Open("Dashboard")
 	h.SetSize(120, 60)
 
-	out := ansi.Strip(h.View())
+	out := ansi.Strip(h.View().Content)
 
 	sections := []string{"NAVIGATION", "LISTS", "ACTIONS", "OVERLAYS"}
 	for _, section := range sections {
@@ -57,7 +57,7 @@ func TestHelpOverlayViewContainsKeybindings(t *testing.T) {
 	h.Open("Dashboard")
 	h.SetSize(120, 60)
 
-	out := ansi.Strip(h.View())
+	out := ansi.Strip(h.View().Content)
 
 	// Spot-check some keybindings from each section.
 	bindings := []string{
@@ -78,7 +78,7 @@ func TestHelpOverlayViewContainsCloseHint(t *testing.T) {
 	h.Open("")
 	h.SetSize(120, 60)
 
-	out := ansi.Strip(h.View())
+	out := ansi.Strip(h.View().Content)
 	if !strings.Contains(out, "esc") {
 		t.Error("View() missing close hint with 'esc'")
 	}
@@ -89,7 +89,7 @@ func TestHelpOverlayViewContainsContext(t *testing.T) {
 	h.Open("Providers")
 	h.SetSize(120, 60)
 
-	out := ansi.Strip(h.View())
+	out := ansi.Strip(h.View().Content)
 	if !strings.Contains(out, "Providers") {
 		t.Error("View() missing context label 'Providers'")
 	}
