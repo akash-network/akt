@@ -260,26 +260,26 @@ e2e/                               # End-to-end tests
 
 - [x] T063 [P] [US3] Unit tests for TUI application shell: root model init, header render, status bar render, window resize in internal/tui/app_test.go
 - [ ] T064 [P] [US3] Unit tests for navigation system: view stack push/pop, breadcrumb trail, number-key dispatch in internal/tui/nav_test.go
-- [ ] T065 [P] [US3] Unit tests for theme system: dark/light themes, color token resolution, NO_COLOR support in internal/ui/theme/theme_test.go
-- [ ] T066 [P] [US3] Unit tests for configurable keybindings: vim/default/custom keymap loading in internal/tui/keymap_test.go
+- [x] T065 [P] [US3] Unit tests for theme system: dark/light themes, color token resolution, NO_COLOR support in internal/ui/theme/theme_test.go
+- [x] T066 [P] [US3] Unit tests for configurable keybindings: vim/default/custom keymap loading in internal/tui/keymap_test.go
 - [ ] T067 [P] [US3] Unit tests for command palette: fuzzy matching, category grouping, keyboard navigation in internal/tui/views/palette_test.go
 - [ ] T068 [P] [US3] Unit tests for ListView and DetailView components: cursor, scroll, selection in internal/tui/views/listview_test.go and internal/tui/views/detailview_test.go
 - [x] T069 [P] [US3] Unit tests for monitor model: consensus state parsing, vote grid rendering, progress bars in internal/monitor/ui/view_test.go
-- [ ] T070 [P] [US3] Unit tests for provider cache: smart scheduling, priority queue, disk persistence in internal/monitor/cache/cache_test.go
+- [x] T070 [P] [US3] Unit tests for provider cache: smart scheduling, priority queue, disk persistence in internal/monitor/cache/cache_test.go
 
 ### Design for User Story 3
 
-- [ ] T071 [P] [US3] TUI application shell design: header layout (app name, context, chain-id, account, block height, sync status), main content area proportions, status bar layout (shortcut hints), responsive resize behavior
-- [ ] T072 [P] [US3] TUI navigation model design: stack-based navigation spec, breadcrumb rendering, number-key quick access mapping (1-6), Esc back behavior
-- [ ] T073 [P] [US3] Theme system design: dark/light color palettes, semantic color tokens (primary/secondary/accent/background/foreground/muted/border/error/warning/success/info), lipgloss style definitions, custom theme YAML schema per SPEC.md §8.7
-- [ ] T074 [P] [US3] Keybinding scheme design: vim-style default bindings (j/k/g/G/Ctrl-d/Ctrl-u), non-vim defaults, custom keybinding YAML schema per SPEC.md §8.6
-- [ ] T075 [P] [US3] Resource view wireframes: deployments, leases, providers, orders, bids list/detail patterns per SPEC.md §8.3
-- [ ] T076 [P] [US3] Consensus & validator view design: consensus state layout (height/round/step/elapsed/proposer), vote progress bars (prevote/precommit with power fractions), validator vote grid (●/○), signing history bar per SPEC.md §8.3.8-8.3.9
-- [ ] T077 [P] [US3] Provider fleet monitor view design: scan progress bar, version distribution dot visualization (●/○ semver-sorted), provider table (URL/version/CPU/memory/GPU), detail sub-view (node-level) per SPEC.md §8.3.10
-- [ ] T078 [P] [US3] Governance params view design: split-pane layout (module list + params), pretty-printed output using shared Render*Params() functions per SPEC.md §8.3.11
-- [ ] T079 [P] [US3] Oracle/BME dashboard design: two-column layout (oracle left, BME right), aggregated prices table, price health section, BME status/vault/ledger sections per SPEC.md §8.3.12
-- [ ] T080 [P] [US3] Command palette design: overlay positioning (60% width, min 50, max 80 cols), fuzzy search, result categories (navigation/action/app), keyboard interaction per SPEC.md §8.4
-- [ ] T081 [P] [US3] Confirmation dialog & log viewer design: dialog overlay (fee preview, Cancel/Confirm), log auto-scroll, search highlight, service filter per SPEC.md §8.5
+- [x] T071 [P] [US3] TUI application shell design: header layout (app name, context, chain-id, account, block height, sync status), main content area proportions, status bar layout (shortcut hints), responsive resize behavior
+- [x] T072 [P] [US3] TUI navigation model design: stack-based navigation spec, breadcrumb rendering, number-key quick access mapping (1-6), Esc back behavior
+- [x] T073 [P] [US3] Theme system design: dark/light color palettes, semantic color tokens (primary/secondary/accent/background/foreground/muted/border/error/warning/success/info), lipgloss style definitions, custom theme YAML schema per SPEC.md §8.7
+- [x] T074 [P] [US3] Keybinding scheme design: vim-style default bindings (j/k/g/G/Ctrl-d/Ctrl-u), non-vim defaults, custom keybinding YAML schema per SPEC.md §8.6
+- [x] T075 [P] [US3] Resource view wireframes: deployments, leases, providers, orders, bids list/detail patterns per SPEC.md §8.3
+- [x] T076 [P] [US3] Consensus & validator view design: consensus state layout (height/round/step/elapsed/proposer), vote progress bars (prevote/precommit with power fractions), validator vote grid (●/○), signing history bar per SPEC.md §8.3.8-8.3.9
+- [x] T077 [P] [US3] Provider fleet monitor view design: scan progress bar, version distribution dot visualization (●/○ semver-sorted), provider table (URL/version/CPU/memory/GPU), detail sub-view (node-level) per SPEC.md §8.3.10
+- [x] T078 [P] [US3] Governance params view design: split-pane layout (module list + params), pretty-printed output using shared Render*Params() functions per SPEC.md §8.3.11
+- [x] T079 [P] [US3] Oracle/BME dashboard design: two-column layout (oracle left, BME right), aggregated prices table, price health section, BME status/vault/ledger sections per SPEC.md §8.3.12
+- [x] T080 [P] [US3] Command palette design: overlay positioning (60% width, min 50, max 80 cols), fuzzy search, result categories (navigation/action/app), keyboard interaction per SPEC.md §8.4
+- [x] T081 [P] [US3] Confirmation dialog & log viewer design: dialog overlay (fee preview, Cancel/Confirm), log auto-scroll, search highlight, service filter per SPEC.md §8.5
 
 ### Implementation for User Story 3
 
@@ -295,7 +295,7 @@ e2e/                               # End-to-end tests
 - [ ] T086 [P] [US3] Resource table component: generic sortable/filterable table (bubbles/table), column configuration per resource type, pagination, terminal-width-aware column sizing in internal/tui/components/table.go
 - [x] T087 [P] [US3] Detail pane component: scrollable viewport (bubbles/viewport), YAML/JSON toggle, syntax highlighting in internal/tui/views/detailview.go
 - [x] T088 [P] [US3] Command palette: centered floating overlay with text input (bubbles/textinput) + scrollable list (bubbles/list), case-insensitive substring fuzzy matching, category grouping (navigation/action/app), keyboard-driven selection (j/k/Enter/Esc), 17 registered commands per SPEC.md §8.4 in internal/tui/views/palette.go
-- [ ] T089 [P] [US3] Confirmation dialog: modal overlay for destructive actions, transaction summary (owner/balance/gas/fees), Cancel (Esc) / Confirm (Enter) buttons in internal/tui/components/confirm.go
+- [x] T089 [P] [US3] Confirmation dialog: modal overlay for destructive actions, transaction summary (owner/balance/gas/fees), Cancel (Esc) / Confirm (Enter) buttons in internal/tui/components/confirm.go
 - [x] T090 [P] [US3] Help overlay: keybinding reference panel (bubbles/help), view-specific action listing, toggle with ? in internal/tui/components/help.go
 - [x] T091 [P] [US3] Progress bar & vote grid components: progress bar (bubbles/progress for consensus votes + provider scanning), vote grid (●/○ voted/not-voted line-wrapped to terminal width) in internal/monitor/ui/styles.go
 
