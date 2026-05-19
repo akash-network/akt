@@ -74,11 +74,11 @@ func formatMicroDenom(amount math.Int, denom string) string {
 
 	case abs64(uamt) >= 1_000_000:
 		d := math.LegacyNewDecFromInt(amount).Quo(math.LegacyNewDec(1_000_000))
-		return fmt.Sprintf("%s %s", trimDecTrailingZeros(d.String()), base)
+		return fmt.Sprintf("%s %s", TrimDecTrailingZeros(d.String()), base)
 
 	case abs64(uamt) >= 1_000:
 		d := math.LegacyNewDecFromInt(amount).Quo(math.LegacyNewDec(1_000))
-		return fmt.Sprintf("%s m%s", trimDecTrailingZeros(d.String()), base)
+		return fmt.Sprintf("%s m%s", TrimDecTrailingZeros(d.String()), base)
 
 	default:
 		return fmt.Sprintf("%d u%s", uamt, base)
@@ -99,7 +99,7 @@ func FormatDecCoin(coin sdk.DecCoin) string {
 	if isMicroDenom(coin.Denom) {
 		return formatMicroDenomDec(coin.Amount, coin.Denom)
 	}
-	return fmt.Sprintf("%s %s", trimDecTrailingZeros(coin.Amount.String()), coin.Denom)
+	return fmt.Sprintf("%s %s", TrimDecTrailingZeros(coin.Amount.String()), coin.Denom)
 }
 
 // FormatDecAsAKT formats a math.LegacyDec amount (in uakt) using AKT sub-denominations.
@@ -114,7 +114,7 @@ func FormatDecAmount(amount math.LegacyDec, denom string) string {
 	if isMicroDenom(denom) {
 		return formatMicroDenomDec(amount, denom)
 	}
-	return fmt.Sprintf("%s %s", trimDecTrailingZeros(amount.String()), denom)
+	return fmt.Sprintf("%s %s", TrimDecTrailingZeros(amount.String()), denom)
 }
 
 // FormatCoins formats a list of sdk.Coins. Each coin is formatted via FormatCoin.
@@ -161,18 +161,18 @@ func formatMicroDenomDec(amount math.LegacyDec, denom string) string {
 		return fmt.Sprintf("0 %s", base)
 	case absAmt.GTE(million):
 		d := amount.Quo(million)
-		return fmt.Sprintf("%s %s", trimDecTrailingZeros(d.String()), base)
+		return fmt.Sprintf("%s %s", TrimDecTrailingZeros(d.String()), base)
 	case absAmt.GTE(thousand):
 		d := amount.Quo(thousand)
-		return fmt.Sprintf("%s m%s", trimDecTrailingZeros(d.String()), base)
+		return fmt.Sprintf("%s m%s", TrimDecTrailingZeros(d.String()), base)
 	default:
-		return fmt.Sprintf("%s u%s", trimDecTrailingZeros(amount.String()), base)
+		return fmt.Sprintf("%s u%s", TrimDecTrailingZeros(amount.String()), base)
 	}
 }
 
-// trimDecTrailingZeros removes unnecessary trailing zeros from a decimal string.
+// TrimDecTrailingZeros removes unnecessary trailing zeros from a decimal string.
 // "100000.000000000000000000" → "100000", "1.500000" → "1.5", "0.100" → "0.1"
-func trimDecTrailingZeros(s string) string {
+func TrimDecTrailingZeros(s string) string {
 	if !strings.Contains(s, ".") {
 		return s
 	}
@@ -551,7 +551,7 @@ func FormatPercent(s string) string {
 // FormatPercentDec converts a math.LegacyDec to a percentage string.
 func FormatPercentDec(d math.LegacyDec) string {
 	pct := d.MulInt64(100)
-	return trimDecTrailingZeros(pct.String()) + "%"
+	return TrimDecTrailingZeros(pct.String()) + "%"
 }
 
 // FormatBool formats a boolean as a color-coded "Yes" / "No" string.

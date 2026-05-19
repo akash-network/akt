@@ -893,18 +893,18 @@ func (a App) View() tea.View {
 		main = a.logViewer.View()
 	}
 
-	// Overlay: confirm dialog renders on top of content when active.
+	// Overlay: confirm dialog floats over base content when active.
 	if a.confirmDialog.Active() {
-		main = a.confirmDialog.View()
+		main = overlayCenter(main, a.confirmDialog.View(), a.width, contentH)
 	}
 
-	// Overlay: help overlay renders on top of content when active.
+	// Overlay: help overlay floats over base content when active.
 	if a.helpOverlay.Active() {
-		main = a.helpOverlay.View()
+		main = overlayCenter(main, a.helpOverlay.View(), a.width, contentH)
 	}
 
 	if a.palette.Active() {
-		main = a.palette.View()
+		main = overlayCenter(main, a.palette.View(), a.width, contentH)
 		footer = a.renderPaletteFooter()
 	}
 
@@ -1310,6 +1310,45 @@ func (a App) renderCentered(h int, text string) string {
 		Align(lipgloss.Center, lipgloss.Center)
 
 	return style.Render(text)
+}
+
+// overlayCenter composites an overlay string centered on top of a base view.
+// Overlay lines replace the corresponding base lines at the center position.
+func overlayCenter(base, overlay string, w, h int) string {
+	baseLines := strings.Split(base, "\n")
+	for len(baseLines) < h {
+		baseLines = append(baseLines, "")
+	}
+
+	overlayLines := strings.Split(overlay, "\n")
+	overlayH := len(overlayLines)
+	overlayW := 0
+	for _, line := range overlayLines {
+		if lw := lipgloss.Width(line); lw > overlayW {
+			overlayW = lw
+		}
+	}
+
+	startY := (h - overlayH) / 2
+	if startY < 2 {
+		startY = 2
+	}
+	startX := (w - overlayW) / 2
+	if startX < 0 {
+		startX = 0
+	}
+
+	for i, line := range overlayLines {
+		row := startY + i
+		if row < len(baseLines) {
+			baseLines[row] = strings.Repeat(" ", startX) + line
+		}
+	}
+
+	if len(baseLines) > h {
+		baseLines = baseLines[:h]
+	}
+	return strings.Join(baseLines, "\n")
 }
 
 // truncateStr shortens a string to maxLen characters, appending "…" if truncated.

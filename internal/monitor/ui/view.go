@@ -218,9 +218,51 @@ func renderOraclePanel(ctx ViewContext, width int) string {
 				fmt.Sprintf("  Oracle %s detected — waiting for aggregated prices...", ctx.Oracle.Version)))
 		}
 		b.WriteString("\n")
+		return b.String()
 	}
-	// TODO: call pretty.RenderAggregatedPrice / pretty.RenderOraclePrices
-	// when data is available.
+
+	// Header
+	b.WriteString(headerStyle.Width(width).Render("Oracle Prices"))
+	b.WriteString("\n")
+
+	// Sort denoms for stable display order.
+	denoms := make([]string, 0, len(ctx.Oracle.Aggregated))
+	for d := range ctx.Oracle.Aggregated {
+		denoms = append(denoms, d)
+	}
+	sort.Strings(denoms)
+
+	for _, denom := range denoms {
+		ev := ctx.Oracle.Aggregated[denom]
+		if ev == nil {
+			continue
+		}
+		ap := ev.Price
+
+		twap := pretty.TrimDecTrailingZeros(ap.TWAP.String())
+		median := pretty.TrimDecTrailingZeros(ap.MedianPrice.String())
+		minP := pretty.TrimDecTrailingZeros(ap.MinPrice.String())
+		maxP := pretty.TrimDecTrailingZeros(ap.MaxPrice.String())
+
+		b.WriteString(fmt.Sprintf("  %s\n", valueStyle.Render(ap.Denom)))
+		b.WriteString(fmt.Sprintf("    %s %s\n",
+			labelStyle.Render("TWAP:"),
+			valueStyle.Render(twap)))
+		b.WriteString(fmt.Sprintf("    %s %s\n",
+			labelStyle.Render("Median:"),
+			mutedStyle.Render(median)))
+		b.WriteString(fmt.Sprintf("    %s %s  %s %s\n",
+			labelStyle.Render("Min:"),
+			mutedStyle.Render(minP),
+			labelStyle.Render("Max:"),
+			mutedStyle.Render(maxP)))
+		b.WriteString(fmt.Sprintf("    %s %s  %s %d bps\n",
+			labelStyle.Render("Sources:"),
+			mutedStyle.Render(fmt.Sprintf("%d", ap.NumSources)),
+			labelStyle.Render("Deviation:"),
+			ap.DeviationBps))
+		b.WriteString("\n")
+	}
 
 	return b.String()
 }
