@@ -6,62 +6,73 @@ import (
 	"strconv"
 	"strings"
 
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 
+	"pkg.akt.dev/akt/internal/tui/components"
+	"pkg.akt.dev/akt/internal/tui/keys"
+	"pkg.akt.dev/akt/internal/tui/messages"
 	"pkg.akt.dev/akt/internal/ui/theme"
 )
+
+var _ ViewComponent = (*ProposalDetailView)(nil)
 
 // ProposalDetailView is the drill-down detail view for a single governance proposal.
 // It displays proposal info and vote tally progress bars.
 type ProposalDetailView struct {
+	BaseDetailView
+	km       keys.KeyMap
 	proposal *govv1.Proposal
 	tally    *govv1.TallyResult
-	width    int
-	height   int
-	scroll   int
 }
 
-// NewProposalDetailView creates a new empty proposal detail view.
-func NewProposalDetailView() ProposalDetailView {
-	return ProposalDetailView{}
-}
-
-// SetProposal sets the proposal to display.
-func (v *ProposalDetailView) SetProposal(p *govv1.Proposal) {
-	v.proposal = p
-	v.scroll = 0
-}
-
-// SetTally sets the tally result to display.
-func (v *ProposalDetailView) SetTally(t *govv1.TallyResult) {
-	v.tally = t
-}
-
-// SetSize updates the view dimensions.
-func (v *ProposalDetailView) SetSize(w, h int) {
-	v.width = w
-	v.height = h
-}
-
-// ScrollUp scrolls the content up by one line.
-func (v *ProposalDetailView) ScrollUp() {
-	if v.scroll > 0 {
-		v.scroll--
+// NewProposalDetailView creates a detail view pre-loaded with a proposal and tally.
+func NewProposalDetailView(km keys.KeyMap, proposal *govv1.Proposal, tally *govv1.TallyResult) *ProposalDetailView {
+	return &ProposalDetailView{
+		BaseDetailView: NewBaseDetailView(),
+		km:             km,
+		proposal:       proposal,
+		tally:          tally,
 	}
 }
 
-// ScrollDown scrolls the content down by one line.
-func (v *ProposalDetailView) ScrollDown() {
-	v.scroll++
+// ─── tea.Model ───────────────────────────────────────────────────────
+
+// Init returns nil — data is already set via the constructor.
+func (v *ProposalDetailView) Init() tea.Cmd { return nil }
+
+// Update handles key events for the proposal detail view.
+func (v *ProposalDetailView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if kmsg, ok := msg.(tea.KeyPressMsg); ok {
+		switch {
+		case key.Matches(kmsg, v.km.Back):
+			return v, CmdFunc(messages.PopViewMsg{})
+		case key.Matches(kmsg, v.km.Vote):
+			if v.proposal != nil && v.proposal.Status == govv1.StatusVotingPeriod {
+				return v, CmdFunc(messages.ShowConfirmMsg{
+					Kind: components.ConfirmVote,
+					Data: components.ConfirmData{
+						Title: "Vote on Proposal",
+						Body:  fmt.Sprintf("Vote on proposal #%d: %s?", v.proposal.Id, truncateTitle(v.proposal.Title, 40)),
+					},
+				})
+			}
+		default:
+			// j/k scroll handled by BaseDetailView
+			v.BaseDetailView.Update(msg)
+		}
+	}
+	return v, nil
 }
 
 // View renders the proposal detail panel.
-func (v ProposalDetailView) View() string {
+func (v *ProposalDetailView) View() tea.View {
 	if v.proposal == nil {
-		return theme.Muted.Render("  No proposal selected")
+		return tea.NewView(theme.Muted.Render("  No proposal selected"))
 	}
 
-	w := v.width
+	w := v.W
 	if w < 40 {
 		w = 40
 	}
@@ -95,29 +106,46 @@ func (v ProposalDetailView) View() string {
 	lines = append(lines, renderProgressLine("Abstain", abstain, fmt.Sprintf("%.1f%%", abstain), barW))
 	lines = append(lines, renderProgressLine("No w/ Veto", veto, fmt.Sprintf("%.1f%%", veto), barW))
 
-	// Apply scrolling
-	visibleH := v.height - 4
+	// Apply scrolling via BaseDetailView
+	visibleH := v.H - 4
 	if visibleH < 3 {
 		visibleH = 3
 	}
 
-	start := v.scroll
-	if start >= len(lines) {
-		start = max(0, len(lines)-1)
-	}
-	end := start + visibleH
-	if end > len(lines) {
-		end = len(lines)
-	}
+	visible := v.BaseDetailView.VisibleWindow(lines, visibleH)
 
 	var b strings.Builder
-	for i := start; i < end; i++ {
-		b.WriteString(lines[i])
+	for _, line := range visible {
+		b.WriteString(line)
 		b.WriteByte('\n')
 	}
 
-	return b.String()
+	return tea.NewView(b.String())
 }
+
+// ─── ViewComponent ───────────────────────────────────────────────────
+
+// SetSize delegates to the embedded BaseDetailView.
+func (v *ProposalDetailView) SetSize(w, h int) {
+	v.BaseDetailView.SetSize(w, h)
+}
+
+// Breadcrumb returns the navigation label for this view.
+func (v *ProposalDetailView) Breadcrumb() string {
+	return "Detail"
+}
+
+// ShortHelp returns the footer hint pairs for the proposal detail view.
+func (v *ProposalDetailView) ShortHelp() []components.HintPair {
+	return []components.HintPair{
+		{Key: "j/k", Desc: "scroll"},
+		{Key: "v", Desc: "vote"},
+		{Key: "esc", Desc: "back"},
+	}
+}
+
+// Refresh returns nil — detail views have no data to reload.
+func (v *ProposalDetailView) Refresh() tea.Cmd { return nil }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 

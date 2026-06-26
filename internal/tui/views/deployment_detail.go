@@ -7,10 +7,15 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"pkg.akt.dev/akt/internal/store"
 	"pkg.akt.dev/akt/internal/tui/components"
+	"pkg.akt.dev/akt/internal/tui/data"
+	"pkg.akt.dev/akt/internal/tui/keys"
+	"pkg.akt.dev/akt/internal/tui/messages"
 	"pkg.akt.dev/akt/internal/ui/theme"
 )
 
@@ -18,94 +23,105 @@ const numTabs = 4
 
 var tabLabels = [numTabs]string{"overview", "lease", "escrow", "endpoints"}
 
+// Compile-time check: *DeploymentDetailView must satisfy ViewComponent.
+var _ ViewComponent = (*DeploymentDetailView)(nil)
+
 // DeploymentDetailView is the drill-down detail view for a single deployment.
 // It contains 4 sub-tabs: overview, lease, escrow, and endpoints.
 type DeploymentDetailView struct {
+	BaseDetailView
+	svc        data.Service
+	km         keys.KeyMap
 	deployment *store.DeploymentRecord
 	leases     []*store.LeaseRecord
 	bids       []*store.BidRecord
 	tab        int // 0=overview, 1=lease, 2=escrow, 3=endpoints
-	width      int
-	height     int
-	scroll     int
 }
 
-// NewDeploymentDetailView creates a new empty deployment detail view.
-func NewDeploymentDetailView() DeploymentDetailView {
-	return DeploymentDetailView{}
-}
-
-// Deployment returns the currently displayed deployment record, or nil.
-func (v DeploymentDetailView) Deployment() *store.DeploymentRecord {
-	return v.deployment
-}
-
-// SetDeployment sets the deployment record to display.
-func (v *DeploymentDetailView) SetDeployment(d *store.DeploymentRecord) {
-	v.deployment = d
-	v.scroll = 0
-}
-
-// SetLeases sets the lease records for this deployment.
-func (v *DeploymentDetailView) SetLeases(leases []*store.LeaseRecord) {
-	v.leases = leases
-}
-
-// SetBids sets the bid records for this deployment.
-func (v *DeploymentDetailView) SetBids(bids []*store.BidRecord) {
-	v.bids = bids
-}
-
-// SetSize updates the view dimensions.
-func (v *DeploymentDetailView) SetSize(w, h int) {
-	v.width = w
-	v.height = h
-}
-
-// NextTab advances to the next sub-tab.
-func (v *DeploymentDetailView) NextTab() {
-	v.tab = (v.tab + 1) % numTabs
-	v.scroll = 0
-}
-
-// PrevTab moves to the previous sub-tab.
-func (v *DeploymentDetailView) PrevTab() {
-	v.tab = (v.tab - 1 + numTabs) % numTabs
-	v.scroll = 0
-}
-
-// SetTab sets the active sub-tab directly.
-func (v *DeploymentDetailView) SetTab(n int) {
-	if n >= 0 && n < numTabs {
-		v.tab = n
-		v.scroll = 0
+// NewDeploymentDetailView constructs a detail view pre-loaded with a deployment record.
+func NewDeploymentDetailView(svc data.Service, km keys.KeyMap, rec *store.DeploymentRecord) *DeploymentDetailView {
+	return &DeploymentDetailView{
+		BaseDetailView: NewBaseDetailView(),
+		svc:            svc,
+		km:             km,
+		deployment:     rec,
 	}
 }
 
-// ScrollUp scrolls the content up by one line.
-func (v *DeploymentDetailView) ScrollUp() {
-	if v.scroll > 0 {
-		v.scroll--
+// ─── tea.Model ───────────────────────────────────────────────────────
+
+// Init fires the initial data loads for leases and bids.
+func (v *DeploymentDetailView) Init() tea.Cmd {
+	if v.svc == nil || v.deployment == nil {
+		return nil
 	}
+	return tea.Batch(
+		v.svc.LoadDeploymentLeases(v.deployment.Owner, v.deployment.DSeq),
+		v.svc.LoadBids(v.deployment.Owner, v.deployment.DSeq),
+	)
 }
 
-// ScrollDown scrolls the content down by one line.
-func (v *DeploymentDetailView) ScrollDown() {
-	v.scroll++
+// Update handles messages for the deployment detail view.
+func (v *DeploymentDetailView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case messages.LeasesLoadedMsg:
+		if msg.Err == nil {
+			v.leases = msg.Leases
+		}
+		return v, nil
+
+	case messages.BidsLoadedMsg:
+		if msg.Err == nil {
+			v.bids = msg.Bids
+		}
+		return v, nil
+	}
+
+	if kmsg, ok := msg.(tea.KeyPressMsg); ok {
+		switch {
+		case key.Matches(kmsg, v.km.Back):
+			return v, CmdFunc(messages.PopViewMsg{})
+
+		case key.Matches(kmsg, v.km.TabNext):
+			v.tab = (v.tab + 1) % numTabs
+			v.Scroll = 0
+			return v, nil
+		}
+
+		switch kmsg.String() {
+		case "1":
+			v.tab = 0
+			v.Scroll = 0
+			return v, nil
+		case "2":
+			v.tab = 1
+			v.Scroll = 0
+			return v, nil
+		case "3":
+			v.tab = 2
+			v.Scroll = 0
+			return v, nil
+		case "4":
+			v.tab = 3
+			v.Scroll = 0
+			return v, nil
+		}
+
+		// Delegate j/k scroll to BaseDetailView
+		v.BaseDetailView.Update(msg)
+	}
+	return v, nil
 }
 
-// HasData returns true if a deployment is loaded.
-func (v DeploymentDetailView) HasData() bool {
-	return v.deployment != nil
-}
+// ─── ViewComponent ───────────────────────────────────────────────────
 
 // View renders the deployment detail panel.
-func (v DeploymentDetailView) View() string {
+func (v *DeploymentDetailView) View() tea.View {
 	if v.deployment == nil {
-		return theme.Muted.Render("  No deployment selected")
+		return tea.NewView(theme.Muted.Render("  No deployment selected"))
 	}
 
-	w := v.width
+	w := v.W
 	if w < 40 {
 		w = 40
 	}
@@ -123,42 +139,66 @@ func (v DeploymentDetailView) View() string {
 	// Tab content
 	content := v.renderTabContent(w)
 
-	// Apply scrolling
+	// Apply scrolling via BaseDetailView
 	lines := strings.Split(content, "\n")
-	maxLines := v.height - 7 // header(2) + tab bar(1) + blank(1) + back hint(2) + padding(1)
-	if maxLines < 3 {
-		maxLines = 3
+	visibleH := v.H - 7 // header(2) + tab bar(1) + blank(1) + back hint(2) + padding(1)
+	if visibleH < 3 {
+		visibleH = 3
 	}
 
-	start := v.scroll
-	if start >= len(lines) {
-		start = max(0, len(lines)-1)
-	}
-	end := start + maxLines
-	if end > len(lines) {
-		end = len(lines)
-	}
-
-	for i := start; i < end; i++ {
-		b.WriteString(lines[i])
+	visible := v.BaseDetailView.VisibleWindow(lines, visibleH)
+	for _, line := range visible {
+		b.WriteString(line)
 		b.WriteByte('\n')
 	}
 
 	// Back hint and scroll indicator
 	b.WriteByte('\n')
 	b.WriteString(theme.Muted.Render("  esc: back"))
-	if len(lines) > maxLines {
+	if len(lines) > visibleH {
 		b.WriteString(lipgloss.NewStyle().Foreground(theme.ColorMuted).Render(
 			"  j/k: scroll  1-4: tabs",
 		))
 	}
 	b.WriteByte('\n')
 
-	return b.String()
+	return tea.NewView(b.String())
 }
 
+// SetSize delegates to the embedded BaseDetailView.
+func (v *DeploymentDetailView) SetSize(w, h int) {
+	v.BaseDetailView.SetSize(w, h)
+}
+
+// Breadcrumb returns the navigation label for this view.
+func (v *DeploymentDetailView) Breadcrumb() string {
+	return "Detail"
+}
+
+// ShortHelp returns the footer hint pairs for the deployment detail view.
+func (v *DeploymentDetailView) ShortHelp() []components.HintPair {
+	return []components.HintPair{
+		{Key: "j/k", Desc: "scroll"},
+		{Key: "1-4", Desc: "tabs"},
+		{Key: "tab", Desc: "next tab"},
+		{Key: "esc", Desc: "back"},
+	}
+}
+
+// Refresh re-fires the same data loads as Init.
+func (v *DeploymentDetailView) Refresh() tea.Cmd {
+	return v.Init()
+}
+
+// Deployment returns the currently displayed deployment record, or nil.
+func (v *DeploymentDetailView) Deployment() *store.DeploymentRecord {
+	return v.deployment
+}
+
+// ─── Rendering helpers ───────────────────────────────────────────────
+
 // renderHeader renders the header strip with deployment name, DSEQ, state, and owner.
-func (v DeploymentDetailView) renderHeader(w int) string {
+func (v *DeploymentDetailView) renderHeader(w int) string {
 	d := v.deployment
 
 	// Deployment name from SDL path basename or fallback
@@ -179,7 +219,7 @@ func (v DeploymentDetailView) renderHeader(w int) string {
 }
 
 // renderTabBar renders the sub-tab bar.
-func (v DeploymentDetailView) renderTabBar() string {
+func (v *DeploymentDetailView) renderTabBar() string {
 	activeNum := lipgloss.NewStyle().Foreground(theme.AccentRed).Bold(true)
 	activeText := lipgloss.NewStyle().Foreground(theme.Slate100).Bold(true)
 	inactiveNum := lipgloss.NewStyle().Foreground(theme.Slate500)
@@ -199,7 +239,7 @@ func (v DeploymentDetailView) renderTabBar() string {
 }
 
 // renderTabContent renders the content for the active tab.
-func (v DeploymentDetailView) renderTabContent(w int) string {
+func (v *DeploymentDetailView) renderTabContent(w int) string {
 	contentW := w - 4 // indent padding
 	if contentW < 30 {
 		contentW = 30
@@ -221,7 +261,7 @@ func (v DeploymentDetailView) renderTabContent(w int) string {
 }
 
 // renderOverviewTab renders the overview tab content.
-func (v DeploymentDetailView) renderOverviewTab(w int) string {
+func (v *DeploymentDetailView) renderOverviewTab(w int) string {
 	d := v.deployment
 	var sections []string
 
@@ -253,7 +293,7 @@ func (v DeploymentDetailView) renderOverviewTab(w int) string {
 }
 
 // renderLeaseTab renders the lease tab content.
-func (v DeploymentDetailView) renderLeaseTab(w int) string {
+func (v *DeploymentDetailView) renderLeaseTab(w int) string {
 	var sections []string
 
 	if len(v.leases) == 0 {
@@ -291,7 +331,7 @@ func (v DeploymentDetailView) renderLeaseTab(w int) string {
 }
 
 // renderEscrowTab renders the escrow tab content.
-func (v DeploymentDetailView) renderEscrowTab(w int) string {
+func (v *DeploymentDetailView) renderEscrowTab(w int) string {
 	d := v.deployment
 	var sections []string
 
@@ -320,7 +360,7 @@ func (v DeploymentDetailView) renderEscrowTab(w int) string {
 }
 
 // renderEndpointsTab renders the endpoints tab content.
-func (v DeploymentDetailView) renderEndpointsTab(w int) string {
+func (v *DeploymentDetailView) renderEndpointsTab(w int) string {
 	sections := []string{components.Section("Endpoints", w)}
 
 	// Collect all endpoints from all leases
@@ -376,7 +416,7 @@ func fmtTimestamp(ts int64) string {
 }
 
 // providerAddr returns the provider address from the first lease, or "—".
-func (v DeploymentDetailView) providerAddr() string {
+func (v *DeploymentDetailView) providerAddr() string {
 	if len(v.leases) > 0 {
 		return v.leases[0].ID.Provider
 	}
@@ -384,7 +424,7 @@ func (v DeploymentDetailView) providerAddr() string {
 }
 
 // uptimeStr computes uptime from the first lease's created timestamp.
-func (v DeploymentDetailView) uptimeStr() string {
+func (v *DeploymentDetailView) uptimeStr() string {
 	if len(v.leases) == 0 || v.leases[0].CreatedAt == 0 {
 		return "—"
 	}
@@ -402,7 +442,7 @@ func (v DeploymentDetailView) uptimeStr() string {
 }
 
 // costStr returns the price from the first lease, or "—".
-func (v DeploymentDetailView) costStr() string {
+func (v *DeploymentDetailView) costStr() string {
 	if len(v.leases) > 0 && v.leases[0].Price != "" {
 		return v.leases[0].Price
 	}

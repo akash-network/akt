@@ -6,84 +6,141 @@ import (
 	"strconv"
 	"time"
 
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+
 	"pkg.akt.dev/akt/internal/store"
 	"pkg.akt.dev/akt/internal/tui/components"
+	"pkg.akt.dev/akt/internal/tui/data"
+	"pkg.akt.dev/akt/internal/tui/keys"
+	"pkg.akt.dev/akt/internal/tui/messages"
 )
 
-// DeploymentsView renders a table of deployment records with filtering.
+// DeploymentsView is a full tea.Model list view for deployment records.
+// It embeds BaseListView for cursor/scroll handling and satisfies the
+// ViewComponent interface so the App shell can push it onto the nav stack.
 type DeploymentsView struct {
-	table  components.ResourceTable
+	BaseListView
+	svc    data.Service
+	owner  string
 	data   []*store.DeploymentRecord
-	width  int
-	height int
 	filter string // "", "active", "closed"
 }
 
-// NewDeploymentsView creates a new DeploymentsView with the standard column layout.
-func NewDeploymentsView() DeploymentsView {
-	return DeploymentsView{
-		table: components.NewResourceTable(components.ResourceTableConfig{
-			Columns: []components.TableColumn{
-				{Header: "DSEQ", Width: 10, Align: components.AlignLeft},
-				{Header: "IMAGE", Width: 0, Align: components.AlignLeft},
-				{Header: "STATE", Width: 12, Align: components.AlignLeft, RenderFunc: components.StateTag},
-				{Header: "CPU", Width: 6, Align: components.AlignRight},
-				{Header: "MEMORY", Width: 8, Align: components.AlignRight},
-				{Header: "GPU", Width: 10, Align: components.AlignLeft},
-				{Header: "PROVIDER", Width: 0, Align: components.AlignLeft},
-				{Header: "AGE", Width: 10, Align: components.AlignRight},
-				{Header: "ESCROW", Width: 14, Align: components.AlignRight},
-				{Header: "COST", Width: 14, Align: components.AlignRight},
-			},
-			EmptyText: "No deployments. Use 'akt deploy <sdl>' to create one.",
-		}),
+// NewDeploymentsView creates a DeploymentsView wired to the given data service.
+func NewDeploymentsView(svc data.Service, km keys.KeyMap, owner string) *DeploymentsView {
+	cfg := components.ResourceTableConfig{
+		Columns:   deploymentsColumns(),
+		EmptyText: "No deployments found",
+	}
+	return &DeploymentsView{
+		BaseListView: NewBaseListView(cfg, km),
+		svc:          svc,
+		owner:        owner,
 	}
 }
 
-// SetData stores the records and rebuilds the table rows using the current filter.
-func (v *DeploymentsView) SetData(records []*store.DeploymentRecord) {
-	v.data = records
-	v.applyFilter()
+// ─── tea.Model ───────────────────────────────────────────────────────
+
+// Init kicks off the initial data load.
+func (d *DeploymentsView) Init() tea.Cmd {
+	return d.svc.LoadDeployments(d.owner)
 }
 
-// SetSize updates the available width and height for rendering.
-func (v *DeploymentsView) SetSize(w, h int) {
-	v.width = w
-	v.height = h
-	v.table.SetSize(w, h)
-}
-
-// CycleFilter rotates through "" -> "active" -> "closed" -> "" and re-applies.
-func (v *DeploymentsView) CycleFilter() {
-	switch v.filter {
-	case "":
-		v.filter = "active"
-	case "active":
-		v.filter = "closed"
-	case "closed":
-		v.filter = ""
+// Update handles messages for the deployments list.
+func (d *DeploymentsView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case messages.DeploymentsLoadedMsg:
+		if msg.Err == nil {
+			d.data = msg.Deployments
+			d.applyFilter()
+		}
+		return d, nil
 	}
-	v.applyFilter()
-}
 
-// SelectedDseq returns the DSEQ of the currently highlighted deployment, or 0.
-func (v *DeploymentsView) SelectedDseq() uint64 {
-	row := v.table.SelectedRow()
-	if row == nil {
-		return 0
+	if kmsg, ok := msg.(tea.KeyPressMsg); ok {
+		switch {
+		case key.Matches(kmsg, d.Keys.Select):
+			rec := d.selectedRecord()
+			if rec != nil {
+				detail := NewDeploymentDetailView(d.svc, d.Keys, rec)
+				return d, CmdFunc(messages.PushViewMsg{View: detail})
+			}
+		case key.Matches(kmsg, d.Keys.Logs):
+			rec := d.selectedRecord()
+			if rec != nil {
+				return d, CmdFunc(messages.StartLogStreamMsg{Owner: rec.Owner, DSeq: rec.DSeq})
+			}
+		case key.Matches(kmsg, d.Keys.Close):
+			rec := d.selectedRecord()
+			if rec != nil {
+				return d, CmdFunc(messages.ShowConfirmMsg{
+					Kind: components.ConfirmClose,
+					Data: components.ConfirmData{
+						Title:  "Close Deployment",
+						Body:   fmt.Sprintf("Close deployment %d? This action is irreversible.", rec.DSeq),
+						Danger: true,
+					},
+				})
+			}
+		case key.Matches(kmsg, d.Keys.Filter):
+			d.cycleFilter()
+			return d, d.svc.LoadDeployments(d.owner)
+		}
+		// Fall through to BaseListView for cursor keys
+		d.BaseListView.Update(msg)
 	}
-	dseq, _ := strconv.ParseUint(row.ID, 10, 64)
-	return dseq
+	return d, nil
 }
 
-// SelectedRecord returns the deployment record at the cursor, or nil.
-func (v *DeploymentsView) SelectedRecord() *store.DeploymentRecord {
-	row := v.table.SelectedRow()
+// View delegates rendering to the embedded BaseListView table.
+func (d *DeploymentsView) View() tea.View {
+	return d.BaseListView.View()
+}
+
+// ─── ViewComponent ───────────────────────────────────────────────────
+
+// SetSize delegates to the embedded BaseListView.
+func (d *DeploymentsView) SetSize(w, h int) {
+	d.BaseListView.SetSize(w, h)
+}
+
+// Breadcrumb returns the navigation label for this view.
+func (d *DeploymentsView) Breadcrumb() string {
+	return "Deployments"
+}
+
+// ShortHelp returns the footer hint pairs for the deployments list.
+func (d *DeploymentsView) ShortHelp() []components.HintPair {
+	hints := []components.HintPair{
+		{Key: "j/k", Desc: "navigate"},
+		{Key: "↵", Desc: "detail"},
+		{Key: "f", Desc: "filter"},
+		{Key: "l", Desc: "logs"},
+		{Key: "d", Desc: "close", Accent: true},
+		{Key: "esc", Desc: "back"},
+	}
+	if d.filter != "" {
+		hints = append(hints, components.HintPair{Key: "filter", Desc: d.filter})
+	}
+	return hints
+}
+
+// Refresh re-fires the data load for this view.
+func (d *DeploymentsView) Refresh() tea.Cmd {
+	return d.svc.LoadDeployments(d.owner)
+}
+
+// ─── Internal ────────────────────────────────────────────────────────
+
+// selectedRecord returns the deployment record at the cursor, or nil.
+func (d *DeploymentsView) selectedRecord() *store.DeploymentRecord {
+	row := d.BaseListView.SelectedRow()
 	if row == nil {
 		return nil
 	}
 	dseq, _ := strconv.ParseUint(row.ID, 10, 64)
-	for _, r := range v.data {
+	for _, r := range d.data {
 		if r.DSeq == dseq {
 			return r
 		}
@@ -91,26 +148,24 @@ func (v *DeploymentsView) SelectedRecord() *store.DeploymentRecord {
 	return nil
 }
 
-// CursorUp moves the cursor up one row.
-func (v *DeploymentsView) CursorUp() {
-	v.table.CursorUp()
+// cycleFilter rotates through "" -> "active" -> "closed" -> "" and re-applies.
+func (d *DeploymentsView) cycleFilter() {
+	switch d.filter {
+	case "":
+		d.filter = "active"
+	case "active":
+		d.filter = "closed"
+	case "closed":
+		d.filter = ""
+	}
+	d.applyFilter()
 }
 
-// CursorDown moves the cursor down one row.
-func (v *DeploymentsView) CursorDown() {
-	v.table.CursorDown()
-}
-
-// View renders the deployments table.
-func (v DeploymentsView) View() string {
-	return v.table.View()
-}
-
-// applyFilter rebuilds the table rows from v.data using the current filter.
-func (v *DeploymentsView) applyFilter() {
+// applyFilter rebuilds the table rows from d.data using the current filter.
+func (d *DeploymentsView) applyFilter() {
 	var filtered []*store.DeploymentRecord
-	for _, r := range v.data {
-		if v.filter != "" && r.State != v.filter {
+	for _, r := range d.data {
+		if d.filter != "" && r.State != d.filter {
 			continue
 		}
 		filtered = append(filtered, r)
@@ -123,8 +178,28 @@ func (v *DeploymentsView) applyFilter() {
 			Cells: deploymentCells(r),
 		}
 	}
-	v.table.SetRows(rows)
+	d.BaseListView.SetRows(rows)
 }
+
+// ─── Column Definitions ──────────────────────────────────────────────
+
+// deploymentsColumns returns the standard column layout for the deployments table.
+func deploymentsColumns() []components.TableColumn {
+	return []components.TableColumn{
+		{Header: "DSEQ", Width: 10, Align: components.AlignLeft},
+		{Header: "IMAGE", Width: 0, Align: components.AlignLeft},
+		{Header: "STATE", Width: 12, Align: components.AlignLeft, RenderFunc: components.StateTag},
+		{Header: "CPU", Width: 6, Align: components.AlignRight},
+		{Header: "MEMORY", Width: 8, Align: components.AlignRight},
+		{Header: "GPU", Width: 10, Align: components.AlignLeft},
+		{Header: "PROVIDER", Width: 0, Align: components.AlignLeft},
+		{Header: "AGE", Width: 10, Align: components.AlignRight},
+		{Header: "ESCROW", Width: 14, Align: components.AlignRight},
+		{Header: "COST", Width: 14, Align: components.AlignRight},
+	}
+}
+
+// ─── Row Mapping ─────────────────────────────────────────────────────
 
 // deploymentCells formats a DeploymentRecord into cell values matching the column layout.
 func deploymentCells(r *store.DeploymentRecord) []string {
@@ -168,6 +243,8 @@ func deploymentCells(r *store.DeploymentRecord) []string {
 
 	return []string{dseq, image, state, cpu, memory, gpu, provider, age, escrow, cost}
 }
+
+// ─── Helpers ─────────────────────────────────────────────────────────
 
 // labelOrDash returns the label value for key, or "—" if not present.
 func labelOrDash(labels map[string]string, key string) string {

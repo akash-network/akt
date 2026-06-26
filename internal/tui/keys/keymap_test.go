@@ -1,4 +1,4 @@
-package tui_test
+package keys_test
 
 import (
 	"slices"
@@ -6,11 +6,11 @@ import (
 
 	"charm.land/bubbles/v2/key"
 
-	"pkg.akt.dev/akt/internal/tui"
+	"pkg.akt.dev/akt/internal/tui/keys"
 )
 
 func TestDefaultKeyMapReturnsNonNil(t *testing.T) {
-	km := tui.DefaultKeyMap()
+	km := keys.DefaultKeyMap()
 	// Verify the struct is populated by checking a few bindings are usable.
 	if km.Quit.Keys() == nil {
 		t.Error("Quit binding has nil keys")
@@ -44,7 +44,7 @@ func bindingContains(t *testing.T, name string, b key.Binding, wantKey string) {
 }
 
 func TestDefaultKeyMapBindings(t *testing.T) {
-	km := tui.DefaultKeyMap()
+	km := keys.DefaultKeyMap()
 
 	tests := []struct {
 		name    string
@@ -81,7 +81,7 @@ func TestDefaultKeyMapBindings(t *testing.T) {
 }
 
 func TestAllBindingsEnabled(t *testing.T) {
-	km := tui.DefaultKeyMap()
+	km := keys.DefaultKeyMap()
 
 	bindings := []struct {
 		name    string
@@ -122,8 +122,8 @@ func TestAllBindingsEnabled(t *testing.T) {
 }
 
 func TestKeyMapFromConfigNilViperReturnsDefaults(t *testing.T) {
-	km := tui.KeyMapFromConfig(nil)
-	def := tui.DefaultKeyMap()
+	km := keys.KeyMapFromConfig(nil)
+	def := keys.DefaultKeyMap()
 
 	// Spot-check that nil Viper returns the same bindings as DefaultKeyMap.
 	checks := []struct {

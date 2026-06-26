@@ -48,7 +48,7 @@ func TestLogViewerAppendLine(t *testing.T) {
 		Message:   "High memory usage",
 	})
 
-	out := lv.View()
+	out := lv.View().Content
 	if out == "" {
 		t.Fatal("View() returned empty string for active viewer with lines")
 	}
@@ -68,21 +68,21 @@ func TestLogViewerTogglePause(t *testing.T) {
 	lv.SetSize(80, 40)
 
 	// Initially not paused — View should show "streaming".
-	out := ansi.Strip(lv.View())
+	out := ansi.Strip(lv.View().Content)
 	if !strings.Contains(out, "streaming") {
 		t.Error("View() should show 'streaming' when not paused")
 	}
 
 	// Toggle pause.
 	lv.TogglePause()
-	out = ansi.Strip(lv.View())
+	out = ansi.Strip(lv.View().Content)
 	if !strings.Contains(out, "paused") {
 		t.Error("View() should show 'paused' after TogglePause")
 	}
 
 	// Toggle again — back to streaming.
 	lv.TogglePause()
-	out = ansi.Strip(lv.View())
+	out = ansi.Strip(lv.View().Content)
 	if !strings.Contains(out, "streaming") {
 		t.Error("View() should show 'streaming' after second TogglePause")
 	}
@@ -102,7 +102,7 @@ func TestLogViewerClear(t *testing.T) {
 
 	lv.Clear()
 
-	out := ansi.Strip(lv.View())
+	out := ansi.Strip(lv.View().Content)
 	if strings.Contains(out, "Should be cleared") {
 		t.Error("View() still contains cleared message")
 	}
@@ -110,7 +110,7 @@ func TestLogViewerClear(t *testing.T) {
 
 func TestLogViewerInactiveViewEmpty(t *testing.T) {
 	lv := views.NewLogViewer()
-	if out := lv.View(); out != "" {
+	if out := lv.View().Content; out != "" {
 		t.Errorf("inactive View() = %q, want empty string", out)
 	}
 }
@@ -120,7 +120,7 @@ func TestLogViewerViewContainsDeploymentInfo(t *testing.T) {
 	lv.Open("my-app", "99999", "api")
 	lv.SetSize(80, 40)
 
-	out := ansi.Strip(lv.View())
+	out := ansi.Strip(lv.View().Content)
 	if !strings.Contains(out, "my-app") {
 		t.Error("View() missing deployment title 'my-app'")
 	}
@@ -144,7 +144,7 @@ func TestLogViewerAppendLines(t *testing.T) {
 	}
 	lv.AppendLines(lines)
 
-	out := ansi.Strip(lv.View())
+	out := ansi.Strip(lv.View().Content)
 	for _, l := range lines {
 		if !strings.Contains(out, l.Message) {
 			t.Errorf("View() missing message %q", l.Message)

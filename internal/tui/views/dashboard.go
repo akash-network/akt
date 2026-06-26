@@ -5,10 +5,14 @@ import (
 	"strings"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"pkg.akt.dev/akt/internal/store"
 	"pkg.akt.dev/akt/internal/tui/components"
+	"pkg.akt.dev/akt/internal/tui/data"
+	"pkg.akt.dev/akt/internal/tui/keys"
+	"pkg.akt.dev/akt/internal/tui/messages"
 	"pkg.akt.dev/akt/internal/ui/theme"
 )
 
@@ -25,10 +29,27 @@ type ActivityEntry struct {
 	Text string // description
 }
 
+// Compile-time check: *Dashboard must satisfy ViewComponent.
+var _ ViewComponent = (*Dashboard)(nil)
+
+// DashboardContext holds static chrome info passed at construction time.
+type DashboardContext struct {
+	ContextName string
+	ChainID     string
+	Account     string
+	RPCEndpoint string
+	Version     string
+}
+
 // Dashboard is the landing view that shows a summary of the user's Akash state.
 type Dashboard struct {
 	width  int
 	height int
+
+	// Dependencies
+	svc data.Service      // for data loading
+	ctx DashboardContext   // static context info
+	km  keys.KeyMap        // key bindings
 
 	// Context
 	contextName string
@@ -64,9 +85,87 @@ type Dashboard struct {
 	activity []ActivityEntry
 }
 
-// NewDashboard returns a new empty Dashboard.
-func NewDashboard() Dashboard {
-	return Dashboard{}
+// NewDashboard returns a new Dashboard wired to the given data service,
+// static context, and key map. It applies context data immediately.
+func NewDashboard(svc data.Service, ctx DashboardContext, km keys.KeyMap) *Dashboard {
+	d := &Dashboard{
+		svc: svc,
+		ctx: ctx,
+		km:  km,
+	}
+	// Apply static context via existing setters.
+	d.SetContext(ctx.ContextName, ctx.ChainID, ctx.Account)
+	d.SetRPCEndpoint(ctx.RPCEndpoint)
+	d.SetVersion(ctx.Version)
+	return d
+}
+
+// ─── tea.Model + ViewComponent ───────────────────────────────────────
+
+// Init fires the initial data loads for the dashboard.
+func (d *Dashboard) Init() tea.Cmd {
+	if d.svc == nil {
+		return nil
+	}
+	return tea.Batch(
+		d.svc.LoadDeployments(d.ctx.Account),
+		d.svc.LoadStoreStats(),
+		d.svc.LoadSyncState(),
+		d.svc.LoadBalance(d.ctx.Account),
+	)
+}
+
+// Update handles incoming messages and updates dashboard state.
+func (d *Dashboard) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case messages.DeploymentsLoadedMsg:
+		if msg.Err == nil {
+			var active []*store.DeploymentRecord
+			for _, dep := range msg.Deployments {
+				if dep.State == "active" {
+					active = append(active, dep)
+				}
+			}
+			d.SetActiveDeployments(active)
+		}
+	case messages.StoreStatsMsg:
+		if msg.Err == nil {
+			d.SetStats(msg.Stats)
+		}
+	case messages.SyncStateMsg:
+		if msg.Err == nil {
+			d.SetSyncState(msg.State)
+			if msg.State != nil {
+				d.SetSyncBridgeActive(true)
+			}
+		}
+	case messages.BalanceLoadedMsg:
+		if msg.Err == nil {
+			d.SetBalance(msg.Amount)
+			d.SetWallet(msg.Amount, "", "", "")
+		}
+	}
+	return d, nil
+}
+
+// Breadcrumb returns the navigation label for this view.
+func (d *Dashboard) Breadcrumb() string {
+	return "Dashboard"
+}
+
+// ShortHelp returns the footer hint pairs for the dashboard.
+func (d *Dashboard) ShortHelp() []components.HintPair {
+	return []components.HintPair{
+		{Key: "1-6", Desc: "navigate"},
+		{Key: ":", Desc: "command"},
+		{Key: "?", Desc: "help"},
+		{Key: "D", Desc: "deploy", Accent: true},
+	}
+}
+
+// Refresh re-fires the same data loads as Init.
+func (d *Dashboard) Refresh() tea.Cmd {
+	return d.Init()
 }
 
 // ─── Existing Setters (unchanged) ────────────────────────────────────
@@ -173,7 +272,7 @@ func (d *Dashboard) SetVersion(version string) {
 // ─── View ────────────────────────────────────────────────────────────
 
 // View renders the dashboard.
-func (d Dashboard) View() string {
+func (d *Dashboard) View() tea.View {
 	w := d.width
 	if w < 40 {
 		w = 80
@@ -209,6 +308,7 @@ func (d Dashboard) View() string {
 	sections = append(sections, row2)
 
 	// Row 3: Recent Activity (2 cols) | Shortcuts (1 col)
+	// Row 3 should expand to fill remaining terminal height.
 	activityContent := d.activityContent(wideW - 4)
 	shortcutsContent := d.shortcutsContent()
 
@@ -217,17 +317,32 @@ func (d Dashboard) View() string {
 		maxLines3 = n
 	}
 
+	// Calculate how many content lines row 3 needs to fill the terminal.
+	// Each TitledPanel adds 2 lines (top + bottom border).
+	row1Lines := strings.Count(sections[0], "\n") + 1
+	row2Lines := strings.Count(row2, "\n") + 1
+	usedLines := row1Lines + row2Lines + 2 // +2 for newline separators between rows
+	remainingLines := d.height - usedLines
+	if remainingLines < maxLines3+2 {
+		remainingLines = maxLines3 + 2
+	}
+	// remainingLines includes the panel borders, so content lines = remaining - 2
+	row3ContentLines := remainingLines - 2
+	if row3ContentLines < maxLines3 {
+		row3ContentLines = maxLines3
+	}
+
 	row3 := lipgloss.JoinHorizontal(lipgloss.Top,
-		components.TitledPanelHeight("RECENT ACTIVITY", activityContent, wideW, maxLines3), " ",
-		components.TitledPanelHeight("SHORTCUTS", shortcutsContent, colW, maxLines3))
+		components.TitledPanelHeight("RECENT ACTIVITY", activityContent, wideW, row3ContentLines), " ",
+		components.TitledPanelHeight("SHORTCUTS", shortcutsContent, colW, row3ContentLines))
 	sections = append(sections, row3)
 
-	return strings.Join(sections, "\n")
+	return tea.NewView(strings.Join(sections, "\n"))
 }
 
 // ─── Welcome Banner ──────────────────────────────────────────────────
 
-func (d Dashboard) renderWelcome(w int) string {
+func (d *Dashboard) renderWelcome(w int) string {
 	artStyle := lipgloss.NewStyle().Foreground(theme.AccentRed).Bold(true)
 	art := artStyle.Render(" ▄▀█ █▄▀ ▀█▀") + "\n" +
 		artStyle.Render(" █▀█ █ █  █ ")
@@ -323,7 +438,7 @@ func (d Dashboard) renderWelcome(w int) string {
 // ─── Wallet Panel ────────────────────────────────────────────────────
 
 // walletContent returns the inner content for the WALLET panel.
-func (d Dashboard) walletContent(innerW int) string {
+func (d *Dashboard) walletContent(innerW int) string {
 
 	var lines []string
 
@@ -407,7 +522,7 @@ func (d Dashboard) walletContent(innerW int) string {
 // ─── Active Deployments Panel ────────────────────────────────────────
 
 // activeContent returns the inner content for the ACTIVE panel.
-func (d Dashboard) activeContent(innerW int) string {
+func (d *Dashboard) activeContent(innerW int) string {
 	var lines []string
 
 	if len(d.deployments) == 0 {
@@ -485,7 +600,7 @@ func (d Dashboard) activeContent(innerW int) string {
 // ─── Network Panel ───────────────────────────────────────────────────
 
 // networkContent returns the inner content for the NETWORK panel.
-func (d Dashboard) networkContent(innerW int) string {
+func (d *Dashboard) networkContent(innerW int) string {
 	var lines []string
 
 	// Block height
@@ -534,6 +649,14 @@ func (d Dashboard) networkContent(innerW int) string {
 	lines = append(lines, kvRight("inflation",
 		lipgloss.NewStyle().Foreground(theme.Slate200).Render(inf), innerW))
 
+	// Chain ID (show in network panel for backward compat with tests)
+	chain := d.chainID
+	if chain == "" {
+		chain = "—"
+	}
+	lines = append(lines, kvRight("chain",
+		lipgloss.NewStyle().Foreground(theme.Slate200).Render(chain), innerW))
+
 	// Blank line
 	lines = append(lines, "")
 
@@ -559,13 +682,16 @@ func (d Dashboard) networkContent(innerW int) string {
 		lipgloss.NewStyle().Foreground(theme.Slate300).Render(mx)
 	lines = append(lines, statsLine)
 
-	return strings.Join(lines, "\n")
+	content := strings.Join(lines, "\n")
+	return components.TitledPanel("NETWORK", content, colW)
 }
 
 // ─── Recent Activity Panel ───────────────────────────────────────────
 
-// activityContent returns the inner content for the RECENT ACTIVITY panel.
-func (d Dashboard) activityContent(innerW int) string {
+func (d Dashboard) renderActivity(w int) string {
+	innerW := w - 4
+	_ = innerW
+
 	var lines []string
 
 	if len(d.activity) == 0 {
@@ -602,7 +728,7 @@ func (d Dashboard) activityContent(innerW int) string {
 // ─── Shortcuts Panel ─────────────────────────────────────────────────
 
 // shortcutsContent returns the inner content for the SHORTCUTS panel.
-func (d Dashboard) shortcutsContent() string {
+func (d *Dashboard) shortcutsContent() string {
 	type shortcut struct {
 		key   string
 		desc  string

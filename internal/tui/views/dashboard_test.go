@@ -5,36 +5,60 @@ import (
 	"strings"
 	"testing"
 
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
+	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 
 	"pkg.akt.dev/akt/internal/store"
+	"pkg.akt.dev/akt/internal/tui/keys"
 	"pkg.akt.dev/akt/internal/tui/views"
 )
 
+// noopService is a minimal data.Service that returns nil for every load.
+type noopService struct{}
+
+func (noopService) LoadDeployments(string) tea.Cmd                    { return nil }
+func (noopService) LoadLeases(string) tea.Cmd                         { return nil }
+func (noopService) LoadDeploymentLeases(string, uint64) tea.Cmd       { return nil }
+func (noopService) LoadBids(string, uint64) tea.Cmd                   { return nil }
+func (noopService) LoadProviders() tea.Cmd                            { return nil }
+func (noopService) LoadProposals() tea.Cmd                            { return nil }
+func (noopService) LoadTallies([]*govv1.Proposal) tea.Cmd             { return nil }
+func (noopService) LoadValidators() tea.Cmd                           { return nil }
+func (noopService) LoadStakingPool() tea.Cmd                          { return nil }
+func (noopService) LoadBalance(string) tea.Cmd                        { return nil }
+func (noopService) LoadStoreStats() tea.Cmd                           { return nil }
+func (noopService) LoadSyncState() tea.Cmd                            { return nil }
+
+// newTestDashboard creates a Dashboard with a noop service and empty context for tests.
+func newTestDashboard() *views.Dashboard {
+	return views.NewDashboard(noopService{}, views.DashboardContext{}, keys.DefaultKeyMap())
+}
+
 func TestDashboardRendersNonEmpty(t *testing.T) {
-	d := views.NewDashboard()
+	d := newTestDashboard()
 	d.SetSize(120, 60)
 
-	out := d.View()
+	out := d.View().Content
 	if out == "" {
 		t.Error("View() returned empty string after SetSize")
 	}
 }
 
 func TestDashboardDefaultWidthWhenSmall(t *testing.T) {
-	d := views.NewDashboard()
+	d := newTestDashboard()
 	// Don't call SetSize — width stays 0, which is < 40, so View uses 80.
-	out := d.View()
+	out := d.View().Content
 	if out == "" {
 		t.Error("View() returned empty string with default (zero) size")
 	}
 }
 
 func TestDashboardShowsPanelTitles(t *testing.T) {
-	d := views.NewDashboard()
+	d := newTestDashboard()
 	d.SetSize(120, 60)
 
-	out := ansi.Strip(d.View())
+	out := ansi.Strip(d.View().Content)
 
 	// The new dashboard has titled panels: WALLET, ACTIVE, NETWORK,
 	// RECENT ACTIVITY, and SHORTCUTS.
@@ -53,10 +77,10 @@ func TestDashboardShowsPanelTitles(t *testing.T) {
 }
 
 func TestDashboardShowsWalletPanel(t *testing.T) {
-	d := views.NewDashboard()
+	d := newTestDashboard()
 	d.SetSize(120, 60)
 
-	out := ansi.Strip(d.View())
+	out := ansi.Strip(d.View().Content)
 
 	// Wallet panel should show labels for address, liquid, staked, rewards, escrow.
 	labels := []string{"address", "liquid", "staked", "rewards", "escrow"}
@@ -68,11 +92,11 @@ func TestDashboardShowsWalletPanel(t *testing.T) {
 }
 
 func TestDashboardSetContext(t *testing.T) {
-	d := views.NewDashboard()
+	d := newTestDashboard()
 	d.SetSize(120, 60)
 	d.SetContext("my-context", "akashnet-2", "akash1abc123")
 
-	out := ansi.Strip(d.View())
+	out := ansi.Strip(d.View().Content)
 
 	// Context name should appear in the welcome banner ("connected to my-context").
 	if !strings.Contains(out, "my-context") {
@@ -85,7 +109,7 @@ func TestDashboardSetContext(t *testing.T) {
 }
 
 func TestDashboardSetStats(t *testing.T) {
-	d := views.NewDashboard()
+	d := newTestDashboard()
 	d.SetSize(120, 60)
 	d.SetStats(&store.StoreStats{
 		Deployments:       142,
@@ -96,7 +120,7 @@ func TestDashboardSetStats(t *testing.T) {
 	// Stats are used internally; active count shows in the ACTIVE panel title.
 	// The panel title is "ACTIVE · N" where N comes from len(deployments),
 	// not from stats. Stats are stored for potential future use.
-	out := ansi.Strip(d.View())
+	out := ansi.Strip(d.View().Content)
 	// Just verify it renders without error.
 	if out == "" {
 		t.Error("View() returned empty string after SetStats")
@@ -104,10 +128,10 @@ func TestDashboardSetStats(t *testing.T) {
 }
 
 func TestDashboardNoStatsShowsDash(t *testing.T) {
-	d := views.NewDashboard()
+	d := newTestDashboard()
 	d.SetSize(120, 60)
 
-	out := ansi.Strip(d.View())
+	out := ansi.Strip(d.View().Content)
 
 	// Without data, panels should show em dash (—) for missing values.
 	if !strings.Contains(out, "\u2014") && !strings.Contains(out, "0") {
@@ -116,14 +140,14 @@ func TestDashboardNoStatsShowsDash(t *testing.T) {
 }
 
 func TestDashboardSetSyncState(t *testing.T) {
-	d := views.NewDashboard()
+	d := newTestDashboard()
 	d.SetSize(120, 60)
 	d.SetSyncState(&store.SyncState{
 		LastBlockHeight: 12345,
 		LastSyncTime:    1700000000,
 	})
 
-	out := ansi.Strip(d.View())
+	out := ansi.Strip(d.View().Content)
 
 	// Block height should appear in Network panel (possibly comma-grouped).
 	if !strings.Contains(out, "12,345") && !strings.Contains(out, "12345") {
@@ -132,7 +156,7 @@ func TestDashboardSetSyncState(t *testing.T) {
 }
 
 func TestDashboardSetActiveDeployments(t *testing.T) {
-	d := views.NewDashboard()
+	d := newTestDashboard()
 	d.SetSize(120, 60)
 
 	depls := []*store.DeploymentRecord{
@@ -141,7 +165,7 @@ func TestDashboardSetActiveDeployments(t *testing.T) {
 	}
 	d.SetActiveDeployments(depls)
 
-	out := ansi.Strip(d.View())
+	out := ansi.Strip(d.View().Content)
 
 	if !strings.Contains(out, "100") {
 		t.Error("View() missing deployment DSeq 100")
@@ -152,10 +176,10 @@ func TestDashboardSetActiveDeployments(t *testing.T) {
 }
 
 func TestDashboardNoActiveDeploymentsShowsEmpty(t *testing.T) {
-	d := views.NewDashboard()
+	d := newTestDashboard()
 	d.SetSize(120, 60)
 
-	out := ansi.Strip(d.View())
+	out := ansi.Strip(d.View().Content)
 
 	if !strings.Contains(out, "No deployments") {
 		t.Error("View() should show empty state when no deployments are set")
@@ -163,7 +187,7 @@ func TestDashboardNoActiveDeploymentsShowsEmpty(t *testing.T) {
 }
 
 func TestDashboardActiveDeploymentsLimitedToMax(t *testing.T) {
-	d := views.NewDashboard()
+	d := newTestDashboard()
 	d.SetSize(120, 60)
 
 	// Create 7 deployments (max displayed is 4).
@@ -176,7 +200,7 @@ func TestDashboardActiveDeploymentsLimitedToMax(t *testing.T) {
 	}
 	d.SetActiveDeployments(depls)
 
-	out := ansi.Strip(d.View())
+	out := ansi.Strip(d.View().Content)
 
 	// First 4 should be visible.
 	for i := 0; i < 4; i++ {
@@ -193,13 +217,13 @@ func TestDashboardActiveDeploymentsLimitedToMax(t *testing.T) {
 }
 
 func TestDashboardDeploymentWithoutSDLPath(t *testing.T) {
-	d := views.NewDashboard()
+	d := newTestDashboard()
 	d.SetSize(120, 60)
 	d.SetActiveDeployments([]*store.DeploymentRecord{
 		{DSeq: 999},
 	})
 
-	out := ansi.Strip(d.View())
+	out := ansi.Strip(d.View().Content)
 
 	if !strings.Contains(out, "999") {
 		t.Error("View() missing deployment DSeq 999")
@@ -207,11 +231,11 @@ func TestDashboardDeploymentWithoutSDLPath(t *testing.T) {
 }
 
 func TestDashboardSetBalance(t *testing.T) {
-	d := views.NewDashboard()
+	d := newTestDashboard()
 	d.SetSize(120, 60)
 	d.SetBalance("148.52 AKT")
 
-	out := ansi.Strip(d.View())
+	out := ansi.Strip(d.View().Content)
 
 	if !strings.Contains(out, "148.52 AKT") {
 		t.Error("View() missing balance after SetBalance")
@@ -219,11 +243,11 @@ func TestDashboardSetBalance(t *testing.T) {
 }
 
 func TestDashboardSetValidatorCount(t *testing.T) {
-	d := views.NewDashboard()
+	d := newTestDashboard()
 	d.SetSize(120, 60)
 	d.SetValidatorCount(100)
 
-	out := ansi.Strip(d.View())
+	out := ansi.Strip(d.View().Content)
 
 	if !strings.Contains(out, "100") {
 		t.Error("View() missing validator count after SetValidatorCount")
@@ -231,24 +255,32 @@ func TestDashboardSetValidatorCount(t *testing.T) {
 }
 
 func TestDashboardSetProposalCount(t *testing.T) {
-	d := views.NewDashboard()
+	d := newTestDashboard()
 	d.SetSize(120, 60)
 	d.SetProposalCount(2)
 
 	// ProposalCount is stored but not directly displayed in the new design.
 	// Verify it doesn't crash.
-	out := ansi.Strip(d.View())
+	out := ansi.Strip(d.View().Content)
 	if out == "" {
 		t.Error("View() returned empty string after SetProposalCount")
 	}
 }
 
+<<<<<<< HEAD
 func TestDashboardWelcomeBannerShowsContext(t *testing.T) {
 	d := views.NewDashboard()
+||||||| d60d1d3
+func TestDashboardNetworkPanelShowsChainID(t *testing.T) {
+	d := views.NewDashboard()
+=======
+func TestDashboardWelcomeBannerShowsContext(t *testing.T) {
+	d := newTestDashboard()
+>>>>>>> refactor/tui-rewrite
 	d.SetSize(120, 60)
 	d.SetContext("ctx", "mainnet-1", "akash1xyz")
 
-	out := ansi.Strip(d.View())
+	out := ansi.Strip(d.View().Content)
 
 	// Context name appears in the welcome banner ("connected to ctx").
 	if !strings.Contains(out, "ctx") {
@@ -257,11 +289,11 @@ func TestDashboardWelcomeBannerShowsContext(t *testing.T) {
 }
 
 func TestDashboardWelcomeBanner(t *testing.T) {
-	d := views.NewDashboard()
+	d := newTestDashboard()
 	d.SetSize(120, 60)
 	d.SetContext("my-ctx", "akashnet-2", "akash1zk2vq4r")
 
-	out := ansi.Strip(d.View())
+	out := ansi.Strip(d.View().Content)
 
 	if !strings.Contains(out, "welcome back") {
 		t.Error("View() missing welcome greeting")
@@ -272,11 +304,11 @@ func TestDashboardWelcomeBanner(t *testing.T) {
 }
 
 func TestDashboardSetWallet(t *testing.T) {
-	d := views.NewDashboard()
+	d := newTestDashboard()
 	d.SetSize(120, 60)
 	d.SetWallet("1,284 AKT", "3,400 AKT", "+12.4 AKT", "246.4 AKT")
 
-	out := ansi.Strip(d.View())
+	out := ansi.Strip(d.View().Content)
 
 	if !strings.Contains(out, "1,284 AKT") {
 		t.Error("View() missing liquid balance after SetWallet")
@@ -287,14 +319,14 @@ func TestDashboardSetWallet(t *testing.T) {
 }
 
 func TestDashboardSetRecentActivity(t *testing.T) {
-	d := views.NewDashboard()
+	d := newTestDashboard()
 	d.SetSize(120, 60)
 	d.SetRecentActivity([]views.ActivityEntry{
 		{Time: "14:02:11", Kind: "tx", Text: "MsgSendManifest"},
 		{Time: "14:01:48", Kind: "evt", Text: "bid received"},
 	})
 
-	out := ansi.Strip(d.View())
+	out := ansi.Strip(d.View().Content)
 
 	if !strings.Contains(out, "MsgSendManifest") {
 		t.Error("View() missing activity entry after SetRecentActivity")
@@ -305,10 +337,10 @@ func TestDashboardSetRecentActivity(t *testing.T) {
 }
 
 func TestDashboardShortcutsPanel(t *testing.T) {
-	d := views.NewDashboard()
+	d := newTestDashboard()
 	d.SetSize(120, 60)
 
-	out := ansi.Strip(d.View())
+	out := ansi.Strip(d.View().Content)
 
 	if !strings.Contains(out, "SHORTCUTS") {
 		t.Error("View() missing SHORTCUTS panel")

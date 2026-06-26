@@ -30,7 +30,7 @@ func TestPaletteInactive(t *testing.T) {
 	if p.Active() {
 		t.Fatal("palette should be inactive by default")
 	}
-	if v := p.View(); v != "" {
+	if v := p.View().Content; v != "" {
 		t.Fatal("inactive palette should render empty")
 	}
 }
@@ -41,7 +41,7 @@ func TestPaletteOpenClose(t *testing.T) {
 	if !p.Active() {
 		t.Fatal("palette should be active after Open()")
 	}
-	if v := p.View(); v == "" {
+	if v := p.View().Content; v == "" {
 		t.Fatal("active palette should render non-empty")
 	}
 	p.Close()
@@ -106,7 +106,7 @@ func TestPaletteFilterReducesList(t *testing.T) {
 	// Type "dep" to filter.
 	typeIntoPalette(p, "dep")
 
-	view := ansi.Strip(p.View())
+	view := ansi.Strip(p.View().Content)
 	if view == "" {
 		t.Fatal("filtered palette should still render")
 	}
@@ -122,7 +122,7 @@ func TestPaletteNoMatchShowsEmpty(t *testing.T) {
 
 	typeIntoPalette(p, "zzzznotacommand")
 
-	view := ansi.Strip(p.View())
+	view := ansi.Strip(p.View().Content)
 	if !strings.Contains(view, "no matching") {
 		t.Errorf("palette should show 'no matching commands', got view length: %d", len(view))
 	}

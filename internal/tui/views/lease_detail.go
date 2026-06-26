@@ -4,61 +4,64 @@ import (
 	"fmt"
 	"strings"
 
+	"charm.land/bubbles/v2/key"
+	tea "charm.land/bubbletea/v2"
+
 	"pkg.akt.dev/akt/internal/store"
 	"pkg.akt.dev/akt/internal/tui/components"
+	"pkg.akt.dev/akt/internal/tui/keys"
+	"pkg.akt.dev/akt/internal/tui/messages"
 	"pkg.akt.dev/akt/internal/ui/theme"
 )
+
+// Compile-time check: *LeaseDetailView must satisfy ViewComponent.
+var _ ViewComponent = (*LeaseDetailView)(nil)
 
 // LeaseDetailView is the drill-down detail view for a single lease.
 // It renders 5 sections: Lease, Order, Settlement, Provider Status, and Endpoints.
 type LeaseDetailView struct {
-	lease  *store.LeaseRecord
-	width  int
-	height int
-	scroll int
+	BaseDetailView
+	km    keys.KeyMap
+	lease *store.LeaseRecord
 }
 
-// NewLeaseDetailView creates a new empty lease detail view.
-func NewLeaseDetailView() LeaseDetailView {
-	return LeaseDetailView{}
-}
-
-// Lease returns the currently displayed lease record, or nil.
-func (v LeaseDetailView) Lease() *store.LeaseRecord {
-	return v.lease
-}
-
-// SetLease sets the lease record to display.
-func (v *LeaseDetailView) SetLease(l *store.LeaseRecord) {
-	v.lease = l
-	v.scroll = 0
-}
-
-// SetSize updates the view dimensions.
-func (v *LeaseDetailView) SetSize(w, h int) {
-	v.width = w
-	v.height = h
-}
-
-// ScrollUp scrolls the content up by one line.
-func (v *LeaseDetailView) ScrollUp() {
-	if v.scroll > 0 {
-		v.scroll--
+// NewLeaseDetailView creates a new lease detail view pre-loaded with a lease record.
+func NewLeaseDetailView(km keys.KeyMap, lease *store.LeaseRecord) *LeaseDetailView {
+	return &LeaseDetailView{
+		BaseDetailView: NewBaseDetailView(),
+		km:             km,
+		lease:          lease,
 	}
 }
 
-// ScrollDown scrolls the content down by one line.
-func (v *LeaseDetailView) ScrollDown() {
-	v.scroll++
+// ─── tea.Model ───────────────────────────────────────────────────────
+
+// Init returns nil — data is passed via constructor.
+func (v *LeaseDetailView) Init() tea.Cmd {
+	return nil
 }
+
+// Update handles messages for the lease detail view.
+func (v *LeaseDetailView) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if kmsg, ok := msg.(tea.KeyPressMsg); ok {
+		if key.Matches(kmsg, v.km.Back) {
+			return v, CmdFunc(messages.PopViewMsg{})
+		}
+		// Delegate j/k scroll to BaseDetailView
+		v.BaseDetailView.Update(msg)
+	}
+	return v, nil
+}
+
+// ─── ViewComponent ───────────────────────────────────────────────────
 
 // View renders the lease detail panel.
-func (v LeaseDetailView) View() string {
+func (v *LeaseDetailView) View() tea.View {
 	if v.lease == nil {
-		return theme.Muted.Render("  No lease selected")
+		return tea.NewView(theme.Muted.Render("  No lease selected"))
 	}
 
-	w := v.width
+	w := v.W
 	if w < 40 {
 		w = 40
 	}
@@ -119,37 +122,60 @@ func (v LeaseDetailView) View() string {
 
 	content := strings.Join(sections, "\n\n")
 
-	// Apply scrolling
+	// Apply scrolling via BaseDetailView
 	lines := strings.Split(content, "\n")
-	maxLines := v.height - 4 // back hint + padding
-	if maxLines < 3 {
-		maxLines = 3
+	visibleH := v.H - 4 // back hint + padding
+	if visibleH < 3 {
+		visibleH = 3
 	}
 
-	start := v.scroll
-	if start >= len(lines) {
-		start = max(0, len(lines)-1)
-	}
-	end := start + maxLines
-	if end > len(lines) {
-		end = len(lines)
-	}
+	visible := v.BaseDetailView.VisibleWindow(lines, visibleH)
 
 	var b strings.Builder
-	for i := start; i < end; i++ {
-		b.WriteString(lines[i])
+	for _, line := range visible {
+		b.WriteString(line)
 		b.WriteByte('\n')
 	}
 
 	b.WriteByte('\n')
 	b.WriteString(theme.Muted.Render("  esc: back"))
-	if len(lines) > maxLines {
+	if len(lines) > visibleH {
 		b.WriteString(theme.Muted.Render("  j/k: scroll"))
 	}
 	b.WriteByte('\n')
 
-	return b.String()
+	return tea.NewView(b.String())
 }
+
+// SetSize delegates to the embedded BaseDetailView.
+func (v *LeaseDetailView) SetSize(w, h int) {
+	v.BaseDetailView.SetSize(w, h)
+}
+
+// Breadcrumb returns the navigation label for this view.
+func (v *LeaseDetailView) Breadcrumb() string {
+	return "Detail"
+}
+
+// ShortHelp returns the footer hint pairs for the lease detail view.
+func (v *LeaseDetailView) ShortHelp() []components.HintPair {
+	return []components.HintPair{
+		{Key: "j/k", Desc: "scroll"},
+		{Key: "esc", Desc: "back"},
+	}
+}
+
+// Refresh returns nil — data is passed via constructor.
+func (v *LeaseDetailView) Refresh() tea.Cmd {
+	return nil
+}
+
+// Lease returns the currently displayed lease record, or nil.
+func (v *LeaseDetailView) Lease() *store.LeaseRecord {
+	return v.lease
+}
+
+// ─── Helpers ─────────────────────────────────────────────────────────
 
 // truncateAddr truncates an address to the first 12 characters followed by "...".
 // If the address is 15 characters or shorter, it is returned as-is.

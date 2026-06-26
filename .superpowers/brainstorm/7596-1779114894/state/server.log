@@ -1,0 +1,2 @@
+{"type":"server-started","port":64228,"host":"127.0.0.1","url_host":"localhost","url":"http://localhost:64228","screen_dir":"/Users/amr/go/src/github.com/akash-network/akt/.superpowers/brainstorm/7596-1779114894/content","state_dir":"/Users/amr/go/src/github.com/akash-network/akt/.superpowers/brainstorm/7596-1779114894/state"}
+{"type":"server-stopped","reason":"idle timeout"}
