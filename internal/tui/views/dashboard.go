@@ -649,14 +649,6 @@ func (d *Dashboard) networkContent(innerW int) string {
 	lines = append(lines, kvRight("inflation",
 		lipgloss.NewStyle().Foreground(theme.Slate200).Render(inf), innerW))
 
-	// Chain ID (show in network panel for backward compat with tests)
-	chain := d.chainID
-	if chain == "" {
-		chain = "—"
-	}
-	lines = append(lines, kvRight("chain",
-		lipgloss.NewStyle().Foreground(theme.Slate200).Render(chain), innerW))
-
 	// Blank line
 	lines = append(lines, "")
 
@@ -682,16 +674,13 @@ func (d *Dashboard) networkContent(innerW int) string {
 		lipgloss.NewStyle().Foreground(theme.Slate300).Render(mx)
 	lines = append(lines, statsLine)
 
-	content := strings.Join(lines, "\n")
-	return components.TitledPanel("NETWORK", content, colW)
+	return strings.Join(lines, "\n")
 }
 
 // ─── Recent Activity Panel ───────────────────────────────────────────
 
-func (d Dashboard) renderActivity(w int) string {
-	innerW := w - 4
-	_ = innerW
-
+// activityContent returns the inner content for the RECENT ACTIVITY panel.
+func (d *Dashboard) activityContent(innerW int) string {
 	var lines []string
 
 	if len(d.activity) == 0 {

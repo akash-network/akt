@@ -267,16 +267,8 @@ func TestDashboardSetProposalCount(t *testing.T) {
 	}
 }
 
-<<<<<<< HEAD
-func TestDashboardWelcomeBannerShowsContext(t *testing.T) {
-	d := views.NewDashboard()
-||||||| d60d1d3
-func TestDashboardNetworkPanelShowsChainID(t *testing.T) {
-	d := views.NewDashboard()
-=======
 func TestDashboardWelcomeBannerShowsContext(t *testing.T) {
 	d := newTestDashboard()
->>>>>>> refactor/tui-rewrite
 	d.SetSize(120, 60)
 	d.SetContext("ctx", "mainnet-1", "akash1xyz")
 
