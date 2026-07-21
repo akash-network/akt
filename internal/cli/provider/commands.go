@@ -291,8 +291,11 @@ func leaseShellCmd() *cobra.Command {
 
 			tty, _ := cmd.Flags().GetBool("tty")
 
-			return cl.LeaseShell(ctx, lid, service, 0, args,
+			err = cl.LeaseShell(ctx, lid, service, 0, args,
 				os.Stdin, os.Stdout, os.Stderr, tty, nil)
+			recordProviderAction(ctx, "lease-shell", lid.Provider, lid.DSeq, err)
+
+			return err
 		},
 	}
 
@@ -339,7 +342,9 @@ func sendManifestCmd() *cobra.Command {
 				return fmt.Errorf("build manifest from SDL: %w", err)
 			}
 
-			if err := cl.SubmitManifest(ctx, dseq, mani); err != nil {
+			err = cl.SubmitManifest(ctx, dseq, mani)
+			recordProviderAction(ctx, "send-manifest", providerAddr.String(), dseq, err)
+			if err != nil {
 				return fmt.Errorf("submit manifest: %w", err)
 			}
 
@@ -425,7 +430,9 @@ func migrateHostnamesCmd() *cobra.Command {
 				return fmt.Errorf("--hostnames is required")
 			}
 
-			if err := cl.MigrateHostnames(ctx, hostnames, dseq, gseq); err != nil {
+			err = cl.MigrateHostnames(ctx, hostnames, dseq, gseq)
+			recordProviderAction(ctx, "migrate-hostnames", providerAddr.String(), dseq, err)
+			if err != nil {
 				return fmt.Errorf("migrate hostnames: %w", err)
 			}
 
@@ -473,7 +480,9 @@ func migrateEndpointsCmd() *cobra.Command {
 				return fmt.Errorf("--endpoints is required")
 			}
 
-			if err := cl.MigrateEndpoints(ctx, endpoints, dseq, gseq); err != nil {
+			err = cl.MigrateEndpoints(ctx, endpoints, dseq, gseq)
+			recordProviderAction(ctx, "migrate-endpoints", providerAddr.String(), dseq, err)
+			if err != nil {
 				return fmt.Errorf("migrate endpoints: %w", err)
 			}
 
