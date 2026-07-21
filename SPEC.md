@@ -215,6 +215,8 @@ Contexts compose a network, keyring, and context-specific settings. The state st
 | `fees`                        | string | no       | `""`                                   | Fixed fees (only with `keyring` auth)                                        |
 | `provider-defaults.auth-type` | string | no       | `"jwt"`                                | Provider gateway auth: `jwt` or `mtls` (only with `keyring` auth)            |
 
+**Console API key**: the per-context Console API key is deliberately **not** a config.yaml field. It is stored as a separate credential file at `<config-root>/contexts/<name>/console-api-key` with `0600` permissions and is managed via `akt context create/edit --console-api-key`. See §7.1 for the full resolution order and handling rules.
+
 ### 1.5 Keyring Schema
 
 Keyrings are shared wallet storage. Adding a key to a keyring makes it immediately available to all contexts that reference that keyring.
@@ -2585,9 +2587,20 @@ All Console API requests require the `x-api-key` header. The API key is resolved
 
 1. `--console-api-key` flag (highest priority, session only)
 2. `AKT_CONSOLE_API_KEY` environment variable
-3. If neither is set, the command fails with an error instructing the user to set `AKT_CONSOLE_API_KEY`.
+3. The per-context stored credential (see below)
+4. If none is available, the command fails with an error explaining how to configure a key.
 
-The API key is **never** persisted in config.yaml or the keyring.
+**Per-context credential storage.** A Console API key can be stored on a context so that switching contexts switches Console identity with no manual credential juggling. The key is stored at:
+
+```
+<config-root>/contexts/<context-name>/console-api-key
+```
+
+- The file is created with `0600` permissions and contains only the key.
+- The key is **never** written to `config.yaml` and is **never** printed by any command or recorded in logs; `akt context show` reports only whether a key is configured.
+- Because the credential lives in the context's data directory, `akt context rename` moves it and `akt context delete` removes it (unless `--keep-data`).
+- The credential is written via `akt context create --console-api-key ...` or `akt context edit --console-api-key ...`; passing an empty string via `akt context edit --console-api-key ""` removes it.
+- Different contexts hold independent keys; Console calls always use the active context's key (subject to the flag/env overrides above).
 
 API keys are created at [console.akash.network](https://console.akash.network) > Settings > API Keys.
 

@@ -210,7 +210,7 @@ Each context has an `auth-method` that determines how transactions are signed an
 - Custodial managed wallet via the [Akash Console API](https://console.akash.network).
 - The Console backend holds the wallet keys, signs transactions, and broadcasts on the user's behalf.
 - Authenticated via an API key (created at console.akash.network > Settings > API Keys).
-- The API key is supplied via the `AKT_CONSOLE_API_KEY` environment variable or the `--console-api-key` flag. It is **not** persisted in config or keyring.
+- The API key is resolved as flag > env > per-context credential: `--console-api-key` (session only), then `AKT_CONSOLE_API_KEY`, then a per-context credential file at `contexts/<name>/console-api-key` (mode 0600, managed via `akt context create/edit --console-api-key`). It is never written to config.yaml, never printed, and never logged — each context carries its own key, so switching context switches Console identity.
 - Deposits are denominated in USD (not uakt) -- the Console handles the conversion.
 - Only deployment lifecycle operations are supported through the Console API (create, update, close, bids, leases, deposit). Query commands still work directly against chain RPC.
 - No keyring, default-account, or provider-defaults are used. The context only needs a network (for query commands) and the API key.
