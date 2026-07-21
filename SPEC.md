@@ -2459,13 +2459,13 @@ The action log records entries for the following command categories:
 | Command category | Logged | Entry type | When |
 |---|---|---|---|
 | `tx *` | Always | `tx` | After broadcast (success or failure). On success: includes tx hash, height, gas used. On failure: includes error message and result code. |
-| `query *` | Always | `query` | After query completes. Includes query path, duration. |
+| `query *` | Never by default | `query` | Read-only queries are not state changes and are not recorded by default (see verbose row below). |
 | Workflow commands (`deploy`, `update`, `close`) | Always | `workflow` | One entry per workflow step. Each entry includes the step name, result, and workflow run ID. |
 | `provider *` (state-changing: `send-manifest`, `migrate-hostnames`, `migrate-endpoints`, `lease-shell`) | Always | `provider` | After the provider gateway operation completes (success or failure). Read-only provider queries (`status`, `lease-status`, `lease-logs`, `lease-events`, `get-manifest`) are not recorded. |
 | `context *` | Always | `context` | After context management operation (switch, edit, create, delete). |
 | Console API state changes (create/update/close deployment, create lease, deposit) | Always | `console` | After the Console API call completes (success or failure). Read-only Console queries are not recorded. |
 | All commands | On failure | `error` | When any command fails. Includes original action type and error message. |
-| `query` (read-only, no side effects) | When `-v` is set | `query` | Verbose mode logs all queries for debugging. In default mode, only queries from interactive commands (not internal queries by the sync engine) are logged. |
+| `query` (read-only, no side effects) | When `-v` is set (future) | `query` | Verbose-mode query logging for debugging is planned but not yet implemented. Internal queries (e.g. by the sync engine) are never logged. |
 
 The action logger is opened in the root command's `PersistentPreRunE` and closed in `PersistentPostRunE`. Commands retrieve it via `cliutil.ActionLogFromContext(cmd.Context())`.
 
