@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **Action logger never closed (AKT-211)**: The per-context action logger is opened in the root command's `PersistentPreRunE` but was never closed, diverging from SPEC §5.6. Added a root `PersistentPostRunE` that closes the logger retrieved via `cliutil.ActionLogFromContext`.
+
 - **TUI dashboard build break from botched `refactor/tui-rewrite` merge**: The merge that integrated the TUI rewrite corrupted `internal/tui/views/dashboard.go` and left unresolved conflict markers in `internal/tui/views/dashboard_test.go`, breaking `make akt` (`undefined: colW`, `d.activityContent undefined`) and `go test ./...`. Restored `networkContent()` to return inner content via `strings.Join(lines, "\n")` (the merge had reintroduced an out-of-scope `components.TitledPanel("NETWORK", content, colW)` call referencing `colW`, a `View()`-local variable, plus a stray "chain" row) and renamed `renderActivity(w int)` back to `activityContent(innerW int)` with a pointer receiver (the method `View()` actually calls). Resolved the `dashboard_test.go` conflict in favor of the rewrite (`newTestDashboard()` helper + `View().Content`). Restores the intended rewrite state with no behavior change; chain-id continues to display in the header/welcome banner rather than the network panel.
 
 ### Added

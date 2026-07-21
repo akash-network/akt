@@ -217,6 +217,13 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 				Insecure:     true,
 			})
 		},
+		PersistentPostRunE: func(cmd *cobra.Command, _ []string) error {
+			// Close the action logger opened in PersistentPreRunE (SPEC §5.6).
+			if l := cliutil.ActionLogFromContext(cmd.Context()); l != nil {
+				return l.Close()
+			}
+			return nil
+		},
 		SilenceUsage:  true,
 		SilenceErrors: true,
 	}
