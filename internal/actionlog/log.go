@@ -209,7 +209,10 @@ func readLogFile(path string, filter Filter) ([]Entry, error) {
 	var entries []Entry
 
 	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	// A single entry may carry large params (SDL contents, raw messages);
+	// allow lines up to the rotation threshold so Read never chokes on an
+	// entry that Log accepted.
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLogSize)
 
 	for scanner.Scan() {
 		line := scanner.Bytes()
