@@ -45,6 +45,25 @@ func RenderContextShow(rc aktctx.Context) string {
 	SubKV(w, "Gas Adj", rc.GasAdjustment)
 
 	Newline(w)
+
+	authMethod := rc.AuthMethod
+	if authMethod == "" {
+		authMethod = aktctx.AuthMethodKeyring
+	}
+	KV(w, "Auth Method", authMethod)
+
+	if authMethod == aktctx.AuthMethodConsoleAPI {
+		KVHeader(w, "  Console API")
+		SubKV(w, "URL", rc.ConsoleAPIURL)
+
+		// The key itself is never printed (SPEC §7.1).
+		if rc.ConsoleAPIKey != "" {
+			SubKV(w, "API Key", "configured")
+		} else {
+			SubKV(w, "API Key", Dim("(not set)"))
+		}
+	}
+
 	KV(w, "Keyring", fmt.Sprintf("%s (backend: %s)", rc.Keyring.Name, rc.Keyring.Backend))
 
 	if rc.DefaultAccount != "" {

@@ -7,6 +7,7 @@
       [38;2;113;113;122mGas Prices:[m      
       [38;2;113;113;122mGas Adj:[m         
 
+  [38;2;113;113;122mAuth Method:[m         keyring
   [38;2;113;113;122mKeyring:[m             test (backend: test)
   [38;2;113;113;122mDefault Account:[m     [38;2;161;161;170m(not set)[m
   [38;2;113;113;122mGas:[m                 200000

@@ -62,12 +62,17 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			defaultAccount, _ := cmd.Flags().GetString("default-account")
 			gas, _ := cmd.Flags().GetString("gas")
 			fees, _ := cmd.Flags().GetString("fees")
+			authMethod, _ := cmd.Flags().GetString("auth-method")
+			consoleAPIURL, _ := cmd.Flags().GetString("console-api-url")
+			consoleAPIKey, _ := cmd.Flags().GetString("console-api-key")
 			setCurrent, _ := cmd.Flags().GetBool("set-current")
 
 			ctx := aktctx.Context{
 				Name:           name,
 				Network:        aktctx.Network{Name: network},
 				Keyring:        aktctx.Keyring{Name: keyring},
+				AuthMethod:     authMethod,
+				ConsoleAPIURL:  consoleAPIURL,
 				DefaultAccount: defaultAccount,
 				Gas:            gas,
 				Fees:           fees,
@@ -75,6 +80,14 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 
 			if err := m.CreateContext(ctx); err != nil {
 				return err
+			}
+
+			// The Console API key is a credential, stored per-context
+			// outside config.yaml (SPEC §7.1) and never logged.
+			if consoleAPIKey != "" {
+				if err := aktctx.SetConsoleAPIKey(m.Root(), name, consoleAPIKey); err != nil {
+					return err
+				}
 			}
 
 			recordContextAction(m.Root(), name, "create", map[string]string{
@@ -102,6 +115,9 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd.Flags().String("default-account", "", "Default account name")
 	cmd.Flags().String("gas", "auto", "Gas limit override")
 	cmd.Flags().String("fees", "", "Fixed fees override")
+	cmd.Flags().String("auth-method", "", "Authentication method: keyring (default) or console-api")
+	cmd.Flags().String("console-api-url", "", "Console API base URL (empty = default; only with console-api auth)")
+	cmd.Flags().String("console-api-key", "", "Console API key stored as a per-context credential (never written to config.yaml)")
 	cmd.Flags().Bool("set-current", false, "Set as current context after creation")
 	_ = cmd.MarkFlagRequired("network")
 
@@ -280,9 +296,38 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 					changed["fees"] = c.Fees
 				}
 
+				if cmd.Flags().Changed("auth-method") {
+					method, _ := cmd.Flags().GetString("auth-method")
+					if method != aktctx.AuthMethodKeyring && method != aktctx.AuthMethodConsoleAPI {
+						return fmt.Errorf("invalid auth-method %q: must be %q or %q", method, aktctx.AuthMethodKeyring, aktctx.AuthMethodConsoleAPI)
+					}
+					c.AuthMethod = method
+					changed["auth-method"] = method
+				}
+
+				if cmd.Flags().Changed("console-api-url") {
+					c.ConsoleAPIURL, _ = cmd.Flags().GetString("console-api-url")
+					changed["console-api-url"] = c.ConsoleAPIURL
+				}
+
 				return nil
 			}); err != nil {
 				return err
+			}
+
+			// The credential is stored outside config.yaml (SPEC §7.1);
+			// only "updated"/"removed" is recorded, never the key itself.
+			if cmd.Flags().Changed("console-api-key") {
+				key, _ := cmd.Flags().GetString("console-api-key")
+				if err := aktctx.SetConsoleAPIKey(m.Root(), name, key); err != nil {
+					return err
+				}
+
+				if key == "" {
+					changed["console-api-key"] = "removed"
+				} else {
+					changed["console-api-key"] = "updated"
+				}
 			}
 
 			recordContextAction(m.Root(), name, "edit", changed)
@@ -296,6 +341,9 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd.Flags().String("default-account", "", "Change default account")
 	cmd.Flags().String("gas", "", "Change gas setting")
 	cmd.Flags().String("fees", "", "Change fees setting")
+	cmd.Flags().String("auth-method", "", "Change authentication method: keyring or console-api")
+	cmd.Flags().String("console-api-url", "", "Change Console API base URL (empty = default)")
+	cmd.Flags().String("console-api-key", "", "Set the per-context Console API key (empty string removes it)")
 	cmd.Flags().Bool("fork-network", false, "Fork the context's network before editing")
 
 	_ = cmd.RegisterFlagCompletionFunc("network", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
