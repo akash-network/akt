@@ -1715,6 +1715,73 @@ With write tools:
 }
 ```
 
+### 2.9 Console Commands
+
+The `akt console` group drives the Akash Console managed-wallet API (§7): deployments are created, funded, and closed by the Console's server-side wallet — no local keyring or gas handling is involved. Authenticated commands resolve the API key per §7.1 (`--console-api-key` flag > `AKT_CONSOLE_API_KEY` > per-context stored credential) and fail with a pointer to `akt console login` when none is found. The base URL resolves per §7.2 (`--console-api-url` flag > context `console-api-url` > default). Public catalog commands (`provider`, `gpu`, `template`) work without a key and without a configured context.
+
+**Group persistent flags:**
+
+| Flag                | Type   | Default | Description                                                          |
+| ------------------- | ------ | ------- | -------------------------------------------------------------------- |
+| `--console-api-url` | string | `""`    | Console API base URL (overrides the context setting)                 |
+| `--console-api-key` | string | `""`    | Console API key (overrides env var and stored credential, session only) |
+
+**Authentication:**
+
+| Command                    | Description                                                                                                     |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `akt console login [key]`  | Validate a key against `GET /v1/user/me` and store it as the active context's credential (§7.1). The key is taken from the positional argument or a hidden stdin prompt. Requires an active context. Prints the username; never prints the key. |
+| `akt console logout`       | Remove the active context's stored credential.                                                                    |
+| `akt console whoami`       | Show the authenticated user (username, email, verified).                                                          |
+
+**Deployments** (positional `dseq` per §3.8.2):
+
+| Command                                             | Flags                                          | Description                                                                                   |
+| --------------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `akt console deployment list`                       | `--skip` (0), `--limit` (20)                   | List deployments with pagination.                                                              |
+| `akt console deployment get <dseq>`                 |                                                | Deployment with leases and escrow account.                                                     |
+| `akt console deployment create <sdl-file>`          | `--deposit <usd>` (required, min 0.5)          | Create a deployment; prints `dseq` + tx hash. The returned manifest is cached at `contexts/<name>/manifests/<dseq>.json` for `lease create`. |
+| `akt console deployment update <dseq> <sdl-file>`   |                                                | Update the deployment's SDL.                                                                   |
+| `akt console deployment close <dseq>`               |                                                | Close a deployment. Idempotent: an already-closed deployment prints a note and exits 0.        |
+| `akt console deployment deposit <dseq>`             | `--amount <usd>` (required, > 0)               | Add funds to the deployment's escrow.                                                          |
+| `akt console deployment settings <dseq>`            | `--auto-top-up true\|false`                    | Show settings when the flag is absent; set auto-top-up when present.                           |
+| `akt console bid list <dseq>`                       |                                                | List bids for the deployment's open orders.                                                    |
+| `akt console lease create <dseq>`                   | `--gseq` (1), `--oseq` (1), `--provider` (required), `--manifest <file>` | Accept a bid; the manifest defaults to the one cached by `deployment create`. |
+
+**Wallet and usage:**
+
+| Command                       | Flags                        | Description                                                     |
+| ----------------------------- | ---------------------------- | ---------------------------------------------------------------- |
+| `akt console wallet list`     |                              | List managed wallets (balances shown as `$X.XX`).                |
+| `akt console wallet balance`  |                              | Available / in-deployment / total balance in USD.                |
+| `akt console wallet settings` | `--auto-reload true\|false`  | Show settings when the flag is absent; set auto-reload when present. |
+| `akt console wallet cost`     |                              | Estimated weekly cost in USD.                                    |
+| `akt console usage`           | `--from`, `--to` (YYYY-MM-DD) | Daily spend history for the account's managed wallet address.   |
+
+**Public catalog** (no API key required):
+
+| Command                             | Flags            | Description                                             |
+| ----------------------------------- | ---------------- | -------------------------------------------------------- |
+| `akt console provider list`         | `--limit` (20, 0 = all) | List providers (limit applied client-side).       |
+| `akt console provider get <address>` |                 | One provider's full catalog record.                      |
+| `akt console provider regions`      |                  | Regions providers advertise.                             |
+| `akt console provider auditors`     |                  | Known auditors.                                          |
+| `akt console gpu`                   |                  | Network-wide GPU availability and price catalog.         |
+| `akt console template list`         |                  | Template catalog.                                        |
+| `akt console template get <id>`     |                  | One template.                                            |
+| `akt console template sdl <id>`     |                  | Print the template's raw SDL to stdout (for piping).     |
+
+**API keys and JWTs:**
+
+| Command                          | Flags                                          | Description                                                    |
+| -------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------- |
+| `akt console apikey list`        |                                                | List API keys (secrets are never shown).                         |
+| `akt console apikey create`      | `--name` (required), `--expires-at` (RFC 3339) | Create a key; the secret is printed exactly once with a warning. |
+| `akt console apikey delete <id>` |                                                | Delete a key; a missing key (404) is a no-op.                    |
+| `akt console jwt create`         | `--ttl` (300), `--scope` (csv, default `status,logs,events,shell,send-manifest,get-manifest`) | Mint a short-lived provider-scoped JWT. |
+
+Output is indented JSON; USD values are rendered as `$X.XX`. State-changing calls are recorded in the context's action log as `type=console` entries (§5.6). No command ever prints a Console API key, except the one-time secret from `apikey create`.
+
 ---
 
 ## 3. Flag Specification
