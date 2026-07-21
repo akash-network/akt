@@ -12,6 +12,8 @@
 
 ### Added
 
+- **Dynamic workflow command surfacing pinned by tests + spec (AKT-651)**: The workflow-generated command surface (commands exist iff their workflow YAML resolves; built-ins `deploy`/`update`/`close` always resolve per SPEC §2.3.9) was implemented earlier but had no unit tests and no explicit spec wording. Added 6 tests in `internal/cli/workflow/commands_test.go` covering: built-ins-only surface, user workflow appearing/absent (negative case), malformed YAML skipped, generated Use/flags for close and deploy, and user-workflow override of a built-in. SPEC §2.3.1 gains a "Dynamic surfacing" paragraph making the iff-rule normative.
+
 - **Console API mutations recorded in the action log (AKT-211)**: New `console` action type (SPEC §5.2/§5.6 amended). The Console client's state-changing calls (create/update/close deployment, create lease, deposit) record `type=console` entries with operation, dseq, and success/failure via an optional `WithActionLog` hook — read-only Console queries are not recorded. 2 tests.
 
 - **Workflow step action-log adapter (AKT-211)**: New `workflow.ActionLogAdapter` implements the engine's `Logger` hook, writing one `type=workflow` entry per completed step (workflow name, run ID, step index/name, status, error, tx hash/height) per SPEC §5.6. The engine already invoked `Logger.LogStep` after every step; this provides the previously missing implementation. Wired into workflow execution when the engine is constructed. 2 tests.

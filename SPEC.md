@@ -874,6 +874,8 @@ Workflow definitions are resolved in order:
 
 Top-level commands (`akt deploy`, `akt update`, `akt close`) are thin wrappers that load and run the corresponding workflow. CLI flags are **auto-generated** from the workflow's declared `params` section.
 
+**Dynamic surfacing**: Workflow commands are generated at CLI startup from the set of workflows returned by the loader. A top-level command exists **if and only if** a workflow with that name resolves. The embedded built-ins (`deploy`, `update`, `close`) always resolve and therefore always appear; user-defined workflows in the global or per-context directories add further top-level commands, and removing a user workflow removes its command. Help output reflects only the resolved set.
+
 #### 2.3.2 Workflow Definition Format
 
 ```yaml
