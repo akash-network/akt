@@ -2,6 +2,7 @@ package flags
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -118,7 +119,7 @@ func LeaseIDFromFlags(flags *pflag.FlagSet, opts ...MarketOption) (mv1.LeaseID, 
 // AddOrderFilterFlags add flags to filter for order list
 func AddOrderFilterFlags(flags *pflag.FlagSet) {
 	flags.String(FlagOwner, "", "order owner address to filter")
-	flags.String(FlagState, "", "order state to filter (open,matched,closed)")
+	flags.String(FlagState, "", "order state to filter (open,active,closed)")
 	flags.Uint64(FlagDSeq, 0, "deployment sequence to filter")
 	flags.Uint32(FlagGSeq, 0, "group sequence to filter")
 	flags.Uint32(FlagOSeq, 0, "order sequence to filter")
@@ -150,7 +151,7 @@ func OrderFiltersFromFlags(flags *pflag.FlagSet) (mvbeta.OrderFilters, error) {
 // AddBidFilterFlags add flags to filter for bid list
 func AddBidFilterFlags(flags *pflag.FlagSet) {
 	flags.String(FlagOwner, "", "bid owner address to filter")
-	flags.String(FlagState, "", "bid state to filter (open,matched,lost,closed)")
+	flags.String(FlagState, "", "bid state to filter (open,active,lost,closed)")
 	flags.Uint64(FlagDSeq, 0, "deployment sequence to filter")
 	flags.Uint32(FlagGSeq, 0, "group sequence to filter")
 	flags.Uint32(FlagOSeq, 0, "order sequence to filter")
@@ -230,12 +231,25 @@ func LeaseFiltersIsID(f mv1.LeaseFilters) bool {
 //   - [owner/]dseq[/gseq[/oseq]]
 //   - If the first component is a number, it is dseq and defaultOwner is used.
 //   - If the first component is a bech32 address, it is the owner.
+//   - If the arg is a bare state keyword (open|active|closed), it is a state
+//     filter equivalent to --state. State keywords do not combine with
+//     identity paths.
 func OrderFiltersFromArg(arg string, defaultOwner string) (mvbeta.OrderFilters, error) {
 	parts := strings.Split(arg, "/")
 	var f mvbeta.OrderFilters
 
 	if len(parts) < 1 || parts[0] == "" {
 		return f, fmt.Errorf("order filter: argument is required")
+	}
+
+	// A bare state keyword as the sole argument selects a state filter (SPEC §3.8.2).
+	if val, exists := mvbeta.Order_State_value[parts[0]]; exists && mvbeta.Order_State(val) != mvbeta.OrderStateInvalid {
+		if len(parts) > 1 {
+			return f, fmt.Errorf("order filter: state keyword %q cannot be combined with identity path %q; use --state with an identity filter instead", parts[0], arg)
+		}
+		f.State = parts[0]
+
+		return f, nil
 	}
 
 	idx := 0
@@ -293,12 +307,26 @@ func OrderFiltersFromArg(arg string, defaultOwner string) (mvbeta.OrderFilters, 
 // When byProvider is true, the leading address is the provider and the trailing
 // address is the owner. Otherwise the leading address is the owner and the
 // trailing address is the provider.
+//
+// A bare state keyword (open|active|lost|closed) as the sole argument is a
+// state filter equivalent to --state. State keywords do not combine with
+// identity paths.
 func BidFiltersFromArg(arg string, defaultOwner string, byProvider bool) (mvbeta.BidFilters, error) {
 	parts := strings.Split(arg, "/")
 	var f mvbeta.BidFilters
 
 	if len(parts) < 1 || parts[0] == "" {
 		return f, fmt.Errorf("bid filter: argument is required")
+	}
+
+	// A bare state keyword as the sole argument selects a state filter (SPEC §3.8.2).
+	if val, exists := mvbeta.Bid_State_value[parts[0]]; exists && mvbeta.Bid_State(val) != mvbeta.BidStateInvalid {
+		if len(parts) > 1 {
+			return f, fmt.Errorf("bid filter: state keyword %q cannot be combined with identity path %q; use --state with an identity filter instead", parts[0], arg)
+		}
+		f.State = parts[0]
+
+		return f, nil
 	}
 
 	idx := 0
@@ -373,12 +401,54 @@ func BidFiltersFromArg(arg string, defaultOwner string, byProvider bool) (mvbeta
 
 // LeaseFiltersFromArg parses a partial lease path into LeaseFilters.
 // See BidFiltersFromArg for format details.
+//
+// A bare state keyword (active|insufficient_funds|closed) as the sole argument
+// is a state filter equivalent to --state. The lease state vocabulary differs
+// from the bid vocabulary, so it is handled here before delegating identity
+// parsing to BidFiltersFromArg.
 func LeaseFiltersFromArg(arg string, defaultOwner string, byProvider bool) (mv1.LeaseFilters, error) {
+	parts := strings.Split(arg, "/")
+
+	// A bare state keyword as the sole argument selects a state filter (SPEC §3.8.2).
+	if val, exists := mv1.Lease_State_value[parts[0]]; exists && mv1.Lease_State(val) != mv1.LeaseStateInvalid {
+		if len(parts) > 1 {
+			return mv1.LeaseFilters{}, fmt.Errorf("lease filter: state keyword %q cannot be combined with identity path %q; use --state with an identity filter instead", parts[0], arg)
+		}
+
+		return mv1.LeaseFilters{State: parts[0]}, nil
+	}
+
 	bf, err := BidFiltersFromArg(arg, defaultOwner, byProvider)
 	if err != nil {
 		return mv1.LeaseFilters{}, err
 	}
+
+	// BidFiltersFromArg recognizes bid state keywords; reject those that are
+	// not valid lease states (e.g. "open", "lost").
+	if bf.State != "" {
+		if _, exists := mv1.Lease_State_value[bf.State]; !exists {
+			return mv1.LeaseFilters{}, fmt.Errorf("lease filter: %q is not a valid lease state (%s)", bf.State, stateKeywords(mv1.Lease_State_value))
+		}
+	}
+
 	return mv1.LeaseFilters(bf), nil
+}
+
+// stateKeywords returns the valid state keywords of a protobuf State_value
+// enum map joined with "|", ordered by enum value and excluding the zero
+// (invalid) placeholder.
+func stateKeywords(values map[string]int32) string {
+	names := make([]string, 0, len(values))
+	for name, val := range values {
+		if val == 0 {
+			continue
+		}
+		names = append(names, name)
+	}
+
+	sort.Slice(names, func(i, j int) bool { return values[names[i]] < values[names[j]] })
+
+	return strings.Join(names, "|")
 }
 
 // AddBidClosedReasonFlag add the reason flag when the provider initiates lease close

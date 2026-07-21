@@ -36,9 +36,15 @@ func GetQueryDeploymentCmds() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				dfilters.Owner = af.Owner
+				if af.Owner != "" {
+					dfilters.Owner = af.Owner
+				}
 				if af.DSeq != 0 {
 					dfilters.DSeq = af.DSeq
+				}
+				// Positional state keyword wins over --state (SPEC §3.8.2).
+				if af.State != "" {
+					dfilters.State = af.State
 				}
 			}
 

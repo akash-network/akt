@@ -30,6 +30,7 @@ func TestDepFiltersFromArg(t *testing.T) {
 		defaultOwner string
 		wantOwner    string
 		wantDSeq     uint64
+		wantState    string
 		wantErr      string
 	}{
 		{
@@ -87,6 +88,26 @@ func TestDepFiltersFromArg(t *testing.T) {
 			arg:     "42/extra",
 			wantErr: "no default account set",
 		},
+		{
+			name:      "state keyword active",
+			arg:       "active",
+			wantState: "active",
+		},
+		{
+			name:      "state keyword closed",
+			arg:       "closed",
+			wantState: "closed",
+		},
+		{
+			name:    "state keyword with identity path errors",
+			arg:     "active/12345",
+			wantErr: "cannot be combined",
+		},
+		{
+			name:    "invalid state keyword falls through to identity error",
+			arg:     "invalid",
+			wantErr: "is not a valid address or dseq number",
+		},
 	}
 
 	for _, tc := range tests {
@@ -100,6 +121,7 @@ func TestDepFiltersFromArg(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, tc.wantOwner, f.Owner)
 			assert.Equal(t, tc.wantDSeq, f.DSeq)
+			assert.Equal(t, tc.wantState, f.State)
 		})
 	}
 }
@@ -215,6 +237,7 @@ func TestOrderFiltersFromArg(t *testing.T) {
 		wantDSeq     uint64
 		wantGSeq     uint32
 		wantOSeq     uint32
+		wantState    string
 		wantErr      string
 	}{
 		{
@@ -273,6 +296,26 @@ func TestOrderFiltersFromArg(t *testing.T) {
 			arg:     testOwner + "/100/1/abc",
 			wantErr: "invalid oseq",
 		},
+		{
+			name:      "state keyword open",
+			arg:       "open",
+			wantState: "open",
+		},
+		{
+			name:      "state keyword active",
+			arg:       "active",
+			wantState: "active",
+		},
+		{
+			name:      "state keyword closed",
+			arg:       "closed",
+			wantState: "closed",
+		},
+		{
+			name:    "state keyword with identity path errors",
+			arg:     "open/100",
+			wantErr: "cannot be combined",
+		},
 	}
 
 	for _, tc := range tests {
@@ -288,6 +331,7 @@ func TestOrderFiltersFromArg(t *testing.T) {
 			assert.Equal(t, tc.wantDSeq, f.DSeq)
 			assert.Equal(t, tc.wantGSeq, f.GSeq)
 			assert.Equal(t, tc.wantOSeq, f.OSeq)
+			assert.Equal(t, tc.wantState, f.State)
 		})
 	}
 }
@@ -307,6 +351,7 @@ func TestBidFiltersFromArg(t *testing.T) {
 		wantDSeq     uint64
 		wantGSeq     uint32
 		wantOSeq     uint32
+		wantState    string
 		wantErr      string
 	}{
 		{
@@ -381,6 +426,28 @@ func TestBidFiltersFromArg(t *testing.T) {
 			byProvider: true,
 			wantErr:    "provider address is required",
 		},
+		// --- State keywords ---
+		{
+			name:      "state keyword open",
+			arg:       "open",
+			wantState: "open",
+		},
+		{
+			name:      "state keyword lost",
+			arg:       "lost",
+			wantState: "lost",
+		},
+		{
+			name:       "by-provider: state keyword open",
+			arg:        "open",
+			byProvider: true,
+			wantState:  "open",
+		},
+		{
+			name:    "state keyword with identity path errors",
+			arg:     "open/100",
+			wantErr: "cannot be combined",
+		},
 	}
 
 	for _, tc := range tests {
@@ -397,6 +464,7 @@ func TestBidFiltersFromArg(t *testing.T) {
 			assert.Equal(t, tc.wantDSeq, f.DSeq)
 			assert.Equal(t, tc.wantGSeq, f.GSeq)
 			assert.Equal(t, tc.wantOSeq, f.OSeq)
+			assert.Equal(t, tc.wantState, f.State)
 		})
 	}
 }
@@ -421,6 +489,45 @@ func TestLeaseFiltersFromArg(t *testing.T) {
 		_, err := LeaseFiltersFromArg("", "", false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "argument is required")
+	})
+
+	t.Run("state keyword active", func(t *testing.T) {
+		lf, err := LeaseFiltersFromArg("active", "", false)
+		require.NoError(t, err)
+		assert.Equal(t, "active", lf.State)
+		assert.Empty(t, lf.Owner)
+	})
+
+	t.Run("state keyword insufficient_funds", func(t *testing.T) {
+		lf, err := LeaseFiltersFromArg("insufficient_funds", "", false)
+		require.NoError(t, err)
+		assert.Equal(t, "insufficient_funds", lf.State)
+	})
+
+	t.Run("state keyword closed", func(t *testing.T) {
+		lf, err := LeaseFiltersFromArg("closed", "", false)
+		require.NoError(t, err)
+		assert.Equal(t, "closed", lf.State)
+	})
+
+	t.Run("bid-only state keyword rejected", func(t *testing.T) {
+		_, err := LeaseFiltersFromArg("open", "", false)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "is not a valid lease state")
+	})
+
+	t.Run("state keyword with identity path errors", func(t *testing.T) {
+		_, err := LeaseFiltersFromArg("active/12345", "", false)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "cannot be combined")
+	})
+
+	t.Run("plain identity still works", func(t *testing.T) {
+		lf, err := LeaseFiltersFromArg(testOwner+"/100", "", false)
+		require.NoError(t, err)
+		assert.Equal(t, testOwner, lf.Owner)
+		assert.Equal(t, uint64(100), lf.DSeq)
+		assert.Empty(t, lf.State)
 	})
 }
 

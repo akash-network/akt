@@ -1869,8 +1869,18 @@ The first component is classified by its format:
 | ----------------------------- | ----------------------------- | ------------------ |
 | Bech32 address (`akash1...`)  | Leading address (owner or provider per `--by` mode) | `akash1abc...def` |
 | Unsigned integer              | `dseq` — the leading address defaults to the context's `default-account` (in `--by owner` mode) | `12345` |
+| State keyword (per-resource vocabulary) | State filter — equivalent to `--state <keyword>` | `active` |
 
 Subsequent `/`-separated components are parsed positionally: after the leading address comes `dseq` (uint64), then `gseq` (uint32), then `oseq` (uint32), then the trailing address (provider or owner, opposite of the leading address).
+
+State keywords are only recognized as the sole/first component; they do not combine with identity paths (use `--state` with an identity filter for that). When both a positional state keyword and `--state` are given, the positional value wins (it is applied after flags). Each resource has its own state vocabulary, derived from the on-chain state enums:
+
+| Resource       | State keywords                        |
+| -------------- | ------------------------------------- |
+| `deployment`   | `active`, `closed`                    |
+| `market order` | `open`, `active`, `closed`            |
+| `market bid`   | `open`, `active`, `lost`, `closed`    |
+| `market lease` | `active`, `insufficient_funds`, `closed` |
 
 #### 3.8.3 Get-vs-List Heuristic
 
@@ -1921,6 +1931,7 @@ akt query deployment 12345                     # Get deployment dseq 12345 (owne
 akt query deployment akash1abc...              # List all deployments for that owner
 akt query deployment akash1abc.../12345        # Get specific deployment
 akt query deployment --state active            # List active deployments for default account
+akt query deployment active                    # Same as --state active (positional state keyword)
 akt query deployment 12345 --state active      # Get dseq 12345 (--state ignored on single get)
 ```
 
@@ -1932,6 +1943,8 @@ akt query market lease 12345                   # List leases for dseq 12345 (own
 akt query market lease 12345/1/1               # List leases for order 12345/1/1
 akt query market lease akash1abc.../12345/1/1/akash1prov...  # Get specific lease
 akt query market lease --state active          # List active leases for default account
+akt query market lease active                  # Same as --state active (positional state keyword)
+akt query market bid open                      # List open bids (positional state keyword)
 ```
 
 **Market lease queries — provider perspective** (`--by provider`):

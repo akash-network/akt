@@ -203,15 +203,27 @@ func DepFiltersIsID(f dv1beta.DeploymentFilters) bool {
 // Smart type detection (SPEC §3.8.2):
 //   - If the first component is a bech32 address, it is the owner.
 //   - If the first component is a number, it is the dseq and defaultOwner is used.
+//   - If the arg is a bare state keyword (active|closed), it is a state filter
+//     equivalent to --state. State keywords do not combine with identity paths.
 //   - When the arg is a bare bech32 address with no "/", it lists all deployments for that owner.
 //
-// Format: [owner/]dseq  or  owner
+// Format: [owner/]dseq  or  owner  or  state
 func DepFiltersFromArg(arg string, defaultOwner string) (dv1beta.DeploymentFilters, error) {
 	parts := strings.Split(arg, "/")
 	var f dv1beta.DeploymentFilters
 
 	if len(parts) < 1 || parts[0] == "" {
 		return f, fmt.Errorf("deployment filter: argument is required")
+	}
+
+	// A bare state keyword as the sole argument selects a state filter (SPEC §3.8.2).
+	if val, exists := dv1.Deployment_State_value[parts[0]]; exists && dv1.Deployment_State(val) != dv1.DeploymentStateInvalid {
+		if len(parts) > 1 {
+			return f, fmt.Errorf("deployment filter: state keyword %q cannot be combined with identity path %q; use --state with an identity filter instead", parts[0], arg)
+		}
+		f.State = parts[0]
+
+		return f, nil
 	}
 
 	// Smart type detection on the first component.

@@ -56,7 +56,9 @@ func GetQueryMarketOrderCmd() *cobra.Command {
 				if err != nil {
 					return err
 				}
-				ofilters.Owner = af.Owner
+				if af.Owner != "" {
+					ofilters.Owner = af.Owner
+				}
 				if af.DSeq != 0 {
 					ofilters.DSeq = af.DSeq
 				}
@@ -65,6 +67,10 @@ func GetQueryMarketOrderCmd() *cobra.Command {
 				}
 				if af.OSeq != 0 {
 					ofilters.OSeq = af.OSeq
+				}
+				// Positional state keyword wins over --state (SPEC §3.8.2).
+				if af.State != "" {
+					ofilters.State = af.State
 				}
 			}
 
@@ -156,6 +162,10 @@ func GetQueryMarketBidCmd() *cobra.Command {
 				}
 				if af.Provider != "" {
 					bfilters.Provider = af.Provider
+				}
+				// Positional state keyword wins over --state (SPEC §3.8.2).
+				if af.State != "" {
+					bfilters.State = af.State
 				}
 			}
 
@@ -249,6 +259,10 @@ func GetQueryMarketLeaseCmd() *cobra.Command {
 				}
 				if af.Provider != "" {
 					lfilters.Provider = af.Provider
+				}
+				// Positional state keyword wins over --state (SPEC §3.8.2).
+				if af.State != "" {
+					lfilters.State = af.State
 				}
 			}
 
