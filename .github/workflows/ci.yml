@@ -1,0 +1,64 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOWORK: off
+
+jobs:
+  build-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: go build ./...
+      - name: Unit tests (excluding e2e)
+        run: go test $(go list ./... | grep -v /e2e)
+      # golangci-lint is intentionally not wired up: the repo has no
+      # .golangci.yml yet. Once a config is committed, add the official
+      # golangci/golangci-lint-action step here (see GOLANGCI_LINT_VERSION
+      # in the Makefile for the pinned version).
+
+  e2e-offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build akt binary
+        # `make akt` needs the direnv-managed environment (AKT_ROOT,
+        # AKT_DEVCACHE_*, static-link toolchain); build the plain binary
+        # directly at the path the e2e harness expects instead.
+        run: go build -o .cache/bin/akt ./cmd/akt
+      - name: e2e offline suite (gated localnet tests self-skip)
+        run: go test ./e2e/... -v -count=1
+
+  e2e-localnet:
+    runs-on: ubuntu-latest
+    # The docker bootstrap has been verified locally (macOS, docker 27,
+    # ghcr.io/akash-network/node:2.1.0) but not yet on GitHub Actions
+    # runners. Flip continue-on-error to false once this job is proven
+    # green in CI.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build akt binary
+        run: go build -o .cache/bin/akt ./cmd/akt
+      - name: e2e localnet suite (single-validator akash node in docker)
+        env:
+          AKT_E2E_LOCALNET: "1"
+        run: go test ./e2e/ -run TestLocalnet -v -count=1 -timeout 15m
