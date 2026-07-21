@@ -15,6 +15,7 @@ import (
 	rest "pkg.akt.dev/go/provider/client"
 	"pkg.akt.dev/go/sdl"
 
+	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	aktprovider "pkg.akt.dev/akt/internal/provider"
 )
 
@@ -81,13 +82,16 @@ func statusCmd() *cobra.Command {
 
 func leaseStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "lease-status",
+		Use:   "lease-status [dseq]",
 		Short: "Query lease deployment status",
 		Long:  "Query the live status of a lease from a provider, including service status, forwarded ports, and IPs.",
-		Args:  cobra.NoArgs,
-		Example: `  # Query lease status
+		Args:  cobra.MaximumNArgs(1),
+		Example: `  # Query lease status (positional dseq)
+  akt provider lease-status 12345 --provider akash1...
+
+  # Query lease status via flag; a positional dseq wins when both are given
   akt provider lease-status --dseq 12345 --provider akash1...`,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
 			providerAddr, providerURL, err := resolveProvider(cmd, nil)
@@ -100,7 +104,7 @@ func leaseStatusCmd() *cobra.Command {
 				return err
 			}
 
-			lid, err := leaseIDFromFlags(cmd, providerAddr)
+			lid, err := leaseIDFromFlags(cmd, args, providerAddr)
 			if err != nil {
 				return err
 			}
@@ -121,19 +125,19 @@ func leaseStatusCmd() *cobra.Command {
 
 func leaseLogsCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "lease-logs",
+		Use:   "lease-logs [dseq]",
 		Short: "Stream container logs",
 		Long:  "Stream container logs from a lease. Supports filtering by service and following output.",
-		Args:  cobra.NoArgs,
-		Example: `  # Stream logs for all services
-  akt provider lease-logs --dseq 12345 --provider akash1...
+		Args:  cobra.MaximumNArgs(1),
+		Example: `  # Stream logs for all services (positional dseq)
+  akt provider lease-logs 12345 --provider akash1...
 
-  # Follow logs for a specific service
+  # Follow logs for a specific service; a positional dseq wins over --dseq
   akt provider lease-logs --dseq 12345 --provider akash1... --service web --follow
 
   # Show last 100 lines
   akt provider lease-logs --dseq 12345 --provider akash1... --tail 100`,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
 			providerAddr, providerURL, err := resolveProvider(cmd, nil)
@@ -146,7 +150,7 @@ func leaseLogsCmd() *cobra.Command {
 				return err
 			}
 
-			lid, err := leaseIDFromFlags(cmd, providerAddr)
+			lid, err := leaseIDFromFlags(cmd, args, providerAddr)
 			if err != nil {
 				return err
 			}
@@ -192,16 +196,16 @@ func leaseLogsCmd() *cobra.Command {
 
 func leaseEventsCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "lease-events",
+		Use:   "lease-events [dseq]",
 		Short: "Stream Kubernetes events",
 		Long:  "Stream Kubernetes events for a lease from the provider.",
-		Args:  cobra.NoArgs,
-		Example: `  # Stream events
-  akt provider lease-events --dseq 12345 --provider akash1...
+		Args:  cobra.MaximumNArgs(1),
+		Example: `  # Stream events (positional dseq; wins over --dseq when both are given)
+  akt provider lease-events 12345 --provider akash1...
 
   # Follow events
   akt provider lease-events --dseq 12345 --provider akash1... --follow`,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
 			providerAddr, providerURL, err := resolveProvider(cmd, nil)
@@ -214,7 +218,7 @@ func leaseEventsCmd() *cobra.Command {
 				return err
 			}
 
-			lid, err := leaseIDFromFlags(cmd, providerAddr)
+			lid, err := leaseIDFromFlags(cmd, args, providerAddr)
 			if err != nil {
 				return err
 			}
@@ -279,7 +283,9 @@ func leaseShellCmd() *cobra.Command {
 				return err
 			}
 
-			lid, err := leaseIDFromFlags(cmd, providerAddr)
+			// lease-shell consumes its positional args as the remote command,
+			// so dseq must come from the --dseq flag here.
+			lid, err := leaseIDFromFlags(cmd, nil, providerAddr)
 			if err != nil {
 				return err
 			}
@@ -360,13 +366,16 @@ func sendManifestCmd() *cobra.Command {
 
 func getManifestCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "get-manifest",
+		Use:   "get-manifest [dseq]",
 		Short: "Retrieve current manifest",
 		Long:  "Retrieve the current manifest for a lease from the provider.",
-		Args:  cobra.NoArgs,
-		Example: `  # Get manifest for a lease
+		Args:  cobra.MaximumNArgs(1),
+		Example: `  # Get manifest for a lease (positional dseq)
+  akt provider get-manifest 12345 --provider akash1...
+
+  # Get manifest via flag; a positional dseq wins when both are given
   akt provider get-manifest --dseq 12345 --provider akash1...`,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
 			providerAddr, providerURL, err := resolveProvider(cmd, nil)
@@ -379,7 +388,7 @@ func getManifestCmd() *cobra.Command {
 				return err
 			}
 
-			lid, err := leaseIDFromFlags(cmd, providerAddr)
+			lid, err := leaseIDFromFlags(cmd, args, providerAddr)
 			if err != nil {
 				return err
 			}
@@ -507,14 +516,22 @@ func addLeaseFlags(cmd *cobra.Command) {
 	cmd.Flags().Uint32("oseq", 1, "Order sequence number")
 }
 
-// leaseIDFromFlags builds a LeaseID from the command flags.
-func leaseIDFromFlags(cmd *cobra.Command, provider sdk.AccAddress) (mtypes.LeaseID, error) {
+// leaseIDFromFlags builds a LeaseID from the command flags and an optional
+// positional dseq argument. A positional dseq always wins over the --dseq
+// flag (SPEC §3.8.2).
+func leaseIDFromFlags(cmd *cobra.Command, args []string, provider sdk.AccAddress) (mtypes.LeaseID, error) {
 	cctx := sdkclient.GetClientContextFromCmd(cmd)
 	owner := cctx.GetFromAddress()
 
 	dseq, _ := cmd.Flags().GetUint64("dseq")
+
+	dseq, err := cflags.DSeqFromArgs(args, dseq)
+	if err != nil {
+		return mtypes.LeaseID{}, err
+	}
+
 	if dseq == 0 {
-		return mtypes.LeaseID{}, fmt.Errorf("--dseq is required")
+		return mtypes.LeaseID{}, fmt.Errorf("dseq is required: provide positional [dseq] or the --dseq flag")
 	}
 
 	gseq, _ := cmd.Flags().GetUint32("gseq")

@@ -423,12 +423,12 @@ akt
 │   │   └── multi-send <from> <to1,to2,...> <amount>
 │   ├── deployment
 │   │   ├── create <sdl-file>
-│   │   ├── update <sdl-file>
-│   │   ├── close
+│   │   ├── update <sdl-file> [dseq]
+│   │   ├── close [dseq]
 │   │   └── group
-│   │       ├── close
-│   │       ├── pause
-│   │       └── start
+│   │       ├── close [dseq] [gseq]
+│   │       ├── pause [dseq] [gseq]
+│   │       └── start [dseq] [gseq]
 │   ├── market
 │   │   ├── bid
 │   │   │   ├── create
@@ -618,12 +618,12 @@ akt
 ├── close [dseq]                         # Workflow: close deployment
 ├── provider                             # Provider gateway commands
 │   ├── status [provider-addr]
-│   ├── lease-status
-│   ├── lease-logs
-│   ├── lease-events
+│   ├── lease-status [dseq]
+│   ├── lease-logs [dseq]
+│   ├── lease-events [dseq]
 │   ├── lease-shell
 │   ├── send-manifest <sdl-file>
-│   ├── get-manifest
+│   ├── get-manifest [dseq]
 │   ├── migrate-hostnames
 │   └── migrate-endpoints
 ├── store                                # Local store management
@@ -1362,26 +1362,26 @@ Query provider status. If `provider-addr` is omitted, uses the provider from the
 | `--provider`  | string | `""`            | Provider address         |
 | `--auth-type` | string | context default | Auth type: `jwt`, `mtls` |
 
-#### `akt provider lease-status`
+#### `akt provider lease-status [dseq]`
 
-Query lease deployment status from the provider gateway.
+Query lease deployment status from the provider gateway. The optional positional `dseq` supplies the deployment sequence; when both the positional and `--dseq` are given, the positional value wins.
 
 | Flag          | Type   | Default         | Description         |
 | ------------- | ------ | --------------- | ------------------- |
-| `--dseq`      | uint64 | required        | Deployment sequence |
+| `--dseq`      | uint64 | required unless positional `dseq` given | Deployment sequence |
 | `--gseq`      | uint32 | `1`             | Group sequence      |
 | `--oseq`      | uint32 | `1`             | Order sequence      |
 | `--provider`  | string | required        | Provider address    |
 | `--from`      | string | context default | Owner account       |
 | `--auth-type` | string | context default | Auth type           |
 
-#### `akt provider lease-logs`
+#### `akt provider lease-logs [dseq]`
 
-Stream container logs from a lease.
+Stream container logs from a lease. The optional positional `dseq` supplies the deployment sequence; when both the positional and `--dseq` are given, the positional value wins.
 
 | Flag          | Type   | Default         | Description               |
 | ------------- | ------ | --------------- | ------------------------- |
-| `--dseq`      | uint64 | required        | Deployment sequence       |
+| `--dseq`      | uint64 | required unless positional `dseq` given | Deployment sequence       |
 | `--gseq`      | uint32 | `1`             | Group sequence            |
 | `--oseq`      | uint32 | `1`             | Order sequence            |
 | `--provider`  | string | required        | Provider address          |
@@ -1391,9 +1391,9 @@ Stream container logs from a lease.
 | `--tail`      | int64  | `-1`            | Lines from end (-1 = all) |
 | `--auth-type` | string | context default | Auth type                 |
 
-#### `akt provider lease-events`
+#### `akt provider lease-events [dseq]`
 
-Stream Kubernetes events from a lease.
+Stream Kubernetes events from a lease. The optional positional `dseq` behaves as in `lease-logs`.
 
 Same flags as `lease-logs` (minus `--service`, `--tail`), plus `--follow`.
 
@@ -1430,9 +1430,9 @@ Send an SDL manifest to provider(s) for an existing lease.
 | `--provider`  | string | `""`            | Specific provider (default: all providers with active leases) |
 | `--auth-type` | string | context default | Auth type                                                     |
 
-#### `akt provider get-manifest`
+#### `akt provider get-manifest [dseq]`
 
-Retrieve the current manifest from a provider.
+Retrieve the current manifest from a provider. The optional positional `dseq` supplies the deployment sequence; when both the positional and `--dseq` are given, the positional value wins.
 
 #### `akt provider migrate-hostnames`
 

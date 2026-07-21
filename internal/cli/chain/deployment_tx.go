@@ -133,17 +133,24 @@ func GetTxDeploymentCreateCmd() *cobra.Command {
 
 func GetTxDeploymentCloseCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "close",
-		Short:             "Close deployment",
-		Args:              cobra.ExactArgs(0),
+		Use:   "close [dseq]",
+		Short: "Close deployment",
+		Args:  cobra.MaximumNArgs(1),
+		Example: `akt tx deployment close 12345
+akt tx deployment close --dseq 12345`,
 		PersistentPreRunE: TxPersistentPreRunE,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustClientFromContext(ctx)
 			cctx := cl.ClientContext()
 
 			id, err := cflags.DeploymentIDFromFlags(cmd.Flags(), cflags.WithOwner(cctx.FromAddress))
 			if err != nil {
+				return err
+			}
+
+			// Positional dseq wins over the --dseq flag (SPEC §3.8.2).
+			if id.DSeq, err = cflags.DSeqFromArgs(args, id.DSeq); err != nil {
 				return err
 			}
 
@@ -165,9 +172,11 @@ func GetTxDeploymentCloseCmd() *cobra.Command {
 
 func GetTxDeploymentUpdateCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "update [sdl-file]",
-		Short:             "update deployment",
-		Args:              cobra.ExactArgs(1),
+		Use:   "update [sdl-file] [dseq]",
+		Short: "update deployment",
+		Args:  cobra.RangeArgs(1, 2),
+		Example: `akt tx deployment update deploy.yaml 12345
+akt tx deployment update deploy.yaml --dseq 12345`,
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -176,6 +185,11 @@ func GetTxDeploymentUpdateCmd() *cobra.Command {
 
 			id, err := cflags.DeploymentIDFromFlags(cmd.Flags(), cflags.WithOwner(cctx.FromAddress))
 			if err != nil {
+				return err
+			}
+
+			// Positional dseq wins over the --dseq flag (SPEC §3.8.2).
+			if id.DSeq, err = cflags.DSeqFromArgs(args[1:], id.DSeq); err != nil {
 				return err
 			}
 
@@ -254,16 +268,17 @@ func GetTxDeploymentGroupCmds() *cobra.Command {
 
 func GetTxDeploymentGroupCloseCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "close",
-		Short:             "close a Deployment's specific Group",
-		Example:           "akash tx deployment group-close --owner=[Account Address] --dseq=[uint64] --gseq=[uint32]",
-		Args:              cobra.ExactArgs(0),
+		Use:   "close [dseq] [gseq]",
+		Short: "close a Deployment's specific Group",
+		Example: `akt tx deployment group close 12345 1 --owner=[Account Address]
+akt tx deployment group close --owner=[Account Address] --dseq=[uint64] --gseq=[uint32]`,
+		Args:              cobra.MaximumNArgs(2),
 		PersistentPreRunE: TxPersistentPreRunE,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustClientFromContext(ctx)
 
-			id, err := cflags.GroupIDFromFlags(cmd.Flags())
+			id, err := groupIDFromFlagsAndArgs(cmd, args)
 			if err != nil {
 				return err
 			}
@@ -287,23 +302,26 @@ func GetTxDeploymentGroupCloseCmd() *cobra.Command {
 
 	cflags.AddTxFlagsToCmd(cmd)
 	cflags.AddGroupIDFlags(cmd.Flags())
-	cflags.MarkReqGroupIDFlags(cmd)
+	// Owner remains flag-only; dseq may be given positionally, so it is
+	// validated in RunE instead of being marked required.
+	_ = cmd.MarkFlagRequired(cflags.FlagOwner)
 
 	return cmd
 }
 
 func GetDeploymentGroupPauseCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "pause",
-		Short:             "pause a Deployment's specific Group",
-		Example:           "akash tx deployment group pause --owner=[Account Address] --dseq=[uint64] --gseq=[uint32]",
-		Args:              cobra.ExactArgs(0),
+		Use:   "pause [dseq] [gseq]",
+		Short: "pause a Deployment's specific Group",
+		Example: `akt tx deployment group pause 12345 1 --owner=[Account Address]
+akt tx deployment group pause --owner=[Account Address] --dseq=[uint64] --gseq=[uint32]`,
+		Args:              cobra.MaximumNArgs(2),
 		PersistentPreRunE: TxPersistentPreRunE,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustClientFromContext(ctx)
 
-			id, err := cflags.GroupIDFromFlags(cmd.Flags())
+			id, err := groupIDFromFlagsAndArgs(cmd, args)
 			if err != nil {
 				return err
 			}
@@ -327,23 +345,26 @@ func GetDeploymentGroupPauseCmd() *cobra.Command {
 
 	cflags.AddTxFlagsToCmd(cmd)
 	cflags.AddGroupIDFlags(cmd.Flags())
-	cflags.MarkReqGroupIDFlags(cmd)
+	// Owner remains flag-only; dseq may be given positionally, so it is
+	// validated in RunE instead of being marked required.
+	_ = cmd.MarkFlagRequired(cflags.FlagOwner)
 
 	return cmd
 }
 
 func GetDeploymentGroupStartCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "start",
-		Short:             "start a Deployment's specific Group",
-		Example:           "akash tx deployment group pause --owner=[Account Address] --dseq=[uint64] --gseq=[uint32]",
-		Args:              cobra.ExactArgs(0),
+		Use:   "start [dseq] [gseq]",
+		Short: "start a Deployment's specific Group",
+		Example: `akt tx deployment group start 12345 1 --owner=[Account Address]
+akt tx deployment group start --owner=[Account Address] --dseq=[uint64] --gseq=[uint32]`,
+		Args:              cobra.MaximumNArgs(2),
 		PersistentPreRunE: TxPersistentPreRunE,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustClientFromContext(ctx)
 
-			id, err := cflags.GroupIDFromFlags(cmd.Flags())
+			id, err := groupIDFromFlagsAndArgs(cmd, args)
 			if err != nil {
 				return err
 			}
@@ -367,9 +388,31 @@ func GetDeploymentGroupStartCmd() *cobra.Command {
 
 	cflags.AddTxFlagsToCmd(cmd)
 	cflags.AddGroupIDFlags(cmd.Flags())
-	cflags.MarkReqGroupIDFlags(cmd)
+	// Owner remains flag-only; dseq may be given positionally, so it is
+	// validated in RunE instead of being marked required.
+	_ = cmd.MarkFlagRequired(cflags.FlagOwner)
 
 	return cmd
+}
+
+// groupIDFromFlagsAndArgs resolves a GroupID from flags and optional
+// positional [dseq] [gseq] arguments. Positional values win over the
+// --dseq/--gseq flags (SPEC §3.8.2).
+func groupIDFromFlagsAndArgs(cmd *cobra.Command, args []string) (dv1.GroupID, error) {
+	id, err := cflags.GroupIDFromFlags(cmd.Flags())
+	if err != nil {
+		return dv1.GroupID{}, err
+	}
+
+	if id.DSeq, id.GSeq, err = cflags.GroupSeqsFromArgs(args, id.DSeq, id.GSeq); err != nil {
+		return dv1.GroupID{}, err
+	}
+
+	if id.DSeq == 0 {
+		return dv1.GroupID{}, fmt.Errorf("dseq is required: provide positional [dseq] or the --dseq flag")
+	}
+
+	return id, nil
 }
 
 func warnIfGroupVolumesExceeds(cctx sdkclient.Context, dgroups []dv1beta.GroupSpec) {
