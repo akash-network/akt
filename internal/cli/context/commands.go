@@ -77,8 +77,20 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
+			recordContextAction(m.Root(), name, "create", map[string]string{
+				"network": network,
+				"keyring": keyring,
+			})
+
 			if setCurrent {
-				return m.UseContext(name)
+				previous := m.CurrentContext()
+				if err := m.UseContext(name); err != nil {
+					return err
+				}
+				recordContextAction(m.Root(), name, "switch", map[string]string{
+					"from": previous,
+					"to":   name,
+				})
 			}
 
 			return nil
@@ -117,7 +129,19 @@ func useCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		ValidArgsFunction: completeContextNames(mgr),
 		Example:           `  akt context use staging`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return mgr().UseContext(args[0])
+			m := mgr()
+			previous := m.CurrentContext()
+
+			if err := m.UseContext(args[0]); err != nil {
+				return err
+			}
+
+			recordContextAction(m.Root(), args[0], "switch", map[string]string{
+				"from": previous,
+				"to":   args[0],
+			})
+
+			return nil
 		},
 	}
 }
@@ -226,31 +250,44 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 				return fmt.Errorf("cannot use --fork-network with --network; use akt network create to fork manually")
 			}
 
-			return m.UpdateContext(name, func(c *aktctx.Context) error {
+			changed := map[string]string{}
+
+			if err := m.UpdateContext(name, func(c *aktctx.Context) error {
 				if cmd.Flags().Changed("network") {
 					network, _ := cmd.Flags().GetString("network")
+					changed["network"] = network
 					c.Network = aktctx.Network{Name: network}
 				}
 
 				if cmd.Flags().Changed("keyring") {
 					keyring, _ := cmd.Flags().GetString("keyring")
+					changed["keyring"] = keyring
 					c.Keyring = aktctx.Keyring{Name: keyring}
 				}
 
 				if cmd.Flags().Changed("default-account") {
 					c.DefaultAccount, _ = cmd.Flags().GetString("default-account")
+					changed["default-account"] = c.DefaultAccount
 				}
 
 				if cmd.Flags().Changed("gas") {
 					c.Gas, _ = cmd.Flags().GetString("gas")
+					changed["gas"] = c.Gas
 				}
 
 				if cmd.Flags().Changed("fees") {
 					c.Fees, _ = cmd.Flags().GetString("fees")
+					changed["fees"] = c.Fees
 				}
 
 				return nil
-			})
+			}); err != nil {
+				return err
+			}
+
+			recordContextAction(m.Root(), name, "edit", changed)
+
+			return nil
 		},
 	}
 
@@ -306,7 +343,20 @@ func deleteCmd(mgr func() *aktctx.Manager) *cobra.Command {
 
 			keepData, _ := cmd.Flags().GetBool("keep-data")
 
-			return mgr().DeleteContext(name, keepData)
+			m := mgr()
+			if err := m.DeleteContext(name, keepData); err != nil {
+				return err
+			}
+
+			// The deleted context's log is gone (unless --keep-data), so
+			// record the deletion in the current context's log if one exists.
+			if current := m.CurrentContext(); current != "" && current != name {
+				recordContextAction(m.Root(), current, "delete", map[string]string{
+					"context": name,
+				})
+			}
+
+			return nil
 		},
 	}
 
@@ -324,7 +374,18 @@ func renameCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		ValidArgsFunction: completeContextNames(mgr),
 		Example:           `  akt context rename staging testnet-staging`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return mgr().RenameContext(args[0], args[1])
+			m := mgr()
+
+			if err := m.RenameContext(args[0], args[1]); err != nil {
+				return err
+			}
+
+			recordContextAction(m.Root(), args[1], "rename", map[string]string{
+				"from": args[0],
+				"to":   args[1],
+			})
+
+			return nil
 		},
 	}
 }
