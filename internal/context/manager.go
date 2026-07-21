@@ -272,6 +272,12 @@ func (m *Manager) CreateContext(ctx Context) error {
 		ctx.ProviderDefaults.AuthType = "jwt"
 	}
 
+	switch ctx.AuthMethod {
+	case "", AuthMethodKeyring, AuthMethodConsoleAPI:
+	default:
+		return fmt.Errorf("invalid auth-method %q: must be %q or %q", ctx.AuthMethod, AuthMethodKeyring, AuthMethodConsoleAPI)
+	}
+
 	m.cfg.Contexts = append(m.cfg.Contexts, ctx)
 
 	// Create data directories for the new context.
@@ -470,10 +476,22 @@ func (m *Manager) Resolve(name string) (*Context, error) {
 		return nil, fmt.Errorf("keyring %q (referenced by context %q) not found", ctx.Keyring.Name, name)
 	}
 
+	authMethod := ctx.AuthMethod
+	if authMethod == "" {
+		authMethod = AuthMethodKeyring
+	}
+
+	consoleURL := ctx.ConsoleAPIURL
+	if consoleURL == "" {
+		consoleURL = DefaultConsoleAPIURL
+	}
+
 	return &Context{
 		Name:             ctx.Name,
 		Network:          *net,
 		Keyring:          *kr,
+		AuthMethod:       authMethod,
+		ConsoleAPIURL:    consoleURL,
 		DefaultAccount:   ctx.DefaultAccount,
 		Gas:              ctx.Gas,
 		Fees:             ctx.Fees,
@@ -482,5 +500,6 @@ func (m *Manager) Resolve(name string) (*Context, error) {
 		GasAdjustment:    net.GasAdjustment,
 		AuthType:         ctx.ProviderDefaults.AuthType,
 		Root:             m.root,
+		ConsoleAPIKey:    ResolveConsoleAPIKey(m.root, ctx.Name),
 	}, nil
 }
