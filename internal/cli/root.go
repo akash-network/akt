@@ -275,7 +275,7 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 
 	// Workflow commands are discovered dynamically from workflow definitions.
 	// Only workflows that exist (built-in or user-defined YAML) produce commands.
-	for _, wfCmd := range cliworkflow.Commands(homeFn, ctxNameFn) {
+	for _, wfCmd := range cliworkflow.CommandsWithManager(homeFn, ctxNameFn, mgrFn) {
 		root.AddCommand(wfCmd)
 	}
 	root.AddCommand(versionCmd(bi))

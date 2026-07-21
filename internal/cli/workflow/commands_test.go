@@ -1,13 +1,19 @@
 package workflow
 
 import (
+	"bytes"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 
+	aktctx "pkg.akt.dev/akt/internal/context"
 	wf "pkg.akt.dev/akt/internal/workflow"
 	"pkg.akt.dev/akt/internal/workflow/builtin"
 )
@@ -153,7 +159,7 @@ func loadBuiltin(t *testing.T, name string) *wf.WorkflowDef {
 func TestCommandFromDefClose(t *testing.T) {
 	homeFn, ctxNameFn := staticFns(t.TempDir())
 
-	cmd := commandFromDef(loadBuiltin(t, "close"), homeFn, ctxNameFn)
+	cmd := commandFromDef(loadBuiltin(t, "close"), homeFn, ctxNameFn, nil)
 
 	if cmd.Use != "close [dseq]" {
 		t.Fatalf("close Use = %q, want %q", cmd.Use, "close [dseq]")
@@ -179,7 +185,7 @@ func TestCommandFromDefClose(t *testing.T) {
 func TestCommandFromDefDeploy(t *testing.T) {
 	homeFn, ctxNameFn := staticFns(t.TempDir())
 
-	cmd := commandFromDef(loadBuiltin(t, "deploy"), homeFn, ctxNameFn)
+	cmd := commandFromDef(loadBuiltin(t, "deploy"), homeFn, ctxNameFn, nil)
 
 	if cmd.Use != "deploy <sdl-file>" {
 		t.Fatalf("deploy Use = %q, want %q", cmd.Use, "deploy <sdl-file>")
@@ -229,5 +235,262 @@ steps:
 	}
 	if cmd.Short == builtinDesc {
 		t.Fatalf("close Short = %q still matches the built-in description; override not applied", cmd.Short)
+	}
+}
+
+// TestCommandFromDefTxFlags verifies that the standard chain tx flags are
+// merged onto workflow commands (needed for keyring chain-client discovery)
+// without clobbering the workflow-specific --yes/--dry-run flags.
+func TestCommandFromDefTxFlags(t *testing.T) {
+	homeFn, ctxNameFn := staticFns(t.TempDir())
+
+	cmd := commandFromDef(loadBuiltin(t, "close"), homeFn, ctxNameFn, nil)
+
+	for _, flag := range []string{"from", "gas", "node", "chain-id"} {
+		if cmd.Flags().Lookup(flag) == nil {
+			t.Errorf("close command missing tx flag --%s", flag)
+		}
+	}
+
+	dryRun := cmd.Flags().Lookup("dry-run")
+	if dryRun == nil {
+		t.Fatal("close command missing --dry-run flag")
+	}
+	if !strings.Contains(dryRun.Usage, "execution plan") {
+		t.Errorf("--dry-run usage = %q, want the workflow meaning, not the tx simulate meaning", dryRun.Usage)
+	}
+}
+
+// newTestManager builds a real context manager in home with a single
+// context named ctxName using the given auth method, and makes it current.
+func newTestManager(t *testing.T, home, ctxName, authMethod string) *aktctx.Manager {
+	t.Helper()
+
+	m, err := aktctx.NewManager(home)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	if err := m.CreateNetworkFromTemplate("mainnet", "mainnet"); err != nil {
+		t.Fatalf("CreateNetworkFromTemplate: %v", err)
+	}
+	if m.GetKeyring("default") == nil {
+		if err := m.CreateKeyring(aktctx.Keyring{Name: "default"}); err != nil {
+			t.Fatalf("CreateKeyring: %v", err)
+		}
+	}
+	if err := m.CreateContext(aktctx.Context{
+		Name:       ctxName,
+		Network:    aktctx.Network{Name: "mainnet"},
+		AuthMethod: authMethod,
+	}); err != nil {
+		t.Fatalf("CreateContext: %v", err)
+	}
+	if err := m.UseContext(ctxName); err != nil {
+		t.Fatalf("UseContext: %v", err)
+	}
+
+	return m
+}
+
+// executeCommand runs a generated workflow command with args, capturing
+// combined output.
+func executeCommand(t *testing.T, cmd *cobra.Command, args ...string) (string, error) {
+	t.Helper()
+
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	cmd.SetErr(&buf)
+	cmd.SetArgs(args)
+
+	err := cmd.Execute()
+
+	return buf.String(), err
+}
+
+// TestExecuteConsoleContextWithoutKey verifies the AKT-647 no-credential
+// error: a console-api context without a Console API key fails with guidance
+// pointing at AKT_CONSOLE_API_KEY, `akt context edit`, and keyring contexts.
+func TestExecuteConsoleContextWithoutKey(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(aktctx.EnvConsoleAPIKey, "")
+
+	m := newTestManager(t, home, "console", aktctx.AuthMethodConsoleAPI)
+
+	cmds := CommandsWithManager(
+		func() string { return home },
+		func() string { return "console" },
+		func() *aktctx.Manager { return m },
+	)
+
+	cmd := findCommand(cmds, "close")
+	if cmd == nil {
+		t.Fatal("CommandsWithManager() did not surface close")
+	}
+
+	_, err := executeCommand(t, cmd, "123")
+	if err == nil {
+		t.Fatal("expected no-credential error, got nil")
+	}
+	for _, want := range []string{"console-api", "no Console credential", aktctx.EnvConsoleAPIKey, "--console-api-key", "keyring"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not mention %q", err.Error(), want)
+		}
+	}
+}
+
+// TestExecuteDryRunNeedsNoClient verifies --dry-run prints the plan and
+// succeeds without any manager, credentials, or chain client.
+func TestExecuteDryRunNeedsNoClient(t *testing.T) {
+	homeFn, ctxNameFn := staticFns(t.TempDir())
+
+	cmd := findCommand(Commands(homeFn, ctxNameFn), "close")
+	if cmd == nil {
+		t.Fatal("Commands() did not surface close")
+	}
+
+	out, err := executeCommand(t, cmd, "--dry-run", "456")
+	if err != nil {
+		t.Fatalf("dry-run execute: %v", err)
+	}
+	for _, want := range []string{"close-deployment", "Dry run — no transactions broadcast."} {
+		if !strings.Contains(out, want) {
+			t.Errorf("dry-run output %q does not contain %q", out, want)
+		}
+	}
+}
+
+// TestExecuteKeyringContextWithoutChainClient verifies the clear
+// wallet/chain-client error when a keyring context has no chain client in
+// the command context (the "neither credential" case).
+func TestExecuteKeyringContextWithoutChainClient(t *testing.T) {
+	home := t.TempDir()
+
+	m := newTestManager(t, home, "wallet", aktctx.AuthMethodKeyring)
+
+	cmds := CommandsWithManager(
+		func() string { return home },
+		func() string { return "wallet" },
+		func() *aktctx.Manager { return m },
+	)
+
+	cmd := findCommand(cmds, "close")
+	if cmd == nil {
+		t.Fatal("CommandsWithManager() did not surface close")
+	}
+
+	_, err := executeCommand(t, cmd, "123")
+	if err == nil {
+		t.Fatal("expected wallet/chain-client error, got nil")
+	}
+	if !strings.Contains(err.Error(), "no wallet/chain client available") {
+		t.Errorf("error %q does not explain that no wallet/chain client is available", err.Error())
+	}
+}
+
+// TestExecuteConsoleDeployEndToEnd runs the built-in deploy workflow against
+// a fake Console API: create deployment (SDL + USD deposit), poll bids via
+// the Console fallback, auto-select the cheapest bid, create the lease with
+// the cached manifest, and skip the provider send-manifest step.
+func TestExecuteConsoleDeployEndToEnd(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(aktctx.EnvConsoleAPIKey, "secret-key")
+
+	var leaseBody map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments":
+			_, _ = w.Write([]byte(`{"data":{"dseq":"4242","manifest":"[{\"name\":\"web\"}]","signTx":{"code":0,"transactionHash":"CREATEHASH"}}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/bids":
+			_, _ = w.Write([]byte(`{"data":[
+				{"bid":{"id":{"owner":"o","dseq":"4242","gseq":1,"oseq":1,"provider":"akash1exp"},"state":"open","price":{"denom":"uakt","amount":"25"}}},
+				{"bid":{"id":{"owner":"o","dseq":"4242","gseq":1,"oseq":1,"provider":"akash1cheap"},"state":"open","price":{"denom":"uakt","amount":"10"}}}
+			]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/leases":
+			if err := json.NewDecoder(r.Body).Decode(&leaseBody); err != nil {
+				t.Errorf("decode lease body: %v", err)
+			}
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"owner":"o","dseq":"4242"},"state":"active"}}}`))
+		default:
+			t.Errorf("unexpected console request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	m := newTestManager(t, home, "console", aktctx.AuthMethodConsoleAPI)
+	if err := m.UpdateContext("console", func(c *aktctx.Context) error {
+		c.ConsoleAPIURL = srv.URL
+		return nil
+	}); err != nil {
+		t.Fatalf("UpdateContext: %v", err)
+	}
+
+	sdlPath := filepath.Join(t.TempDir(), "app.yaml")
+	if err := os.WriteFile(sdlPath, []byte("services:\n  web:\n    image: nginx\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmds := CommandsWithManager(
+		func() string { return home },
+		func() string { return "console" },
+		func() *aktctx.Manager { return m },
+	)
+
+	cmd := findCommand(cmds, "deploy")
+	if cmd == nil {
+		t.Fatal("CommandsWithManager() did not surface deploy")
+	}
+
+	out, err := executeCommand(t, cmd, sdlPath, "--deposit", "5", "--bid-select", "cheapest")
+	if err != nil {
+		t.Fatalf("deploy execute: %v\noutput:\n%s", err, out)
+	}
+
+	// The cheapest bid's lease must be created with the cached manifest.
+	if leaseBody["manifest"] != `[{"name":"web"}]` {
+		t.Errorf("lease manifest = %v, want the cached create-deployment manifest", leaseBody["manifest"])
+	}
+	leases, _ := leaseBody["leases"].([]any)
+	if len(leases) != 1 {
+		t.Fatalf("lease requests = %v, want exactly one", leaseBody["leases"])
+	}
+	lease, _ := leases[0].(map[string]any)
+	if lease["dseq"] != "4242" || lease["provider"] != "akash1cheap" {
+		t.Errorf("lease request = %v, want dseq 4242 provider akash1cheap", lease)
+	}
+
+	for _, want := range []string{
+		"create-deployment", "tx: CREATEHASH",
+		"wait-for-bids", "select-bid", "create-lease",
+		"skipping step \"send-manifest\" (manifest submission handled by Console)",
+		"completed successfully",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output does not contain %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "send-manifest  ") {
+		t.Errorf("send-manifest must not run for console auth:\n%s", out)
+	}
+}
+
+// TestExecuteWithoutManager verifies that commands built via the legacy
+// Commands constructor (nil manager) fail execution with a clear
+// no-configuration message instead of a panic or a silent no-op.
+func TestExecuteWithoutManager(t *testing.T) {
+	homeFn, ctxNameFn := staticFns(t.TempDir())
+
+	cmd := findCommand(Commands(homeFn, ctxNameFn), "close")
+	if cmd == nil {
+		t.Fatal("Commands() did not surface close")
+	}
+
+	_, err := executeCommand(t, cmd, "123")
+	if err == nil {
+		t.Fatal("expected no-configuration error, got nil")
+	}
+	if !strings.Contains(err.Error(), "no configuration loaded") {
+		t.Errorf("error %q does not mention missing configuration", err.Error())
 	}
 }

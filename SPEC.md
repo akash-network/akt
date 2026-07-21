@@ -1089,7 +1089,7 @@ On error:
 | `workflow` | string   | Workflow name (e.g., `deploy`, `update`, `close`)               |
 | `id`       | string   | Unique workflow run ID (generated at start, same for all steps) |
 | `step`     | string   | Step name from the workflow definition                          |
-| `result`   | string   | `completed` or `error`                                          |
+| `result`   | string   | `completed`, `error`, or `skipped` (step skipped by its on-error policy) |
 | `errors`   | []string | Array of error messages (empty when `result` is `completed`)    |
 | `txs`      | []object | Array of raw transaction results (empty for non-tx steps)       |
 
@@ -1099,7 +1099,7 @@ On error:
 | ---------- | ------ | --------------------------------------------- |
 | `hash`     | string | Transaction hash                              |
 | `height`   | int64  | Block height where the tx was included        |
-| `gas_used` | int64  | Gas consumed                                  |
+| `gas_used` | int64  | Gas consumed (omitted when the executor does not report gas) |
 | `code`     | uint32 | Response code (0 = success)                   |
 | `raw_log`  | string | Raw log output (present on error, omitted otherwise) |
 
