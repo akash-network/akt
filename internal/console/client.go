@@ -12,6 +12,8 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	"pkg.akt.dev/akt/internal/actionlog"
 )
 
 // Client interacts with the Akash Console Managed Wallet API.
@@ -19,6 +21,7 @@ type Client struct {
 	baseURL    string
 	apiKey     string
 	httpClient *http.Client
+	actionLog  *actionlog.Logger
 }
 
 // DeploymentResponse represents a deployment returned by the API.
@@ -57,6 +60,39 @@ func New(baseURL, apiKey string) *Client {
 	}
 }
 
+// WithActionLog attaches a per-context action logger; state-changing Console
+// API calls are then recorded as type=console entries (SPEC §5.6). A nil
+// logger disables recording. Returns the client for chaining.
+func (c *Client) WithActionLog(l *actionlog.Logger) *Client {
+	c.actionLog = l
+	return c
+}
+
+// record writes a console action entry. Best-effort: logging failures never
+// affect the API call result.
+func (c *Client) record(action, dseq string, opErr error) {
+	if c.actionLog == nil {
+		return
+	}
+
+	entry := actionlog.Entry{
+		Type:   actionlog.TypeConsole,
+		Action: action,
+		Status: "success",
+	}
+
+	if n, err := strconv.ParseUint(dseq, 10, 64); err == nil {
+		entry.DSeq = n
+	}
+
+	if opErr != nil {
+		entry.Status = "failed"
+		entry.Error = opErr.Error()
+	}
+
+	_ = c.actionLog.Log(entry)
+}
+
 // CreateDeployment creates a deployment via managed wallet. Deposit is in USD.
 func (c *Client) CreateDeployment(ctx context.Context, sdl string, depositUSD float64) (*DeploymentResponse, error) {
 	body := map[string]any{
@@ -66,8 +102,11 @@ func (c *Client) CreateDeployment(ctx context.Context, sdl string, depositUSD fl
 
 	var resp DeploymentResponse
 	if err := c.doJSON(ctx, http.MethodPost, "/v1/deployments", body, &resp); err != nil {
+		c.record("create-deployment", "", err)
 		return nil, err
 	}
+
+	c.record("create-deployment", resp.DSeq, nil)
 
 	return &resp, nil
 }
@@ -101,7 +140,9 @@ func (c *Client) UpdateDeployment(ctx context.Context, dseq, sdl string) (*Deplo
 	}
 
 	var resp DeploymentResponse
-	if err := c.doJSON(ctx, http.MethodPut, "/v1/deployments/"+url.PathEscape(dseq), body, &resp); err != nil {
+	err := c.doJSON(ctx, http.MethodPut, "/v1/deployments/"+url.PathEscape(dseq), body, &resp)
+	c.record("update-deployment", dseq, err)
+	if err != nil {
 		return nil, err
 	}
 
@@ -110,7 +151,10 @@ func (c *Client) UpdateDeployment(ctx context.Context, dseq, sdl string) (*Deplo
 
 // CloseDeployment closes a deployment.
 func (c *Client) CloseDeployment(ctx context.Context, dseq string) error {
-	return c.doJSON(ctx, http.MethodDelete, "/v1/deployments/"+url.PathEscape(dseq), nil, nil)
+	err := c.doJSON(ctx, http.MethodDelete, "/v1/deployments/"+url.PathEscape(dseq), nil, nil)
+	c.record("close-deployment", dseq, err)
+
+	return err
 }
 
 // FetchBids fetches bids for a deployment.
@@ -132,8 +176,15 @@ func (c *Client) CreateLease(ctx context.Context, manifest string, leases []Leas
 		"leases":   leases,
 	}
 
+	leaseDSeq := ""
+	if len(leases) > 0 {
+		leaseDSeq = leases[0].DSeq
+	}
+
 	var resp DeploymentResponse
-	if err := c.doJSON(ctx, http.MethodPost, "/v1/leases", body, &resp); err != nil {
+	err := c.doJSON(ctx, http.MethodPost, "/v1/leases", body, &resp)
+	c.record("create-lease", leaseDSeq, err)
+	if err != nil {
 		return nil, err
 	}
 
@@ -147,7 +198,10 @@ func (c *Client) Deposit(ctx context.Context, dseq string, amountUSD float64) er
 		"amount": amountUSD,
 	}
 
-	return c.doJSON(ctx, http.MethodPost, "/v1/deposit-deployment", body, nil)
+	err := c.doJSON(ctx, http.MethodPost, "/v1/deposit-deployment", body, nil)
+	c.record("deposit", dseq, err)
+
+	return err
 }
 
 const maxRetries = 3

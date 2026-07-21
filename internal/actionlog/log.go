@@ -25,6 +25,7 @@ const (
 	TypeWorkflow ActionType = "workflow"
 	TypeProvider ActionType = "provider"
 	TypeContext  ActionType = "context"
+	TypeConsole  ActionType = "console"
 	TypeError    ActionType = "error"
 )
 

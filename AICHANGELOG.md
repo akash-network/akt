@@ -10,6 +10,8 @@
 
 ### Added
 
+- **Console API mutations recorded in the action log (AKT-211)**: New `console` action type (SPEC §5.2/§5.6 amended). The Console client's state-changing calls (create/update/close deployment, create lease, deposit) record `type=console` entries with operation, dseq, and success/failure via an optional `WithActionLog` hook — read-only Console queries are not recorded. 2 tests.
+
 - **Workflow step action-log adapter (AKT-211)**: New `workflow.ActionLogAdapter` implements the engine's `Logger` hook, writing one `type=workflow` entry per completed step (workflow name, run ID, step index/name, status, error, tx hash/height) per SPEC §5.6. The engine already invoked `Logger.LogStep` after every step; this provides the previously missing implementation. Wired into workflow execution when the engine is constructed. 2 tests.
 
 - **Provider gateway operations recorded in the action log (AKT-211)**: The state-changing provider commands (`send-manifest`, `migrate-hostnames`, `migrate-endpoints`, `lease-shell`) now write `type=provider` entries per SPEC §5.6 with the operation name, provider address, dseq, and success/failure status. Read-only provider queries (status, lease-status, lease-logs, lease-events, get-manifest) are not recorded, consistent with the action log's mutating-actions scope. New helper `recordProviderAction` in `internal/cli/provider/actionlog.go` + 2 tests.

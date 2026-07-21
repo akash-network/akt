@@ -2373,6 +2373,7 @@ Each context has its own action log at:
 | `workflow` | A multi-step workflow (e.g., `akt deploy`) | Workflow name, step sequence, each step's type and result             |
 | `provider` | A provider gateway operation               | Operation (send-manifest, lease-logs, etc.), provider address, result |
 | `context`  | A context management operation             | Operation (switch, edit, etc.), old/new values                        |
+| `console`  | A state-changing Console API operation     | Operation (create-deployment, close-deployment, etc.), dseq, result   |
 | `error`    | A failed operation                         | Original action type, error message, context                          |
 
 ### 5.3 Action Entry Format
@@ -2462,6 +2463,7 @@ The action log records entries for the following command categories:
 | Workflow commands (`deploy`, `update`, `close`) | Always | `workflow` | One entry per workflow step. Each entry includes the step name, result, and workflow run ID. |
 | `provider *` (state-changing: `send-manifest`, `migrate-hostnames`, `migrate-endpoints`, `lease-shell`) | Always | `provider` | After the provider gateway operation completes (success or failure). Read-only provider queries (`status`, `lease-status`, `lease-logs`, `lease-events`, `get-manifest`) are not recorded. |
 | `context *` | Always | `context` | After context management operation (switch, edit, create, delete). |
+| Console API state changes (create/update/close deployment, create lease, deposit) | Always | `console` | After the Console API call completes (success or failure). Read-only Console queries are not recorded. |
 | All commands | On failure | `error` | When any command fails. Includes original action type and error message. |
 | `query` (read-only, no side effects) | When `-v` is set | `query` | Verbose mode logs all queries for debugging. In default mode, only queries from interactive commands (not internal queries by the sync engine) are logged. |
 
