@@ -10,6 +10,8 @@
 
 ### Added
 
+- **Workflow step action-log adapter (AKT-211)**: New `workflow.ActionLogAdapter` implements the engine's `Logger` hook, writing one `type=workflow` entry per completed step (workflow name, run ID, step index/name, status, error, tx hash/height) per SPEC §5.6. The engine already invoked `Logger.LogStep` after every step; this provides the previously missing implementation. Wired into workflow execution when the engine is constructed. 2 tests.
+
 - **Provider gateway operations recorded in the action log (AKT-211)**: The state-changing provider commands (`send-manifest`, `migrate-hostnames`, `migrate-endpoints`, `lease-shell`) now write `type=provider` entries per SPEC §5.6 with the operation name, provider address, dseq, and success/failure status. Read-only provider queries (status, lease-status, lease-logs, lease-events, get-manifest) are not recorded, consistent with the action log's mutating-actions scope. New helper `recordProviderAction` in `internal/cli/provider/actionlog.go` + 2 tests.
 
 - **Chain transactions recorded in the action log (AKT-211)**: All `tx *` commands now write `type=tx` entries per SPEC §5.6 through a single choke point — `TxPersistentPreRunE` wraps the discovered chain client in a logging decorator (`internal/cli/chain/actionlog.go`) whose `Tx()` intercepts `BroadcastMsgs`/`BroadcastTx`. Entries record the compact msg type (e.g. `deployment.MsgCloseDeployment`), tx hash, height, gas used, result code, signer account, and — for well-known Akash messages — dseq/gseq/oseq/provider. Failures record `status=failed` with the error; generate-only/simulate/offline runs are not logged. 4 new tests.
