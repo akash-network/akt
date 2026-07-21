@@ -10,7 +10,7 @@ params:
   deposit:
     type: string
     default: "auto"
-    description: Initial deposit amount (auto = chain minimum or SDL-specified)
+    description: Initial deposit amount (auto = chain minimum or SDL-specified; USD amount for console-api contexts)
   bid-timeout:
     type: duration
     default: "5m"
@@ -42,22 +42,26 @@ steps:
   - name: select-bid
     type: prompt
     mode: "{{ index .Params \"bid-select\" }}"
-    data: "{{ (index .Steps \"wait-for-bids\").bids }}"
+    data: "{{ toJson (index .Steps \"wait-for-bids\").bids }}"
     display:
-      columns: [provider, price, audited]
+      columns: [provider, price]
+    on-error: abort
 
   - name: create-lease
     type: tx
     msg: market.MsgCreateLease
     params:
-      bid-id: "{{ (index .Steps \"select-bid\").bid.id }}"
+      dseq: "{{ (index .Steps \"create-deployment\").dseq }}"
+      gseq: "{{ (index .Steps \"select-bid\").gseq }}"
+      oseq: "{{ (index .Steps \"select-bid\").oseq }}"
+      provider: "{{ (index .Steps \"select-bid\").provider }}"
     on-error: abort
 
   - name: send-manifest
     type: provider
     action: send-manifest
     params:
-      provider: "{{ (index .Steps \"select-bid\").bid.provider }}"
+      provider: "{{ (index .Steps \"select-bid\").provider }}"
       dseq: "{{ (index .Steps \"create-deployment\").dseq }}"
       sdl: "{{ index .Params \"sdl-file\" }}"
     retry:

@@ -1141,32 +1141,14 @@ steps:
       dseq: "{{ .Params.dseq }}"
     on-error: abort
 
-  - name: send-manifests
-    type: foreach
-    query: market.leases
-    params:
-      owner: "{{ .Account }}"
-      dseq: "{{ .Params.dseq }}"
-      state: active
-    as: lease
-    step:
-      type: provider
-      action: send-manifest
-      params:
-        provider: "{{ .Item.lease.id.provider }}"
-        dseq: "{{ .Params.dseq }}"
-        sdl: "{{ index .Params \"sdl-file\" }}"
-      retry:
-        max: 3
-        delay: "5s"
-    on-error: continue
-
   - name: display-result
     type: output
     template: |
       Deployment updated!
         DSEQ: {{ .Params.dseq }}
 ```
+
+Manifest re-send to providers with active leases (a `foreach` over `market.leases` running `provider`/`send-manifest` sub-steps) is planned for when the engine gains the `foreach` step type; until then, keyring users re-send manifests with `akt provider send-manifest` after an update, and console-api contexts get manifest handling from the Console API automatically.
 
 **Close workflow definition:**
 

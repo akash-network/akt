@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **Builtin deploy workflow glue could never round-trip (AKT-647)**: Step outputs rendered through Go templates with `fmt` map syntax, so the select-bid prompt step couldn't parse the wait step's bids and `create-lease` referenced a nonexistent `.bid.id`. Added a `toJson` template function, made the prompt executor emit the selected bid's identity as discrete outputs (`provider`/`dseq`/`gseq`/`oseq`/`price`, numbers as decimal strings) with genuine cheapest-price selection, gave the output step an injectable writer (JSONL mode must own stdout), and rewrote deploy.yaml's select-bid/create-lease/send-manifest params accordingly. SPEC §2.3.9's update example dropped the unimplemented `foreach` step with a note.
+
 - **Action log Read choked on entries larger than 1 MB (AKT-211)**: `readLogFile`'s scanner buffer capped lines at 1 MB, so an entry with large params (e.g. SDL contents) that `Log` happily wrote could never be read back ("token too long"). The buffer now allows lines up to the 10 MB rotation threshold. Added `TestLogRotation` covering rotation at the size threshold plus newest-first reads spanning rotated files — a gap TASKS.md T008 claimed was covered but wasn't.
 
 - **Action logger never closed (AKT-211)**: The per-context action logger is opened in the root command's `PersistentPreRunE` but was never closed, diverging from SPEC §5.6. Added a root `PersistentPostRunE` that closes the logger retrieved via `cliutil.ActionLogFromContext`.
