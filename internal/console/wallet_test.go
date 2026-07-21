@@ -1,0 +1,116 @@
+package console_test
+
+import (
+	"context"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"pkg.akt.dev/akt/internal/console"
+)
+
+func TestGetUser(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodGet, r.Method)
+		assert.Equal(t, "/v1/user/me", r.URL.Path)
+
+		_, _ = w.Write([]byte(`{"data":{"id":"uuid-internal","userId":"auth0|abc","username":"alice","email":"a@example.com","emailVerified":true}}`))
+	}))
+	defer srv.Close()
+
+	c := console.New(srv.URL, "test-key")
+	u, err := c.GetUser(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "uuid-internal", u.ID)
+	assert.Equal(t, "auth0|abc", u.UserID)
+	assert.True(t, u.EmailVerified)
+}
+
+func TestListWallets(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/wallets", r.URL.Path)
+		assert.Equal(t, "uuid-internal", r.URL.Query().Get("userId"))
+
+		_, _ = w.Write([]byte(`{"data":[{"address":"akash1abc","creditAmount":25.5,"isTrialing":true,"denom":"usdc"}]}`))
+	}))
+	defer srv.Close()
+
+	c := console.New(srv.URL, "test-key")
+	ws, err := c.ListWallets(context.Background(), "uuid-internal")
+	require.NoError(t, err)
+	require.Len(t, ws, 1)
+	assert.Equal(t, "akash1abc", ws[0].Address)
+	assert.InDelta(t, 25.5, ws[0].CreditAmount, 0.001)
+	assert.True(t, ws[0].IsTrialing)
+}
+
+func TestWalletSettingsRoundTrip(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/wallet-settings", r.URL.Path)
+
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"data":{"autoReloadEnabled":false}}`))
+
+		case http.MethodPut:
+			data := decodeDataBody(t, r)
+			assert.Equal(t, true, data["autoReloadEnabled"])
+			_, _ = w.Write([]byte(`{"data":{"autoReloadEnabled":true}}`))
+
+		default:
+			t.Errorf("unexpected method %s", r.Method)
+		}
+	}))
+	defer srv.Close()
+
+	c := console.New(srv.URL, "test-key")
+
+	s, err := c.GetWalletSettings(context.Background())
+	require.NoError(t, err)
+	assert.False(t, s.AutoReloadEnabled)
+
+	s, err = c.UpdateWalletSettings(context.Background(), true)
+	require.NoError(t, err)
+	assert.True(t, s.AutoReloadEnabled)
+}
+
+func TestGetWeeklyCost(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/weekly-cost", r.URL.Path)
+		_, _ = w.Write([]byte(`{"data":{"weeklyCost":13.37}}`))
+	}))
+	defer srv.Close()
+
+	c := console.New(srv.URL, "test-key")
+	cost, err := c.GetWeeklyCost(context.Background())
+	require.NoError(t, err)
+	assert.InDelta(t, 13.37, cost, 0.001)
+}
+
+func TestGetUsageHistoryTopLevelArray(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/usage/history", r.URL.Path)
+		q := r.URL.Query()
+		assert.Equal(t, "akash1abc", q.Get("address"))
+		assert.Equal(t, "2026-07-01", q.Get("startDate"))
+		assert.Equal(t, "2026-07-21", q.Get("endDate"))
+
+		// Top-level array, NOT data-enveloped.
+		_, _ = w.Write([]byte(`[
+			{"date":"2026-07-01","activeDeployments":2,"dailyUsdcSpent":1.25,"totalUsdcSpent":10.0},
+			{"date":"2026-07-02","activeDeployments":3,"dailyUsdcSpent":2.5,"totalUsdcSpent":12.5}
+		]`))
+	}))
+	defer srv.Close()
+
+	c := console.New(srv.URL, "test-key")
+	points, err := c.GetUsageHistory(context.Background(), "akash1abc", "2026-07-01", "2026-07-21")
+	require.NoError(t, err)
+	require.Len(t, points, 2)
+	assert.Equal(t, "2026-07-01", points[0].Date)
+	assert.Equal(t, 3, points[1].ActiveDeployments)
+	assert.InDelta(t, 12.5, points[1].TotalUsdcSpent, 0.001)
+}

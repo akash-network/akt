@@ -1,22 +1,64 @@
-// Package console provides an HTTP client for the Akash Console Managed
-// Wallet API at https://console-api.akash.network.
+// Package console provides an HTTP client for the Akash Console API at
+// https://console-api.akash.network (managed wallets, deployments, and the
+// public marketplace/catalog endpoints).
+//
+// Authenticated endpoints require an API key sent via the x-api-key header.
+// Public endpoints work without a key; the key is still sent when configured.
+//
+// Wire conventions: most write bodies are wrapped in a {"data": ...} envelope
+// and most responses arrive as {"data": ...}. Exceptions (top-level arrays or
+// objects) are noted on the individual methods.
 package console
 
 import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"strconv"
 	"time"
 
 	"pkg.akt.dev/akt/internal/actionlog"
 )
 
-// Client interacts with the Akash Console Managed Wallet API.
+// DefaultBaseURL is the production Console API endpoint.
+const DefaultBaseURL = "https://console-api.akash.network"
+
+// Sentinel errors returned by the client. Match with errors.Is.
+var (
+	// ErrUnauthorized indicates the API key is missing, invalid, or expired
+	// (HTTP 401).
+	ErrUnauthorized = errors.New("console: invalid or expired API key")
+
+	// ErrInsufficientFunds indicates the managed wallet cannot cover the
+	// operation (HTTP 402).
+	ErrInsufficientFunds = errors.New("console: insufficient funds")
+
+	// ErrNotFound indicates the requested resource does not exist (HTTP 404).
+	ErrNotFound = errors.New("console: resource not found")
+
+	// ErrAlreadyClosed is returned by CloseDeployment when the deployment is
+	// already closed (the API answers 404 or 400). Callers that want
+	// idempotent close semantics should treat it as success:
+	//
+	//	if err := c.CloseDeployment(ctx, dseq); err != nil && !errors.Is(err, console.ErrAlreadyClosed) { ... }
+	ErrAlreadyClosed = errors.New("console: deployment already closed")
+)
+
+// HTTPError is returned for non-2xx statuses that have no dedicated mapping.
+type HTTPError struct {
+	StatusCode int
+	Body       string
+}
+
+func (e *HTTPError) Error() string {
+	return fmt.Sprintf("console: unexpected status %d: %s", e.StatusCode, e.Body)
+}
+
+// Client interacts with the Akash Console API.
 type Client struct {
 	baseURL    string
 	apiKey     string
@@ -24,33 +66,13 @@ type Client struct {
 	actionLog  *actionlog.Logger
 }
 
-// DeploymentResponse represents a deployment returned by the API.
-type DeploymentResponse struct {
-	DSeq     string `json:"dseq"`
-	Manifest string `json:"manifest,omitempty"`
-}
-
-// DeploymentListResponse wraps a paginated list of deployments.
-type DeploymentListResponse struct {
-	Data []DeploymentResponse `json:"data"`
-}
-
-// BidResponse represents a bid from a provider.
-type BidResponse struct {
-	Provider string  `json:"provider"`
-	Price    float64 `json:"price"`
-}
-
-// LeaseRequest identifies a specific bid to accept.
-type LeaseRequest struct {
-	DSeq     string `json:"dseq"`
-	GSeq     uint32 `json:"gseq"`
-	OSeq     uint32 `json:"oseq"`
-	Provider string `json:"provider"`
-}
-
-// New creates a Console API client.
+// New creates a Console API client. An empty baseURL selects DefaultBaseURL.
+// The apiKey may be empty when only public endpoints are used.
 func New(baseURL, apiKey string) *Client {
+	if baseURL == "" {
+		baseURL = DefaultBaseURL
+	}
+
 	return &Client{
 		baseURL: baseURL,
 		apiKey:  apiKey,
@@ -93,136 +115,55 @@ func (c *Client) record(action, dseq string, opErr error) {
 	_ = c.actionLog.Log(entry)
 }
 
-// CreateDeployment creates a deployment via managed wallet. Deposit is in USD.
-func (c *Client) CreateDeployment(ctx context.Context, sdl string, depositUSD float64) (*DeploymentResponse, error) {
-	body := map[string]any{
-		"sdl":     sdl,
-		"deposit": depositUSD,
-	}
-
-	var resp DeploymentResponse
-	if err := c.doJSON(ctx, http.MethodPost, "/v1/deployments", body, &resp); err != nil {
-		c.record("create-deployment", "", err)
-		return nil, err
-	}
-
-	c.record("create-deployment", resp.DSeq, nil)
-
-	return &resp, nil
+// envelope wraps a request payload in the {"data": ...} envelope used by most
+// Console API write endpoints.
+func envelope(v any) any {
+	return map[string]any{"data": v}
 }
 
-// ListDeployments lists deployments with pagination.
-func (c *Client) ListDeployments(ctx context.Context, skip, limit int) (*DeploymentListResponse, error) {
-	path := fmt.Sprintf("/v1/deployments?skip=%d&limit=%d", skip, limit)
-
-	var resp DeploymentListResponse
-	if err := c.doJSON(ctx, http.MethodGet, path, nil, &resp); err != nil {
-		return nil, err
+// doData executes a request whose response body is a {"data": X} envelope and
+// unmarshals X into result. A nil result discards the payload.
+func (c *Client) doData(ctx context.Context, method, path string, reqBody, result any) error {
+	var env struct {
+		Data json.RawMessage `json:"data"`
 	}
 
-	return &resp, nil
-}
-
-// GetDeployment gets a single deployment.
-func (c *Client) GetDeployment(ctx context.Context, dseq string) (*DeploymentResponse, error) {
-	var resp DeploymentResponse
-	if err := c.doJSON(ctx, http.MethodGet, "/v1/deployments/"+url.PathEscape(dseq), nil, &resp); err != nil {
-		return nil, err
+	if err := c.doJSON(ctx, method, path, reqBody, &env); err != nil {
+		return err
 	}
 
-	return &resp, nil
-}
-
-// UpdateDeployment updates a deployment's SDL.
-func (c *Client) UpdateDeployment(ctx context.Context, dseq, sdl string) (*DeploymentResponse, error) {
-	body := map[string]any{
-		"sdl": sdl,
+	if result == nil || len(env.Data) == 0 {
+		return nil
 	}
 
-	var resp DeploymentResponse
-	err := c.doJSON(ctx, http.MethodPut, "/v1/deployments/"+url.PathEscape(dseq), body, &resp)
-	c.record("update-deployment", dseq, err)
-	if err != nil {
-		return nil, err
+	if err := json.Unmarshal(env.Data, result); err != nil {
+		return fmt.Errorf("console: decode data envelope for %s %s: %w", method, path, err)
 	}
 
-	return &resp, nil
-}
-
-// CloseDeployment closes a deployment.
-func (c *Client) CloseDeployment(ctx context.Context, dseq string) error {
-	err := c.doJSON(ctx, http.MethodDelete, "/v1/deployments/"+url.PathEscape(dseq), nil, nil)
-	c.record("close-deployment", dseq, err)
-
-	return err
-}
-
-// FetchBids fetches bids for a deployment.
-func (c *Client) FetchBids(ctx context.Context, dseq string) ([]BidResponse, error) {
-	path := "/v1/bids?dseq=" + url.QueryEscape(dseq)
-
-	var resp []BidResponse
-	if err := c.doJSON(ctx, http.MethodGet, path, nil, &resp); err != nil {
-		return nil, err
-	}
-
-	return resp, nil
-}
-
-// CreateLease creates a lease from bids.
-func (c *Client) CreateLease(ctx context.Context, manifest string, leases []LeaseRequest) (*DeploymentResponse, error) {
-	body := map[string]any{
-		"manifest": manifest,
-		"leases":   leases,
-	}
-
-	leaseDSeq := ""
-	if len(leases) > 0 {
-		leaseDSeq = leases[0].DSeq
-	}
-
-	var resp DeploymentResponse
-	err := c.doJSON(ctx, http.MethodPost, "/v1/leases", body, &resp)
-	c.record("create-lease", leaseDSeq, err)
-	if err != nil {
-		return nil, err
-	}
-
-	return &resp, nil
-}
-
-// Deposit adds funds to a deployment. Amount is in USD.
-func (c *Client) Deposit(ctx context.Context, dseq string, amountUSD float64) error {
-	body := map[string]any{
-		"dseq":   dseq,
-		"amount": amountUSD,
-	}
-
-	err := c.doJSON(ctx, http.MethodPost, "/v1/deposit-deployment", body, nil)
-	c.record("deposit", dseq, err)
-
-	return err
+	return nil
 }
 
 const maxRetries = 3
 
-// doJSON executes an HTTP request with JSON encoding, error mapping, and retry.
-func (c *Client) doJSON(ctx context.Context, method, path string, reqBody any, result any) error {
-	var bodyReader io.Reader
+// doJSON executes an HTTP request with JSON encoding, error mapping, and
+// retry with backoff on 429/5xx (up to maxRetries attempts). The response
+// body is unmarshaled into result as-is (no envelope handling); a nil result
+// discards the body.
+func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, result any) error {
+	var payload []byte
 	if reqBody != nil {
 		data, err := json.Marshal(reqBody)
 		if err != nil {
 			return fmt.Errorf("console: marshal request: %w", err)
 		}
-		bodyReader = bytes.NewReader(data)
+		payload = data
 	}
 
 	var lastErr error
 	for attempt := range maxRetries {
-		// Reset body reader for retries.
-		if reqBody != nil {
-			data, _ := json.Marshal(reqBody) // already validated above
-			bodyReader = bytes.NewReader(data)
+		var bodyReader io.Reader
+		if payload != nil {
+			bodyReader = bytes.NewReader(payload)
 		}
 
 		req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bodyReader)
@@ -230,8 +171,10 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody any, r
 			return fmt.Errorf("console: create request: %w", err)
 		}
 
-		req.Header.Set("x-api-key", c.apiKey)
-		if reqBody != nil {
+		if c.apiKey != "" {
+			req.Header.Set("x-api-key", c.apiKey)
+		}
+		if payload != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
 
@@ -256,22 +199,22 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody any, r
 			return nil
 
 		case resp.StatusCode == http.StatusUnauthorized:
-			return fmt.Errorf("console: invalid or expired API key (HTTP 401)")
+			return fmt.Errorf("%w (HTTP 401)", ErrUnauthorized)
 
 		case resp.StatusCode == http.StatusPaymentRequired:
-			return fmt.Errorf("console: insufficient funds (HTTP 402)")
+			return fmt.Errorf("%w (HTTP 402)", ErrInsufficientFunds)
 
 		case resp.StatusCode == http.StatusNotFound:
-			return fmt.Errorf("console: deployment not found (HTTP 404)")
+			return fmt.Errorf("%w (HTTP 404): %s %s", ErrNotFound, method, path)
 
 		case resp.StatusCode == http.StatusTooManyRequests:
 			lastErr = fmt.Errorf("console: rate limited (HTTP 429)")
 
 		case resp.StatusCode >= 500:
-			lastErr = fmt.Errorf("console: server error (HTTP %s)", strconv.Itoa(resp.StatusCode))
+			lastErr = fmt.Errorf("console: server error (HTTP %d)", resp.StatusCode)
 
 		default:
-			return fmt.Errorf("console: unexpected status %d: %s", resp.StatusCode, string(respBody))
+			return &HTTPError{StatusCode: resp.StatusCode, Body: string(respBody)}
 		}
 
 		// Backoff before retry for 429 and 5xx.
