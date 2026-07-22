@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- **Block query commands ignored the context RPC endpoint**: `akt query block/blocks/block-results` used the SDK's `GetClientQueryContext`, which falls back to the `--node` default `tcp://localhost:26657`, instead of the package-local resolver that builds the RPC client from the active context's network. All three now resolve the context endpoint like module queries; the localnet e2e block test dropped its `--node` workaround.
+
+- **Default `--gas auto` broadcast transactions with gasWanted=0**: `ClientOptionsFromFlags` only forwarded the gas setting when the flag was explicitly changed, so the default `auto` never reached the tx factory — no simulation, gasWanted 0, and every real send failed CheckTx with out-of-gas. The gas flag is now always parsed and applied (`auto` → simulate); invalid values are rejected instead of silently ignored. Verified end-to-end on the localnet with a default-gas `tx bank send`. 3 new tests.
+
+- **Failed broadcasts exited 0**: a CheckTx result with a non-zero code was printed as if successful and the CLI exited 0. The tx-client wrapper (now applied unconditionally, with or without an action logger) converts a non-zero result code into an error carrying the code, codespace, tx hash, and raw log, so failed transactions exit non-zero. Generate-only/simulate/offline runs are unaffected. 3 new tests.
+
 - **Builtin deploy workflow glue could never round-trip (AKT-647)**: Step outputs rendered through Go templates with `fmt` map syntax, so the select-bid prompt step couldn't parse the wait step's bids and `create-lease` referenced a nonexistent `.bid.id`. Added a `toJson` template function, made the prompt executor emit the selected bid's identity as discrete outputs (`provider`/`dseq`/`gseq`/`oseq`/`price`, numbers as decimal strings) with genuine cheapest-price selection, gave the output step an injectable writer (JSONL mode must own stdout), and rewrote deploy.yaml's select-bid/create-lease/send-manifest params accordingly. SPEC §2.3.9's update example dropped the unimplemented `foreach` step with a note.
 
 - **Action log Read choked on entries larger than 1 MB (AKT-211)**: `readLogFile`'s scanner buffer capped lines at 1 MB, so an entry with large params (e.g. SDL contents) that `Log` happily wrote could never be read back ("token too long"). The buffer now allows lines up to the 10 MB rotation threshold. Added `TestLogRotation` covering rotation at the size threshold plus newest-first reads spanning rotated files — a gap TASKS.md T008 claimed was covered but wasn't.

@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 
@@ -19,15 +20,12 @@ import (
 )
 
 // withActionLog wraps a chain client so every broadcast is recorded in the
-// action log carried by ctx (SPEC §5.6). Returns cl unchanged when no logger
-// is present.
+// action log carried by ctx (SPEC §5.6) and so a broadcast whose CheckTx
+// result carries a non-zero code surfaces as an error (non-zero exit)
+// instead of being silently printed as success. The wrapper is applied
+// unconditionally; a missing logger only disables recording.
 func withActionLog(ctx context.Context, cl aclient.Client) aclient.Client {
-	l := cliutil.ActionLogFromContext(ctx)
-	if l == nil {
-		return cl
-	}
-
-	return &loggingClient{Client: cl, log: l}
+	return &loggingClient{Client: cl, log: cliutil.ActionLogFromContext(ctx)}
 }
 
 type loggingClient struct {
@@ -53,14 +51,34 @@ func (t *loggingTxClient) BroadcastMsgs(ctx context.Context, msgs []sdk.Msg, opt
 	resp, err := t.tx.BroadcastMsgs(ctx, msgs, opts...)
 	t.record(msgs, resp, err)
 
-	return resp, err
+	return resp, t.failedTxError(resp, err)
 }
 
 func (t *loggingTxClient) BroadcastTx(ctx context.Context, tx sdk.Tx, opts ...cv1beta3.BroadcastOption) (interface{}, error) {
 	resp, err := t.tx.BroadcastTx(ctx, tx, opts...)
 	t.record(tx.GetMsgs(), resp, err)
 
-	return resp, err
+	return resp, t.failedTxError(resp, err)
+}
+
+// failedTxError converts a broadcast whose result carries a non-zero code
+// into an error so the CLI exits non-zero on failed transactions. The
+// response is still returned to the caller alongside the error.
+func (t *loggingTxClient) failedTxError(resp interface{}, err error) error {
+	if err != nil {
+		return err
+	}
+
+	if t.cctx.GenerateOnly || t.cctx.Simulate || t.cctx.Offline {
+		return nil
+	}
+
+	if r, ok := resp.(*sdk.TxResponse); ok && r != nil && r.Code != 0 {
+		return fmt.Errorf("transaction failed: code %d (codespace %s), tx hash %s: %s",
+			r.Code, r.Codespace, r.TxHash, r.RawLog)
+	}
+
+	return nil
 }
 
 // record writes a tx entry for a broadcast. Nothing is recorded when the

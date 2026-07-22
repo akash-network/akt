@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
@@ -146,6 +147,67 @@ func TestLoggingTxClientSkipsGenerateOnly(t *testing.T) {
 	}
 	if len(entries) != 0 {
 		t.Fatalf("generate-only broadcast must not be logged, got %d entries", len(entries))
+	}
+}
+
+func TestBroadcastNonZeroCodeReturnsError(t *testing.T) {
+	l := newTestActionLogger(t)
+
+	tx := &loggingTxClient{
+		tx: &fakeTxClient{resp: &sdk.TxResponse{
+			TxHash:    "FAIL123",
+			Code:      11,
+			Codespace: "sdk",
+			RawLog:    "out of gas",
+		}},
+		log: l,
+	}
+
+	msg := &dv1beta.MsgCloseDeployment{ID: dv1.DeploymentID{DSeq: 1}}
+	resp, err := tx.BroadcastMsgs(context.Background(), []sdk.Msg{msg})
+	if err == nil {
+		t.Fatal("non-zero code must surface as an error")
+	}
+	if resp == nil {
+		t.Error("response must still be returned alongside the error")
+	}
+	for _, want := range []string{"code 11", "FAIL123", "out of gas"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q missing %q", err.Error(), want)
+		}
+	}
+
+	entries, readErr := l.Read(actionlog.Filter{})
+	if readErr != nil {
+		t.Fatalf("read: %v", readErr)
+	}
+	if len(entries) != 1 || entries[0].Status != "failed" {
+		t.Errorf("failed broadcast not recorded as failed: %+v", entries)
+	}
+}
+
+func TestBroadcastNonZeroCodeGenerateOnlyNoError(t *testing.T) {
+	tx := &loggingTxClient{
+		tx:   &fakeTxClient{resp: &sdk.TxResponse{Code: 11}},
+		cctx: sdkclient.Context{GenerateOnly: true},
+	}
+
+	msg := &dv1beta.MsgCloseDeployment{ID: dv1.DeploymentID{DSeq: 1}}
+	if _, err := tx.BroadcastMsgs(context.Background(), []sdk.Msg{msg}); err != nil {
+		t.Fatalf("generate-only must not convert codes to errors: %v", err)
+	}
+}
+
+func TestWithActionLogWrapsWithoutLogger(t *testing.T) {
+	// The wrapper must apply even without a logger so failed broadcasts
+	// exit non-zero regardless of action log availability.
+	tx := &loggingTxClient{
+		tx: &fakeTxClient{resp: &sdk.TxResponse{Code: 5, RawLog: "boom"}},
+	}
+
+	msg := &dv1beta.MsgCloseDeployment{ID: dv1.DeploymentID{DSeq: 1}}
+	if _, err := tx.BroadcastMsgs(context.Background(), []sdk.Msg{msg}); err == nil {
+		t.Fatal("expected error without logger present")
 	}
 }
 
