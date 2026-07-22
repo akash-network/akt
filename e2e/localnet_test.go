@@ -269,10 +269,10 @@ func TestLocalnet(t *testing.T) {
 		mustRunAkt(t, home, "context", "keys", "add", "recipient", "--no-backup")
 		recipient := strings.TrimSpace(stripANSI(mustRunAkt(t, home, "context", "keys", "show", "recipient", "-a")))
 
-		// Explicit gas/fees: keep the send independent of gas simulation.
+		// Default gas (auto): exercises gas simulation end to end.
 		stdout, stderr, exitCode := runAkt(t, home,
 			"tx", "bank", "send", "validator", recipient, "1000000uakt",
-			"--gas", "200000", "--fees", "5000uakt", "--yes")
+			"--fees", "5000uakt", "--yes")
 		if exitCode != 0 {
 			t.Fatalf("tx bank send failed (exit %d)\nstdout: %s\nstderr: %s", exitCode, stdout, stderr)
 		}

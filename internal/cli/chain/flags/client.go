@@ -41,9 +41,16 @@ func ClientOptionsFromFlags(flagSet *pflag.FlagSet) ([]cltypes.ClientOption, err
 		opts = append(opts, cltypes.WithSkipConfirm(skip))
 	}
 
-	if flagSet.Changed(FlagGas) {
+	// The gas setting must be applied even when the flag is left at its
+	// default: "auto" means simulate-and-adjust, and skipping the option
+	// entirely used to broadcast transactions with gasWanted=0, which fail
+	// CheckTx with an out-of-gas error.
+	if flagSet.Lookup(FlagGas) != nil {
 		gasStr, _ := flagSet.GetString(FlagGas)
-		gasSetting, _ := ParseGasSetting(gasStr)
+		gasSetting, err := ParseGasSetting(gasStr)
+		if err != nil {
+			return nil, err
+		}
 		opts = append(opts, cltypes.WithGas(gasSetting))
 	}
 
