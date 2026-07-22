@@ -113,8 +113,27 @@ func Run(cfgRoot string) error {
 		})
 	}
 
+	// Optional Console API key onboarding for the initial context.
+	consoleKey, routeConsole := consoleOnboarding(currentCtx)
+	if routeConsole {
+		for i := range cfg.Contexts {
+			if cfg.Contexts[i].Name == currentCtx {
+				cfg.Contexts[i].AuthMethod = aktctx.AuthMethodConsoleAPI
+			}
+		}
+	}
+
 	if err := aktctx.SaveConfig(cfgRoot, cfg); err != nil {
 		return fmt.Errorf("write config: %w", err)
+	}
+
+	// The credential lives outside config.yaml (SPEC §7.1).
+	if consoleKey != "" {
+		if err := aktctx.SetConsoleAPIKey(cfgRoot, currentCtx, consoleKey); err != nil {
+			return fmt.Errorf("store console api key: %w", err)
+		}
+
+		fmt.Printf("Console API key stored for context %q.\n", currentCtx)
 	}
 
 	fmt.Printf("\nConfig written to %s\n", aktctx.ConfigPath(cfgRoot))
