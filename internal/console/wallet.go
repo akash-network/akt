@@ -2,8 +2,10 @@ package console
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"net/url"
+	"time"
 )
 
 // GetUser fetches the authenticated Console user. The returned User.ID is the
@@ -92,15 +94,30 @@ func (c *Client) GetWeeklyCost(ctx context.Context) (float64, error) {
 }
 
 // GetUsageHistory fetches daily spend history for an address between
-// startDate and endDate (YYYY-MM-DD).
+// startDate and endDate (YYYY-MM-DD). Empty dates are omitted — the API
+// then defaults endDate to today and startDate to 30 days before endDate;
+// sending an empty string fails the API's format=date validation.
 //
 // Wire: GET /v1/usage/history?address=&startDate=&endDate=. NOTE: the
 // response is a TOP-LEVEL array, not data-enveloped.
 func (c *Client) GetUsageHistory(ctx context.Context, address, startDate, endDate string) ([]UsagePoint, error) {
+	for _, d := range []string{startDate, endDate} {
+		if d == "" {
+			continue
+		}
+		if _, err := time.Parse("2006-01-02", d); err != nil {
+			return nil, fmt.Errorf("console: invalid date %q: expected YYYY-MM-DD", d)
+		}
+	}
+
 	q := url.Values{}
 	q.Set("address", address)
-	q.Set("startDate", startDate)
-	q.Set("endDate", endDate)
+	if startDate != "" {
+		q.Set("startDate", startDate)
+	}
+	if endDate != "" {
+		q.Set("endDate", endDate)
+	}
 
 	var out []UsagePoint
 	if err := c.doJSON(ctx, http.MethodGet, "/v1/usage/history?"+q.Encode(), nil, &out); err != nil {

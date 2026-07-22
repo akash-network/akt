@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **`akt console usage` failed with a 400 when `--from`/`--to` were omitted**: `GetUsageHistory` always sent `startDate`/`endDate`, and the API rejects empty strings with a `format=date` validation error. Empty dates are now omitted (the API then defaults endDate to today, startDate to 30 days prior per its OpenAPI contract) and non-empty dates are validated as YYYY-MM-DD client-side before any request. 2 regression tests.
+
 - **Block query commands ignored the context RPC endpoint**: `akt query block/blocks/block-results` used the SDK's `GetClientQueryContext`, which falls back to the `--node` default `tcp://localhost:26657`, instead of the package-local resolver that builds the RPC client from the active context's network. All three now resolve the context endpoint like module queries; the localnet e2e block test dropped its `--node` workaround.
 
 - **Default `--gas auto` broadcast transactions with gasWanted=0**: `ClientOptionsFromFlags` only forwarded the gas setting when the flag was explicitly changed, so the default `auto` never reached the tx factory — no simulation, gasWanted 0, and every real send failed CheckTx with out-of-gas. The gas flag is now always parsed and applied (`auto` → simulate); invalid values are rejected instead of silently ignored. Verified end-to-end on the localnet with a default-gas `tx bank send`. 3 new tests.

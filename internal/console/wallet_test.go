@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -113,4 +114,45 @@ func TestGetUsageHistoryTopLevelArray(t *testing.T) {
 	assert.Equal(t, "2026-07-01", points[0].Date)
 	assert.Equal(t, 3, points[1].ActiveDeployments)
 	assert.InDelta(t, 12.5, points[1].TotalUsdcSpent, 0.001)
+}
+
+func TestGetUsageHistoryOmitsEmptyDates(t *testing.T) {
+	var gotQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery = r.URL.Query()
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+
+	c := console.New(srv.URL, "k")
+
+	if _, err := c.GetUsageHistory(context.Background(), "akash1abc", "", ""); err != nil {
+		t.Fatalf("GetUsageHistory: %v", err)
+	}
+
+	if gotQuery.Get("address") != "akash1abc" {
+		t.Errorf("address missing from query: %v", gotQuery)
+	}
+	// Empty dates must be omitted entirely — the API rejects empty strings
+	// with a format=date validation error and defaults omitted values.
+	if _, present := gotQuery["startDate"]; present {
+		t.Errorf("empty startDate must be omitted, got %v", gotQuery)
+	}
+	if _, present := gotQuery["endDate"]; present {
+		t.Errorf("empty endDate must be omitted, got %v", gotQuery)
+	}
+}
+
+func TestGetUsageHistoryValidatesDateFormat(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("no request should be sent for an invalid date")
+		_, _ = w.Write([]byte(`[]`))
+	}))
+	defer srv.Close()
+
+	c := console.New(srv.URL, "k")
+
+	if _, err := c.GetUsageHistory(context.Background(), "akash1abc", "01/02/2026", ""); err == nil {
+		t.Fatal("expected invalid date format to be rejected client-side")
+	}
 }
