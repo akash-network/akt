@@ -181,7 +181,7 @@ for. Each module documents its respective events under 'xx_events.md'.
 			version.AppName,
 		),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cctx, err := client.GetClientQueryContext(cmd)
+			cctx, err := GetClientQueryContext(cmd)
 			if err != nil {
 				return err
 			}
@@ -223,7 +223,7 @@ $ %s query block --%s=%s <hash>
 			version.AppName, cflags.FlagType, cflags.TypeHash)),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cctx, err := client.GetClientQueryContext(cmd)
+			cctx, err := GetClientQueryContext(cmd)
 			if err != nil {
 				return err
 			}
@@ -308,7 +308,7 @@ func QueryBlockResultsCmd() *cobra.Command {
 		Long:  "Query for a specific committed block's results using the CometBFT RPC `block_results` method",
 		Args:  cobra.RangeArgs(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cctx, err := client.GetClientQueryContext(cmd)
+			cctx, err := GetClientQueryContext(cmd)
 			if err != nil {
 				return err
 			}

@@ -234,13 +234,9 @@ func TestLocalnet(t *testing.T) {
 	home := setupLocalnetHome(t, net)
 
 	t.Run("QueryBlock", func(t *testing.T) {
-		// KNOWN ISSUE: unlike module queries (bank, staking, ...), the
-		// CometBFT passthrough commands (query block / blocks /
-		// block-results in internal/cli/chain/server_util.go) do not
-		// resolve the RPC endpoint from the active akt context — they fall
-		// back to the --node flag default tcp://localhost:26657. Pass
-		// --node explicitly until that is fixed.
-		stdout := mustRunAkt(t, home, "query", "block", "--node", net.RPC)
+		// No --node: the block passthrough commands must resolve the RPC
+		// endpoint from the active context like module queries do.
+		stdout := mustRunAkt(t, home, "query", "block")
 		if !strings.Contains(stdout, net.ChainID) {
 			t.Fatalf("expected query block output to contain chain-id %q, got:\n%s", net.ChainID, stdout)
 		}
