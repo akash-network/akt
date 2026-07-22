@@ -1722,13 +1722,13 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | --------------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | `akt console deployment list`                       | `--skip` (0), `--limit` (20)                   | List deployments with pagination.                                                              |
 | `akt console deployment get <dseq>`                 |                                                | Deployment with leases and escrow account.                                                     |
-| `akt console deployment create <sdl-file>`          | `--deposit <usd>` (required, min 0.5)          | Create a deployment; prints `dseq` + tx hash. The returned manifest is cached at `contexts/<name>/manifests/<dseq>.json` for `lease create`. |
+| `akt console deployment create <sdl-file> [deposit-usd]` | `--deposit <usd>` (alternative to positional; min 0.5) | Create a deployment; prints `dseq` + tx hash. The returned manifest is cached at `contexts/<name>/manifests/<dseq>.json` for `lease create`. |
 | `akt console deployment update <dseq> <sdl-file>`   |                                                | Update the deployment's SDL.                                                                   |
 | `akt console deployment close <dseq>`               |                                                | Close a deployment. Idempotent: an already-closed deployment prints a note and exits 0.        |
-| `akt console deployment deposit <dseq>`             | `--amount <usd>` (required, > 0)               | Add funds to the deployment's escrow.                                                          |
-| `akt console deployment settings <dseq>`            | `--auto-top-up true\|false`                    | Show settings when the flag is absent; set auto-top-up when present.                           |
+| `akt console deployment deposit <dseq> [amount-usd]` | `--amount <usd>` (alternative to positional; > 0) | Add funds to the deployment's escrow.                                                          |
+| `akt console deployment settings <dseq> [true\|false]` | `--auto-top-up true\|false` (alternative)     | Show settings when no value is given; set auto-top-up when a positional or flag value is present. |
 | `akt console bid list <dseq>`                       |                                                | List bids for the deployment's open orders.                                                    |
-| `akt console lease create <dseq>`                   | `--gseq` (1), `--oseq` (1), `--provider` (required), `--manifest <file>` | Accept a bid; the manifest defaults to the one cached by `deployment create`. |
+| `akt console lease create <dseq> [provider]`        | `--gseq` (1), `--oseq` (1), `--provider` (alternative to positional), `--manifest <file>` | Accept a bid; the manifest defaults to the one cached by `deployment create`. |
 
 **Wallet and usage:**
 
@@ -1736,9 +1736,9 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | ----------------------------- | ---------------------------- | ---------------------------------------------------------------- |
 | `akt console wallet list`     |                              | List managed wallets (balances shown as `$X.XX`).                |
 | `akt console wallet balance`  |                              | Available / in-deployment / total balance in USD.                |
-| `akt console wallet settings` | `--auto-reload true\|false`  | Show settings when the flag is absent; set auto-reload when present. |
+| `akt console wallet settings [true\|false]` | `--auto-reload true\|false` (alternative) | Show settings when no value is given; set auto-reload otherwise. |
 | `akt console wallet cost`     |                              | Estimated weekly cost in USD.                                    |
-| `akt console usage`           | `--from`, `--to` (YYYY-MM-DD) | Daily spend history for the account's managed wallet address.   |
+| `akt console usage [from] [to]` | `--from`, `--to` (YYYY-MM-DD, alternatives) | Daily spend history for the managed wallet. Omitted dates use the API defaults (last 30 days). |
 
 **Public catalog** (no API key required):
 
@@ -1758,11 +1758,11 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | Command                          | Flags                                          | Description                                                    |
 | -------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------- |
 | `akt console apikey list`        |                                                | List API keys (secrets are never shown).                         |
-| `akt console apikey create`      | `--name` (required), `--expires-at` (RFC 3339) | Create a key; the secret is printed exactly once with a warning. |
+| `akt console apikey create <name> [expires-at]` | `--name`, `--expires-at` (RFC 3339, alternatives) | Create a key; the secret is printed exactly once with a warning. |
 | `akt console apikey delete <id>` |                                                | Delete a key; a missing key (404) is a no-op.                    |
 | `akt console jwt create`         | `--ttl` (300), `--scope` (csv, default `status,logs,events,shell,send-manifest,get-manifest`) | Mint a short-lived provider-scoped JWT. |
 
-Output is indented JSON; USD values are rendered as `$X.XX`. State-changing calls are recorded in the context's action log as `type=console` entries (§5.6). No command ever prints a Console API key, except the one-time secret from `apikey create`.
+Per the positional-primary convention (§3.8), every console command takes its primary value(s) positionally; the equivalent flags remain as overrides and a positional value wins when both are given. Output is indented JSON; USD values are rendered as `$X.XX`. State-changing calls are recorded in the context's action log as `type=console` entries (§5.6). No command ever prints a Console API key, except the one-time secret from `apikey create`.
 
 ---
 

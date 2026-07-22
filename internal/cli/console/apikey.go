@@ -48,11 +48,15 @@ func apikeyListCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 func apikeyCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "create",
-		Short:   "Create an API key (the secret is shown ONCE)",
-		Args:    cobra.NoArgs,
-		Example: `  akt console apikey create --name ci --expires-at 2027-01-01T00:00:00Z`,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		Use:   "create <name> [expires-at]",
+		Short: "Create an API key (the secret is shown ONCE)",
+		Args:  cobra.MaximumNArgs(2),
+		Example: `  # Name (and optional RFC 3339 expiry) as positional arguments
+  akt console apikey create ci 2027-01-01T00:00:00Z
+
+  # Equivalent flag form
+  akt console apikey create --name ci --expires-at 2027-01-01T00:00:00Z`,
+		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, _, err := clientFromCmd(cmd, mgrFn, true)
 			if err != nil {
 				return err
@@ -60,6 +64,15 @@ func apikeyCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 			name, _ := cmd.Flags().GetString("name")
 			expiresAt, _ := cmd.Flags().GetString("expires-at")
+			if len(args) > 0 {
+				name = args[0]
+			}
+			if len(args) > 1 {
+				expiresAt = args[1]
+			}
+			if name == "" {
+				return fmt.Errorf("name is required: pass it positionally or via --name")
+			}
 
 			created, err := cl.CreateAPIKey(cmd.Context(), name, expiresAt)
 			if err != nil {
@@ -76,9 +89,8 @@ func apikeyCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().String("name", "", "Human-readable key name (required)")
+	cmd.Flags().String("name", "", "Human-readable key name; alternative to the positional argument")
 	cmd.Flags().String("expires-at", "", "Expiry as an RFC 3339 timestamp (empty = no expiry)")
-	_ = cmd.MarkFlagRequired("name")
 
 	return cmd
 }

@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **Console commands violated the positional-primary convention (AKT-650)**: seven `akt console` commands required flags for their primary values. All now take them positionally with flags kept as overrides (positional wins): `usage [from] [to]`, `deployment create <sdl> [deposit-usd]`, `deployment deposit <dseq> [amount-usd]`, `deployment settings <dseq> [true|false]`, `lease create <dseq> [provider]`, `wallet settings [true|false]`, `apikey create <name> [expires-at]`. SPEC §2.9 signatures updated and a convention note added. 2 new command tests.
+
 - **`akt console usage` failed with a 400 when `--from`/`--to` were omitted**: `GetUsageHistory` always sent `startDate`/`endDate`, and the API rejects empty strings with a `format=date` validation error. Empty dates are now omitted (the API then defaults endDate to today, startDate to 30 days prior per its OpenAPI contract) and non-empty dates are validated as YYYY-MM-DD client-side before any request. 2 regression tests.
 
 - **Block query commands ignored the context RPC endpoint**: `akt query block/blocks/block-results` used the SDK's `GetClientQueryContext`, which falls back to the `--node` default `tcp://localhost:26657`, instead of the package-local resolver that builds the RPC client from the active context's network. All three now resolve the context endpoint like module queries; the localnet e2e block test dropped its `--node` workaround.

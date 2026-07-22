@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
 
 	"github.com/spf13/cobra"
 
@@ -88,12 +89,16 @@ func deploymentGetCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 func deploymentCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "create <sdl-file>",
+		Use:   "create <sdl-file> [deposit-usd]",
 		Short: "Create a deployment (managed wallet signs server-side)",
 		Long: "Create a deployment from an SDL file with a USD deposit. The returned manifest " +
 			"is cached per-context so `akt console lease create` can send it without re-passing it.",
-		Args:    cobra.ExactArgs(1),
-		Example: `  akt console deployment create deploy.yaml --deposit 5`,
+		Args: cobra.RangeArgs(1, 2),
+		Example: `  # Deposit as positional argument
+  akt console deployment create deploy.yaml 5
+
+  # Equivalent flag form
+  akt console deployment create deploy.yaml --deposit 5`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, rc, err := clientFromCmd(cmd, mgrFn, true)
 			if err != nil {
@@ -101,8 +106,14 @@ func deploymentCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			}
 
 			deposit, _ := cmd.Flags().GetFloat64("deposit")
+			if len(args) > 1 {
+				deposit, err = strconv.ParseFloat(args[1], 64)
+				if err != nil {
+					return fmt.Errorf("invalid deposit %q: expected a USD amount", args[1])
+				}
+			}
 			if deposit < minDepositUSD {
-				return fmt.Errorf("--deposit must be at least %s (minimum deposit), got %s", formatUSD(minDepositUSD), formatUSD(deposit))
+				return fmt.Errorf("deposit must be at least %s (got %s): pass it positionally or via --deposit", formatUSD(minDepositUSD), formatUSD(deposit))
 			}
 
 			sdl, err := os.ReadFile(args[0])
@@ -140,8 +151,7 @@ func deploymentCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Float64("deposit", 0, "Deposit amount in USD (minimum 0.5)")
-	_ = cmd.MarkFlagRequired("deposit")
+	cmd.Flags().Float64("deposit", 0, "Deposit amount in USD (minimum 0.5); alternative to the positional argument")
 
 	return cmd
 }
@@ -204,10 +214,14 @@ func deploymentCloseCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 func deploymentDepositCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "deposit <dseq>",
-		Short:   "Add funds to a deployment's escrow",
-		Args:    cobra.ExactArgs(1),
-		Example: `  akt console deployment deposit 12345 --amount 10`,
+		Use:   "deposit <dseq> [amount-usd]",
+		Short: "Add funds to a deployment's escrow",
+		Args:  cobra.RangeArgs(1, 2),
+		Example: `  # Amount as positional argument
+  akt console deployment deposit 12345 10
+
+  # Equivalent flag form
+  akt console deployment deposit 12345 --amount 10`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, _, err := clientFromCmd(cmd, mgrFn, true)
 			if err != nil {
@@ -215,8 +229,14 @@ func deploymentDepositCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			}
 
 			amount, _ := cmd.Flags().GetFloat64("amount")
+			if len(args) > 1 {
+				amount, err = strconv.ParseFloat(args[1], 64)
+				if err != nil {
+					return fmt.Errorf("invalid amount %q: expected a USD amount", args[1])
+				}
+			}
 			if amount <= 0 {
-				return fmt.Errorf("--amount must be a positive USD amount, got %s", formatUSD(amount))
+				return fmt.Errorf("amount must be a positive USD amount (got %s): pass it positionally or via --amount", formatUSD(amount))
 			}
 
 			if err := cl.Deposit(cmd.Context(), args[0], amount); err != nil {
@@ -228,32 +248,34 @@ func deploymentDepositCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Float64("amount", 0, "Amount to add in USD")
-	_ = cmd.MarkFlagRequired("amount")
+	cmd.Flags().Float64("amount", 0, "Amount to add in USD; alternative to the positional argument")
 
 	return cmd
 }
 
 func deploymentSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "settings <dseq>",
+		Use:   "settings <dseq> [true|false]",
 		Short: "View or change a deployment's auto-top-up setting",
-		Args:  cobra.ExactArgs(1),
+		Args:  cobra.RangeArgs(1, 2),
 		Example: `  # Show current settings
   akt console deployment settings 12345
 
-  # Enable auto-top-up
-  akt console deployment settings 12345 --auto-top-up true`,
+  # Enable auto-top-up (positional; --auto-top-up works too)
+  akt console deployment settings 12345 true`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, _, err := clientFromCmd(cmd, mgrFn, true)
 			if err != nil {
 				return err
 			}
 
-			if cmd.Flags().Changed("auto-top-up") {
+			if len(args) > 1 || cmd.Flags().Changed("auto-top-up") {
 				value, _ := cmd.Flags().GetString("auto-top-up")
+				if len(args) > 1 {
+					value = args[1]
+				}
 
-				enabled, err := parseBoolValue(value, "--auto-top-up")
+				enabled, err := parseBoolValue(value, "auto-top-up")
 				if err != nil {
 					return err
 				}
@@ -323,12 +345,16 @@ func leaseCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	}
 
 	create := &cobra.Command{
-		Use:   "create <dseq>",
+		Use:   "create <dseq> [provider]",
 		Short: "Accept a bid by creating a lease and sending the manifest",
 		Long: "Accept a bid by creating a lease and sending the deployment manifest to the " +
 			"winning provider. The manifest defaults to the one cached by `deployment create`.",
-		Args:    cobra.ExactArgs(1),
-		Example: `  akt console lease create 12345 --gseq 1 --oseq 1 --provider akash1...`,
+		Args: cobra.RangeArgs(1, 2),
+		Example: `  # Provider as positional argument (gseq/oseq default to 1)
+  akt console lease create 12345 akash1provider...
+
+  # Equivalent flag form
+  akt console lease create 12345 --provider akash1provider... --gseq 1 --oseq 1`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, rc, err := clientFromCmd(cmd, mgrFn, true)
 			if err != nil {
@@ -339,6 +365,12 @@ func leaseCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 			gseq, _ := cmd.Flags().GetUint32("gseq")
 			oseq, _ := cmd.Flags().GetUint32("oseq")
 			provider, _ := cmd.Flags().GetString("provider")
+			if len(args) > 1 {
+				provider = args[1]
+			}
+			if provider == "" {
+				return fmt.Errorf("provider is required: pass it positionally or via --provider")
+			}
 			manifestFile, _ := cmd.Flags().GetString("manifest")
 
 			var manifest string
@@ -376,9 +408,8 @@ func leaseCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 	create.Flags().Uint32("gseq", 1, "Group sequence number")
 	create.Flags().Uint32("oseq", 1, "Order sequence number")
-	create.Flags().String("provider", "", "Provider address (required)")
+	create.Flags().String("provider", "", "Provider address; alternative to the positional argument")
 	create.Flags().String("manifest", "", "Manifest file (defaults to the one cached by `deployment create`)")
-	_ = create.MarkFlagRequired("provider")
 
 	cmd.AddCommand(create)
 

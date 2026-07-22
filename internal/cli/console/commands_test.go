@@ -3,8 +3,10 @@ package console
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"strings"
 	"testing"
@@ -298,5 +300,72 @@ func TestJWTCreatePrintsToken(t *testing.T) {
 
 	if !strings.Contains(out, "tok-abc123") {
 		t.Errorf("jwt create output should contain the token, got %q", out)
+	}
+}
+
+func TestUsagePositionalDates(t *testing.T) {
+	m := newTestManager(t)
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
+		t.Fatalf("SetConsoleAPIKey: %v", err)
+	}
+
+	var usageQuery url.Values
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/user/me":
+			writeJSON(t, w, `{"data":{"id":"u1","username":"joe"}}`)
+		case "/v1/wallets":
+			writeJSON(t, w, `{"data":[{"address":"akash1wallet","creditAmount":1000000}]}`)
+		case "/v1/usage/history":
+			usageQuery = r.URL.Query()
+			writeJSON(t, w, `[]`)
+		default:
+			t.Errorf("unexpected request %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	if _, err := execConsole(t, m, srv.URL, "usage", "2026-01-01", "2026-01-31"); err != nil {
+		t.Fatalf("usage with positional dates: %v", err)
+	}
+
+	if usageQuery.Get("startDate") != "2026-01-01" || usageQuery.Get("endDate") != "2026-01-31" {
+		t.Errorf("positional dates not forwarded: %v", usageQuery)
+	}
+
+	// No dates at all: params must be omitted so the API applies defaults.
+	usageQuery = nil
+	if _, err := execConsole(t, m, srv.URL, "usage"); err != nil {
+		t.Fatalf("usage without dates: %v", err)
+	}
+	if _, present := usageQuery["startDate"]; present {
+		t.Errorf("empty startDate must be omitted, got %v", usageQuery)
+	}
+}
+
+func TestDepositPositionalAmount(t *testing.T) {
+	m := newTestManager(t)
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
+		t.Fatalf("SetConsoleAPIKey: %v", err)
+	}
+
+	var body string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		body = string(b)
+		writeJSON(t, w, `{"data":{}}`)
+	}))
+	defer srv.Close()
+
+	if _, err := execConsole(t, m, srv.URL, "deployment", "deposit", "12345", "10"); err != nil {
+		t.Fatalf("deposit with positional amount: %v", err)
+	}
+	if !strings.Contains(body, `"deposit":10`) || !strings.Contains(body, `"dseq":"12345"`) {
+		t.Errorf("positional amount not sent: %s", body)
+	}
+
+	// Invalid positional amount must fail before any request.
+	if _, err := execConsole(t, m, srv.URL, "deployment", "deposit", "12345", "ten"); err == nil {
+		t.Error("invalid positional amount must be rejected")
 	}
 }

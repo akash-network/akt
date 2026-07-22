@@ -94,24 +94,27 @@ func walletBalanceCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 func walletSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "settings",
+		Use:   "settings [true|false]",
 		Short: "View or change wallet settings",
-		Args:  cobra.NoArgs,
+		Args:  cobra.MaximumNArgs(1),
 		Example: `  # Show current settings
   akt console wallet settings
 
-  # Enable automatic top-up
-  akt console wallet settings --auto-reload true`,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+  # Enable automatic top-up (positional; --auto-reload works too)
+  akt console wallet settings true`,
+		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, _, err := clientFromCmd(cmd, mgrFn, true)
 			if err != nil {
 				return err
 			}
 
-			if cmd.Flags().Changed("auto-reload") {
+			if len(args) > 0 || cmd.Flags().Changed("auto-reload") {
 				value, _ := cmd.Flags().GetString("auto-reload")
+				if len(args) > 0 {
+					value = args[0]
+				}
 
-				enabled, err := parseBoolValue(value, "--auto-reload")
+				enabled, err := parseBoolValue(value, "auto-reload")
 				if err != nil {
 					return err
 				}
@@ -164,11 +167,15 @@ func walletCostCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 func usageCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "usage",
-		Short:   "Historical spend and active-deployment counts",
-		Args:    cobra.NoArgs,
-		Example: `  akt console usage --from 2026-01-01 --to 2026-01-31`,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		Use:   "usage [from] [to]",
+		Short: "Historical spend and active-deployment counts",
+		Args:  cobra.MaximumNArgs(2),
+		Example: `  # Last 30 days (API default)
+  akt console usage
+
+  # Explicit range, positional (flags work too and positionals win)
+  akt console usage 2026-01-01 2026-01-31`,
+		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, _, err := clientFromCmd(cmd, mgrFn, true)
 			if err != nil {
 				return err
@@ -176,6 +183,12 @@ func usageCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 			from, _ := cmd.Flags().GetString("from")
 			to, _ := cmd.Flags().GetString("to")
+			if len(args) > 0 {
+				from = args[0]
+			}
+			if len(args) > 1 {
+				to = args[1]
+			}
 
 			// Usage history is keyed by wallet address: resolve the user's
 			// first managed wallet with an on-chain address.
