@@ -270,15 +270,17 @@ func GetTxDeploymentGroupCloseCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "close [dseq] [gseq]",
 		Short: "close a Deployment's specific Group",
-		Example: `akt tx deployment group close 12345 1 --owner=[Account Address]
-akt tx deployment group close --owner=[Account Address] --dseq=[uint64] --gseq=[uint32]`,
+		Example: `akt tx deployment group close 12345 1
+akt tx deployment group close --dseq=[uint64] --gseq=[uint32]
+akt tx deployment group close 12345 1 --owner=[Account Address]`,
 		Args:              cobra.MaximumNArgs(2),
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustClientFromContext(ctx)
+			cctx := cl.ClientContext()
 
-			id, err := groupIDFromFlagsAndArgs(cmd, args)
+			id, err := groupIDFromFlagsAndArgs(cmd, args, cctx.GetFromAddress())
 			if err != nil {
 				return err
 			}
@@ -302,9 +304,6 @@ akt tx deployment group close --owner=[Account Address] --dseq=[uint64] --gseq=[
 
 	cflags.AddTxFlagsToCmd(cmd)
 	cflags.AddGroupIDFlags(cmd.Flags())
-	// Owner remains flag-only; dseq may be given positionally, so it is
-	// validated in RunE instead of being marked required.
-	_ = cmd.MarkFlagRequired(cflags.FlagOwner)
 
 	return cmd
 }
@@ -313,15 +312,17 @@ func GetDeploymentGroupPauseCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pause [dseq] [gseq]",
 		Short: "pause a Deployment's specific Group",
-		Example: `akt tx deployment group pause 12345 1 --owner=[Account Address]
-akt tx deployment group pause --owner=[Account Address] --dseq=[uint64] --gseq=[uint32]`,
+		Example: `akt tx deployment group pause 12345 1
+akt tx deployment group pause --dseq=[uint64] --gseq=[uint32]
+akt tx deployment group pause 12345 1 --owner=[Account Address]`,
 		Args:              cobra.MaximumNArgs(2),
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustClientFromContext(ctx)
+			cctx := cl.ClientContext()
 
-			id, err := groupIDFromFlagsAndArgs(cmd, args)
+			id, err := groupIDFromFlagsAndArgs(cmd, args, cctx.GetFromAddress())
 			if err != nil {
 				return err
 			}
@@ -345,9 +346,6 @@ akt tx deployment group pause --owner=[Account Address] --dseq=[uint64] --gseq=[
 
 	cflags.AddTxFlagsToCmd(cmd)
 	cflags.AddGroupIDFlags(cmd.Flags())
-	// Owner remains flag-only; dseq may be given positionally, so it is
-	// validated in RunE instead of being marked required.
-	_ = cmd.MarkFlagRequired(cflags.FlagOwner)
 
 	return cmd
 }
@@ -356,15 +354,17 @@ func GetDeploymentGroupStartCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "start [dseq] [gseq]",
 		Short: "start a Deployment's specific Group",
-		Example: `akt tx deployment group start 12345 1 --owner=[Account Address]
-akt tx deployment group start --owner=[Account Address] --dseq=[uint64] --gseq=[uint32]`,
+		Example: `akt tx deployment group start 12345 1
+akt tx deployment group start --dseq=[uint64] --gseq=[uint32]
+akt tx deployment group start 12345 1 --owner=[Account Address]`,
 		Args:              cobra.MaximumNArgs(2),
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustClientFromContext(ctx)
+			cctx := cl.ClientContext()
 
-			id, err := groupIDFromFlagsAndArgs(cmd, args)
+			id, err := groupIDFromFlagsAndArgs(cmd, args, cctx.GetFromAddress())
 			if err != nil {
 				return err
 			}
@@ -388,18 +388,16 @@ akt tx deployment group start --owner=[Account Address] --dseq=[uint64] --gseq=[
 
 	cflags.AddTxFlagsToCmd(cmd)
 	cflags.AddGroupIDFlags(cmd.Flags())
-	// Owner remains flag-only; dseq may be given positionally, so it is
-	// validated in RunE instead of being marked required.
-	_ = cmd.MarkFlagRequired(cflags.FlagOwner)
 
 	return cmd
 }
 
 // groupIDFromFlagsAndArgs resolves a GroupID from flags and optional
 // positional [dseq] [gseq] arguments. Positional values win over the
-// --dseq/--gseq flags (SPEC §3.8.2).
-func groupIDFromFlagsAndArgs(cmd *cobra.Command, args []string) (dv1.GroupID, error) {
-	id, err := cflags.GroupIDFromFlags(cmd.Flags())
+// --dseq/--gseq flags (SPEC §3.8.2). The owner defaults to the signer (the
+// from address) and may be overridden with --owner.
+func groupIDFromFlagsAndArgs(cmd *cobra.Command, args []string, owner sdk.AccAddress) (dv1.GroupID, error) {
+	id, err := cflags.GroupIDFromFlags(cmd.Flags(), cflags.WithOwner(owner))
 	if err != nil {
 		return dv1.GroupID{}, err
 	}

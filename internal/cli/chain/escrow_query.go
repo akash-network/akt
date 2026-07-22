@@ -232,17 +232,38 @@ $ %[1]s query %[2]s accounts open deployment/akash1...
 
 func GetQueryEscrowBlocksRemainingCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "blocks-remaining",
-		Short:             "Compute the number of blocks remaining for an escrow account",
-		Args:              cobra.ExactArgs(0),
+		Use:   "blocks-remaining [filter]",
+		Short: "Compute the number of blocks remaining for an escrow account",
+		Long: `Compute the number of blocks remaining for an escrow account.
+The filter argument takes the form [owner/]dseq (SPEC §3.8); the owner
+defaults to the context's default account when omitted.`,
+		Example: `akt query escrow blocks-remaining 12345
+akt query escrow blocks-remaining akash1owner.../12345
+akt query escrow blocks-remaining --owner akash1owner... --dseq 12345`,
+		Args:              cobra.MaximumNArgs(1),
 		PersistentPreRunE: QueryPersistentPreRunE,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)
 
 			id, err := cflags.DeploymentIDFromFlags(cmd.Flags())
 			if err != nil {
 				return err
+			}
+
+			// Positional [owner/]dseq wins over the --owner/--dseq flags;
+			// owner defaults to the context default account (SPEC §3.8).
+			defaultOwner := cl.ClientContext().GetFromAddress().String()
+			if id, err = cflags.DeploymentIDFromArgs(args, id, defaultOwner); err != nil {
+				return err
+			}
+
+			if id.Owner == "" {
+				return errors.New("owner is required: pass the filter positionally as [owner/]dseq or use --owner")
+			}
+
+			if id.DSeq == 0 {
+				return errors.New("dseq is required: pass the filter positionally as [owner/]dseq or use --dseq")
 			}
 
 			// Fetch leases matching owner & dseq
@@ -342,7 +363,6 @@ func GetQueryEscrowBlocksRemainingCmd() *cobra.Command {
 
 	cflags.AddQueryFlagsToCmd(cmd)
 	cflags.AddDeploymentIDFlags(cmd.Flags())
-	cflags.MarkReqDeploymentIDFlags(cmd)
 
 	return cmd
 }

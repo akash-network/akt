@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"errors"
+
 	"github.com/spf13/cobra"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
@@ -165,16 +167,18 @@ func GetTxMarketLeaseCmds() *cobra.Command {
 
 func GetTxMarketLeaseCreateCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "create",
-		Short:             "Create a market lease",
-		Args:              cobra.ExactArgs(0),
+		Use:   "create [dseq] [provider]",
+		Short: "Create a market lease",
+		Args:  cobra.MaximumNArgs(2),
+		Example: `akt tx market lease create 12345 akash1provider...
+akt tx market lease create --dseq 12345 --provider akash1provider...`,
 		PersistentPreRunE: TxPersistentPreRunE,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustClientFromContext(ctx)
 			cctx := cl.ClientContext()
 
-			id, err := cflags.LeaseIDFromFlags(cmd.Flags(), cflags.WithOwner(cctx.FromAddress))
+			id, err := leaseIDFromFlagsAndArgs(cmd, args, cctx.FromAddress)
 			if err != nil {
 				return err
 			}
@@ -198,24 +202,25 @@ func GetTxMarketLeaseCreateCmd() *cobra.Command {
 
 	cflags.AddTxFlagsToCmd(cmd)
 	cflags.AddLeaseIDFlags(cmd.Flags())
-	cflags.MarkReqLeaseIDFlags(cmd, cflags.DeploymentIDOptionNoOwner(true))
 
 	return cmd
 }
 
 func GetTxMarketLeaseWithdrawCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "withdraw",
-		Short:             "Settle and withdraw available funds from market order escrow account",
-		Args:              cobra.ExactArgs(0),
+		Use:   "withdraw [dseq] [provider]",
+		Short: "Settle and withdraw available funds from market order escrow account",
+		Args:  cobra.MaximumNArgs(2),
+		Example: `akt tx market lease withdraw 12345 akash1provider...
+akt tx market lease withdraw --dseq 12345 --provider akash1provider...`,
 		PersistentPreRunE: TxPersistentPreRunE,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustClientFromContext(ctx)
 
 			cctx := cl.ClientContext()
 
-			id, err := cflags.LeaseIDFromFlags(cmd.Flags(), cflags.WithOwner(cctx.FromAddress))
+			id, err := leaseIDFromFlagsAndArgs(cmd, args, cctx.FromAddress)
 			if err != nil {
 				return err
 			}
@@ -239,23 +244,24 @@ func GetTxMarketLeaseWithdrawCmd() *cobra.Command {
 
 	cflags.AddTxFlagsToCmd(cmd)
 	cflags.AddLeaseIDFlags(cmd.Flags())
-	cflags.MarkReqLeaseIDFlags(cmd, cflags.DeploymentIDOptionNoOwner(true))
 
 	return cmd
 }
 
 func GetTxMarketLeaseCloseCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "close",
-		Short:             "Close a market order",
-		Args:              cobra.ExactArgs(0),
+		Use:   "close [dseq] [provider]",
+		Short: "Close a market order",
+		Args:  cobra.MaximumNArgs(2),
+		Example: `akt tx market lease close 12345 akash1provider...
+akt tx market lease close --dseq 12345 --provider akash1provider...`,
 		PersistentPreRunE: TxPersistentPreRunE,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustClientFromContext(ctx)
 			cctx := cl.ClientContext()
 
-			id, err := cflags.LeaseIDFromFlags(cmd.Flags(), cflags.WithOwner(cctx.FromAddress))
+			id, err := leaseIDFromFlagsAndArgs(cmd, args, cctx.FromAddress)
 			if err != nil {
 				return err
 			}
@@ -281,7 +287,40 @@ func GetTxMarketLeaseCloseCmd() *cobra.Command {
 
 	cflags.AddTxFlagsToCmd(cmd)
 	cflags.AddLeaseIDFlags(cmd.Flags())
-	cflags.MarkReqLeaseIDFlags(cmd, cflags.DeploymentIDOptionNoOwner(true))
 
 	return cmd
+}
+
+// leaseIDFromFlagsAndArgs resolves a LeaseID from flags and optional
+// positional [dseq] [provider] arguments. Positional values win over the
+// --dseq/--provider flags (SPEC §3.8.2); gseq/oseq keep their flag defaults.
+func leaseIDFromFlagsAndArgs(cmd *cobra.Command, args []string, owner sdk.AccAddress) (mv1.LeaseID, error) {
+	oid, err := cflags.OrderIDFromFlags(cmd.Flags(), cflags.WithOwner(owner))
+	if err != nil {
+		return mv1.LeaseID{}, err
+	}
+
+	provider, err := cmd.Flags().GetString(cflags.FlagProvider)
+	if err != nil {
+		return mv1.LeaseID{}, err
+	}
+
+	if oid.DSeq, provider, err = cflags.LeaseSeqsFromArgs(args, oid.DSeq, provider); err != nil {
+		return mv1.LeaseID{}, err
+	}
+
+	if oid.DSeq == 0 {
+		return mv1.LeaseID{}, errors.New("dseq is required: pass it positionally or via --dseq")
+	}
+
+	if provider == "" {
+		return mv1.LeaseID{}, errors.New("provider is required: pass it positionally or via --provider")
+	}
+
+	paddr, err := sdk.AccAddressFromBech32(provider)
+	if err != nil {
+		return mv1.LeaseID{}, err
+	}
+
+	return mv1.MakeBidID(oid, paddr).LeaseID(), nil
 }

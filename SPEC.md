@@ -434,9 +434,9 @@ akt
 │   │   │   ├── create
 │   │   │   └── close
 │   │   └── lease
-│   │       ├── create
-│   │       ├── withdraw
-│   │       └── close
+│   │       ├── create [dseq] [provider]
+│   │       ├── withdraw [dseq] [provider]
+│   │       └── close [dseq] [provider]
 │   ├── provider
 │   │   ├── create <config-file>
 │   │   └── update <config-file>
@@ -538,7 +538,7 @@ akt
 │   ├── audit [owner]                    # Owner or default account; --auditor flag
 │   ├── escrow [filter]                  # [owner[/dseq]]; --state flag
 │   │   ├── payment [filter]             # [owner[/dseq]]
-│   │   └── blocks-remaining
+│   │   └── blocks-remaining [filter]    # [owner/]dseq
 │   ├── staking
 │   │   ├── validator <val-addr>
 │   │   ├── validators
@@ -608,10 +608,10 @@ akt
 │   ├── ibc-transfer                     # IBC transfer (passthrough from cosmos-sdk, subcommands not expanded)
 │   ├── upgrade
 │   ├── block [height]
-│   ├── blocks
+│   ├── blocks [query]                   # CometBFT query expr; --query override
 │   ├── block-results [height]
 │   ├── tx <hash>
-│   ├── txs
+│   ├── txs [events]                     # event list expr; --events override
 │   └── module-name-to-address <module>
 ├── deploy <sdl-file>                    # Workflow: full deployment lifecycle
 ├── update <sdl-file> [dseq]             # Workflow: update deployment + send manifest
@@ -1969,6 +1969,7 @@ State keywords are only recognized as the sole/first component; they do not comb
 | `query audit`            | `[owner]`                                       | no             |
 | `query escrow`           | `[owner[/dseq]]`                                | no             |
 | `query escrow payment`   | `[owner[/dseq]]`                                | no             |
+| `query escrow blocks-remaining` | `[owner/]dseq`                           | no             |
 
 #### 3.8.6 Examples
 
