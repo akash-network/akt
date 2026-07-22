@@ -13,11 +13,23 @@ import (
 // the key is still sent when the client has one configured.
 
 // ScreenBids asks the Console API which providers can satisfy the given
-// requirements/resources before a deployment is created.
+// requirements/resources before a deployment is created. The API contract
+// requires both Resources and Timezone (an IANA zone name); requests missing
+// either are rejected locally instead of triggering an HTTP 400.
 //
 // Wire: POST /v1/bid-screening (request and response are NOT data-enveloped;
 // the response is {"providers":[...]}).
 func (c *Client) ScreenBids(ctx context.Context, req *BidScreeningRequest) ([]ScreenedProvider, error) {
+	if req == nil {
+		return nil, fmt.Errorf("console: bid screening: request is nil")
+	}
+	if len(req.Resources) == 0 {
+		return nil, fmt.Errorf("console: bid screening: resources are required")
+	}
+	if req.Timezone == "" {
+		return nil, fmt.Errorf("console: bid screening: timezone is required (IANA zone name, e.g. America/Chicago)")
+	}
+
 	var out struct {
 		Providers []ScreenedProvider `json:"providers"`
 	}

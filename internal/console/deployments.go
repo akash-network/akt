@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
+	"strings"
 )
 
 // CreateDeployment creates a deployment via the managed wallet. Deposit is in
@@ -30,11 +32,25 @@ func (c *Client) CreateDeployment(ctx context.Context, sdl string, depositUSD fl
 	return &out, nil
 }
 
-// ListDeployments lists deployments with pagination.
+// ListDeployments lists deployments with pagination. Out-of-range values are
+// omitted from the query instead of being sent — the API requires skip >= 0
+// and limit >= 1, so a negative skip falls back to 0 and a non-positive limit
+// falls back to the server default page size.
 //
 // Wire: GET /v1/deployments?skip=&limit=, data-enveloped response.
 func (c *Client) ListDeployments(ctx context.Context, skip, limit int) (*DeploymentList, error) {
-	path := fmt.Sprintf("/v1/deployments?skip=%d&limit=%d", skip, limit)
+	var params []string
+	if skip >= 0 {
+		params = append(params, "skip="+strconv.Itoa(skip))
+	}
+	if limit >= 1 {
+		params = append(params, "limit="+strconv.Itoa(limit))
+	}
+
+	path := "/v1/deployments"
+	if len(params) > 0 {
+		path += "?" + strings.Join(params, "&")
+	}
 
 	var out DeploymentList
 	if err := c.doData(ctx, http.MethodGet, path, nil, &out); err != nil {

@@ -301,21 +301,29 @@ type Attribute struct {
 	Value string `json:"value"`
 }
 
-// SignedBy expresses auditor requirements for bid screening.
+// SignedBy expresses auditor requirements for bid screening. Empty lists are
+// omitted on the wire: the API schema types anyOf/allOf as (non-nullable)
+// string arrays, so serializing nil slices as JSON null violates the contract.
 type SignedBy struct {
-	AnyOf []string `json:"anyOf"`
-	AllOf []string `json:"allOf"`
+	AnyOf []string `json:"anyOf,omitempty"`
+	AllOf []string `json:"allOf,omitempty"`
 }
 
-// BidScreeningRequirements narrows the provider set for bid screening.
+// BidScreeningRequirements narrows the provider set for bid screening. An
+// empty Attributes list is omitted on the wire (the API schema types it as a
+// non-nullable array, so JSON null is rejected).
 type BidScreeningRequirements struct {
 	SignedBy   SignedBy    `json:"signedBy"`
-	Attributes []Attribute `json:"attributes"`
+	Attributes []Attribute `json:"attributes,omitempty"`
 }
 
 // BidScreeningRequest is the body of POST /v1/bid-screening (not
 // data-enveloped). Resources and ReclamationWindow are passed through raw so
 // callers can supply whatever shape the SDL produced.
+//
+// The API requires Resources and Timezone; ScreenBids rejects requests
+// missing either before hitting the network. Timezone must be an IANA zone
+// name (e.g. "America/Chicago").
 type BidScreeningRequest struct {
 	Requirements      BidScreeningRequirements `json:"requirements"`
 	Resources         json.RawMessage          `json:"resources,omitempty"`
