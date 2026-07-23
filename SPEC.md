@@ -151,7 +151,8 @@ contexts:
     auth-method: console-api            # use Console managed wallet instead of keyring
     console-api-url: ""                 # empty = default (https://console-api.akash.network)
     # keyring, default-account, and provider-defaults are not used with console-api auth
-    # API key is supplied via AKT_CONSOLE_API_KEY env var or --console-api-key flag
+    # API key: --console-api-key flag > AKT_CONSOLE_API_KEY env var > per-context
+    # credential file (contexts/<name>/console-api-key, see §7.1); never stored here
 
 # TUI settings
 tui:
@@ -297,7 +298,7 @@ All environment variables use the `AKT_` prefix. When set, they override the cor
 | `AKT_FEES`            | `contexts[*].fees`                                      | `5000uakt`                     |
 | `AKT_BROADCAST_MODE`  | `defaults.broadcast-mode`                               | `sync`                         |
 | `AKT_OUTPUT`          | `defaults.output`                                       | `json`                         |
-| `AKT_CONSOLE_API_KEY` | Console API key (required for `console-api` auth method) | `akt_abc123...`                |
+| `AKT_CONSOLE_API_KEY` | Console API key (overrides the per-context stored credential; see §7.1) | `akt_abc123...`                |
 
 ### 1.10 Built-in Network Templates
 
@@ -616,6 +617,20 @@ akt
 ├── deploy <sdl-file>                    # Workflow: full deployment lifecycle
 ├── update <sdl-file> [dseq]             # Workflow: update deployment + send manifest
 ├── close [dseq]                         # Workflow: close deployment
+├── console                              # Akash Console managed-wallet API (§2.9)
+│   ├── login [key]                      # Validate + store per-context API key credential
+│   ├── logout                           # Remove stored credential
+│   ├── whoami                           # Authenticated user info
+│   ├── deployment                       # list | get | create | update | close | deposit | settings
+│   ├── bid list <dseq>                  # Bids for a deployment's open orders
+│   ├── lease create <dseq> [provider]   # Accept a bid (uses cached manifest)
+│   ├── wallet                           # list | balance | settings | cost
+│   ├── usage [from] [to]                # Daily spend history
+│   ├── provider                         # list | get | regions | auditors (public, no key)
+│   ├── gpu                              # GPU availability/pricing (public, no key)
+│   ├── template                         # list | get | sdl (public, no key)
+│   ├── apikey                           # list | create | delete
+│   └── jwt create                       # Mint provider-scoped JWT
 ├── provider                             # Provider gateway commands
 │   ├── status [provider-addr]
 │   ├── lease-status [dseq]
@@ -657,6 +672,7 @@ Create a new named context. A context references a network and keyring by name.
 | `--network`           | string | `""`        | Network name to use (required; must exist)                       |
 | `--auth-method`       | string | `"keyring"` | Authentication method: `keyring` or `console-api`                |
 | `--console-api-url`   | string | `""`        | Console API base URL (empty = default; only with `console-api`)  |
+| `--console-api-key`   | string | `""`        | Console API key stored as a per-context credential (§7.1; never written to config.yaml) |
 | `--keyring`           | string | `"default"` | Keyring name (only with `keyring` auth)                          |
 | `--default-account`   | string | `""`        | Default account name (only with `keyring` auth)                  |
 | `--gas`               | string | `"auto"`    | Gas limit override (only with `keyring` auth)                    |
@@ -675,7 +691,8 @@ akt context create monitoring --network mainnet
 akt context create staging --network testnet --keyring test-keyring --default-account testaccount
 
 # Create context using Console API managed wallet
-# API key is supplied via AKT_CONSOLE_API_KEY env var at runtime
+# Store the API key as the context credential with --console-api-key,
+# or later via `akt console login` (see §7.1)
 akt context create console --network mainnet --auth-method console-api --set-current
 ```
 
@@ -735,6 +752,9 @@ Edit context-level settings. For network-level changes (endpoints, gas-prices), 
 | `--default-account` | string | `""`    | Change default account                 |
 | `--gas`             | string | `""`    | Change gas setting                     |
 | `--fees`            | string | `""`    | Change fees setting                    |
+| `--auth-method`     | string | `""`    | Change authentication method: `keyring` or `console-api` |
+| `--console-api-url` | string | `""`    | Change Console API base URL (empty = default) |
+| `--console-api-key` | string | `""`    | Set the per-context Console API key (empty string removes it; §7.1) |
 | `--fork-network`    | bool   | `false` | Force fork when editing network fields |
 
 ```bash
@@ -769,7 +789,7 @@ View the action log for the current context.
 | ----------- | ------ | --------- | ------------------------------------------------------------------- |
 | `--context` | string | current   | Context to view log for                                             |
 | `--limit`   | int    | `50`      | Number of entries to show                                           |
-| `--type`    | string | `""`      | Filter by action type: `tx`, `query`, `workflow`, `error`           |
+| `--type`    | string | `""`      | Filter by action type: `tx`, `workflow`, `provider`, `context`, `console`, `error` (see §5.6) |
 | `--since`   | string | `""`      | Show entries since timestamp or duration (e.g., `1h`, `2024-01-01`) |
 | `--output`  | string | `pretty`  | Output format: `pretty` (table), `json` (raw JSONL entries, one per line) |
 
@@ -779,7 +799,7 @@ $ akt context log --limit 5
   2026-03-23 10:15:32     tx        deployment create (dseq: 12345)            success
   2026-03-23 10:15:45     tx        market lease create (dseq: 12345)          success
   2026-03-23 10:15:50     workflow  send-manifest -> akash1prov1...            success
-  2026-03-23 10:20:01     query     deployment deployments --dseq 12345        success
+  2026-03-23 10:20:01     context   edit (default-account: bob)                success
   2026-03-23 10:25:00     tx        deployment close (dseq: 12345)             success
 ```
 
@@ -2679,12 +2699,14 @@ API keys are created at [console.akash.network](https://console.akash.network) >
 
 All requests include `Content-Type: application/json` and `x-api-key` headers.
 
+The endpoints below cover the deployment lifecycle used by command and workflow routing (§7.4-§7.5). The client's full surface — user info, wallets, usage, provider/GPU/template catalogs, API keys, and provider-scoped JWTs — is documented per command in §2.9 and contract-tested against the vendored OpenAPI spec (`internal/console/testdata/openapi.json`).
+
 #### `POST /v1/deployments` -- Create Deployment
 
 | Field           | Type   | Required | Description                           |
 | --------------- | ------ | -------- | ------------------------------------- |
 | `data.sdl`      | string | yes      | SDL content as string                 |
-| `data.deposit`  | number | yes      | Deposit in USD (minimum $5)           |
+| `data.deposit`  | number | yes      | Deposit in USD (minimum $0.50)        |
 
 Returns `{ data: { dseq: string, manifest: string } }`.
 
@@ -2772,7 +2794,7 @@ When a context uses `console-api` auth, the following commands are routed throug
 | `akt tx deployment create <sdl>`     | `POST /v1/deployments`               | `--deposit` flag in USD                  |
 | `akt tx deployment update <sdl>`     | `PUT /v1/deployments/{dseq}`         |                                          |
 | `akt tx deployment close`            | `DELETE /v1/deployments/{dseq}`      |                                          |
-| `akt query market bid --dseq`        | `GET /v1/bids?dseq=`                 |                                          |
+| `akt query market bid <dseq>`        | `GET /v1/bids?dseq=`                 |                                          |
 | `akt tx market lease create`         | `POST /v1/leases`                    | Requires manifest from deployment create |
 | `akt tx escrow deposit`              | `POST /v1/deposit-deployment`        | `--deposit` flag in USD                  |
 | `akt query deployment`               | `GET /v1/deployments`                | Paginated via `--skip`/`--limit`         |
@@ -2788,7 +2810,7 @@ Use a context with auth-method: keyring for this operation.
 
 | HTTP Status | Handling                                                          |
 | ----------- | ----------------------------------------------------------------- |
-| 401         | Invalid or expired API key. Prompt user to check `AKT_CONSOLE_API_KEY`. |
+| 401         | Invalid or expired API key. Point the user at the key resolution chain (§7.1) and `akt console login`. |
 | 402         | Insufficient funds in Console account.                            |
 | 404         | Deployment not found (dseq does not exist or not owned by user).  |
 | 429         | Rate limited. Retry with backoff.                                 |
@@ -4692,7 +4714,7 @@ Cobra provides this feature via `Command.SuggestionsMinimumDistance` and `Comman
 | 1.4  | Context manager       | Context CRUD, switching, composition (network + keyring + store + log), fork/edit-parent for networks                                                                                       | All `akt context *` commands work, fork/edit-parent works, context propagation works                    |
 | 1.5  | Context live-reload   | Config file watching, propagation of changes to running session                                                                                                                             | Config changes reflected in session; TUI overrides flags/env; CLI respects override chain               |
 | 1.6  | Keyring integration   | Shared multi-keyring support, keys visible to all contexts using the keyring                                                                                                                | Keys can be created, listed, and used for signing; adding key to shared keyring visible in all contexts |
-| 1.7  | Action log            | Append-only JSONL action log per context, log reading/filtering                                                                                                                             | All tx/query actions logged, `akt context log` shows entries, log rotation works                        |
+| 1.7  | Action log            | Append-only JSONL action log per context, log reading/filtering                                                                                                                             | All mutating actions (tx, workflow, provider, context, console) logged per §5.6 — read-only queries are not recorded by default; `akt context log` shows entries newest-first; log rotation works |
 | 1.8  | Chain client          | Full and light client with multi-endpoint failover                                                                                                                                          | Successful tx broadcast and query with automatic failover when primary endpoint is down                 |
 | 1.9  | Transaction commands  | All `tx` module commands (bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, slashing, vesting, upgrade, crisis, IBC) | Each command matches the behavioral output of the current `akash` binary                                |
 | 1.10 | Query commands        | All `query` module commands                                                                                                                                                                 | Each command matches the behavioral output of the current `akash` binary                                |
@@ -4724,7 +4746,7 @@ Cobra provides this feature via `Command.SuggestionsMinimumDistance` and `Comman
 | 2.8  | Store export/import     | YAML and JSON export, import with merge/replace                                                                                | Round-trip: export then import produces identical store state             |
 | 2.9  | Store status command    | Display store info, sync state, record counts                                                                                  | Accurate reporting of store contents                                      |
 | 2.10 | Events command          | Live blockchain event streaming                                                                                                | `akt events` shows real-time events                                       |
-| 2.11 | Console API client      | `auth-method: console-api` support, API key via env var, deployment CRUD via Console managed wallet API                        | Create, update, close deployments; list bids; create leases via Console API with `AKT_CONSOLE_API_KEY` |
+| 2.11 | Console API client      | `auth-method: console-api` support, API key resolved flag > env > per-context stored credential (§7.1), deployment CRUD via Console managed wallet API, `akt console` command group (§2.9) | Create, update, close deployments; list bids; create leases via Console API with the API key resolved per §7.1 |
 | 2.12 | MCP server              | `akt mcp` command with stdio JSON-RPC transport, 21 read-only tools, 4 write tools gated behind `--enable-writes`              | Read-only tools query chain state; write tools send transactions. Config resolved from active context. |
 
 ### Phase 3: TUI Mode

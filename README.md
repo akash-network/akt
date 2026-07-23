@@ -12,7 +12,7 @@ See [DESIGN.md](DESIGN.md) for architecture and [SPEC.md](SPEC.md) for the full 
 
 ## Status
 
-Under active development. Phase 1 (Foundation) is in progress. Provider gateway, deployment store, sync engine, and full TUI views are in progress.
+Under active development. Phase 1 (Foundation) is complete: context system, key management, all chain tx/query commands, output formatting, action log, and shell completion. Workflow execution (`akt deploy/update/close`) and Akash Console integration (the `akt console` command group, per-context API keys, auth-aware workflow routing) have landed, along with offline e2e suites and CI. The deployment store, sync engine, and provider gateway commands are implemented; TUI resource views continue to mature.
 
 ## What's Implemented
 
@@ -55,7 +55,7 @@ Subcommands for direct access: `akt monitor network`, `akt monitor provider`, `a
 
 ### Action Log
 
-Per-context append-only JSONL log recording all tx, query, workflow, provider, and context operations. Supports filtering by type, time range, deployment sequence, and account. Automatic rotation at 10 MB.
+Per-context append-only JSONL log recording every mutating operation: tx, workflow, provider, context, and console actions. Read-only queries are not recorded by design. `akt context log` reads entries newest-first with `--type`, `--since`, and `--limit` filters. Automatic rotation at 10 MB (up to 5 rotated files kept).
 
 ### Output Formatting
 
@@ -67,7 +67,11 @@ All commands support `--output pretty|json|yaml` with pretty formatting by defau
 
 ### Workflow Engine
 
-Core engine with 3-level definition resolution (per-context > global > embedded), Go template evaluation, 8 step types (tx, query, wait, prompt, provider, output, shell, check), and retry/error handling. Workflows support two execution modes: **TUI mode** (interactive progress display) and **JSONL mode** (`--output jsonl`, JSONL output for CI/CD and scripting). Built-in workflow definitions (deploy, update, close) are not yet wired.
+Core engine with 3-level definition resolution (per-context > global > embedded), Go template evaluation, 8 step types (tx, query, wait, prompt, provider, output, shell, check), and retry/error handling. Workflows support two execution modes: **TUI mode** (interactive progress display) and **JSONL mode** (`--output jsonl`, JSONL output for CI/CD and scripting). The built-in workflows (`akt deploy`, `akt update`, `akt close`) execute end-to-end with auth-aware routing: keyring contexts sign and broadcast locally, while console-api contexts route through the Console API (provider manifest steps are skipped -- Console submits manifests internally). Every step is recorded in the action log.
+
+### Console Integration (`akt console`)
+
+Full command group for the [Akash Console](https://console.akash.network) managed-wallet API: `login`/`logout`/`whoami`, deployment lifecycle (`deployment list/get/create/update/close/deposit/settings`), bid listing, lease creation with a per-context manifest cache, wallet commands (`wallet list/balance/settings/cost`), usage history, public provider/GPU/template catalogs, API key management, and provider-scoped JWT minting. The API key is stored per context (`contexts/<name>/console-api-key`, mode 0600, never in config.yaml) and resolved flag > env > stored credential, so switching context switches Console identity. The first-run bootstrap offers Console onboarding, and state-changing Console calls are recorded in the action log.
 
 ### TUI Shell
 
@@ -198,11 +202,11 @@ akt tx bank send alice akash1dest... 1000000uakt
 # Create a deployment
 akt tx deployment create deployment.yaml
 
-# Close a deployment
-akt tx deployment close --dseq 12345
+# Close a deployment (positional dseq)
+akt tx deployment close 12345
 
-# Create a lease
-akt tx market lease create --dseq 12345 --gseq 1 --oseq 1 --provider akash1prov...
+# Create a lease (positional dseq and provider; gseq/oseq default to 1)
+akt tx market lease create 12345 akash1prov...
 
 # Delegate to a validator
 akt tx staking delegate akashvaloper1... 1000000uakt
@@ -217,9 +221,9 @@ akt tx cert publish client
 
 All transaction commands accept `--from`, `--gas`, `--fees`, `--broadcast-mode`, `--yes`, `--dry-run`, and other standard flags. Defaults come from the active context.
 
-### Workflows (Planned)
+### Workflows
 
-Workflow commands orchestrate multi-step operations. They support two execution modes:
+Workflow commands orchestrate multi-step operations, routing each step through the active context's auth method (local signing for `keyring`, Console API for `console-api`). They support two execution modes:
 
 **TUI mode** (default, interactive):
 ```bash
@@ -252,7 +256,7 @@ akt deploy deployment.yaml --bid-select cheapest --yes -o jsonl \
 
 ### Queries
 
-Akash query commands use a **positional filter argument** instead of `--owner`/`--dseq` flags. The filter follows the resource hierarchy (`owner/dseq/gseq/oseq/provider`) with smart type detection: a bech32 address is an owner, a number is a dseq. When no owner is given, the context's default account is used. Non-identity filters like `--state` remain as flags. See [SPEC.md §3.8](SPEC.md#38-resource-filter-argument) for full details.
+Akash query commands use a **positional filter argument** instead of `--owner`/`--dseq` flags. The filter follows the resource hierarchy (`owner/dseq/gseq/oseq/provider`) with smart type detection: a bech32 address is an owner, a number is a dseq. When no owner is given, the context's default account is used. State keywords are also positional (`akt query deployment active`); `--state` remains available as a flag alternative. See [SPEC.md §3.8](SPEC.md#38-resource-filter-argument) for full details.
 
 ```bash
 # Check balances
@@ -270,8 +274,8 @@ akt query deployment akash1abc...
 # Get a specific deployment by owner and dseq
 akt query deployment akash1abc.../12345
 
-# List active leases
-akt query market lease --state active
+# List active leases (positional state keyword)
+akt query market lease active
 
 # Leases for a specific deployment
 akt query market lease 12345
@@ -364,8 +368,10 @@ Contexts with `--auth-method console-api` use the [Akash Console Managed Wallet 
 # Set up a console-api context
 akt context create console --network mainnet --auth-method console-api --set-current
 
-# Set your API key (created at console.akash.network > Settings > API Keys)
-export AKT_CONSOLE_API_KEY="your-api-key-here"
+# Store your API key as the context credential (created at
+# console.akash.network > Settings > API Keys). Validates the key and
+# writes it to contexts/<name>/console-api-key (0600).
+akt console login
 
 # Deploy using the Console managed wallet
 akt tx deployment create deploy.yaml --deposit 5
@@ -374,13 +380,18 @@ akt tx deployment create deploy.yaml --deposit 5
 akt query deployment
 
 # Update a deployment
-akt tx deployment update deploy.yaml --dseq 12345
+akt tx deployment update deploy.yaml 12345
 
 # Close a deployment
-akt tx deployment close --dseq 12345
+akt tx deployment close 12345
+
+# Drive the Console API directly
+akt console deployment list
+akt console wallet balance
+akt console usage
 ```
 
-Query commands that read directly from the chain (e.g., `akt query bank balances`) still work normally. Commands that require local signing (e.g., `akt tx bank send`, `akt tx gov vote`) are not supported with `console-api` auth -- use a `keyring` context for those.
+The API key resolves `--console-api-key` flag > `AKT_CONSOLE_API_KEY` env var > per-context stored credential. Query commands that read directly from the chain (e.g., `akt query bank balances`) still work normally. Commands that require local signing (e.g., `akt tx bank send`, `akt tx gov vote`) are not supported with `console-api` auth -- use a `keyring` context for those.
 
 ### TUI Mode
 
@@ -396,8 +407,8 @@ Navigation: `1`-`6` primary views (Deployments, Leases, Providers, Monitor, Gove
 
 Upcoming work (see [SPEC.md](SPEC.md) for full details):
 
-- **Phase 2**: Deployment store (bbolt), sync engine, `akt deploy` workflow, provider gateway commands (`akt provider status/lease-status/lease-logs/lease-shell/send-manifest`), Console API client (`auth-method: console-api`), store export/import
-- **Phase 3**: Full TUI with live resource views (deployments, leases, providers, governance, validators), `akt monitor` hub (network, provider, oracle/BME dashboards), command palette, themes
+- **TUI**: resource views (deployments, leases, providers, governance, validators) populated with live data from the store and sync engine
+- **Console parity follow-ups**: logs/shell access for managed deployments via Console-minted JWTs, bid screening command (see [docs/console-parity.md](docs/console-parity.md))
 - **Phase 4**: Plugin system, additional TUI resource views (wasm, ibc, escrow), performance optimization
 
 ## License

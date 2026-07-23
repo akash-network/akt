@@ -143,7 +143,7 @@ graph TB
       subgraph al ["Action Log"]
         a1["actions.log"]
         a2["tx msg + response"]
-        a3["query results"]
+        a3["console + provider ops"]
         a4["workflow steps"]
       end
     end
@@ -173,10 +173,10 @@ graph TB
 - Sync state metadata.
 
 **Action Log** (unique per context):
-- Append-only log of all user actions within the context.
+- Append-only log of all mutating user actions within the context.
 - Each entry records what was done, when, and the result.
 - A transaction action consists of two parts: the tx message and the chain response.
-- Query actions, workflow steps, and errors are also logged.
+- Workflow steps, provider operations, context changes, Console API calls, and errors are also logged. Read-only queries are not recorded by default.
 
 #### 3.1.2 Context Propagation
 
@@ -212,7 +212,7 @@ Each context has an `auth-method` that determines how transactions are signed an
 - Authenticated via an API key (created at console.akash.network > Settings > API Keys).
 - The API key is resolved as flag > env > per-context credential: `--console-api-key` (session only), then `AKT_CONSOLE_API_KEY`, then a per-context credential file at `contexts/<name>/console-api-key` (mode 0600, managed via `akt context create/edit --console-api-key`). It is never written to config.yaml, never printed, and never logged — each context carries its own key, so switching context switches Console identity.
 - Deposits are denominated in USD (not uakt) -- the Console handles the conversion.
-- Only deployment lifecycle operations are supported through the Console API (create, update, close, bids, leases, deposit). Query commands still work directly against chain RPC.
+- For `tx` commands and workflows, only deployment lifecycle operations route through the Console API (create, update, close, bids, leases, deposit). Chain query commands still work directly against chain RPC. The broader Console surface (wallets, usage, provider/GPU/template catalogs, API keys, provider-scoped JWTs) is exposed by the dedicated `akt console` command group.
 - No keyring, default-account, or provider-defaults are used. The context only needs a network (for query commands) and the API key.
 
 A context uses **one** auth method. Users who need both can create separate contexts (e.g., `prod` with keyring auth and `console` with console-api auth), potentially sharing the same network definition.
@@ -578,7 +578,7 @@ Send
 - Provider migration commands: migrate-hostnames, migrate-endpoints
 - Store export/import commands
 - Store status command (sync state, record counts)
-- Console API client: `auth-method: console-api` context support, API key via `AKT_CONSOLE_API_KEY` env var, deployment operations via Console managed wallet API (`https://console-api.akash.network`)
+- Console API client: `auth-method: console-api` context support, API key resolved flag > env > per-context stored credential, deployment operations via Console managed wallet API (`https://console-api.akash.network`), plus the `akt console` command group for the full Console surface
 
 ### Phase 3: TUI Mode
 
