@@ -530,7 +530,7 @@ func logCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	}
 
 	cmd.Flags().Int("limit", 50, "Number of entries to show")
-	cmd.Flags().String("type", "", "Filter by action type: tx, query, workflow, error")
+	cmd.Flags().String("type", "", "Filter by action type: tx, workflow, provider, context, console, error")
 	cmd.Flags().String("since", "", "Show entries since duration (1h) or date (2006-01-02)")
 
 	return cmd

@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **`context log --type` help text listed the wrong action types**: it offered `tx, query, workflow, error`; the recorded types are `tx, workflow, provider, context, console, error` (queries are not recorded by design).
+
 - **Chain commands violated the positional-primary convention (AKT-650)**: `tx market lease create/withdraw/close` now take `[dseq] [provider]` positionally, `query escrow blocks-remaining` accepts the §3.8 `[owner/]dseq` filter argument, `query blocks`/`query txs` take the search expression positionally, and `tx deployment group close/pause/start` no longer require `--owner` (defaults to the signer — closing your own group needs zero flags). Flags remain as overrides; positionals win. Plus a new convention guard, `TestNoUnapprovedRequiredFlags`, that walks the whole command tree and fails when any flag is marked required without an allowlisted justification (allowlisted: signer selection on `tx sign`/`sign-batch`/audit attr, governance `--title` flags, `context create --network`). SPEC §2.1/§3.8.5 updated; 3 new helper test suites.
 
 - **Console commands violated the positional-primary convention (AKT-650)**: seven `akt console` commands required flags for their primary values. All now take them positionally with flags kept as overrides (positional wins): `usage [from] [to]`, `deployment create <sdl> [deposit-usd]`, `deployment deposit <dseq> [amount-usd]`, `deployment settings <dseq> [true|false]`, `lease create <dseq> [provider]`, `wallet settings [true|false]`, `apikey create <name> [expires-at]`. SPEC §2.9 signatures updated and a convention note added. 2 new command tests.
