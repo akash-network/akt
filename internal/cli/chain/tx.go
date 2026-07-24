@@ -9,6 +9,7 @@ import (
 	ibctransfer "github.com/cosmos/ibc-go/v10/modules/apps/transfer"
 	ibccore "github.com/cosmos/ibc-go/v10/modules/core"
 
+	"pkg.akt.dev/akt/internal/capability"
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	aclient "pkg.akt.dev/go/node/client/discovery"
 )
@@ -61,6 +62,8 @@ func TxCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "tx",
 		Short: "Transactions subcommands",
+		// Capability gating: broadcasting requires a chain RPC endpoint.
+		Annotations: map[string]string{capability.AnnotationKey: string(capability.ChainTx)},
 	}
 
 	cmd.AddCommand(

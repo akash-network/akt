@@ -15,6 +15,7 @@ import (
 	rest "pkg.akt.dev/go/provider/client"
 	"pkg.akt.dev/go/sdl"
 
+	"pkg.akt.dev/akt/internal/capability"
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	aktprovider "pkg.akt.dev/akt/internal/provider"
 )
@@ -25,6 +26,8 @@ func Commands() *cobra.Command {
 		Use:   "provider",
 		Short: "Provider gateway operations",
 		Long:  "Interact with Akash provider gateway APIs: query status, manage leases, send manifests, and more.",
+		// Capability gating: gateway discovery and wallet auth need chain access.
+		Annotations: map[string]string{capability.AnnotationKey: string(capability.Provider)},
 	}
 
 	cmd.PersistentFlags().String("auth-type", "", "Provider auth type: jwt (default) or mtls")

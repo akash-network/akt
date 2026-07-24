@@ -16,6 +16,7 @@ import (
 
 	"pkg.akt.dev/akt/internal/actionlog"
 	"pkg.akt.dev/akt/internal/bootstrap"
+	"pkg.akt.dev/akt/internal/capability"
 	chaincli "pkg.akt.dev/akt/internal/cli/chain"
 
 	cliconsole "pkg.akt.dev/akt/internal/cli/console"
@@ -195,6 +196,26 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 				return noContextError(mgr)
 			}
 
+			// 4b. Capability gating: derive the feature set from the active
+			//     context (chain RPC present? Console key present?) and gate
+			//     the command surface accordingly — commands whose transport
+			//     is not configured are dimmed or hidden in help (mode from
+			//     defaults.command-gating: dim | hide | off) and fail fast
+			//     with an explanation instead of erroring mid-transport.
+			if resolved {
+				rc, rcErr := mgr.Resolve(v.GetString("context"))
+				if rcErr == nil {
+					set := capability.Resolve(rc)
+					applyCapabilityGating(cmd.Root(), set, capability.ParseMode(v.GetString("defaults.command-gating")))
+
+					if !helpRequested(os.Args[1:]) {
+						if err := requirementError(cmd, set); err != nil {
+							return err
+						}
+					}
+				}
+			}
+
 			// 5. Open the action log for the current context (if any).
 			if current := mgr.CurrentContext(); current != "" {
 				logPath := aktctx.ActionLogPath(cfgRoot, current)
@@ -299,6 +320,40 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	}
 	root.AddCommand(versionCmd(bi))
 	root.AddCommand(completionCmd())
+
+	// Capability gating must also shape help output when cobra
+	// short-circuits --help before the persistent hooks run (parsed help
+	// flags never reach PersistentPreRunE). Resolution here is best-effort:
+	// any failure falls back to ungated help rather than blocking it.
+	defaultHelp := root.HelpFunc()
+	root.SetHelpFunc(func(c *cobra.Command, args []string) {
+		if home := root.PersistentFlags().Lookup("home"); home != nil && home.Changed {
+			v.Set("home", home.Value.String())
+		}
+
+		if cfgRoot, err := aktctx.ConfigHome(v.GetString("home")); err == nil {
+			if m, mErr := aktctx.NewManager(cfgRoot); mErr == nil {
+				ctxName := v.GetString("context")
+				if ctxName == "" {
+					ctxName = m.CurrentContext()
+				}
+				if ctxName == "" {
+					if contexts := m.ListContexts(); len(contexts) == 1 {
+						ctxName = contexts[0].Name
+					}
+				}
+
+				if ctxName != "" {
+					if rc, rcErr := m.Resolve(ctxName); rcErr == nil {
+						mode := capability.ParseMode(m.Config().Defaults.CommandGating)
+						applyCapabilityGating(root, capability.Resolve(rc), mode)
+					}
+				}
+			}
+		}
+
+		defaultHelp(c, args)
+	})
 
 	return root
 }
@@ -456,6 +511,8 @@ func monitorCmd(v *viper.Viper) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "monitor [rpc-endpoint]",
 		Short: "Real-time monitoring hub",
+		// Capability gating: monitoring needs a chain RPC endpoint.
+		Annotations: map[string]string{capability.AnnotationKey: string(capability.ChainQuery)},
 		Long: `Interactive TUI for monitoring Akash Network state in real time.
 
 The monitor hub provides three dashboards navigable via Tab/Shift-Tab:

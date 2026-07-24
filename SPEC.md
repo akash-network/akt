@@ -206,7 +206,7 @@ Contexts compose a network, keyring, and context-specific settings. The state st
 | Field                         | Type   | Required | Default                                | Description                                                                  |
 | ----------------------------- | ------ | -------- | -------------------------------------- | ---------------------------------------------------------------------------- |
 | `name`                        | string | yes      | --                                     | Unique context identifier                                                    |
-| `network`                     | string | yes      | --                                     | Name of network definition to use                                            |
+| `network`                     | string | see note | --                                     | Name of network definition to use. Required for `keyring` auth; optional for `console-api` auth (a network-less context operates through the Console API alone and chain commands are capability-gated until a network is attached, §2.10). |
 | `auth-method`                 | string | no       | `"keyring"`                            | Authentication method: `keyring` or `console-api`                            |
 | `console-api-url`             | string | no       | `"https://console-api.akash.network"` | Console API base URL (only with `console-api` auth)                          |
 | `keyring`                     | string | no       | `"default"`                            | Keyring name for signing keys (only with `keyring` auth)                     |
@@ -889,6 +889,8 @@ akt context keys show test1 -a
 
 Workflow commands (`akt deploy`, `akt update`, `akt close`) are driven by a **declarative workflow engine**. Instead of hardcoded command logic, each workflow is a YAML definition that the engine interprets step by step. Users can override built-in workflows or create custom ones.
 
+**Transports**: actions are defined once — as workflow definitions — and translated per transport by `internal/transport`. Each transport carries the same abstract steps onto its backing rail: the **chain** transport (keyring auth) signs and broadcasts transactions locally plus provider-gateway calls, while the **console** transport (console-api auth) maps the same steps onto Console API REST calls (§7.4–§7.5). Because the command surface (positionals and flags) is generated from the workflow definition and the transport is chosen per context at execution time, `akt deploy/update/close` accept identical arguments on both rails, and adding a new action never requires per-rail redesign. Cross-rail argument syntax (notably `--deposit`, §7.4) is normalized in the transport layer.
+
 #### 2.3.1 Workflow Definition Location
 
 Workflow definitions are resolved in order:
@@ -915,7 +917,7 @@ params:
   deposit:
     type: string
     default: "auto"
-    description: Initial deposit amount (auto = chain minimum or SDL-specified)
+    description: "Initial deposit: 5usd or $5 (USD, console-api contexts), 5000000uakt (coin, keyring contexts), auto = chain minimum (keyring)"
   bid-timeout:
     type: duration
     default: "5m"
@@ -1215,7 +1217,7 @@ The flagship workflow command. Orchestrates the full deployment lifecycle:
 | Flag               | Type     | Default         | Description                                                 |
 | ------------------ | -------- | --------------- | ----------------------------------------------------------- |
 | `--from`           | string   | context default | Account to deploy from                                      |
-| `--deposit`        | string   | auto-detect     | Initial deposit amount                                      |
+| `--deposit`        | string   | `auto`          | Initial deposit, unified syntax on both rails (see §7.4): `5usd`/`$5`, `5000000uakt`, or `auto` |
 | `--bid-timeout`    | duration | `5m`            | Maximum time to wait for bids                               |
 | `--min-bids`       | int      | `1`             | Minimum bids before selection                               |
 | `--bid-select`     | string   | `"interactive"` | Bid selection: `interactive`, `cheapest`, `provider=<addr>` |
@@ -1785,6 +1787,31 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | `akt console jwt create`         | `--ttl` (300), `--scope` (csv, default `status,logs,events,shell,send-manifest,get-manifest`) | Mint a short-lived provider-scoped JWT. |
 
 Per the positional-primary convention (§3.8), every console command takes its primary value(s) positionally; the equivalent flags remain as overrides and a positional value wins when both are given. Output is indented JSON; USD values are rendered as `$X.XX`. State-changing calls are recorded in the context's action log as `type=console` entries (§5.6). No command ever prints a Console API key, except the one-time secret from `apikey create`.
+
+---
+
+### 2.10 Capability Gating
+
+The active context's configuration determines a **feature set**: which transports are usable and therefore which command groups can work.
+
+| Capability | Derived from | Gates |
+|---|---|---|
+| `chain-query` | network has ≥1 RPC endpoint | `query`, `monitor` |
+| `chain-tx` | network has ≥1 RPC endpoint | `tx` |
+| `provider` | network has ≥1 RPC endpoint | `provider` |
+| `console` | Console API key resolvable (§7.1) | Console-backed command groups |
+
+Commands declare requirements via a cobra annotation (`akt.requires`, package `internal/capability`); alternatives are separated by `|` (e.g. workflow commands require `chain-tx|console`). A command whose requirement the context cannot satisfy fails fast with the missing capability and its remedy instead of erroring mid-transport.
+
+Presentation is configurable while UX feedback is collected (`defaults.command-gating`):
+
+| Mode | Behavior |
+|---|---|
+| `dim` (default) | Unavailable commands stay listed, marked `[unavailable]` in help, and fail fast with an explanation. |
+| `hide` | Unavailable commands are removed from help listings (direct invocation still fails fast with the explanation). |
+| `off` | No gating; commands fail wherever the missing transport is first touched. |
+
+Example: a network-less `console-api` context (API key only) lists and runs only Console commands; `tx`, `query`, `provider`, and `monitor` are dimmed or hidden and explain that an RPC endpoint must be added.
 
 ---
 
@@ -2783,7 +2810,14 @@ When a workflow runs in a context with `auth-method: console-api`, the workflow 
 | `provider` | Provider gateway call (JWT/mTLS) | Not supported — Console API contexts do not interact with provider gateways directly. The Console API handles manifest submission internally during lease creation. |
 | `foreach` | Iterate and execute nested step | Same, with nested step routing rules applied |
 
-**Deposit handling**: When `auth-method: console-api`, the `--deposit` flag is interpreted as USD (not uakt). The workflow engine passes the value directly to the Console API's `data.deposit` field.
+**Deposit handling**: `--deposit` accepts one unified syntax on both rails, parsed in one place (`internal/transport.ParseDeposit`) and translated per transport. The `usd` unit is case-insensitive and always wins over coin parsing.
+
+| Form | Examples | `keyring` (chain rail) | `console-api` (console rail) |
+|---|---|---|---|
+| USD | `5usd`, `$5`, `5.50usd` | Error: `USD deposits require a console-api context; specify a coin amount like 5000000uakt` | Sent as USD in the Console API's `data.deposit` field (Console minimum: 0.50 USD) |
+| Coin | `5000000uakt`, `5akt` | Attached to the deployment as the coin deposit | Error: `console deposits are in USD; use e.g. 5usd` |
+| Bare number | `5`, `5.50` | Error (coins require a denomination — the historical chain behavior, with cross-rail guidance) | Interpreted as USD, same as `5usd` |
+| `auto` / empty | `auto` | Chain-minimum deployment deposit, queried on chain | Error: an explicit USD deposit is required |
 
 **Manifest handling**: The Console API's `POST /v1/deployments` returns a `manifest` field in the response. The workflow engine stores this value and passes it to `POST /v1/leases` when creating leases, instead of calling the provider's `send-manifest` endpoint directly.
 
