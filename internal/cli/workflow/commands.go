@@ -17,8 +17,8 @@ import (
 	"pkg.akt.dev/akt/internal/cliutil"
 	"pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
+	"pkg.akt.dev/akt/internal/transport"
 	wf "pkg.akt.dev/akt/internal/workflow"
-	"pkg.akt.dev/akt/internal/workflow/adapters"
 	"pkg.akt.dev/akt/internal/workflow/builtin"
 	"pkg.akt.dev/akt/internal/workflow/steps"
 )
@@ -228,9 +228,11 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 	return cmd
 }
 
-// executeWorkflow resolves credentials for the active context, builds the
-// step clients (Console API or wallet/chain — abstracted away from the
-// user), runs the engine, and renders per-step results.
+// executeWorkflow resolves credentials for the active context, picks the
+// transport for its rail (internal/transport: chain for keyring auth,
+// console for console-api auth — abstracted away from the user; the command
+// arguments are identical on both), runs the engine, and renders per-step
+// results.
 func executeWorkflow(
 	cmd *cobra.Command,
 	rtDef *wf.WorkflowDef,
@@ -271,14 +273,14 @@ func executeWorkflow(
 			WithActionLog(cliutil.ActionLogFromContext(cmd.Context()))
 
 		// Chain queries still go directly to the chain when a client is
-		// available (SPEC §7.4); otherwise the console adapter falls back
+		// available (SPEC §7.4); otherwise the console transport falls back
 		// to the Console bids endpoint.
 		var chainQueries steps.ChainClient
 		if cl, cerr := chaincli.ClientFromContext(cmd.Context()); cerr == nil {
-			chainQueries = adapters.NewChainClient(cl)
+			chainQueries = transport.NewChain(cl)
 		}
 
-		chainCl = adapters.NewConsoleChainClient(cc, chainQueries, rc.Root, rc.Name)
+		chainCl = transport.NewConsole(cc, chainQueries, rc.Root, rc.Name)
 
 		// Provider gateway steps are not supported with console-api auth:
 		// the Console API submits the manifest internally during lease
@@ -299,8 +301,8 @@ func executeWorkflow(
 			)
 		}
 
-		chainCl = adapters.NewChainClient(cl)
-		providerCl = adapters.NewProviderClient(cl.ClientContext(), rc.AuthType)
+		chainCl = transport.NewChain(cl)
+		providerCl = transport.NewProvider(cl.ClientContext(), rc.AuthType)
 
 		if addr := cl.ClientContext().GetFromAddress(); !addr.Empty() {
 			account = addr.String()

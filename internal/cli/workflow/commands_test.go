@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 
 	aktctx "pkg.akt.dev/akt/internal/context"
 	wf "pkg.akt.dev/akt/internal/workflow"
@@ -472,6 +473,71 @@ func TestExecuteConsoleDeployEndToEnd(t *testing.T) {
 	}
 	if strings.Contains(out, "send-manifest  ") {
 		t.Errorf("send-manifest must not run for console auth:\n%s", out)
+	}
+}
+
+// argumentSurface flattens a command's user-visible argument surface — the
+// Use line (positionals) plus every flag's name, shorthand, type, default,
+// and usage — into a deterministic string for comparison.
+func argumentSurface(cmd *cobra.Command) string {
+	var flags []string
+	cmd.Flags().VisitAll(func(f *pflag.Flag) {
+		flags = append(flags, strings.Join([]string{f.Name, f.Shorthand, f.Value.Type(), f.DefValue, f.Usage}, "|"))
+	})
+	sort.Strings(flags)
+
+	return cmd.Use + "\n" + strings.Join(flags, "\n")
+}
+
+// TestArgumentSurfaceAuthIndependent locks in the transport parity guarantee
+// (SPEC §2.3): a workflow command's argument surface — positionals in Use and
+// the full flag set — is generated from the workflow definition alone and is
+// identical whether the active context uses keyring auth, console-api auth,
+// or no context manager exists at all. Transports may branch on behavior at
+// execution time, never on the argument surface.
+func TestArgumentSurfaceAuthIndependent(t *testing.T) {
+	keyringHome := t.TempDir()
+	keyringMgr := newTestManager(t, keyringHome, "wallet", aktctx.AuthMethodKeyring)
+
+	consoleHome := t.TempDir()
+	consoleMgr := newTestManager(t, consoleHome, "console", aktctx.AuthMethodConsoleAPI)
+
+	noneHome := t.TempDir()
+
+	variants := []struct {
+		name string
+		cmds []*cobra.Command
+	}{
+		{"no-manager", Commands(staticFns(noneHome))},
+		{"keyring", CommandsWithManager(
+			func() string { return keyringHome },
+			func() string { return "wallet" },
+			func() *aktctx.Manager { return keyringMgr },
+		)},
+		{"console-api", CommandsWithManager(
+			func() string { return consoleHome },
+			func() string { return "console" },
+			func() *aktctx.Manager { return consoleMgr },
+		)},
+	}
+
+	for _, name := range []string{"deploy", "update", "close"} {
+		base := findCommand(variants[0].cmds, name)
+		if base == nil {
+			t.Fatalf("variant %q did not surface %q", variants[0].name, name)
+		}
+		want := argumentSurface(base)
+
+		for _, v := range variants[1:] {
+			cmd := findCommand(v.cmds, name)
+			if cmd == nil {
+				t.Fatalf("variant %q did not surface %q", v.name, name)
+			}
+			if got := argumentSurface(cmd); got != want {
+				t.Errorf("%s: argument surface differs between %q and %q:\n--- %s\n%s\n--- %s\n%s",
+					name, variants[0].name, v.name, variants[0].name, want, v.name, got)
+			}
+		}
 	}
 }
 

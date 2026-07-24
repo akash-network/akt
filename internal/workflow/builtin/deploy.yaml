@@ -10,7 +10,7 @@ params:
   deposit:
     type: string
     default: "auto"
-    description: Initial deposit amount (auto = chain minimum or SDL-specified; USD amount for console-api contexts)
+    description: "Initial deposit: 5usd or $5 (USD, console-api contexts), 5000000uakt (coin, keyring contexts), auto = chain minimum (keyring)"
   bid-timeout:
     type: duration
     default: "5m"
