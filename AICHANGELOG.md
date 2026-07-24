@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **`--help` on SDK module groups required a configured context**: the clean-copied cosmos-sdk group commands (`tx bank`, `tx authz`, `query staking`, …) set `DisableFlagParsing`, so cobra cannot short-circuit `--help` before the root hooks run — on a machine with no config those hooks rejected the command with "no contexts configured" before help printed (the CI failure mode; masked locally by the developer's real config). Root hooks now detect help invocations from argv and skip both bootstrap and the context requirement, so help always works. `TestAllCommandsHelp` is hermetic via `AKT_HOME` pointed at an empty temp home (the env var, because those same groups ignore an unparsed `--home` flag — a pre-existing SDK-copy quirk).
+
 - **First-run bootstrap ran headlessly and hung CI**: with no config and no TTY, bare `akt` silently ran the bootstrap wizard — fetching the network list from the GitHub API and writing a config assembled from non-interactive fallbacks (all networks, `os` keyring) — which made `TestTUINoArgNoTTY` time out on GitHub runners (it passed locally only because the developer's real `~/.config/akt` exists). The wizard now declines to run without a terminal (no fetch, no config, guidance printed to stderr) per SPEC §2.0, and the e2e test is hermetic (fresh `--home`) so it exercises the CI condition everywhere. 2 tests.
 
 - **`context log --type` help text listed the wrong action types**: it offered `tx, query, workflow, error`; the recorded types are `tx, workflow, provider, context, console, error` (queries are not recorded by design).

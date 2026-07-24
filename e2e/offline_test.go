@@ -463,6 +463,11 @@ func TestStoreImportMissingFile(t *testing.T) {
 // internal/cli/chain/query.go.
 
 func TestAllCommandsHelp(t *testing.T) {
+	// Hermetic: help must work on a machine with nothing configured, so
+	// point the CLI at an empty home. AKT_HOME (not --home) because several
+	// SDK group commands disable flag parsing and would ignore the flag.
+	t.Setenv("AKT_HOME", t.TempDir())
+
 	commands := [][]string{
 		// root-level
 		{"version"},

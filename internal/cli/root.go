@@ -145,9 +145,11 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			resolvedCfgRoot = cfgRoot
 
 			// First-run bootstrap: if no config file exists, offer to
-			// fetch networks from github.com/akash-network/net.
+			// fetch networks from github.com/akash-network/net. Help
+			// invocations never bootstrap — help must work on a machine
+			// with nothing configured.
 			cfgPath := aktctx.ConfigPath(cfgRoot)
-			if _, statErr := os.Stat(cfgPath); os.IsNotExist(statErr) {
+			if _, statErr := os.Stat(cfgPath); os.IsNotExist(statErr) && !helpRequested(os.Args[1:]) {
 				// Initialize glyphs before bootstrap (config not yet
 				// available — uses flag/env/auto-detect only).
 				initGlyphs(v)
@@ -185,8 +187,11 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			}
 
 			// 4. If no context was resolved, only allow commands that do not
-			//    require a configured context to proceed.
-			if !resolved && requiresContext(cmd) {
+			//    require a configured context to proceed. Help requests are
+			//    always allowed: SDK group commands disable flag parsing, so
+			//    cobra cannot short-circuit their --help before these hooks
+			//    run, and help must never require a context.
+			if !resolved && requiresContext(cmd) && !helpRequested(os.Args[1:]) {
 				return noContextError(mgr)
 			}
 
@@ -318,6 +323,21 @@ func requiresContext(cmd *cobra.Command) bool {
 	}
 
 	return true
+}
+
+// helpRequested reports whether the invocation asks for help. Detection is
+// argv-based because several clean-copied SDK group commands set
+// DisableFlagParsing, which prevents cobra from seeing --help before the
+// persistent hooks execute.
+func helpRequested(args []string) bool {
+	for _, a := range args {
+		switch a {
+		case "--help", "-h", "help":
+			return true
+		}
+	}
+
+	return false
 }
 
 // checkInteractive returns an error if interactive mode is disabled in config
