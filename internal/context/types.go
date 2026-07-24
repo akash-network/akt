@@ -129,6 +129,10 @@ type PluginSettings struct {
 type Defaults struct {
 	Output        string `yaml:"output,omitempty"         json:"output,omitempty"`
 	BroadcastMode string `yaml:"broadcast-mode,omitempty" json:"broadcast_mode,omitempty"`
+	// CommandGating selects how commands the context configuration cannot
+	// execute are presented: dim (default), hide, or off. Both dim and
+	// hide are supported while UX feedback is collected.
+	CommandGating string `yaml:"command-gating,omitempty" json:"command_gating,omitempty"`
 }
 
 // Config is the top-level configuration structure persisted in config.yaml.

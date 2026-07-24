@@ -67,6 +67,13 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			consoleAPIKey, _ := cmd.Flags().GetString("console-api-key")
 			setCurrent, _ := cmd.Flags().GetBool("set-current")
 
+			// console-api contexts may be created without a network — they
+			// operate through the Console API alone (chain commands are
+			// capability-gated until a network is attached).
+			if network == "" && authMethod != aktctx.AuthMethodConsoleAPI {
+				return fmt.Errorf("--network is required unless --auth-method %s is used", aktctx.AuthMethodConsoleAPI)
+			}
+
 			ctx := aktctx.Context{
 				Name:           name,
 				Network:        aktctx.Network{Name: network},
@@ -119,7 +126,8 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd.Flags().String("console-api-url", "", "Console API base URL (empty = default; only with console-api auth)")
 	cmd.Flags().String("console-api-key", "", "Console API key stored as a per-context credential (never written to config.yaml)")
 	cmd.Flags().Bool("set-current", false, "Set as current context after creation")
-	_ = cmd.MarkFlagRequired("network")
+	// --network is validated in RunE rather than MarkFlagRequired: console-api
+	// contexts are allowed to omit it (network-less, Console-only operation).
 
 	_ = cmd.RegisterFlagCompletionFunc("network", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
 		m := mgr()

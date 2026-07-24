@@ -14,9 +14,6 @@ import (
 // overrides, so new required flags need an explicit entry here (and a good
 // reason).
 var requiredFlagAllowlist = map[string]bool{
-	// A context's network is a named reference selected from shared
-	// definitions; the spec defines it as a required flag (SPEC §2.2).
-	"context create --network": true,
 	// Explicit signer identity is the point of offline signing (cosmos convention).
 	"tx sign --from":       true,
 	"tx sign-batch --from": true,

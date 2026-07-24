@@ -252,7 +252,14 @@ func (m *Manager) CreateContext(ctx Context) error {
 		return fmt.Errorf("context %q already exists", ctx.Name)
 	}
 
-	if m.getNetwork(ctx.Network.Name) == nil {
+	// console-api contexts may omit the network entirely: they operate
+	// through the Console API alone and gain chain access only when a
+	// network is attached later.
+	if ctx.Network.Name == "" {
+		if ctx.AuthMethod != AuthMethodConsoleAPI {
+			return fmt.Errorf("a network is required unless auth-method is %q", AuthMethodConsoleAPI)
+		}
+	} else if m.getNetwork(ctx.Network.Name) == nil {
 		return fmt.Errorf("network %q not found", ctx.Network.Name)
 	}
 
@@ -466,9 +473,14 @@ func (m *Manager) Resolve(name string) (*Context, error) {
 		return nil, fmt.Errorf("context %q not found", name)
 	}
 
-	net := m.getNetwork(ctx.Network.Name)
-	if net == nil {
-		return nil, fmt.Errorf("network %q (referenced by context %q) not found", ctx.Network.Name, name)
+	// Network-less console-api contexts resolve with an empty network;
+	// capability gating then disables chain-backed commands.
+	net := &Network{}
+	if ctx.Network.Name != "" {
+		net = m.getNetwork(ctx.Network.Name)
+		if net == nil {
+			return nil, fmt.Errorf("network %q (referenced by context %q) not found", ctx.Network.Name, name)
+		}
 	}
 
 	kr := m.getKeyring(ctx.Keyring.Name)
