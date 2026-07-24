@@ -1827,6 +1827,62 @@ Example: a network-less `console-api` context (API key only) lists and runs only
 
 ---
 
+### 2.11 SDL Commands
+
+Transport-independent SDL authoring, ported from console-axi (`src/sdl/templates`, `src/sdl/lint.ts`). All `akt sdl` subcommands run entirely locally: no context, key, or RPC endpoint is required, and the group declares no capability requirements.
+
+#### `akt sdl scaffolds`
+
+List the built-in SDL scaffolds (alias: `akt sdl templates`, matching the reference CLI's historical name).
+
+| Scaffold        | Shape                                                                                        |
+| --------------- | -------------------------------------------------------------------------------------------- |
+| `web`           | Single web service with one HTTP port exposed to the internet (nginx:1.27, 0.5 CPU / 512Mi)  |
+| `gpu`           | GPU workload (ML/inference) with an nvidia model requirement (pytorch image, a100, 4 CPU / 16Gi) |
+| `multi-service` | App + postgres:16 database with a persistent volume (`beta2`) and service-to-service networking |
+| `ip-lease`      | Service with a dedicated public IP — SDL v2.1 `endpoints` + `expose ... to ip`               |
+
+#### `akt sdl init <scaffold>`
+
+Generate SDL YAML on stdout, pipeable into `akt sdl validate -` or redirected to a file for `akt deploy`. The output is self-checked against the validator before printing. Flags are generation parameters with per-scaffold defaults — not positional-argument twins — so the zero-flag invocation always produces a deployable SDL. Pricing defaults to a 10000 uact/block ceiling (100000 for `gpu`) so bids arrive.
+
+| Flag          | Type        | Description                                              |
+| ------------- | ----------- | --------------------------------------------------------- |
+| `--name`      | string      | Service name (default per scaffold: `web` / `app`)        |
+| `--image`     | string      | Container image; must be tagged, e.g. `nginx:1.27`        |
+| `--port`      | int         | Container port (default 80; 8080 for `gpu`)               |
+| `--as`        | int         | External port (default 80)                                |
+| `--cpu`       | string      | CPU units, e.g. `0.5` or `500m`                           |
+| `--memory`    | string      | Memory size, e.g. `512Mi`, `2Gi`                          |
+| `--storage`   | string      | Storage size, e.g. `1Gi` (sizes the persistent volume for `multi-service`) |
+| `--count`     | int         | Replica count (default 1)                                 |
+| `--price`     | int         | Max price per block in uact                               |
+| `--env`       | stringArray | Environment variable `KEY=value` (repeatable)             |
+| `--gpu`       | int         | GPU units (`gpu` scaffold, default 1)                     |
+| `--gpu-model` | string      | NVIDIA GPU model (`gpu` scaffold, default `a100`)         |
+
+#### `akt sdl validate <file>`
+
+Validate an SDL offline (`-` reads stdin). Parsing and schema/relational validation use `pkg.akt.dev/go/sdl` — the same parser behind `akt deploy` and the chain tx commands — followed by lint rules ported from the reference:
+
+- **Unpinned image** (error): every service image must carry an explicit tag or `@sha256:` digest; untagged images and `:latest` are rejected as non-reproducible.
+- **Pricing denom**: `uact` passes; `uakt` produces a **warning**, not an error — a deliberate deviation from the reference, which hard-rejects `uakt` because it only serves the managed Console API. akt serves both rails: `uakt` is valid on-chain, but console-api (managed) contexts price in `uact`. Any other denom is an error, matching the reference.
+
+Exit `0` when valid, printing a summary (`valid: N service(s), M group(s), K warning(s)`) plus any warnings; exit `1` when invalid, listing every parse/lint error.
+
+```bash
+# Generate, self-check, and validate
+akt sdl init web --image nginx:1.27 > deploy.yaml
+akt sdl validate deploy.yaml
+
+# Pipe without touching disk
+akt sdl init gpu --gpu-model h100 | akt sdl validate -
+```
+
+---
+
+---
+
 ## 3. Flag Specification
 
 ### 3.1 Global Persistent Flags

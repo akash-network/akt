@@ -22,6 +22,7 @@ import (
 	cliconsole "pkg.akt.dev/akt/internal/cli/console"
 	clicontext "pkg.akt.dev/akt/internal/cli/context"
 	cliprovider "pkg.akt.dev/akt/internal/cli/provider"
+	clisdl "pkg.akt.dev/akt/internal/cli/sdl"
 	clistore "pkg.akt.dev/akt/internal/cli/store"
 	cliworkflow "pkg.akt.dev/akt/internal/cli/workflow"
 	aktclient "pkg.akt.dev/akt/internal/client"
@@ -303,6 +304,7 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	root.AddCommand(mcpCmd())
 	root.AddCommand(cliprovider.Commands())
 	root.AddCommand(cliconsole.Commands(mgrFn))
+	root.AddCommand(clisdl.Commands())
 	homeFn := func() string { return resolvedCfgRoot }
 	ctxNameFn := func() string {
 		if mgr != nil {
