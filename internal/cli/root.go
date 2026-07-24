@@ -208,20 +208,34 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := checkInteractive(v); err != nil {
-				return err
+			// The TUI shell is DISABLED pending UX feedback (2026-07): bare
+			// akt prints help instead of launching the dashboard. The code
+			// path is kept compiled behind AKT_EXPERIMENTAL_TUI=1 so it can
+			// be exercised while feedback is collected; akt monitor (the
+			// real-time monitoring hub) is unaffected. Re-enable by removing
+			// this gate once the TUI resource views are production-ready.
+			if os.Getenv("AKT_EXPERIMENTAL_TUI") == "1" {
+				if err := checkInteractive(v); err != nil {
+					return err
+				}
+
+				cctx := sdkclient.GetClientContextFromCmd(cmd)
+				cfgRoot, _ := aktctx.ConfigHome(v.GetString("home"))
+
+				return akttui.Run(akttui.Config{
+					Viper:        v,
+					RPCEndpoint:  cctx.NodeURI,
+					RESTEndpoint: "", // resolved by rpc.NewClient default when empty
+					CacheDir:     filepath.Join(cfgRoot, "cache"),
+					Insecure:     true,
+				})
 			}
 
-			cctx := sdkclient.GetClientContextFromCmd(cmd)
-			cfgRoot, _ := aktctx.ConfigHome(v.GetString("home"))
+			if interactive, _ := cmd.Flags().GetBool("interactive"); interactive {
+				return fmt.Errorf("the TUI is currently disabled while UX feedback is collected; use the CLI commands or akt monitor")
+			}
 
-			return akttui.Run(akttui.Config{
-				Viper:        v,
-				RPCEndpoint:  cctx.NodeURI,
-				RESTEndpoint: "", // resolved by rpc.NewClient default when empty
-				CacheDir:     filepath.Join(cfgRoot, "cache"),
-				Insecure:     true,
-			})
+			return cmd.Help()
 		},
 		PersistentPostRunE: func(cmd *cobra.Command, _ []string) error {
 			// Close the action logger opened in PersistentPreRunE (SPEC §5.6).

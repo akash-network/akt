@@ -32,6 +32,8 @@
 
 ### Changed
 
+- **TUI shell disabled pending UX feedback**: bare `akt` now prints help instead of launching the dashboard, and `--interactive`/`-i` reports that the TUI is disabled (pointing at the CLI commands and `akt monitor`, which is unaffected). The launch path stays compiled behind `AKT_EXPERIMENTAL_TUI=1` for feedback sessions. SPEC §2.0 annotated.
+
 - **Documentation refreshed to match the delivered state**: README (status paragraph, action-log scope, workflow execution no longer "not yet wired", new Console Integration section, positional-first examples, roadmap pruned of already-delivered items), DESIGN (action-log scope, console-auth section notes the full `akt console` surface, phase status bullets), SPEC (console group added to the §2.1 command tree, context create/edit flag tables, `context log --type` values, §7.3 min deposit corrected to $0.50, §7.5/§7.6 examples, §1.9 env table, §12 milestone wording). TASKS.md verified — no checkbox changes needed. Two cross-doc contradictions flagged for follow-up rather than guessed at: README's TUI "scaffolded" wording vs TASKS T093-T104 complete, and SPEC §7.4's planned `foreach` step type.
 
 ### Added
