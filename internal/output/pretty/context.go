@@ -2,8 +2,10 @@ package pretty
 
 import (
 	"fmt"
+	"io"
 	"strings"
 
+	"pkg.akt.dev/akt/internal/capability"
 	aktctx "pkg.akt.dev/akt/internal/context"
 )
 
@@ -84,5 +86,26 @@ func RenderContextShow(rc aktctx.Context) string {
 	KV(w, "Store", aktctx.StoreDir(rc.Root, rc.Name))
 	KV(w, "Action Log", aktctx.ActionLogPath(rc.Root, rc.Name))
 
+	// Feature set: what this configuration can actually do (SPEC §2.10).
+	// Missing capabilities name their remedy so the user knows how to
+	// enable the corresponding commands.
+	set := capability.Resolve(&rc)
+
+	Newline(w)
+	KVHeader(w, "  Capabilities")
+	renderCapability(w, "Chain queries", set.ChainQuery, "add an RPC endpoint to the network")
+	renderCapability(w, "Chain transactions", set.ChainTx, "add an RPC endpoint to the network")
+	renderCapability(w, "Provider gateway", set.Provider, "add an RPC endpoint to the network")
+	renderCapability(w, "Console API", set.Console, "run akt console login")
+
 	return buf.String()
+}
+
+func renderCapability(w io.Writer, label string, available bool, remedy string) {
+	if available {
+		SubKV(w, label, "available")
+		return
+	}
+
+	SubKV(w, label, Dim("unavailable — "+remedy))
 }

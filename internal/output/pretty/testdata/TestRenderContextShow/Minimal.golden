@@ -15,3 +15,9 @@
   [38;2;113;113;122mProvider Auth:[m       
   [38;2;113;113;122mStore:[m               /tmp/akt-test/contexts/local/store
   [38;2;113;113;122mAction Log:[m          /tmp/akt-test/contexts/local/actions.log
+
+  [38;2;113;113;122m  Capabilities:[m
+      [38;2;113;113;122mChain queries:[m   available
+      [38;2;113;113;122mChain transactions:[m available
+      [38;2;113;113;122mProvider gateway:[m available
+      [38;2;113;113;122mConsole API:[m     [38;2;161;161;170munavailable — run akt console login[m
