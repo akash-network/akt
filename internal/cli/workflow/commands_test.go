@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"pkg.akt.dev/akt/internal/capability"
 	aktctx "pkg.akt.dev/akt/internal/context"
 	wf "pkg.akt.dev/akt/internal/workflow"
 	"pkg.akt.dev/akt/internal/workflow/builtin"
@@ -473,6 +474,24 @@ func TestExecuteConsoleDeployEndToEnd(t *testing.T) {
 	}
 	if strings.Contains(out, "send-manifest  ") {
 		t.Errorf("send-manifest must not run for console auth:\n%s", out)
+	}
+}
+
+// TestCommandsCarryCapabilityAnnotation verifies every generated workflow
+// command declares the either-rail capability requirement used by command
+// gating: chain-tx (keyring) or console (console-api).
+func TestCommandsCarryCapabilityAnnotation(t *testing.T) {
+	homeFn, ctxNameFn := staticFns(t.TempDir())
+
+	cmds := Commands(homeFn, ctxNameFn)
+	if len(cmds) == 0 {
+		t.Fatal("Commands() surfaced no workflow commands")
+	}
+
+	for _, cmd := range cmds {
+		if got := cmd.Annotations[capability.AnnotationKey]; got != "chain-tx|console" {
+			t.Errorf("%s: annotation %q = %q, want %q", cmd.Name(), capability.AnnotationKey, got, "chain-tx|console")
+		}
 	}
 }
 

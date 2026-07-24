@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
+	"pkg.akt.dev/akt/internal/capability"
 	chaincli "pkg.akt.dev/akt/internal/cli/chain"
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	"pkg.akt.dev/akt/internal/cliutil"
@@ -85,6 +86,12 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 		Use:     use,
 		Short:   def.Description,
 		Example: fmt.Sprintf("  akt %s --help", def.Name),
+		// Workflow commands run on either rail (internal/transport): chain
+		// tx broadcasting on keyring contexts or Console API calls on
+		// console-api contexts. Either capability satisfies the gate.
+		Annotations: map[string]string{
+			capability.AnnotationKey: string(capability.ChainTx) + "|" + string(capability.Console),
+		},
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			// Dry runs never need clients.
 			if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {

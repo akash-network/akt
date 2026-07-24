@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"pkg.akt.dev/akt/internal/capability"
 	"pkg.akt.dev/akt/internal/cliutil"
 	"pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
@@ -33,20 +34,41 @@ func Commands(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd.PersistentFlags().String("console-api-key", "", "Console API key (overrides AKT_CONSOLE_API_KEY and the stored credential)")
 
 	cmd.AddCommand(
+		// Credential management and public marketplace/catalog commands
+		// work without a stored key, so they carry no capability gate.
 		loginCmd(mgrFn),
 		logoutCmd(mgrFn),
-		whoamiCmd(mgrFn),
-		deploymentCmds(mgrFn),
-		bidCmds(mgrFn),
-		leaseCmds(mgrFn),
-		walletCmds(mgrFn),
-		usageCmd(mgrFn),
 		providerCmds(mgrFn),
 		gpuCmd(mgrFn),
 		templateCmds(mgrFn),
-		apikeyCmds(mgrFn),
-		jwtCmds(mgrFn),
+		screenCmd(mgrFn),
+
+		// Everything below needs a resolvable Console API key (SPEC §2.10).
+		requireConsole(whoamiCmd(mgrFn)),
+		requireConsole(deploymentCmds(mgrFn)),
+		requireConsole(bidCmds(mgrFn)),
+		requireConsole(leaseCmds(mgrFn)),
+		requireConsole(walletCmds(mgrFn)),
+		requireConsole(usageCmd(mgrFn)),
+		requireConsole(apikeyCmds(mgrFn)),
+		requireConsole(jwtCmds(mgrFn)),
+		requireConsole(logsCmd(mgrFn)),
+		requireConsole(eventsCmd(mgrFn)),
+		requireConsole(statusCmd(mgrFn)),
+		requireConsole(shellCmd(mgrFn)),
 	)
+
+	return cmd
+}
+
+// requireConsole tags a command as needing the console capability so the
+// gating layer (internal/capability, SPEC §2.10) can dim or hide it when the
+// active context has no resolvable Console API key.
+func requireConsole(cmd *cobra.Command) *cobra.Command {
+	if cmd.Annotations == nil {
+		cmd.Annotations = map[string]string{}
+	}
+	cmd.Annotations[capability.AnnotationKey] = string(capability.Console)
 
 	return cmd
 }
