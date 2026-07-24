@@ -188,12 +188,12 @@ func GetGenesisInitCmd(mbm module.BasicManager, defaultNodeHome string) *cobra.C
 				}
 				bankGenState.SendEnabled = []banktypes.SendEnabled{
 					{
-						sdkutil.DenomUakt,
-						true,
+						Denom:   sdkutil.DenomUakt,
+						Enabled: true,
 					},
 					{
-						sdkutil.DenomUact,
-						false,
+						Denom:   sdkutil.DenomUact,
+						Enabled: false,
 					},
 				}
 				bankGenStateBz, err := cdc.MarshalJSON(bankGenState)

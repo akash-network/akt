@@ -90,10 +90,7 @@ func leaseStatusCmd() *cobra.Command {
 		Long:  "Query the live status of a lease from a provider, including service status, forwarded ports, and IPs.",
 		Args:  cobra.MaximumNArgs(1),
 		Example: `  # Query lease status (positional dseq)
-  akt provider lease-status 12345 --provider akash1...
-
-  # Query lease status via flag; a positional dseq wins when both are given
-  akt provider lease-status --dseq 12345 --provider akash1...`,
+  akt provider lease-status 12345 --provider akash1...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
@@ -135,11 +132,11 @@ func leaseLogsCmd() *cobra.Command {
 		Example: `  # Stream logs for all services (positional dseq)
   akt provider lease-logs 12345 --provider akash1...
 
-  # Follow logs for a specific service; a positional dseq wins over --dseq
-  akt provider lease-logs --dseq 12345 --provider akash1... --service web --follow
+  # Follow logs for a specific service
+  akt provider lease-logs 12345 --provider akash1... --service web --follow
 
   # Show last 100 lines
-  akt provider lease-logs --dseq 12345 --provider akash1... --tail 100`,
+  akt provider lease-logs 12345 --provider akash1... --tail 100`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
@@ -203,11 +200,11 @@ func leaseEventsCmd() *cobra.Command {
 		Short: "Stream Kubernetes events",
 		Long:  "Stream Kubernetes events for a lease from the provider.",
 		Args:  cobra.MaximumNArgs(1),
-		Example: `  # Stream events (positional dseq; wins over --dseq when both are given)
+		Example: `  # Stream events (positional dseq)
   akt provider lease-events 12345 --provider akash1...
 
   # Follow events
-  akt provider lease-events --dseq 12345 --provider akash1... --follow`,
+  akt provider lease-events 12345 --provider akash1... --follow`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
@@ -308,7 +305,7 @@ func leaseShellCmd() *cobra.Command {
 		},
 	}
 
-	addLeaseFlags(cmd)
+	addLeaseShellFlags(cmd)
 	cmd.Flags().String("service", "", "Service name (required)")
 	cmd.Flags().BoolP("tty", "t", true, "Allocate a TTY")
 
@@ -374,10 +371,7 @@ func getManifestCmd() *cobra.Command {
 		Long:  "Retrieve the current manifest for a lease from the provider.",
 		Args:  cobra.MaximumNArgs(1),
 		Example: `  # Get manifest for a lease (positional dseq)
-  akt provider get-manifest 12345 --provider akash1...
-
-  # Get manifest via flag; a positional dseq wins when both are given
-  akt provider get-manifest --dseq 12345 --provider akash1...`,
+  akt provider get-manifest 12345 --provider akash1...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
@@ -512,16 +506,32 @@ func migrateEndpointsCmd() *cobra.Command {
 
 // --- helpers ---
 
-// addLeaseFlags adds the common lease identification flags to a command.
+// addLeaseFlags adds the common lease identification flags to the commands
+// that take a positional [dseq] (lease-status, lease-logs, lease-events,
+// get-manifest). lease-shell keeps its --dseq via addLeaseShellFlags.
 func addLeaseFlags(cmd *cobra.Command) {
+	// FEEDBACK(2026-07): --dseq disabled for the positional-only UX trial
+	// (use the positional [dseq] argument instead). Restore by uncommenting
+	// if users ask for the flag form back.
+	// cmd.Flags().Uint64("dseq", 0, "Deployment sequence number")
+	cmd.Flags().Uint32("gseq", 1, "Group sequence number")
+	cmd.Flags().Uint32("oseq", 1, "Order sequence number")
+}
+
+// addLeaseShellFlags adds the lease identification flags for lease-shell,
+// which consumes its positional args as the remote command and therefore
+// keeps --dseq (no positional twin).
+func addLeaseShellFlags(cmd *cobra.Command) {
 	cmd.Flags().Uint64("dseq", 0, "Deployment sequence number")
 	cmd.Flags().Uint32("gseq", 1, "Group sequence number")
 	cmd.Flags().Uint32("oseq", 1, "Order sequence number")
 }
 
 // leaseIDFromFlags builds a LeaseID from the command flags and an optional
-// positional dseq argument. A positional dseq always wins over the --dseq
-// flag (SPEC §3.8.2).
+// positional dseq argument. Only lease-shell still registers --dseq
+// (FEEDBACK 2026-07: the flag is disabled on the positional-[dseq] commands
+// for the positional-only UX trial); for those commands the flag lookup
+// below yields zero and the positional argument is the sole source.
 func leaseIDFromFlags(cmd *cobra.Command, args []string, provider sdk.AccAddress) (mtypes.LeaseID, error) {
 	cctx := sdkclient.GetClientContextFromCmd(cmd)
 	owner := cctx.GetFromAddress()
@@ -534,7 +544,7 @@ func leaseIDFromFlags(cmd *cobra.Command, args []string, provider sdk.AccAddress
 	}
 
 	if dseq == 0 {
-		return mtypes.LeaseID{}, fmt.Errorf("dseq is required: provide positional [dseq] or the --dseq flag")
+		return mtypes.LeaseID{}, fmt.Errorf("dseq is required: provide the positional [dseq] argument (or --dseq for lease-shell)")
 	}
 
 	gseq, _ := cmd.Flags().GetUint32("gseq")

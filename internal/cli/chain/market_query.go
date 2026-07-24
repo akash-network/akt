@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
@@ -36,9 +38,9 @@ func GetQueryMarketCmds() *cobra.Command {
 // When partially specified, returns a filtered list.
 func GetQueryMarketOrderCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "order [id]",
+		Use:               "order [id] [state]",
 		Short:             "Query orders",
-		Args:              cobra.MaximumNArgs(1),
+		Args:              cobra.MaximumNArgs(2),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -51,7 +53,7 @@ func GetQueryMarketOrderCmd() *cobra.Command {
 
 			defaultOwner := cl.ClientContext().GetFromAddress().String()
 
-			if len(args) == 1 {
+			if len(args) > 0 {
 				af, err := cflags.OrderFiltersFromArg(args[0], defaultOwner)
 				if err != nil {
 					return err
@@ -68,9 +70,21 @@ func GetQueryMarketOrderCmd() *cobra.Command {
 				if af.OSeq != 0 {
 					ofilters.OSeq = af.OSeq
 				}
-				// Positional state keyword wins over --state (SPEC §3.8.2).
+				// A bare state keyword may only appear once (SPEC §3.8.2).
 				if af.State != "" {
+					if len(args) > 1 {
+						return fmt.Errorf("order filter: state keyword %q cannot be combined with a second argument %q", args[0], args[1])
+					}
 					ofilters.State = af.State
+				}
+			}
+
+			// Optional second positional: a state keyword narrowing the
+			// identity filter (SPEC §3.8), e.g.
+			// `akt query market order 12345 open`.
+			if len(args) > 1 {
+				if ofilters.State, err = cflags.OrderStateFromArg(args[1]); err != nil {
+					return err
 				}
 			}
 
@@ -126,9 +140,9 @@ func GetQueryMarketOrderCmd() *cobra.Command {
 // When partially specified, returns a filtered list.
 func GetQueryMarketBidCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "bid [id]",
+		Use:               "bid [id] [state]",
 		Short:             "Query bids",
-		Args:              cobra.MaximumNArgs(1),
+		Args:              cobra.MaximumNArgs(2),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -143,7 +157,7 @@ func GetQueryMarketBidCmd() *cobra.Command {
 			byProvider, _ := cmd.Flags().GetString("by")
 			isByProvider := byProvider == "provider"
 
-			if len(args) == 1 {
+			if len(args) > 0 {
 				af, err := cflags.BidFiltersFromArg(args[0], defaultOwner, isByProvider)
 				if err != nil {
 					return err
@@ -163,9 +177,21 @@ func GetQueryMarketBidCmd() *cobra.Command {
 				if af.Provider != "" {
 					bfilters.Provider = af.Provider
 				}
-				// Positional state keyword wins over --state (SPEC §3.8.2).
+				// A bare state keyword may only appear once (SPEC §3.8.2).
 				if af.State != "" {
+					if len(args) > 1 {
+						return fmt.Errorf("bid filter: state keyword %q cannot be combined with a second argument %q", args[0], args[1])
+					}
 					bfilters.State = af.State
+				}
+			}
+
+			// Optional second positional: a state keyword narrowing the
+			// identity filter (SPEC §3.8), e.g.
+			// `akt query market bid 12345 open`.
+			if len(args) > 1 {
+				if bfilters.State, err = cflags.BidStateFromArg(args[1]); err != nil {
+					return err
 				}
 			}
 
@@ -223,9 +249,9 @@ func GetQueryMarketBidCmd() *cobra.Command {
 // When partially specified, returns a filtered list.
 func GetQueryMarketLeaseCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "lease [id]",
+		Use:               "lease [id] [state]",
 		Short:             "Query leases",
-		Args:              cobra.MaximumNArgs(1),
+		Args:              cobra.MaximumNArgs(2),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -240,7 +266,7 @@ func GetQueryMarketLeaseCmd() *cobra.Command {
 			byProvider, _ := cmd.Flags().GetString("by")
 			isByProvider := byProvider == "provider"
 
-			if len(args) == 1 {
+			if len(args) > 0 {
 				af, err := cflags.LeaseFiltersFromArg(args[0], defaultOwner, isByProvider)
 				if err != nil {
 					return err
@@ -260,9 +286,21 @@ func GetQueryMarketLeaseCmd() *cobra.Command {
 				if af.Provider != "" {
 					lfilters.Provider = af.Provider
 				}
-				// Positional state keyword wins over --state (SPEC §3.8.2).
+				// A bare state keyword may only appear once (SPEC §3.8.2).
 				if af.State != "" {
+					if len(args) > 1 {
+						return fmt.Errorf("lease filter: state keyword %q cannot be combined with a second argument %q", args[0], args[1])
+					}
 					lfilters.State = af.State
+				}
+			}
+
+			// Optional second positional: a state keyword narrowing the
+			// identity filter (SPEC §3.8), e.g.
+			// `akt query market lease 12345 active`.
+			if len(args) > 1 {
+				if lfilters.State, err = cflags.LeaseStateFromArg(args[1]); err != nil {
+					return err
 				}
 			}
 

@@ -95,17 +95,19 @@ func deploymentCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			"is cached per-context so `akt console lease create` can send it without re-passing it.",
 		Args: cobra.RangeArgs(1, 2),
 		Example: `  # Deposit as positional argument
-  akt console deployment create deploy.yaml 5
-
-  # Equivalent flag form
-  akt console deployment create deploy.yaml --deposit 5`,
+  akt console deployment create deploy.yaml 5`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, rc, err := clientFromCmd(cmd, mgrFn, true)
 			if err != nil {
 				return err
 			}
 
-			deposit, _ := cmd.Flags().GetFloat64("deposit")
+			// FEEDBACK(2026-07): --deposit disabled for the positional-only
+			// UX trial; the positional [deposit-usd] argument is the only
+			// source (zero fallback). Restore by uncommenting if users ask
+			// for the flag form back.
+			// deposit, _ := cmd.Flags().GetFloat64("deposit")
+			deposit := 0.0
 			if len(args) > 1 {
 				deposit, err = strconv.ParseFloat(args[1], 64)
 				if err != nil {
@@ -113,7 +115,7 @@ func deploymentCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				}
 			}
 			if deposit < minDepositUSD {
-				return fmt.Errorf("deposit must be at least %s (got %s): pass it positionally or via --deposit", formatUSD(minDepositUSD), formatUSD(deposit))
+				return fmt.Errorf("deposit must be at least %s (got %s): pass it as the [deposit-usd] argument", formatUSD(minDepositUSD), formatUSD(deposit))
 			}
 
 			sdl, err := os.ReadFile(args[0])
@@ -151,7 +153,10 @@ func deploymentCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Float64("deposit", 0, "Deposit amount in USD (minimum 0.5); alternative to the positional argument")
+	// FEEDBACK(2026-07): --deposit disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// cmd.Flags().Float64("deposit", 0, "Deposit amount in USD (minimum 0.5); alternative to the positional argument")
 
 	return cmd
 }
@@ -218,17 +223,19 @@ func deploymentDepositCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		Short: "Add funds to a deployment's escrow",
 		Args:  cobra.RangeArgs(1, 2),
 		Example: `  # Amount as positional argument
-  akt console deployment deposit 12345 10
-
-  # Equivalent flag form
-  akt console deployment deposit 12345 --amount 10`,
+  akt console deployment deposit 12345 10`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, _, err := clientFromCmd(cmd, mgrFn, true)
 			if err != nil {
 				return err
 			}
 
-			amount, _ := cmd.Flags().GetFloat64("amount")
+			// FEEDBACK(2026-07): --amount disabled for the positional-only
+			// UX trial; the positional [amount-usd] argument is the only
+			// source (zero fallback). Restore by uncommenting if users ask
+			// for the flag form back.
+			// amount, _ := cmd.Flags().GetFloat64("amount")
+			amount := 0.0
 			if len(args) > 1 {
 				amount, err = strconv.ParseFloat(args[1], 64)
 				if err != nil {
@@ -236,7 +243,7 @@ func deploymentDepositCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				}
 			}
 			if amount <= 0 {
-				return fmt.Errorf("amount must be a positive USD amount (got %s): pass it positionally or via --amount", formatUSD(amount))
+				return fmt.Errorf("amount must be a positive USD amount (got %s): pass it as the [amount-usd] argument", formatUSD(amount))
 			}
 
 			if err := cl.Deposit(cmd.Context(), args[0], amount); err != nil {
@@ -248,7 +255,10 @@ func deploymentDepositCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Float64("amount", 0, "Amount to add in USD; alternative to the positional argument")
+	// FEEDBACK(2026-07): --amount disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// cmd.Flags().Float64("amount", 0, "Amount to add in USD; alternative to the positional argument")
 
 	return cmd
 }
@@ -261,7 +271,7 @@ func deploymentSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		Example: `  # Show current settings
   akt console deployment settings 12345
 
-  # Enable auto-top-up (positional; --auto-top-up works too)
+  # Enable auto-top-up
   akt console deployment settings 12345 true`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, _, err := clientFromCmd(cmd, mgrFn, true)
@@ -269,11 +279,17 @@ func deploymentSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			if len(args) > 1 || cmd.Flags().Changed("auto-top-up") {
-				value, _ := cmd.Flags().GetString("auto-top-up")
-				if len(args) > 1 {
-					value = args[1]
-				}
+			// FEEDBACK(2026-07): --auto-top-up disabled for the
+			// positional-only UX trial; the positional [true|false] argument
+			// is the only source. Restore by uncommenting if users ask for
+			// the flag form back.
+			// if len(args) > 1 || cmd.Flags().Changed("auto-top-up") {
+			// 	value, _ := cmd.Flags().GetString("auto-top-up")
+			// 	if len(args) > 1 {
+			// 		value = args[1]
+			// 	}
+			if len(args) > 1 {
+				value := args[1]
 
 				enabled, err := parseBoolValue(value, "auto-top-up")
 				if err != nil {
@@ -297,7 +313,10 @@ func deploymentSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().String("auto-top-up", "", "Enable or disable auto-top-up (true|false)")
+	// FEEDBACK(2026-07): --auto-top-up disabled for the positional-only UX
+	// trial (use the positional form instead). Restore by uncommenting if
+	// users ask for the flag form back.
+	// cmd.Flags().String("auto-top-up", "", "Enable or disable auto-top-up (true|false)")
 
 	return cmd
 }
@@ -351,10 +370,7 @@ func leaseCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 			"winning provider. The manifest defaults to the one cached by `deployment create`.",
 		Args: cobra.RangeArgs(1, 2),
 		Example: `  # Provider as positional argument (gseq/oseq default to 1)
-  akt console lease create 12345 akash1provider...
-
-  # Equivalent flag form
-  akt console lease create 12345 --provider akash1provider... --gseq 1 --oseq 1`,
+  akt console lease create 12345 akash1provider...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, rc, err := clientFromCmd(cmd, mgrFn, true)
 			if err != nil {
@@ -364,12 +380,17 @@ func leaseCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 			dseq := args[0]
 			gseq, _ := cmd.Flags().GetUint32("gseq")
 			oseq, _ := cmd.Flags().GetUint32("oseq")
-			provider, _ := cmd.Flags().GetString("provider")
+			// FEEDBACK(2026-07): --provider disabled for the positional-only
+			// UX trial; the positional [provider] argument is the only
+			// source. Restore by uncommenting if users ask for the flag form
+			// back.
+			// provider, _ := cmd.Flags().GetString("provider")
+			provider := ""
 			if len(args) > 1 {
 				provider = args[1]
 			}
 			if provider == "" {
-				return fmt.Errorf("provider is required: pass it positionally or via --provider")
+				return fmt.Errorf("provider is required: pass it as the [provider] argument")
 			}
 			manifestFile, _ := cmd.Flags().GetString("manifest")
 
@@ -408,7 +429,10 @@ func leaseCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 	create.Flags().Uint32("gseq", 1, "Group sequence number")
 	create.Flags().Uint32("oseq", 1, "Order sequence number")
-	create.Flags().String("provider", "", "Provider address; alternative to the positional argument")
+	// FEEDBACK(2026-07): --provider disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// create.Flags().String("provider", "", "Provider address; alternative to the positional argument")
 	create.Flags().String("manifest", "", "Manifest file (defaults to the one cached by `deployment create`)")
 
 	cmd.AddCommand(create)

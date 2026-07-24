@@ -162,7 +162,12 @@ func logsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 			follow, _ := cmd.Flags().GetBool("follow")
 			tail, _ := cmd.Flags().GetInt64("tail")
-			service, _ := cmd.Flags().GetString("service")
+			// FEEDBACK(2026-07): --service disabled for the positional-only
+			// UX trial; the positional [service] argument is the only
+			// source. Restore by uncommenting if users ask for the flag form
+			// back.
+			// service, _ := cmd.Flags().GetString("service")
+			service := ""
 			if len(args) > 1 {
 				service = args[1]
 			}
@@ -206,7 +211,10 @@ func logsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 	cmd.Flags().BoolP("follow", "f", false, "Follow log output")
 	cmd.Flags().Int64("tail", -1, "Number of lines to show from the end of the logs")
-	cmd.Flags().String("service", "", "Filter logs by service name; alternative to the positional argument")
+	// FEEDBACK(2026-07): --service disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// cmd.Flags().String("service", "", "Filter logs by service name; alternative to the positional argument")
 
 	return cmd
 }

@@ -393,6 +393,9 @@ func TestQueryDeploymentPositionalArgsOffline(t *testing.T) {
 		{"state keyword", []string{"query", "deployment", "active", "--node", unreachableNode}},
 		{"owner address", []string{"query", "deployment", testMnemonicAddr, "--node", unreachableNode}},
 		{"owner slash dseq", []string{"query", "deployment", testMnemonicAddr + "/12345", "--node", unreachableNode}},
+		// Second positional: a state keyword combined with the identity
+		// filter (2026-07 positional-only trial; --state is disabled).
+		{"identity plus state", []string{"query", "deployment", testMnemonicAddr + "/12345", "active", "--node", unreachableNode}},
 	}
 
 	for _, tc := range cases {

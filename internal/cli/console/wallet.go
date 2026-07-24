@@ -100,7 +100,7 @@ func walletSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		Example: `  # Show current settings
   akt console wallet settings
 
-  # Enable automatic top-up (positional; --auto-reload works too)
+  # Enable automatic top-up
   akt console wallet settings true`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, _, err := clientFromCmd(cmd, mgrFn, true)
@@ -108,11 +108,17 @@ func walletSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			if len(args) > 0 || cmd.Flags().Changed("auto-reload") {
-				value, _ := cmd.Flags().GetString("auto-reload")
-				if len(args) > 0 {
-					value = args[0]
-				}
+			// FEEDBACK(2026-07): --auto-reload disabled for the
+			// positional-only UX trial; the positional [true|false] argument
+			// is the only source. Restore by uncommenting if users ask for
+			// the flag form back.
+			// if len(args) > 0 || cmd.Flags().Changed("auto-reload") {
+			// 	value, _ := cmd.Flags().GetString("auto-reload")
+			// 	if len(args) > 0 {
+			// 		value = args[0]
+			// 	}
+			if len(args) > 0 {
+				value := args[0]
 
 				enabled, err := parseBoolValue(value, "auto-reload")
 				if err != nil {
@@ -136,7 +142,10 @@ func walletSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().String("auto-reload", "", "Enable or disable automatic top-up (true|false)")
+	// FEEDBACK(2026-07): --auto-reload disabled for the positional-only UX
+	// trial (use the positional form instead). Restore by uncommenting if
+	// users ask for the flag form back.
+	// cmd.Flags().String("auto-reload", "", "Enable or disable automatic top-up (true|false)")
 
 	return cmd
 }
@@ -173,7 +182,7 @@ func usageCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		Example: `  # Last 30 days (API default)
   akt console usage
 
-  # Explicit range, positional (flags work too and positionals win)
+  # Explicit range (positional dates)
   akt console usage 2026-01-01 2026-01-31`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, _, err := clientFromCmd(cmd, mgrFn, true)
@@ -181,8 +190,12 @@ func usageCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			from, _ := cmd.Flags().GetString("from")
-			to, _ := cmd.Flags().GetString("to")
+			// FEEDBACK(2026-07): --from/--to disabled for the positional-only
+			// UX trial; the positional [from] [to] dates are the only source.
+			// Restore by uncommenting if users ask for the flag form back.
+			// from, _ := cmd.Flags().GetString("from")
+			// to, _ := cmd.Flags().GetString("to")
+			from, to := "", ""
 			if len(args) > 0 {
 				from = args[0]
 			}
@@ -239,8 +252,14 @@ func usageCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().String("from", "", "Start date (YYYY-MM-DD)")
-	cmd.Flags().String("to", "", "End date (YYYY-MM-DD)")
+	// FEEDBACK(2026-07): --from disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// cmd.Flags().String("from", "", "Start date (YYYY-MM-DD)")
+	// FEEDBACK(2026-07): --to disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// cmd.Flags().String("to", "", "End date (YYYY-MM-DD)")
 
 	return cmd
 }

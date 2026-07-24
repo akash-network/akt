@@ -528,16 +528,16 @@ akt
 │   │   ├── total
 │   │   ├── denom-metadata
 │   │   └── send-enabled [denom1...]
-│   ├── deployment [filter]              # [owner/]dseq; no arg → list; --state flag
+│   ├── deployment [filter] [state]      # [owner/]dseq [state]; no arg → list; --state flag — **disabled pending feedback** (positional only, 2026-07)
 │   │   ├── group [filter]               # [owner/]dseq[/gseq]
 │   │   └── params
 │   ├── market
-│   │   ├── order [filter]               # [owner/]dseq[/gseq/oseq]; --state flag
-│   │   ├── bid [filter]                 # [owner/]dseq[/gseq/oseq[/prov]]; --by; --state
-│   │   ├── lease [filter]               # [owner/]dseq[/gseq/oseq[/prov]]; --by; --state
+│   │   ├── order [filter] [state]       # [owner/]dseq[/gseq/oseq] [state]; --state flag — **disabled pending feedback** (positional only, 2026-07)
+│   │   ├── bid [filter] [state]         # [owner/]dseq[/gseq/oseq[/prov]] [state]; --by; --state — **disabled pending feedback** (positional only, 2026-07)
+│   │   ├── lease [filter] [state]       # [owner/]dseq[/gseq/oseq[/prov]] [state]; --by; --state — **disabled pending feedback** (positional only, 2026-07)
 │   │   └── params
 │   ├── provider [address]               # List or get (address → single)
-│   ├── cert [owner]                     # Owner or default account; --state flag
+│   ├── cert [owner] [state]             # Owner or default account, plus [state]; --owner/--state flags — **disabled pending feedback** (positional only, 2026-07)
 │   ├── audit [owner]                    # Owner or default account; --auditor flag
 │   ├── escrow [filter]                  # [owner[/dseq]]; --state flag
 │   │   ├── payment [filter]             # [owner[/dseq]]
@@ -611,10 +611,10 @@ akt
 │   ├── ibc-transfer                     # IBC transfer (passthrough from cosmos-sdk, subcommands not expanded)
 │   ├── upgrade
 │   ├── block [height]
-│   ├── blocks [query]                   # CometBFT query expr; --query override
+│   ├── blocks [query]                   # CometBFT query expr; --query override — **disabled pending feedback** (positional only, 2026-07)
 │   ├── block-results [height]
 │   ├── tx <hash>
-│   ├── txs [events]                     # event list expr; --events override
+│   ├── txs [events]                     # event list expr; --events override — **disabled pending feedback** (positional only, 2026-07)
 │   └── module-name-to-address <module>
 ├── deploy <sdl-file>                    # Workflow: full deployment lifecycle
 ├── update <sdl-file> [dseq]             # Workflow: update deployment + send manifest
@@ -1370,11 +1370,11 @@ Query provider status. If `provider-addr` is omitted, uses the provider from the
 
 #### `akt provider lease-status [dseq]`
 
-Query lease deployment status from the provider gateway. The optional positional `dseq` supplies the deployment sequence; when both the positional and `--dseq` are given, the positional value wins.
+Query lease deployment status from the provider gateway. The positional `dseq` supplies the deployment sequence. The `--dseq` flag is **disabled pending feedback** (positional only, 2026-07).
 
 | Flag          | Type   | Default         | Description         |
 | ------------- | ------ | --------------- | ------------------- |
-| `--dseq`      | uint64 | required unless positional `dseq` given | Deployment sequence |
+| `--dseq`      | uint64 | required unless positional `dseq` given | Deployment sequence — **disabled pending feedback** (positional only, 2026-07) |
 | `--gseq`      | uint32 | `1`             | Group sequence      |
 | `--oseq`      | uint32 | `1`             | Order sequence      |
 | `--provider`  | string | required        | Provider address    |
@@ -1383,11 +1383,11 @@ Query lease deployment status from the provider gateway. The optional positional
 
 #### `akt provider lease-logs [dseq]`
 
-Stream container logs from a lease. The optional positional `dseq` supplies the deployment sequence; when both the positional and `--dseq` are given, the positional value wins.
+Stream container logs from a lease. The positional `dseq` supplies the deployment sequence. The `--dseq` flag is **disabled pending feedback** (positional only, 2026-07).
 
 | Flag          | Type   | Default         | Description               |
 | ------------- | ------ | --------------- | ------------------------- |
-| `--dseq`      | uint64 | required unless positional `dseq` given | Deployment sequence       |
+| `--dseq`      | uint64 | required unless positional `dseq` given | Deployment sequence — **disabled pending feedback** (positional only, 2026-07) |
 | `--gseq`      | uint32 | `1`             | Group sequence            |
 | `--oseq`      | uint32 | `1`             | Order sequence            |
 | `--provider`  | string | required        | Provider address          |
@@ -1399,7 +1399,7 @@ Stream container logs from a lease. The optional positional `dseq` supplies the 
 
 #### `akt provider lease-events [dseq]`
 
-Stream Kubernetes events from a lease. The optional positional `dseq` behaves as in `lease-logs`.
+Stream Kubernetes events from a lease. The positional `dseq` behaves as in `lease-logs` (`--dseq` — **disabled pending feedback**, positional only, 2026-07).
 
 Same flags as `lease-logs` (minus `--service`, `--tail`), plus `--follow`.
 
@@ -1438,7 +1438,7 @@ Send an SDL manifest to provider(s) for an existing lease.
 
 #### `akt provider get-manifest [dseq]`
 
-Retrieve the current manifest from a provider. The optional positional `dseq` supplies the deployment sequence; when both the positional and `--dseq` are given, the positional value wins.
+Retrieve the current manifest from a provider. The positional `dseq` supplies the deployment sequence. The `--dseq` flag is **disabled pending feedback** (positional only, 2026-07).
 
 #### `akt provider migrate-hostnames`
 
@@ -1746,13 +1746,13 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | --------------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | `akt console deployment list`                       | `--skip` (0), `--limit` (20)                   | List deployments with pagination.                                                              |
 | `akt console deployment get <dseq>`                 |                                                | Deployment with leases and escrow account.                                                     |
-| `akt console deployment create <sdl-file> [deposit-usd]` | `--deposit <usd>` (alternative to positional; min 0.5) | Create a deployment; prints `dseq` + tx hash. The returned manifest is cached at `contexts/<name>/manifests/<dseq>.json` for `lease create`. |
+| `akt console deployment create <sdl-file> [deposit-usd]` | `--deposit <usd>` (alternative to positional; min 0.5) — **disabled pending feedback** (positional only, 2026-07) | Create a deployment; prints `dseq` + tx hash. The returned manifest is cached at `contexts/<name>/manifests/<dseq>.json` for `lease create`. |
 | `akt console deployment update <dseq> <sdl-file>`   |                                                | Update the deployment's SDL.                                                                   |
 | `akt console deployment close <dseq>`               |                                                | Close a deployment. Idempotent: an already-closed deployment prints a note and exits 0.        |
-| `akt console deployment deposit <dseq> [amount-usd]` | `--amount <usd>` (alternative to positional; > 0) | Add funds to the deployment's escrow.                                                          |
-| `akt console deployment settings <dseq> [true\|false]` | `--auto-top-up true\|false` (alternative)     | Show settings when no value is given; set auto-top-up when a positional or flag value is present. |
+| `akt console deployment deposit <dseq> [amount-usd]` | `--amount <usd>` (alternative to positional; > 0) — **disabled pending feedback** (positional only, 2026-07) | Add funds to the deployment's escrow.                                                          |
+| `akt console deployment settings <dseq> [true\|false]` | `--auto-top-up true\|false` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Show settings when no value is given; set auto-top-up when a positional or flag value is present. |
 | `akt console bid list <dseq>`                       |                                                | List bids for the deployment's open orders.                                                    |
-| `akt console lease create <dseq> [provider]`        | `--gseq` (1), `--oseq` (1), `--provider` (alternative to positional), `--manifest <file>` | Accept a bid; the manifest defaults to the one cached by `deployment create`. |
+| `akt console lease create <dseq> [provider]`        | `--gseq` (1), `--oseq` (1), `--provider` (alternative to positional) — **disabled pending feedback** (positional only, 2026-07), `--manifest <file>` | Accept a bid; the manifest defaults to the one cached by `deployment create`. |
 
 **Wallet and usage:**
 
@@ -1760,9 +1760,9 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | ----------------------------- | ---------------------------- | ---------------------------------------------------------------- |
 | `akt console wallet list`     |                              | List managed wallets (balances shown as `$X.XX`).                |
 | `akt console wallet balance`  |                              | Available / in-deployment / total balance in USD.                |
-| `akt console wallet settings [true\|false]` | `--auto-reload true\|false` (alternative) | Show settings when no value is given; set auto-reload otherwise. |
+| `akt console wallet settings [true\|false]` | `--auto-reload true\|false` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Show settings when no value is given; set auto-reload otherwise. |
 | `akt console wallet cost`     |                              | Estimated weekly cost in USD.                                    |
-| `akt console usage [from] [to]` | `--from`, `--to` (YYYY-MM-DD, alternatives) | Daily spend history for the managed wallet. Omitted dates use the API defaults (last 30 days). |
+| `akt console usage [from] [to]` | `--from`, `--to` (YYYY-MM-DD, alternatives) — **disabled pending feedback** (positional only, 2026-07) | Daily spend history for the managed wallet. Omitted dates use the API defaults (last 30 days). |
 
 **Public catalog** (no API key required):
 
@@ -1782,7 +1782,7 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | Command                          | Flags                                          | Description                                                    |
 | -------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------- |
 | `akt console apikey list`        |                                                | List API keys (secrets are never shown).                         |
-| `akt console apikey create <name> [expires-at]` | `--name`, `--expires-at` (RFC 3339, alternatives) | Create a key; the secret is printed exactly once with a warning. |
+| `akt console apikey create <name> [expires-at]` | `--name`, `--expires-at` (RFC 3339, alternatives) — **disabled pending feedback** (positional only, 2026-07) | Create a key; the secret is printed exactly once with a warning. |
 | `akt console apikey delete <id>` |                                                | Delete a key; a missing key (404) is a no-op.                    |
 | `akt console jwt create`         | `--ttl` (300), `--scope` (csv, default `status,logs,events,shell,send-manifest,get-manifest`) | Mint a short-lived provider-scoped JWT. |
 
@@ -1792,13 +1792,13 @@ Managed (Console-API) contexts reach provider gateways directly, without a walle
 
 | Command                                            | Flags                                       | Description                                                                                        |
 | -------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `akt console logs <dseq> [service]`                | `--follow`, `--tail N`, `--service` (alternative) | Stream container logs from the lease's provider (JWT scope `logs`).                           |
+| `akt console logs <dseq> [service]`                | `--follow`, `--tail N`, `--service` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Stream container logs from the lease's provider (JWT scope `logs`).                           |
 | `akt console events <dseq>`                        | `--follow`                                  | Stream Kubernetes events from the lease's provider (JWT scope `events`).                            |
 | `akt console status <dseq>`                        | `--watch`, `--interval` (5s)                | Live lease status from the provider gateway (JWT scope `status`); with `--watch`, snapshots are re-printed each interval until interrupted. `deployment get` remains the Console-API view. |
 | `akt console shell <dseq> <service> [-- command...]` |                                           | Interactive shell in a lease container, default `/bin/sh`; exec is the same operation with an explicit command (JWT scope `shell`). TTY auto-detected. |
 | `akt console screen <sdl-file>`                    |                                             | Client-side bid screening: derive resources from the SDL and list the providers able to run it (public endpoint, no key needed). |
 
-Per the positional-primary convention (§3.8), every console command takes its primary value(s) positionally; the equivalent flags remain as overrides and a positional value wins when both are given. Output is indented JSON; USD values are rendered as `$X.XX`. State-changing calls are recorded in the context's action log as `type=console` entries (§5.6). No command ever prints a Console API key, except the one-time secret from `apikey create`.
+Per the positional-primary convention (§3.8), every console command takes its primary value(s) positionally; the equivalent flags remain as overrides and a positional value wins when both are given. (2026-07: the flag twins marked *disabled pending feedback* above are commented out in code for the positional-only UX trial — the positional form is the only way while the trial runs; the original flag definitions are preserved in `FEEDBACK(2026-07)` comments for restoration.) Output is indented JSON; USD values are rendered as `$X.XX`. State-changing calls are recorded in the context's action log as `type=console` entries (§5.6). No command ever prints a Console API key, except the one-time secret from `apikey create`.
 
 ---
 
@@ -1848,7 +1848,7 @@ Two flags control confirmation and safety bypass behavior across the CLI. They s
 
 | Flag | Short | Semantics | Example |
 |---|---|---|---|
-| `--yes` | `-y` | Skip interactive confirmation prompts. The operation proceeds as if the user answered "yes" to all prompts. The operation itself is unchanged. | `akt tx deployment close --dseq 12345 --yes` |
+| `--yes` | `-y` | Skip interactive confirmation prompts. The operation proceeds as if the user answered "yes" to all prompts. The operation itself is unchanged. | `akt tx deployment close 12345 --yes` |
 | `--force` | | Override a safety guard that would otherwise prevent the operation. The operation may behave differently or bypass a check. | `akt context network delete mainnet --force` (deletes even if contexts reference it) |
 
 `--yes` / `-y` is **not a global flag**. It is added individually to commands that have confirmation prompts: all `tx` commands (via `AddTxFlagsToCmd()`, §3.2), workflow commands (`deploy`, `update`, `close`), and destructive context/store management commands (`context delete`, `store import --replace`). `--force` is used sparingly on specific commands where a structural safety check exists (e.g., deleting a network that is referenced by contexts). Commands should never use `--force` as a synonym for `--yes`.
@@ -1922,36 +1922,38 @@ Added to list-type query commands via `AddPaginationFlagsToCmd()`.
 
 Used by `tx` commands and `provider` gateway commands for resource identification. These compose hierarchically: LeaseID includes BidID includes OrderID includes GroupID includes DeploymentID.
 
-> **Note:** For `query` commands, resource identity filtering is done via the positional filter argument instead of these flags. See [section 3.8](#38-resource-filter-argument) for the filter syntax. The flags below continue to be used by `tx` commands (e.g., `akt tx deployment close --dseq 12345`) and `provider` commands (e.g., `akt provider lease-logs --dseq 12345 --provider akash1...`) where the filter argument does not apply.
+> **Note:** For `query` commands, resource identity filtering is done via the positional filter argument instead of these flags. See [section 3.8](#38-resource-filter-argument) for the filter syntax. The flags below continue to be used by `tx` and `provider` commands where no positional twin exists (e.g. `tx deployment create`, `tx market bid create/close`, `provider send-manifest`, `provider lease-shell`, `provider migrate-*`).
+>
+> **2026-07 positional-only trial:** on commands where a positional twin exists — `tx deployment close/update`, `tx deployment group close/pause/start`, `tx market lease create/withdraw/close`, `provider lease-status/lease-logs/lease-events/get-manifest` — the duplicated identity flags are **disabled pending feedback** (positional only, 2026-07); see the per-flag notes below.
 
 | Flag         | Type   | Default                   | Description                |
 | ------------ | ------ | ------------------------- | -------------------------- |
 | `--owner`    | string | context `default-account` | Deployment owner address   |
-| `--dseq`     | uint64 | `0`                       | Deployment sequence number |
-| `--gseq`     | uint32 | `1`                       | Group sequence number      |
+| `--dseq`     | uint64 | `0`                       | Deployment sequence number — **disabled pending feedback** (positional only, 2026-07) on `tx deployment close/update`, `tx deployment group *`, `tx market lease *`, `provider lease-status/lease-logs/lease-events/get-manifest` |
+| `--gseq`     | uint32 | `1`                       | Group sequence number — **disabled pending feedback** (positional only, 2026-07) on `tx deployment group *` |
 | `--oseq`     | uint32 | `1`                       | Order sequence number      |
-| `--provider` | string | `""`                      | Provider address           |
+| `--provider` | string | `""`                      | Provider address — **disabled pending feedback** (positional only, 2026-07) on `tx market lease *` |
 
 ### 3.6 Deployment Query Flags
 
-Used by `query deployment`. Resource identity (owner, dseq) is supplied via the positional filter argument (see [section 3.8](#38-resource-filter-argument)). When enough components are provided to identify a single deployment, returns detail format; otherwise returns a filtered list.
+Used by `query deployment`. Resource identity (owner, dseq) is supplied via the positional filter argument (see [section 3.8](#38-resource-filter-argument)); the duplicated `--owner`/`--dseq` filter flags are **disabled pending feedback** (positional only, 2026-07). When enough components are provided to identify a single deployment, returns detail format; otherwise returns a filtered list.
 
 | Flag      | Type   | Default | Description                                           |
 | --------- | ------ | ------- | ----------------------------------------------------- |
-| `--state` | string | `""`    | Filter by state: `active`, `closed`, or empty for all |
+| `--state` | string | `""`    | Filter by state: `active`, `closed`, or empty for all — **disabled pending feedback** (positional only, 2026-07; use the positional state keyword, including the second positional form `akt query deployment akash1x/12345 active`) |
 
 ### 3.7 Market Query Flags
 
-Used by `query market order`, `query market bid`, and `query market lease`. Resource identity is supplied via the positional filter argument (see [section 3.8](#38-resource-filter-argument)). When enough components are provided to uniquely identify a single resource, returns detail format; otherwise returns a filtered list.
+Used by `query market order`, `query market bid`, and `query market lease`. Resource identity is supplied via the positional filter argument (see [section 3.8](#38-resource-filter-argument)); the duplicated `--owner`/`--dseq`/`--gseq`/`--oseq`/`--provider` filter flags are **disabled pending feedback** (positional only, 2026-07). When enough components are provided to uniquely identify a single resource, returns detail format; otherwise returns a filtered list. `--by` remains enabled (it is a mode switch with no positional twin).
 
 | Flag      | Type   | Default   | Description                               |
 | --------- | ------ | --------- | ----------------------------------------- |
 | `--by`    | string | `"owner"` | Filter perspective: `owner` or `provider`. Controls how the filter argument is parsed. See [section 3.8](#38-resource-filter-argument). Only applies to `bid` and `lease` queries. |
-| `--state` | string | `""`      | Filter by state                           |
+| `--state` | string | `""`      | Filter by state — **disabled pending feedback** (positional only, 2026-07; use the positional state keyword, including the second positional form `akt query market lease 12345 active`) |
 
 ### 3.8 Resource Filter Argument
 
-Akash `query` commands for deployment, market, certificate, audit, and escrow resources accept an optional positional **filter argument** that replaces flag-based identity filtering (the `--owner`, `--dseq`, `--gseq`, `--oseq`, `--provider` flags documented in section 3.5). This supports the [argument-driven filtering](DESIGN.md#11-goals) design goal.
+Akash `query` commands for deployment, market, certificate, audit, and escrow resources accept an optional positional **filter argument** that replaces flag-based identity filtering (the `--owner`, `--dseq`, `--gseq`, `--oseq`, `--provider` flags documented in section 3.5). This supports the [argument-driven filtering](DESIGN.md#11-goals) design goal. The deployment, order, bid, lease, and cert queries additionally accept an optional **second positional argument** — a state keyword — so identity+state combinations stay expressible without `--state` (e.g. `akt query deployment akash1x/12345 active`, `akt query market lease 123 active`).
 
 #### 3.8.1 General Format
 
@@ -1983,7 +1985,7 @@ The first component is classified by its format:
 
 Subsequent `/`-separated components are parsed positionally: after the leading address comes `dseq` (uint64), then `gseq` (uint32), then `oseq` (uint32), then the trailing address (provider or owner, opposite of the leading address).
 
-State keywords are only recognized as the sole/first component; they do not combine with identity paths (use `--state` with an identity filter for that). When both a positional state keyword and `--state` are given, the positional value wins (it is applied after flags). Each resource has its own state vocabulary, derived from the on-chain state enums:
+State keywords are only recognized as the sole/first component of the filter argument; they do not combine with identity paths inside a single argument. Since 2026-07 the identity+state combination is expressed with the optional **second positional argument** (`akt query deployment akash1abc/12345 active`); two state keywords (a bare-keyword first argument plus a second argument) are an error, and the `--state` flag is **disabled pending feedback** (positional only, 2026-07). Each resource has its own state vocabulary, derived from the on-chain state enums:
 
 | Resource       | State keywords                        |
 | -------------- | ------------------------------------- |
@@ -2026,7 +2028,7 @@ State keywords are only recognized as the sole/first component; they do not comb
 | `query market bid`       | `[owner/]dseq[/gseq/oseq[/provider]]`          | yes            |
 | `query market lease`     | `[owner/]dseq[/gseq/oseq[/provider]]`          | yes            |
 | `query provider`         | `[address]`                                     | no             |
-| `query cert`             | `[owner]`                                       | no             |
+| `query cert`             | `[owner] [state]`                               | no             |
 | `query audit`            | `[owner]`                                       | no             |
 | `query escrow`           | `[owner[/dseq]]`                                | no             |
 | `query escrow payment`   | `[owner[/dseq]]`                                | no             |
@@ -2041,9 +2043,11 @@ akt query deployment                           # List all deployments for defaul
 akt query deployment 12345                     # Get deployment dseq 12345 (owner from context)
 akt query deployment akash1abc...              # List all deployments for that owner
 akt query deployment akash1abc.../12345        # Get specific deployment
-akt query deployment --state active            # List active deployments for default account
-akt query deployment active                    # Same as --state active (positional state keyword)
-akt query deployment 12345 --state active      # Get dseq 12345 (--state ignored on single get)
+akt query deployment --state active            # DISABLED pending feedback (2026-07): use `akt query deployment active`
+akt query deployment active                    # List active deployments (positional state keyword)
+akt query deployment 12345 active              # Identity + state via the second positional argument
+akt query deployment akash1abc.../12345 active # Same, with explicit owner
+akt query deployment 12345 --state active      # DISABLED pending feedback (2026-07): use `akt query deployment 12345 active`
 ```
 
 **Market lease queries — owner perspective** (default):
@@ -2053,8 +2057,9 @@ akt query market lease                         # List all leases for default acc
 akt query market lease 12345                   # List leases for dseq 12345 (owner from context)
 akt query market lease 12345/1/1               # List leases for order 12345/1/1
 akt query market lease akash1abc.../12345/1/1/akash1prov...  # Get specific lease
-akt query market lease --state active          # List active leases for default account
-akt query market lease active                  # Same as --state active (positional state keyword)
+akt query market lease --state active          # DISABLED pending feedback (2026-07): use `akt query market lease active`
+akt query market lease active                  # List active leases (positional state keyword)
+akt query market lease 12345 active            # Identity + state via the second positional argument
 akt query market bid open                      # List open bids (positional state keyword)
 ```
 

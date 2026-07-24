@@ -133,11 +133,10 @@ func GetTxDeploymentCreateCmd() *cobra.Command {
 
 func GetTxDeploymentCloseCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "close [dseq]",
-		Short: "Close deployment",
-		Args:  cobra.MaximumNArgs(1),
-		Example: `akt tx deployment close 12345
-akt tx deployment close --dseq 12345`,
+		Use:               "close [dseq]",
+		Short:             "Close deployment",
+		Args:              cobra.MaximumNArgs(1),
+		Example:           `akt tx deployment close 12345`,
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -149,8 +148,9 @@ akt tx deployment close --dseq 12345`,
 				return err
 			}
 
-			// Positional dseq wins over the --dseq flag (SPEC §3.8.2).
-			if id.DSeq, err = cflags.DSeqFromArgs(args, id.DSeq); err != nil {
+			// FEEDBACK(2026-07): --dseq disabled for the positional-only UX
+			// trial; the positional [dseq] is the only source (zero fallback).
+			if id.DSeq, err = cflags.DSeqFromArgs(args, 0); err != nil {
 				return err
 			}
 
@@ -166,17 +166,16 @@ akt tx deployment close --dseq 12345`,
 	}
 
 	cflags.AddTxFlagsToCmd(cmd)
-	cflags.AddDeploymentIDFlags(cmd.Flags())
+	addDeploymentOwnerTxFlags(cmd)
 	return cmd
 }
 
 func GetTxDeploymentUpdateCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "update [sdl-file] [dseq]",
-		Short: "update deployment",
-		Args:  cobra.RangeArgs(1, 2),
-		Example: `akt tx deployment update deploy.yaml 12345
-akt tx deployment update deploy.yaml --dseq 12345`,
+		Use:               "update [sdl-file] [dseq]",
+		Short:             "update deployment",
+		Args:              cobra.RangeArgs(1, 2),
+		Example:           `akt tx deployment update deploy.yaml 12345`,
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -188,8 +187,9 @@ akt tx deployment update deploy.yaml --dseq 12345`,
 				return err
 			}
 
-			// Positional dseq wins over the --dseq flag (SPEC §3.8.2).
-			if id.DSeq, err = cflags.DSeqFromArgs(args[1:], id.DSeq); err != nil {
+			// FEEDBACK(2026-07): --dseq disabled for the positional-only UX
+			// trial; the positional [dseq] is the only source (zero fallback).
+			if id.DSeq, err = cflags.DSeqFromArgs(args[1:], 0); err != nil {
 				return err
 			}
 
@@ -246,9 +246,24 @@ akt tx deployment update deploy.yaml --dseq 12345`,
 	}
 
 	cflags.AddTxFlagsToCmd(cmd)
-	cflags.AddDeploymentIDFlags(cmd.Flags())
+	addDeploymentOwnerTxFlags(cmd)
 
 	return cmd
+}
+
+// addDeploymentOwnerTxFlags registers the deployment identity flags for the
+// close/update tx commands: --owner stays (it defaults to the signer and has
+// no positional twin).
+// FEEDBACK(2026-07): --dseq disabled for the positional-only UX trial (use
+// the positional [dseq] argument instead). Restore by replacing this helper's
+// body with the original registration:
+// cflags.AddDeploymentIDFlags(cmd.Flags())
+func addDeploymentOwnerTxFlags(cmd *cobra.Command) {
+	cmd.Flags().String(cflags.FlagOwner, "", "Deployment Owner")
+	// FEEDBACK(2026-07): --dseq disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// cmd.Flags().Uint64(cflags.FlagDSeq, 0, "Deployment Sequence")
 }
 
 func GetTxDeploymentGroupCmds() *cobra.Command {
@@ -271,7 +286,6 @@ func GetTxDeploymentGroupCloseCmd() *cobra.Command {
 		Use:   "close [dseq] [gseq]",
 		Short: "close a Deployment's specific Group",
 		Example: `akt tx deployment group close 12345 1
-akt tx deployment group close --dseq=[uint64] --gseq=[uint32]
 akt tx deployment group close 12345 1 --owner=[Account Address]`,
 		Args:              cobra.MaximumNArgs(2),
 		PersistentPreRunE: TxPersistentPreRunE,
@@ -303,7 +317,7 @@ akt tx deployment group close 12345 1 --owner=[Account Address]`,
 	}
 
 	cflags.AddTxFlagsToCmd(cmd)
-	cflags.AddGroupIDFlags(cmd.Flags())
+	addGroupOwnerTxFlags(cmd)
 
 	return cmd
 }
@@ -313,7 +327,6 @@ func GetDeploymentGroupPauseCmd() *cobra.Command {
 		Use:   "pause [dseq] [gseq]",
 		Short: "pause a Deployment's specific Group",
 		Example: `akt tx deployment group pause 12345 1
-akt tx deployment group pause --dseq=[uint64] --gseq=[uint32]
 akt tx deployment group pause 12345 1 --owner=[Account Address]`,
 		Args:              cobra.MaximumNArgs(2),
 		PersistentPreRunE: TxPersistentPreRunE,
@@ -345,7 +358,7 @@ akt tx deployment group pause 12345 1 --owner=[Account Address]`,
 	}
 
 	cflags.AddTxFlagsToCmd(cmd)
-	cflags.AddGroupIDFlags(cmd.Flags())
+	addGroupOwnerTxFlags(cmd)
 
 	return cmd
 }
@@ -355,7 +368,6 @@ func GetDeploymentGroupStartCmd() *cobra.Command {
 		Use:   "start [dseq] [gseq]",
 		Short: "start a Deployment's specific Group",
 		Example: `akt tx deployment group start 12345 1
-akt tx deployment group start --dseq=[uint64] --gseq=[uint32]
 akt tx deployment group start 12345 1 --owner=[Account Address]`,
 		Args:              cobra.MaximumNArgs(2),
 		PersistentPreRunE: TxPersistentPreRunE,
@@ -387,27 +399,48 @@ akt tx deployment group start 12345 1 --owner=[Account Address]`,
 	}
 
 	cflags.AddTxFlagsToCmd(cmd)
-	cflags.AddGroupIDFlags(cmd.Flags())
+	addGroupOwnerTxFlags(cmd)
 
 	return cmd
 }
 
-// groupIDFromFlagsAndArgs resolves a GroupID from flags and optional
-// positional [dseq] [gseq] arguments. Positional values win over the
-// --dseq/--gseq flags (SPEC §3.8.2). The owner defaults to the signer (the
-// from address) and may be overridden with --owner.
+// addGroupOwnerTxFlags registers the group identity flags for the group tx
+// commands: --owner stays (it defaults to the signer and has no positional
+// twin).
+// FEEDBACK(2026-07): --dseq/--gseq disabled for the positional-only UX trial
+// (use the positional [dseq] [gseq] arguments instead). Restore by replacing
+// this helper's body with the original registration:
+// cflags.AddGroupIDFlags(cmd.Flags())
+func addGroupOwnerTxFlags(cmd *cobra.Command) {
+	cmd.Flags().String(cflags.FlagOwner, "", "Deployment Owner")
+	// FEEDBACK(2026-07): --dseq disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// cmd.Flags().Uint64(cflags.FlagDSeq, 0, "Deployment Sequence")
+	// FEEDBACK(2026-07): --gseq disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// cmd.Flags().Uint32(cflags.FlagGSeq, 1, "Group Sequence")
+}
+
+// groupIDFromFlagsAndArgs resolves a GroupID from the optional positional
+// [dseq] [gseq] arguments. The owner defaults to the signer (the from
+// address) and may be overridden with --owner.
 func groupIDFromFlagsAndArgs(cmd *cobra.Command, args []string, owner sdk.AccAddress) (dv1.GroupID, error) {
 	id, err := cflags.GroupIDFromFlags(cmd.Flags(), cflags.WithOwner(owner))
 	if err != nil {
 		return dv1.GroupID{}, err
 	}
 
-	if id.DSeq, id.GSeq, err = cflags.GroupSeqsFromArgs(args, id.DSeq, id.GSeq); err != nil {
+	// FEEDBACK(2026-07): --dseq/--gseq disabled for the positional-only UX
+	// trial; the positional [dseq] [gseq] arguments are the only source
+	// (dseq zero fallback; gseq keeps its old flag default of 1).
+	if id.DSeq, id.GSeq, err = cflags.GroupSeqsFromArgs(args, 0, 1); err != nil {
 		return dv1.GroupID{}, err
 	}
 
 	if id.DSeq == 0 {
-		return dv1.GroupID{}, fmt.Errorf("dseq is required: provide positional [dseq] or the --dseq flag")
+		return dv1.GroupID{}, fmt.Errorf("dseq is required: provide the positional [dseq] argument")
 	}
 
 	return id, nil

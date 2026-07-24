@@ -15,9 +15,9 @@ import (
 // The command itself handles list/get (unified), with group and params as subcommands.
 func GetQueryDeploymentCmds() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:                        dv1.ModuleName + " [id]",
+		Use:                        dv1.ModuleName + " [id] [state]",
 		Short:                      "Query deployments",
-		Args:                       cobra.MaximumNArgs(1),
+		Args:                       cobra.MaximumNArgs(2),
 		SuggestionsMinimumDistance: 2,
 		PersistentPreRunE:          QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -31,7 +31,7 @@ func GetQueryDeploymentCmds() *cobra.Command {
 
 			defaultOwner := cl.ClientContext().GetFromAddress().String()
 
-			if len(args) == 1 {
+			if len(args) > 0 {
 				af, err := cflags.DepFiltersFromArg(args[0], defaultOwner)
 				if err != nil {
 					return err
@@ -42,9 +42,21 @@ func GetQueryDeploymentCmds() *cobra.Command {
 				if af.DSeq != 0 {
 					dfilters.DSeq = af.DSeq
 				}
-				// Positional state keyword wins over --state (SPEC §3.8.2).
+				// A bare state keyword may only appear once (SPEC §3.8.2).
 				if af.State != "" {
+					if len(args) > 1 {
+						return fmt.Errorf("deployment filter: state keyword %q cannot be combined with a second argument %q", args[0], args[1])
+					}
 					dfilters.State = af.State
+				}
+			}
+
+			// Optional second positional: a state keyword narrowing the
+			// identity filter (SPEC §3.8), e.g.
+			// `akt query deployment akash1owner/12345 active`.
+			if len(args) > 1 {
+				if dfilters.State, err = cflags.DeploymentStateFromArg(args[1]); err != nil {
+					return err
 				}
 			}
 
@@ -98,7 +110,7 @@ func GetQueryDeploymentCmds() *cobra.Command {
 
 // GetQueryDeploymentGroupCmd returns the command to query deployment groups.
 // Accepts an optional positional ID in the form owner/dseq[/gseq].
-// When gseq is provided (via arg or --gseq flag), returns a single group.
+// When gseq is provided, returns a single group.
 // When only owner/dseq are given, fetches the deployment and shows all its groups.
 func GetQueryDeploymentGroupCmd() *cobra.Command {
 	cmd := &cobra.Command{
@@ -128,22 +140,27 @@ func GetQueryDeploymentGroupCmd() *cobra.Command {
 				if fullySpecified {
 					gseq = parsed.GSeq
 				}
-			} else {
-				// Read from flags
-				id, err := cflags.DeploymentIDFromFlags(cmd.Flags())
-				if err != nil {
-					return err
-				}
-				owner = id.Owner
-				dseq = id.DSeq
-
-				if cmd.Flags().Changed(cflags.FlagGSeq) {
-					gseq, _ = cmd.Flags().GetUint32(cflags.FlagGSeq)
-				}
 			}
+			// FEEDBACK(2026-07): the --owner/--dseq/--gseq flag path is
+			// disabled for the positional-only UX trial; the positional
+			// [owner/]dseq[/gseq] argument is the only source. Restore by
+			// uncommenting if users ask for the flag form back.
+			// } else {
+			// 	// Read from flags
+			// 	id, err := cflags.DeploymentIDFromFlags(cmd.Flags())
+			// 	if err != nil {
+			// 		return err
+			// 	}
+			// 	owner = id.Owner
+			// 	dseq = id.DSeq
+			//
+			// 	if cmd.Flags().Changed(cflags.FlagGSeq) {
+			// 		gseq, _ = cmd.Flags().GetUint32(cflags.FlagGSeq)
+			// 	}
+			// }
 
 			if owner == "" || dseq == 0 {
-				return fmt.Errorf("owner and dseq are required (provide as owner/dseq[/gseq] or via --owner and --dseq flags)")
+				return fmt.Errorf("owner and dseq are required (provide as owner/dseq[/gseq])")
 			}
 
 			// If gseq is specified, query a single group.
@@ -171,7 +188,10 @@ func GetQueryDeploymentGroupCmd() *cobra.Command {
 	}
 
 	cflags.AddQueryFlagsToCmd(cmd)
-	cflags.AddGroupIDFlags(cmd.Flags())
+	// FEEDBACK(2026-07): --owner/--dseq/--gseq disabled for the
+	// positional-only UX trial (use the positional owner/dseq[/gseq] form
+	// instead). Restore by uncommenting if users ask for the flag form back.
+	// cflags.AddGroupIDFlags(cmd.Flags())
 
 	return cmd
 }

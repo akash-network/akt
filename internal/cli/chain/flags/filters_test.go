@@ -132,14 +132,14 @@ func TestDepFiltersFromArg(t *testing.T) {
 
 func TestGroupIDFromArg(t *testing.T) {
 	tests := []struct {
-		name           string
-		arg            string
-		defaultOwner   string
-		wantOwner      string
-		wantDSeq       uint64
-		wantGSeq       uint32
-		wantFullySpec  bool
-		wantErr        string
+		name          string
+		arg           string
+		defaultOwner  string
+		wantOwner     string
+		wantDSeq      uint64
+		wantGSeq      uint32
+		wantFullySpec bool
+		wantErr       string
 	}{
 		{
 			name:    "empty arg errors",
@@ -361,12 +361,12 @@ func TestBidFiltersFromArg(t *testing.T) {
 		},
 		// --- Owner perspective (byProvider=false) ---
 		{
-			name:      "owner/dseq/gseq/oseq/provider — full path",
-			arg:       testOwner + "/100/1/2/" + testProvider,
-			wantOwner: testOwner,
-			wantDSeq:  100,
-			wantGSeq:  1,
-			wantOSeq:  2,
+			name:         "owner/dseq/gseq/oseq/provider — full path",
+			arg:          testOwner + "/100/1/2/" + testProvider,
+			wantOwner:    testOwner,
+			wantDSeq:     100,
+			wantGSeq:     1,
+			wantOSeq:     2,
 			wantProvider: testProvider,
 		},
 		{
@@ -529,6 +529,62 @@ func TestLeaseFiltersFromArg(t *testing.T) {
 		assert.Equal(t, uint64(100), lf.DSeq)
 		assert.Empty(t, lf.State)
 	})
+}
+
+// ---------------------------------------------------------------------------
+// StateFromArg helpers — back the optional second positional state argument
+// (`akt query deployment akash1x/12345 active`), one per resource vocabulary.
+// ---------------------------------------------------------------------------
+
+func TestStateFromArgHelpers(t *testing.T) {
+	tests := []struct {
+		name    string
+		fn      func(string) (string, error)
+		valid   []string
+		invalid []string
+	}{
+		{
+			name:    "deployment",
+			fn:      DeploymentStateFromArg,
+			valid:   []string{"active", "closed"},
+			invalid: []string{"open", "lost", "insufficient_funds", "invalid", "bogus", ""},
+		},
+		{
+			name:    "order",
+			fn:      OrderStateFromArg,
+			valid:   []string{"open", "active", "closed"},
+			invalid: []string{"lost", "insufficient_funds", "invalid", "bogus", ""},
+		},
+		{
+			name:    "bid",
+			fn:      BidStateFromArg,
+			valid:   []string{"open", "active", "lost", "closed"},
+			invalid: []string{"insufficient_funds", "invalid", "bogus", ""},
+		},
+		{
+			name:    "lease",
+			fn:      LeaseStateFromArg,
+			valid:   []string{"active", "insufficient_funds", "closed"},
+			invalid: []string{"open", "lost", "invalid", "bogus", ""},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, keyword := range tc.valid {
+				state, err := tc.fn(keyword)
+				require.NoError(t, err, "keyword %q must be a valid %s state", keyword, tc.name)
+				assert.Equal(t, keyword, state)
+			}
+
+			for _, keyword := range tc.invalid {
+				_, err := tc.fn(keyword)
+				require.Error(t, err, "keyword %q must be rejected as a %s state", keyword, tc.name)
+				assert.Contains(t, err.Error(), "is not a valid state")
+				assert.Contains(t, err.Error(), tc.name+" filter:")
+			}
+		})
+	}
 }
 
 // ---------------------------------------------------------------------------

@@ -178,8 +178,7 @@ Please refer to each module's documentation for the full set of events to query
 for. Each module documents its respective events under 'xx_events.md'.
 `,
 		Example: fmt.Sprintf(
-			"$ %[1]s query blocks \"message.sender='cosmos1...' AND block.height > 7\" --page 1 --limit 30 --order_by asc\n"+
-				"$ %[1]s query blocks --query \"message.sender='cosmos1...' AND block.height > 7\" --page 1 --limit 30 --order_by asc",
+			"$ %[1]s query blocks \"message.sender='cosmos1...' AND block.height > 7\" --page 1 --limit 30 --order_by asc",
 			version.AppName,
 		),
 		Args: cobra.MaximumNArgs(1),
@@ -188,11 +187,14 @@ for. Each module documents its respective events under 'xx_events.md'.
 			if err != nil {
 				return err
 			}
-			query, _ := cmd.Flags().GetString(cflags.FlagQuery)
-			// A positional query expression wins over --query (SPEC §3.8.2).
-			query = cflags.ExprFromArgs(args, query)
+			// FEEDBACK(2026-07): --query disabled for the positional-only UX
+			// trial; the positional expression is the only source (zero
+			// fallback). Restore by uncommenting if users ask for the flag
+			// form back.
+			// query, _ := cmd.Flags().GetString(cflags.FlagQuery)
+			query := cflags.ExprFromArgs(args, "")
 			if query == "" {
-				return errors.New("query expression is required: pass it positionally or via --query")
+				return errors.New("query expression is required: pass it positionally")
 			}
 			page, _ := cmd.Flags().GetInt(cflags.FlagPage)
 			limit, _ := cmd.Flags().GetInt(cflags.FlagLimit)
@@ -210,7 +212,10 @@ for. Each module documents its respective events under 'xx_events.md'.
 	cflags.AddQueryFlagsToCmd(cmd)
 	cmd.Flags().Int(cflags.FlagPage, query.DefaultPage, "Query a specific page of paginated results")
 	cmd.Flags().Int(cflags.FlagLimit, query.DefaultLimit, "Query number of transactions results per page returned")
-	cmd.Flags().String(cflags.FlagQuery, "", "The blocks events query per CometBFT's query semantics")
+	// FEEDBACK(2026-07): --query disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// cmd.Flags().String(cflags.FlagQuery, "", "The blocks events query per CometBFT's query semantics")
 	cmd.Flags().String(cflags.FlagOrderBy, "", "The ordering semantics (asc|dsc)")
 
 	return cmd

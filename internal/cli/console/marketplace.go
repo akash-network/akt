@@ -186,7 +186,7 @@ func templateCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		Example: `  # Write a template's SDL to a file, then deploy it
   akt console template sdl hello-world > deploy.yaml
-  akt console deployment create deploy.yaml --deposit 5`,
+  akt console deployment create deploy.yaml 5`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, _, err := clientFromCmd(cmd, mgrFn, false)
 			if err != nil {

@@ -255,8 +255,7 @@ documents its respective events under 'xx_events.md'.
 
 Example:
 $ %[2]s query txs 'message.sender=akash1...&message.action=withdraw_delegator_reward' --page 1 --limit 30
-$ %[2]s query txs --%[3]s 'message.sender=akash1...&message.action=withdraw_delegator_reward' --page 1 --limit 30
-`, eventFormat, version.AppName, cflags.FlagEvents),
+`, eventFormat, version.AppName),
 		),
 		Args:              cobra.MaximumNArgs(1),
 		PersistentPreRunE: QueryPersistentPreRunE,
@@ -265,11 +264,14 @@ $ %[2]s query txs --%[3]s 'message.sender=akash1...&message.action=withdraw_dele
 			cl := MustLightClientFromContext(ctx)
 			cctx := cl.ClientContext()
 
-			eventsRaw, _ := cmd.Flags().GetString(cflags.FlagEvents)
-			// A positional events expression wins over --events (SPEC §3.8.2).
-			eventsRaw = cflags.ExprFromArgs(args, eventsRaw)
+			// FEEDBACK(2026-07): --events disabled for the positional-only UX
+			// trial; the positional expression is the only source (zero
+			// fallback). Restore by uncommenting if users ask for the flag
+			// form back.
+			// eventsRaw, _ := cmd.Flags().GetString(cflags.FlagEvents)
+			eventsRaw := cflags.ExprFromArgs(args, "")
 			if eventsRaw == "" {
-				return fmt.Errorf("events are required: pass them positionally or via --%s", cflags.FlagEvents)
+				return fmt.Errorf("events are required: pass them positionally")
 			}
 			eventsStr := strings.Trim(eventsRaw, "'")
 
@@ -314,7 +316,10 @@ $ %[2]s query txs --%[3]s 'message.sender=akash1...&message.action=withdraw_dele
 	cflags.AddQueryFlagsToCmd(cmd)
 	cmd.Flags().Int(cflags.FlagPage, query.DefaultPage, "Query a specific page of paginated results")
 	cmd.Flags().Int(cflags.FlagLimit, query.DefaultLimit, "Query number of transactions results per page returned")
-	cmd.Flags().String(cflags.FlagEvents, "", fmt.Sprintf("list of transaction events in the form of %s", eventFormat))
+	// FEEDBACK(2026-07): --events disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// cmd.Flags().String(cflags.FlagEvents, "", fmt.Sprintf("list of transaction events in the form of %s", eventFormat))
 
 	return cmd
 }
