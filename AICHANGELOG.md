@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- **First-run bootstrap ran headlessly and hung CI**: with no config and no TTY, bare `akt` silently ran the bootstrap wizard — fetching the network list from the GitHub API and writing a config assembled from non-interactive fallbacks (all networks, `os` keyring) — which made `TestTUINoArgNoTTY` time out on GitHub runners (it passed locally only because the developer's real `~/.config/akt` exists). The wizard now declines to run without a terminal (no fetch, no config, guidance printed to stderr) per SPEC §2.0, and the e2e test is hermetic (fresh `--home`) so it exercises the CI condition everywhere. 2 tests.
+
 - **`context log --type` help text listed the wrong action types**: it offered `tx, query, workflow, error`; the recorded types are `tx, workflow, provider, context, console, error` (queries are not recorded by design).
 
 - **Chain commands violated the positional-primary convention (AKT-650)**: `tx market lease create/withdraw/close` now take `[dseq] [provider]` positionally, `query escrow blocks-remaining` accepts the §3.8 `[owner/]dseq` filter argument, `query blocks`/`query txs` take the search expression positionally, and `tx deployment group close/pause/start` no longer require `--owner` (defaults to the signer — closing your own group needs zero flags). Flags remain as overrides; positionals win. Plus a new convention guard, `TestNoUnapprovedRequiredFlags`, that walks the whole command tree and fails when any flag is marked required without an allowlisted justification (allowlisted: signer selection on `tx sign`/`sign-batch`/audit attr, governance `--title` flags, `context create --network`). SPEC §2.1/§3.8.5 updated; 3 new helper test suites.

@@ -1,6 +1,10 @@
 package bootstrap
 
-import "testing"
+import (
+	"os"
+	"path/filepath"
+	"testing"
+)
 
 func TestParseYesNo(t *testing.T) {
 	cases := []struct {
@@ -32,5 +36,20 @@ func TestConsoleOnboardingSkipsWithoutTTY(t *testing.T) {
 	key, route := consoleOnboarding("prod")
 	if key != "" || route {
 		t.Errorf("expected non-interactive skip, got key=%q route=%v", key, route)
+	}
+}
+
+func TestRunSkipsHeadless(t *testing.T) {
+	// Test processes have no TTY: Run must decline to bootstrap — no
+	// network fetch, no config written, nil error so the CLI continues
+	// to its normal no-config handling.
+	root := t.TempDir()
+
+	if err := Run(root); err != nil {
+		t.Fatalf("headless Run must not error, got: %v", err)
+	}
+
+	if _, err := os.Stat(filepath.Join(root, "config.yaml")); !os.IsNotExist(err) {
+		t.Fatal("headless Run must not write a config file")
 	}
 }

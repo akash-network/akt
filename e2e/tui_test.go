@@ -2,7 +2,9 @@ package e2e
 
 import (
 	"context"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -116,11 +118,18 @@ func TestTUIVersionCommand(t *testing.T) {
 }
 
 func TestTUINoArgNoTTY(t *testing.T) {
-	// Without a TTY, akt should print help and exit (per SPEC §2.0 step 4).
-	// It must not hang waiting for TUI input.
-	_, _, _ = runAktWithTimeout(t, 5*time.Second)
-	// If we reach here, the command exited within the timeout — success.
-	// The exit code may be 0 (help) or non-zero depending on config state.
+	// Without a TTY, akt should print and exit (per SPEC §2.0 step 4).
+	// It must not hang waiting for TUI input, and with a fresh home it
+	// must not silently run the first-run bootstrap (which would fetch
+	// networks over the wire and write a config with fallback answers).
+	// A temp home makes this hermetic — the CI failure mode was exactly
+	// bare akt on a machine with no existing config.
+	home := t.TempDir()
+	_, stderr, _ := runAktWithTimeout(t, 5*time.Second, "--home", home)
+
+	if _, err := os.Stat(filepath.Join(home, "config.yaml")); !os.IsNotExist(err) {
+		t.Fatalf("headless first run must not write a config, stderr:\n%s", stderr)
+	}
 }
 
 func TestTUIContextListEmptyHome(t *testing.T) {

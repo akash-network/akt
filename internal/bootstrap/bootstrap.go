@@ -55,6 +55,16 @@ type metaJSON struct {
 
 // Run performs first-run initialization.
 func Run(cfgRoot string) error {
+	// The wizard is interactive by design. Without a terminal it must not
+	// silently fetch networks and write a config with fallback answers
+	// (SPEC §2.0: no TTY -> print and exit); headless environments create
+	// their config explicitly via akt context/network commands.
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		fmt.Fprintln(os.Stderr, "no akt configuration found and no terminal is available for the first-run wizard;")
+		fmt.Fprintln(os.Stderr, "run akt from a terminal to bootstrap, or create a config with \"akt context network create\" and \"akt context create\"")
+		return nil
+	}
+
 	fmt.Println("Welcome to akt! No configuration found.")
 	fmt.Println()
 	fmt.Println("Fetching available networks from github.com/akash-network/net ...")
