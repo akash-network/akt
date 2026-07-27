@@ -2,6 +2,7 @@ package context_test
 
 import (
 	"os"
+	"path/filepath"
 	"testing"
 
 	aktctx "pkg.akt.dev/akt/internal/context"
@@ -262,5 +263,42 @@ func TestUpdateNetworklessConsoleContext(t *testing.T) {
 		return nil
 	}); err == nil {
 		t.Error("unknown network must still be rejected")
+	}
+}
+
+func TestCredentialDirectoryIsNotWorldReadable(t *testing.T) {
+	root := t.TempDir()
+
+	if err := aktctx.SetConsoleAPIKey(root, "prod", "sk-secret"); err != nil {
+		t.Fatalf("SetConsoleAPIKey: %v", err)
+	}
+
+	// The file is 0600, but a world-readable parent directory still leaks
+	// its presence and lets a local user replace it.
+	dir := filepath.Dir(aktctx.ConsoleAPIKeyPath(root, "prod"))
+	info, err := os.Stat(dir)
+	if err != nil {
+		t.Fatalf("stat credential directory: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm&0o077 != 0 {
+		t.Errorf("credential directory mode = %o, want no group/other access", perm)
+	}
+}
+
+func TestContextDirectoriesAreNotWorldReadable(t *testing.T) {
+	m := newCredentialManager(t)
+
+	// EnsureContextDirs runs on create; the context directory holds the
+	// credential alongside the store and action log.
+	if err := m.CreateContext(aktctx.Context{Name: "prod", Network: aktctx.Network{Name: "mainnet"}}); err != nil {
+		t.Fatalf("CreateContext: %v", err)
+	}
+
+	info, err := os.Stat(aktctx.ContextDir(m.Root(), "prod"))
+	if err != nil {
+		t.Fatalf("stat context directory: %v", err)
+	}
+	if perm := info.Mode().Perm(); perm&0o077 != 0 {
+		t.Errorf("context directory mode = %o, want no group/other access", perm)
 	}
 }

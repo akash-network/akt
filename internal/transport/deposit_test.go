@@ -13,7 +13,10 @@ func TestParseDeposit(t *testing.T) {
 		// Rail-default forms.
 		{"", Deposit{Raw: "", Auto: true}},
 		{"auto", Deposit{Raw: "auto", Auto: true}},
-		{"  auto  ", Deposit{Raw: "  auto  ", Auto: true}},
+		// Raw carries the trimmed value: it is passed downstream (e.g. into
+		// a workflow's tx params), where surrounding whitespace from a YAML
+		// definition would fail the rail's own parsing.
+		{"  auto  ", Deposit{Raw: "auto", Auto: true}},
 
 		// USD forms.
 		{"5usd", Deposit{Raw: "5usd", IsUSD: true, USD: 5}},
@@ -145,6 +148,20 @@ func TestDepositRailValueConsole(t *testing.T) {
 		}
 		if got != tt.want {
 			t.Errorf("RailValue(console) for %q = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+}
+
+func TestParseDepositTrimsRawForDownstreamUse(t *testing.T) {
+	// A user workflow YAML can easily carry padded values; Raw is what the
+	// rail adapters receive, so it must be usable as-is.
+	for _, in := range []string{"  5usd ", "\t5000000uakt\n", " 5 "} {
+		dep, err := ParseDeposit(in)
+		if err != nil {
+			t.Fatalf("ParseDeposit(%q): %v", in, err)
+		}
+		if dep.Raw != strings.TrimSpace(in) {
+			t.Errorf("ParseDeposit(%q).Raw = %q, want the trimmed value %q", in, dep.Raw, strings.TrimSpace(in))
 		}
 	}
 }

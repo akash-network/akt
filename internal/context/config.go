@@ -200,8 +200,15 @@ func SaveConfig(root string, cfg *Config) error {
 	return nil
 }
 
-// EnsureContextDirs creates the store and action log directories for a context.
+// EnsureContextDirs creates the store and action log directories for a
+// context. The context directory is 0700: it holds per-context secrets (the
+// Console API credential) alongside the store and action log.
 func EnsureContextDirs(root, name string) error {
+	ctxDir := ContextDir(root, name)
+	if err := os.MkdirAll(ctxDir, 0o700); err != nil {
+		return fmt.Errorf("create context directory %s: %w", ctxDir, err)
+	}
+
 	storeDir := StoreDir(root, name)
 	if err := os.MkdirAll(storeDir, 0o755); err != nil {
 		return fmt.Errorf("create store directory %s: %w", storeDir, err)

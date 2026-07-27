@@ -139,8 +139,16 @@ func (c *Client) doData(ctx context.Context, method, path string, reqBody, resul
 		return err
 	}
 
-	if result == nil || len(env.Data) == 0 {
+	if result == nil {
 		return nil
+	}
+
+	// A caller that wants a payload must get one: without this check a
+	// response that omits the envelope (an API change, a proxy's error
+	// page, a wrong-shaped success) leaves result zero-valued and reads
+	// as success — e.g. a deployment with an empty dseq.
+	if len(env.Data) == 0 {
+		return fmt.Errorf("console: %s %s returned no data envelope", method, path)
 	}
 
 	if err := json.Unmarshal(env.Data, result); err != nil {

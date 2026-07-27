@@ -44,7 +44,9 @@ func SetConsoleAPIKey(root, ctxName, key string) error {
 		return nil
 	}
 
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+	// 0700: the directory holds the Console credential, so it must not be
+	// world- or group-readable even though the file itself is 0600.
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create context directory: %w", err)
 	}
 

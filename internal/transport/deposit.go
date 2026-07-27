@@ -66,7 +66,7 @@ func ParseDeposit(s string) (Deposit, error) {
 	t := strings.TrimSpace(s)
 
 	if t == "" || t == depositAuto {
-		return Deposit{Raw: s, Auto: true}, nil
+		return Deposit{Raw: t, Auto: true}, nil
 	}
 
 	// USD: "$5", "$5.50".
@@ -76,7 +76,7 @@ func ParseDeposit(s string) (Deposit, error) {
 			return Deposit{}, fmt.Errorf("invalid deposit %q: %w", s, err)
 		}
 
-		return Deposit{Raw: s, IsUSD: true, USD: usd}, nil
+		return Deposit{Raw: t, IsUSD: true, USD: usd}, nil
 	}
 
 	// USD: "5usd", "5.50USD". Checked before coin parsing so "usd" is never
@@ -87,7 +87,7 @@ func ParseDeposit(s string) (Deposit, error) {
 			return Deposit{}, fmt.Errorf("invalid deposit %q: %w", s, err)
 		}
 
-		return Deposit{Raw: s, IsUSD: true, USD: usd}, nil
+		return Deposit{Raw: t, IsUSD: true, USD: usd}, nil
 	}
 
 	// Bare number: valid syntax on both rails, interpreted per rail.
@@ -96,12 +96,12 @@ func ParseDeposit(s string) (Deposit, error) {
 			return Deposit{}, fmt.Errorf("invalid deposit %q: %w", s, err)
 		}
 
-		return Deposit{Raw: s, IsUSD: true, USD: usd, Bare: true}, nil
+		return Deposit{Raw: t, IsUSD: true, USD: usd, Bare: true}, nil
 	}
 
 	// Coin: "5000000uakt", "5akt", "5.5akt", ...
 	if _, err := sdk.ParseDecCoin(t); err == nil {
-		return Deposit{Raw: s, Coin: t}, nil
+		return Deposit{Raw: t, Coin: t}, nil
 	}
 
 	return Deposit{}, fmt.Errorf(

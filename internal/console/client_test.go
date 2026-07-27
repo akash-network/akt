@@ -6,6 +6,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -242,4 +243,34 @@ func TestFlexStringAcceptsNumbers(t *testing.T) {
 
 	require.NoError(t, json.Unmarshal([]byte(`{"dseq":"7890"}`), &v))
 	assert.Equal(t, "7890", v.DSeq.String())
+}
+
+func TestMissingDataEnvelopeIsAnError(t *testing.T) {
+	// A success-shaped response that omits the envelope must not read as a
+	// successful call with a zero-valued result (e.g. an empty dseq).
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	defer srv.Close()
+
+	c := console.New(srv.URL, "k")
+
+	if _, err := c.GetUser(context.Background()); err == nil {
+		t.Fatal("a response without a data envelope must be an error")
+	} else if !strings.Contains(err.Error(), "no data envelope") {
+		t.Errorf("error %q should name the missing envelope", err)
+	}
+}
+
+func TestEmptyBodyIsFineWhenNoResultExpected(t *testing.T) {
+	// Endpoints that return no payload (e.g. DELETE) pass a nil result and
+	// must keep succeeding on an empty body.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	if err := console.New(srv.URL, "k").DeleteAPIKey(context.Background(), "k1"); err != nil {
+		t.Fatalf("empty body with no expected result must succeed: %v", err)
+	}
 }

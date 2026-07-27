@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- **A missing `data` envelope read as success (code review)**: `doData` returned nil with the result left zero-valued whenever a response omitted the envelope — an API change, a proxy error page, or any wrong-shaped 200 would surface as a successful call with, say, an empty dseq. A caller that expects a payload now gets an error naming the request; endpoints that return no body (DELETE) still pass a nil result and succeed.
+
+- **Per-context credential directories were world-readable (code review)**: the Console API key file is 0600, but its parent (`contexts/<name>/`) was created 0755, leaking the credential's existence and letting a local user replace it. Both `EnsureContextDirs` and the credential writer now create the context directory 0700.
+
+- **`ParseDeposit` kept untrimmed input (code review)**: `Deposit.Raw` stored the caller's string verbatim while parsing used the trimmed value, so a padded deposit in a user workflow YAML (`"  auto "`) parsed correctly and then failed downstream when the rail adapter re-parsed `Raw`. Raw now carries the trimmed value.
+
+
 - **Positional state was silently ignored on the get path (code review)**: `akt query deployment 12345 closed` fetched by identity and printed the record regardless of state — and since the sweep removed `--state`, that positional is the only state filter left. A complete identity now still returns the detail view, but a supplied state acts as an assertion: a mismatch fails with both states named ("... is closed, not active; drop the state argument to print it regardless"), which keeps the output shape stable and makes the check scriptable. Applies to deployment, order, bid, and lease.
 
 - **`tx deployment close`/`update` lost their dseq guard (code review)**: with `--dseq` unregistered, a missing positional built a message with dseq 0 and entered the sign/broadcast pipeline — keyring unlock, then a raw chain validation failure. Both now fail fast in an Args hook (before any connection is opened) with the same friendly message the group and lease commands print.
