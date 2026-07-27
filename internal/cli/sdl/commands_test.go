@@ -226,6 +226,53 @@ func TestInitEnvRequiresKeyValue(t *testing.T) {
 	require.Contains(t, err.Error(), "KEY=value")
 }
 
+// TestInitOutOfRangeIntFlagsAreUsageErrors pins the zero-vs-unset semantics:
+// an unset int flag keeps the per-scaffold default, while an explicitly set
+// out-of-range value — including an explicit 0 — is rejected as a usage
+// error (exit 2), never misreported as an internal generation error.
+func TestInitOutOfRangeIntFlagsAreUsageErrors(t *testing.T) {
+	cases := []struct {
+		name    string
+		args    []string
+		wantMsg string
+	}{
+		{"count zero", []string{"init", "web", "--count", "0"}, "--count must be at least 1, got 0"},
+		{"count negative", []string{"init", "web", "--count", "-3"}, "--count must be at least 1, got -3"},
+		{"port zero", []string{"init", "web", "--port", "0"}, "--port must be between 1 and 65535, got 0"},
+		{"port too large", []string{"init", "web", "--port", "70000"}, "--port must be between 1 and 65535, got 70000"},
+		{"as zero", []string{"init", "web", "--as", "0"}, "--as must be between 1 and 65535, got 0"},
+		{"price zero", []string{"init", "web", "--price", "0"}, "--price must be at least 1, got 0"},
+		{"gpu zero", []string{"init", "gpu", "--gpu", "0"}, "--gpu must be at least 1, got 0"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout, _, err := runSDL(t, "", tc.args...)
+			require.Error(t, err)
+			require.Contains(t, err.Error(), tc.wantMsg)
+			require.NotContains(t, err.Error(), "internal error")
+			require.Equal(t, cliutil.ExitUsage, cliutil.ExitCode(err))
+			require.Empty(t, stdout, "no SDL must be emitted for invalid input")
+		})
+	}
+}
+
+// TestInitExplicitMinimumValuesAccepted proves that legitimate explicit
+// values at the low end of each range still generate a valid SDL — the
+// Changed() discrimination must not reject valid input.
+func TestInitExplicitMinimumValuesAccepted(t *testing.T) {
+	stdout, _, err := runSDL(t, "", "init", "gpu",
+		"--count", "1", "--port", "1", "--as", "65535", "--gpu", "1", "--price", "1")
+	require.NoError(t, err)
+
+	res := Validate([]byte(stdout))
+	require.Truef(t, res.Valid, "minimum-value SDL must validate, errors: %+v", res.Errors)
+	require.Contains(t, stdout, "count: 1")
+	require.Contains(t, stdout, "port: 1")
+	require.Contains(t, stdout, "as: 65535")
+	require.Contains(t, stdout, "amount: 1")
+}
+
 func TestValidateValidFile(t *testing.T) {
 	path := writeFixture(t, validSDL)
 

@@ -127,19 +127,22 @@ self-checked against "akt sdl validate" before it is printed.`,
 
 	// Generation parameters, not positional-argument twins: each flag is an
 	// optional knob with a per-scaffold default (see Options), so the
-	// zero-flag invocation always produces a deployable SDL.
+	// zero-flag invocation always produces a deployable SDL. Int flags are
+	// range-checked in optionsFromFlags (Changed() tells an explicit value
+	// apart from the unset default), so out-of-range input — including an
+	// explicit 0 — is a usage error, never an internal one.
 	fl := cmd.Flags()
 	fl.String("name", "", "Service name (default per scaffold)")
 	fl.String("image", "", "Container image; must be tagged, e.g. nginx:1.27")
-	fl.Int("port", 0, "Container port to expose (default per scaffold)")
-	fl.Int("as", 0, "External port (default per scaffold)")
+	fl.Int("port", 0, "Container port to expose, 1-65535 (default per scaffold)")
+	fl.Int("as", 0, "External port, 1-65535 (default per scaffold)")
 	fl.String("cpu", "", "CPU units, e.g. 0.5 or 500m")
 	fl.String("memory", "", "Memory size, e.g. 512Mi, 2Gi")
 	fl.String("storage", "", "Storage size, e.g. 1Gi")
-	fl.Int("count", 0, "Replica count")
-	fl.Int("price", 0, "Max price per block in uact")
+	fl.Int("count", 0, "Replica count, minimum 1 (default per scaffold)")
+	fl.Int("price", 0, "Max price per block in uact, minimum 1 (default per scaffold)")
 	fl.StringArray("env", nil, "Environment variable KEY=value (repeatable)")
-	fl.Int("gpu", 0, "GPU units (gpu scaffold)")
+	fl.Int("gpu", 0, "GPU units, minimum 1 (gpu scaffold)")
 	fl.String("gpu-model", "", "NVIDIA GPU model, e.g. a100 (gpu scaffold)")
 
 	return cmd
@@ -241,19 +244,19 @@ func optionsFromFlags(cmd *cobra.Command) (Options, error) {
 	o.GPUModel, _ = fl.GetString("gpu-model")
 
 	var err error
-	if o.Port, err = intFlag(fl, "port"); err != nil {
+	if o.Port, err = intFlag(fl, "port", 1, maxPort); err != nil {
 		return o, err
 	}
-	if o.As, err = intFlag(fl, "as"); err != nil {
+	if o.As, err = intFlag(fl, "as", 1, maxPort); err != nil {
 		return o, err
 	}
-	if o.Count, err = intFlag(fl, "count"); err != nil {
+	if o.Count, err = intFlag(fl, "count", 1, 0); err != nil {
 		return o, err
 	}
-	if o.Price, err = intFlag(fl, "price"); err != nil {
+	if o.Price, err = intFlag(fl, "price", 1, 0); err != nil {
 		return o, err
 	}
-	if o.GPU, err = intFlag(fl, "gpu"); err != nil {
+	if o.GPU, err = intFlag(fl, "gpu", 1, 0); err != nil {
 		return o, err
 	}
 
@@ -268,9 +271,17 @@ func optionsFromFlags(cmd *cobra.Command) (Options, error) {
 	return o, nil
 }
 
-// intFlag returns the flag value only when it was explicitly set, and
-// rejects negative values.
-func intFlag(fl *pflag.FlagSet, name string) (*int, error) {
+// maxPort is the highest valid TCP/UDP port for --port/--as.
+const maxPort = 65535
+
+// intFlag returns the flag value only when it was explicitly set —
+// pflag's Changed() distinguishes an explicit zero from the unset default,
+// which falls back to the per-scaffold value. Explicitly set values are
+// range-checked here so invalid input (an explicit 0, a negative number, a
+// port above 65535) fails as a usage error (exit 2) before generation
+// instead of surfacing later as an internal self-validation failure.
+// maxVal <= 0 means "no upper bound".
+func intFlag(fl *pflag.FlagSet, name string, minVal, maxVal int) (*int, error) {
 	if !fl.Changed(name) {
 		return nil, nil
 	}
@@ -280,8 +291,12 @@ func intFlag(fl *pflag.FlagSet, name string) (*int, error) {
 		return nil, err
 	}
 
-	if v < 0 {
-		return nil, cliutil.ErrUsage(fmt.Sprintf("--%s must be a non-negative integer, got %d", name, v), nil)
+	if v < minVal || (maxVal > 0 && v > maxVal) {
+		if maxVal > 0 {
+			return nil, cliutil.ErrUsage(fmt.Sprintf("--%s must be between %d and %d, got %d", name, minVal, maxVal, v), nil)
+		}
+
+		return nil, cliutil.ErrUsage(fmt.Sprintf("--%s must be at least %d, got %d", name, minVal, v), nil)
 	}
 
 	return &v, nil

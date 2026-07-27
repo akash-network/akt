@@ -256,7 +256,7 @@ akt deploy deployment.yaml --bid-select cheapest --yes -o jsonl \
 
 ### Queries
 
-Akash query commands use a **positional filter argument** instead of `--owner`/`--dseq` flags. The filter follows the resource hierarchy (`owner/dseq/gseq/oseq/provider`) with smart type detection: a bech32 address is an owner, a number is a dseq. When no owner is given, the context's default account is used. State keywords are also positional (`akt query deployment active`); `--state` remains available as a flag alternative. See [SPEC.md §3.8](SPEC.md#38-resource-filter-argument) for full details.
+Akash query commands use a **positional filter argument** instead of `--owner`/`--dseq` flags. The filter follows the resource hierarchy (`owner/dseq/gseq/oseq/provider`) with smart type detection: a bech32 address is an owner, a number is a dseq. When no owner is given, the context's default account is used. State keywords are also positional: `akt query deployment active` lists active deployments, and identity + state combine as two positional arguments (`akt query deployment 12345 active`). When the identity pins down a single record, the state argument verifies it — the command fails if the record is in a different state instead of printing it. The `--state` flag, like the other duplicated identity filter flags, is **disabled pending feedback** (positional only, 2026-07). See [SPEC.md §3.8](SPEC.md#38-resource-filter-argument) for full details.
 
 ```bash
 # Check balances

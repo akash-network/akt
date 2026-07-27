@@ -420,6 +420,42 @@ func TestQueryDeploymentPositionalArgsOffline(t *testing.T) {
 	}
 }
 
+func TestQueryMarketPositionalStateArgsOffline(t *testing.T) {
+	// The market order/bid/lease twins accept the same optional second
+	// positional [state]; offline we prove cobra and the parse stage accept
+	// the identity+state form and the failure is at the connection stage.
+	home := setupContextHome(t)
+
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"order identity plus state", []string{"query", "market", "order", testMnemonicAddr + "/12345/1/1", "open", "--node", unreachableNode}},
+		{"bid identity plus state", []string{"query", "market", "bid", testMnemonicAddr + "/12345/1/1", "open", "--node", unreachableNode}},
+		{"lease identity plus state", []string{"query", "market", "lease", testMnemonicAddr + "/12345/1/1", "active", "--node", unreachableNode}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout, stderr, exitCode := runAkt(t, home, tc.args...)
+			combined := stdout + stderr
+
+			if exitCode == 0 {
+				t.Fatalf("expected non-zero exit against unreachable node, got 0:\n%s", combined)
+			}
+			if strings.Contains(combined, "not a valid") {
+				t.Fatalf("positional arg was rejected at parse stage:\n%s", combined)
+			}
+			if strings.Contains(combined, "unknown command") || strings.Contains(combined, "accepts at most") {
+				t.Fatalf("positional arg was rejected by cobra args validation:\n%s", combined)
+			}
+			if !strings.Contains(combined, "127.0.0.1") {
+				t.Fatalf("expected a connection-stage error mentioning the node address, got:\n%s", combined)
+			}
+		})
+	}
+}
+
 func TestTxDeploymentClosePositionalArgsOffline(t *testing.T) {
 	// tx deployment close <dseq> requires a node for account/sequence
 	// resolution even with --generate-only, so offline we can only assert
@@ -439,6 +475,56 @@ func TestTxDeploymentClosePositionalArgsOffline(t *testing.T) {
 	}
 	if !strings.Contains(combined, "127.0.0.1") {
 		t.Fatalf("expected a connection-stage error, got:\n%s", combined)
+	}
+}
+
+// --- dseq fail-fast guards (2026-07 positional-only trial) ---
+//
+// With --dseq disabled, the positional dseq is the only source for
+// `tx deployment close` and `tx deployment update`. A missing dseq must fail
+// during cobra argument validation — before the tx pipeline (connection,
+// keyring unlock, broadcast) is entered — with a friendly error pointing at
+// the positional form. The --node flag points at an unreachable endpoint so
+// any connection attempt would be visible as a 127.0.0.1 error.
+
+func TestTxDeploymentCloseMissingDSeqFailsFast(t *testing.T) {
+	home := setupContextHome(t)
+
+	stdout, stderr, exitCode := runAkt(t, home,
+		"tx", "deployment", "close", "--node", unreachableNode)
+	combined := stdout + stderr
+
+	if exitCode == 0 {
+		t.Fatalf("expected non-zero exit for missing dseq, got 0:\n%s", combined)
+	}
+	if !strings.Contains(combined, "dseq is required") {
+		t.Fatalf("expected the dseq guard error, got:\n%s", combined)
+	}
+	if strings.Contains(combined, "127.0.0.1") {
+		t.Fatalf("guard must fire before the connection stage, got:\n%s", combined)
+	}
+}
+
+func TestTxDeploymentUpdateMissingDSeqFailsFast(t *testing.T) {
+	home := setupContextHome(t)
+
+	// The SDL file deliberately does not exist: the guard must fire before
+	// the file is read and before deployment 0 is ever queried.
+	stdout, stderr, exitCode := runAkt(t, home,
+		"tx", "deployment", "update", "does-not-exist.yaml", "--node", unreachableNode)
+	combined := stdout + stderr
+
+	if exitCode == 0 {
+		t.Fatalf("expected non-zero exit for missing dseq, got 0:\n%s", combined)
+	}
+	if !strings.Contains(combined, "dseq is required") {
+		t.Fatalf("expected the dseq guard error, got:\n%s", combined)
+	}
+	if strings.Contains(combined, "127.0.0.1") {
+		t.Fatalf("guard must fire before the connection stage, got:\n%s", combined)
+	}
+	if strings.Contains(combined, "no such file") {
+		t.Fatalf("guard must fire before the SDL file is read, got:\n%s", combined)
 	}
 }
 

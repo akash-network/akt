@@ -15,8 +15,18 @@ import (
 // The command itself handles list/get (unified), with group and params as subcommands.
 func GetQueryDeploymentCmds() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:                        dv1.ModuleName + " [id] [state]",
-		Short:                      "Query deployments",
+		Use:   dv1.ModuleName + " [id] [state]",
+		Short: "Query deployments",
+		Long: `Query deployments.
+
+Without arguments, lists the deployments owned by the context's default
+account. The optional [id] argument is [owner/]dseq, a bare owner address,
+or a bare state keyword (active|closed) per SPEC §3.8.
+
+The optional [state] argument narrows the result: with a partial identity it
+filters the list; when the identity pins down a single deployment it verifies
+the record instead — the command fails if the deployment is in a different
+state rather than printing it.`,
 		Args:                       cobra.MaximumNArgs(2),
 		SuggestionsMinimumDistance: 2,
 		PersistentPreRunE:          QueryPersistentPreRunE,
@@ -73,6 +83,13 @@ func GetQueryDeploymentCmds() *cobra.Command {
 
 				res, err := cl.Query().Deployment().Deployment(ctx, &dvbeta.QueryDeploymentRequest{ID: id})
 				if err != nil {
+					return err
+				}
+
+				// SPEC §3.8.3: on the get path the positional [state] is a
+				// verification, not a filter — never silently ignore it.
+				if err := requireStateMatch(dv1.ModuleName, fmt.Sprintf("%s/%d", id.Owner, id.DSeq),
+					dfilters.State, res.Deployment.State.String()); err != nil {
 					return err
 				}
 

@@ -38,8 +38,17 @@ func GetQueryMarketCmds() *cobra.Command {
 // When partially specified, returns a filtered list.
 func GetQueryMarketOrderCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "order [id] [state]",
-		Short:             "Query orders",
+		Use:   "order [id] [state]",
+		Short: "Query orders",
+		Long: `Query orders.
+
+The optional [id] argument is [owner/]dseq[/gseq[/oseq]], a bare owner
+address, or a bare state keyword (open|active|closed) per SPEC §3.8.
+
+The optional [state] argument narrows the result: with a partial identity it
+filters the list; when the identity pins down a single order it verifies the
+record instead — the command fails if the order is in a different state
+rather than printing it.`,
 		Args:              cobra.MaximumNArgs(2),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -106,6 +115,13 @@ func GetQueryMarketOrderCmd() *cobra.Command {
 					return err
 				}
 
+				// SPEC §3.8.3: on the get path the positional [state] is a
+				// verification, not a filter — never silently ignore it.
+				if err := requireStateMatch("order", fmt.Sprintf("%s/%d/%d/%d", id.Owner, id.DSeq, id.GSeq, id.OSeq),
+					ofilters.State, res.Order.State.String()); err != nil {
+					return err
+				}
+
 				return pretty.PrintQueryResult(cmd, cl.ClientContext(), &res.Order)
 			}
 
@@ -140,8 +156,18 @@ func GetQueryMarketOrderCmd() *cobra.Command {
 // When partially specified, returns a filtered list.
 func GetQueryMarketBidCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "bid [id] [state]",
-		Short:             "Query bids",
+		Use:   "bid [id] [state]",
+		Short: "Query bids",
+		Long: `Query bids.
+
+The optional [id] argument is [owner/]dseq[/gseq[/oseq[/provider]]] (with
+--by provider: [provider/]dseq[/gseq[/oseq[/owner]]]), a bare address, or a
+bare state keyword (open|active|lost|closed) per SPEC §3.8.
+
+The optional [state] argument narrows the result: with a partial identity it
+filters the list; when the identity pins down a single bid it verifies the
+record instead — the command fails if the bid is in a different state rather
+than printing it.`,
 		Args:              cobra.MaximumNArgs(2),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -214,6 +240,13 @@ func GetQueryMarketBidCmd() *cobra.Command {
 					return err
 				}
 
+				// SPEC §3.8.3: on the get path the positional [state] is a
+				// verification, not a filter — never silently ignore it.
+				if err := requireStateMatch("bid", fmt.Sprintf("%s/%d/%d/%d/%s", id.Owner, id.DSeq, id.GSeq, id.OSeq, id.Provider),
+					bfilters.State, res.Bid.State.String()); err != nil {
+					return err
+				}
+
 				return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)
 			}
 
@@ -249,8 +282,18 @@ func GetQueryMarketBidCmd() *cobra.Command {
 // When partially specified, returns a filtered list.
 func GetQueryMarketLeaseCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "lease [id] [state]",
-		Short:             "Query leases",
+		Use:   "lease [id] [state]",
+		Short: "Query leases",
+		Long: `Query leases.
+
+The optional [id] argument is [owner/]dseq[/gseq[/oseq[/provider]]] (with
+--by provider: [provider/]dseq[/gseq[/oseq[/owner]]]), a bare address, or a
+bare state keyword (active|insufficient_funds|closed) per SPEC §3.8.
+
+The optional [state] argument narrows the result: with a partial identity it
+filters the list; when the identity pins down a single lease it verifies the
+record instead — the command fails if the lease is in a different state
+rather than printing it.`,
 		Args:              cobra.MaximumNArgs(2),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -320,6 +363,13 @@ func GetQueryMarketLeaseCmd() *cobra.Command {
 
 				res, err := cl.Query().Market().Lease(ctx, &mvbeta.QueryLeaseRequest{ID: id})
 				if err != nil {
+					return err
+				}
+
+				// SPEC §3.8.3: on the get path the positional [state] is a
+				// verification, not a filter — never silently ignore it.
+				if err := requireStateMatch("lease", fmt.Sprintf("%s/%d/%d/%d/%s", id.Owner, id.DSeq, id.GSeq, id.OSeq, id.Provider),
+					lfilters.State, res.Lease.State.String()); err != nil {
 					return err
 				}
 

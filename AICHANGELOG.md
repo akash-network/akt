@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- **Positional state was silently ignored on the get path (code review)**: `akt query deployment 12345 closed` fetched by identity and printed the record regardless of state — and since the sweep removed `--state`, that positional is the only state filter left. A complete identity now still returns the detail view, but a supplied state acts as an assertion: a mismatch fails with both states named ("... is closed, not active; drop the state argument to print it regardless"), which keeps the output shape stable and makes the check scriptable. Applies to deployment, order, bid, and lease.
+
+- **`tx deployment close`/`update` lost their dseq guard (code review)**: with `--dseq` unregistered, a missing positional built a message with dseq 0 and entered the sign/broadcast pipeline — keyring unlock, then a raw chain validation failure. Both now fail fast in an Args hook (before any connection is opened) with the same friendly message the group and lease commands print.
+
+- **`akt sdl init --count 0` reported an internal error (code review)**: explicit zero/out-of-range values for count, port, as, price, and gpu leaked past flag handling into the post-generation self-check and surfaced as "internal error: generated SDL failed validation". They are now bounded usage errors (exit 2) with the valid range named; unset flags still take the scaffold default.
+
+- **README claimed `--state` still worked (code review)**: the doc refresh added that line just as the sweep removed the flag. Corrected to the positional-only reality, including the identity+state form and the get-path assertion behavior.
+
+
 - **Help detection disabled context and capability enforcement (code review)**: `helpRequested` matched any argv token equal to `--help`/`-h`/`help`, including positional values and tokens after `--`, and it gates bootstrap, the no-context guard, and capability checks. `akt tx deployment close help` therefore skipped the guard on a zero-context machine and went straight to broadcast. Detection now matches only the flag forms, stops at the `--` terminator, and recognizes cobra's `help` command separately.
 
 - **`akt sdl` and `akt console` were blocked without a context (code review)**: `requiresContext`'s prefix list was never updated for the new groups, so offline SDL validation and `AKT_CONSOLE_API_KEY=... akt console whoami` both failed with "no contexts configured" — making the console group's own env-key fallback unreachable. Both groups are now exempt.

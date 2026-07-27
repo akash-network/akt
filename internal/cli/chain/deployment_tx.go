@@ -21,6 +21,12 @@ import (
 var (
 	errDeploymentUpdate              = errors.New("deployment update failed")
 	errDeploymentUpdateGroupsChanged = fmt.Errorf("%w: groups are different than existing deployment, you cannot update groups", errDeploymentUpdate)
+
+	// errDSeqRequired is the fail-fast guard for the positional-only UX
+	// trial: with --dseq disabled, the positional [dseq] argument is the only
+	// source, so a missing (or zero) dseq must be rejected before the tx
+	// pipeline (connection, keyring unlock, broadcast) is ever entered.
+	errDSeqRequired = errors.New("dseq is required: provide the positional [dseq] argument")
 )
 
 // GetTxDeploymentCmds returns the transaction commands for this module
@@ -133,9 +139,26 @@ func GetTxDeploymentCreateCmd() *cobra.Command {
 
 func GetTxDeploymentCloseCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "close [dseq]",
-		Short:             "Close deployment",
-		Args:              cobra.MaximumNArgs(1),
+		Use:   "close <dseq>",
+		Short: "Close deployment",
+		// FEEDBACK(2026-07): --dseq disabled for the positional-only UX
+		// trial; the positional dseq is the only source, so validate it here
+		// — before the tx pipeline (connection, keyring, broadcast) starts.
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.MaximumNArgs(1)(cmd, args); err != nil {
+				return err
+			}
+
+			dseq, err := cflags.DSeqFromArgs(args, 0)
+			if err != nil {
+				return err
+			}
+			if dseq == 0 {
+				return errDSeqRequired
+			}
+
+			return nil
+		},
 		Example:           `akt tx deployment close 12345`,
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -149,9 +172,14 @@ func GetTxDeploymentCloseCmd() *cobra.Command {
 			}
 
 			// FEEDBACK(2026-07): --dseq disabled for the positional-only UX
-			// trial; the positional [dseq] is the only source (zero fallback).
+			// trial; the positional dseq is the only source. The Args hook
+			// already validated it; this guard is defense in depth so a zero
+			// dseq can never reach the broadcast pipeline.
 			if id.DSeq, err = cflags.DSeqFromArgs(args, 0); err != nil {
 				return err
+			}
+			if id.DSeq == 0 {
+				return errDSeqRequired
 			}
 
 			msg := &dv1beta.MsgCloseDeployment{ID: id}
@@ -172,9 +200,27 @@ func GetTxDeploymentCloseCmd() *cobra.Command {
 
 func GetTxDeploymentUpdateCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "update [sdl-file] [dseq]",
-		Short:             "update deployment",
-		Args:              cobra.RangeArgs(1, 2),
+		Use:   "update <sdl-file> <dseq>",
+		Short: "update deployment",
+		// FEEDBACK(2026-07): --dseq disabled for the positional-only UX
+		// trial; the positional dseq is the only source, so validate it here
+		// — before the tx pipeline (connection, keyring, broadcast) starts
+		// and before deployment 0 is ever queried.
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.RangeArgs(1, 2)(cmd, args); err != nil {
+				return err
+			}
+
+			dseq, err := cflags.DSeqFromArgs(args[1:], 0)
+			if err != nil {
+				return err
+			}
+			if dseq == 0 {
+				return errDSeqRequired
+			}
+
+			return nil
+		},
 		Example:           `akt tx deployment update deploy.yaml 12345`,
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -188,9 +234,14 @@ func GetTxDeploymentUpdateCmd() *cobra.Command {
 			}
 
 			// FEEDBACK(2026-07): --dseq disabled for the positional-only UX
-			// trial; the positional [dseq] is the only source (zero fallback).
+			// trial; the positional dseq is the only source. The Args hook
+			// already validated it; this guard is defense in depth so a zero
+			// dseq can never reach the query/broadcast pipeline.
 			if id.DSeq, err = cflags.DSeqFromArgs(args[1:], 0); err != nil {
 				return err
+			}
+			if id.DSeq == 0 {
+				return errDSeqRequired
 			}
 
 			sdlManifest, err := sdl.ReadFile(args[0])
@@ -440,7 +491,7 @@ func groupIDFromFlagsAndArgs(cmd *cobra.Command, args []string, owner sdk.AccAdd
 	}
 
 	if id.DSeq == 0 {
-		return dv1.GroupID{}, fmt.Errorf("dseq is required: provide the positional [dseq] argument")
+		return dv1.GroupID{}, errDSeqRequired
 	}
 
 	return id, nil

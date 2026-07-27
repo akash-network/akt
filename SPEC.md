@@ -426,8 +426,8 @@ akt
 │   │   └── multi-send <from> <to1,to2,...> <amount>
 │   ├── deployment
 │   │   ├── create <sdl-file>
-│   │   ├── update <sdl-file> [dseq]
-│   │   ├── close [dseq]
+│   │   ├── update <sdl-file> <dseq>     # dseq required positionally (--dseq disabled 2026-07); fails fast when missing
+│   │   ├── close <dseq>                 # dseq required positionally (--dseq disabled 2026-07); fails fast when missing
 │   │   └── group
 │   │       ├── close [dseq] [gseq]
 │   │       ├── pause [dseq] [gseq]
@@ -1844,21 +1844,21 @@ List the built-in SDL scaffolds (alias: `akt sdl templates`, matching the refere
 
 #### `akt sdl init <scaffold>`
 
-Generate SDL YAML on stdout, pipeable into `akt sdl validate -` or redirected to a file for `akt deploy`. The output is self-checked against the validator before printing. Flags are generation parameters with per-scaffold defaults — not positional-argument twins — so the zero-flag invocation always produces a deployable SDL. Pricing defaults to a 10000 uact/block ceiling (100000 for `gpu`) so bids arrive.
+Generate SDL YAML on stdout, pipeable into `akt sdl validate -` or redirected to a file for `akt deploy`. The output is self-checked against the validator before printing. Flags are generation parameters with per-scaffold defaults — not positional-argument twins — so the zero-flag invocation always produces a deployable SDL. An int flag left unset keeps its per-scaffold default; an explicitly set value is range-checked up front, so out-of-range input (including an explicit `0`) is a usage error (exit 2), never an internal generation error. Pricing defaults to a 10000 uact/block ceiling (100000 for `gpu`) so bids arrive.
 
 | Flag          | Type        | Description                                              |
 | ------------- | ----------- | --------------------------------------------------------- |
 | `--name`      | string      | Service name (default per scaffold: `web` / `app`)        |
 | `--image`     | string      | Container image; must be tagged, e.g. `nginx:1.27`        |
-| `--port`      | int         | Container port (default 80; 8080 for `gpu`)               |
-| `--as`        | int         | External port (default 80)                                |
+| `--port`      | int         | Container port, 1-65535 (default 80; 8080 for `gpu`)      |
+| `--as`        | int         | External port, 1-65535 (default 80)                       |
 | `--cpu`       | string      | CPU units, e.g. `0.5` or `500m`                           |
 | `--memory`    | string      | Memory size, e.g. `512Mi`, `2Gi`                          |
 | `--storage`   | string      | Storage size, e.g. `1Gi` (sizes the persistent volume for `multi-service`) |
-| `--count`     | int         | Replica count (default 1)                                 |
-| `--price`     | int         | Max price per block in uact                               |
+| `--count`     | int         | Replica count, minimum 1 (default 1)                      |
+| `--price`     | int         | Max price per block in uact, minimum 1                    |
 | `--env`       | stringArray | Environment variable `KEY=value` (repeatable)             |
-| `--gpu`       | int         | GPU units (`gpu` scaffold, default 1)                     |
+| `--gpu`       | int         | GPU units, minimum 1 (`gpu` scaffold, default 1)          |
 | `--gpu-model` | string      | NVIDIA GPU model (`gpu` scaffold, default `a100`)         |
 
 #### `akt sdl validate <file>`
@@ -2041,7 +2041,7 @@ The first component is classified by its format:
 
 Subsequent `/`-separated components are parsed positionally: after the leading address comes `dseq` (uint64), then `gseq` (uint32), then `oseq` (uint32), then the trailing address (provider or owner, opposite of the leading address).
 
-State keywords are only recognized as the sole/first component of the filter argument; they do not combine with identity paths inside a single argument. Since 2026-07 the identity+state combination is expressed with the optional **second positional argument** (`akt query deployment akash1abc/12345 active`); two state keywords (a bare-keyword first argument plus a second argument) are an error, and the `--state` flag is **disabled pending feedback** (positional only, 2026-07). Each resource has its own state vocabulary, derived from the on-chain state enums:
+State keywords are only recognized as the sole/first component of the filter argument; they do not combine with identity paths inside a single argument. Since 2026-07 the identity+state combination is expressed with the optional **second positional argument** (`akt query deployment akash1abc/12345 active`); two state keywords (a bare-keyword first argument plus a second argument) are an error, and the `--state` flag is **disabled pending feedback** (positional only, 2026-07). On a fully-specified identity the second positional state **verifies** the fetched record rather than filtering (see §3.8.3). Each resource has its own state vocabulary, derived from the on-chain state enums:
 
 | Resource       | State keywords                        |
 | -------------- | ------------------------------------- |
@@ -2054,6 +2054,7 @@ State keywords are only recognized as the sole/first component of the filter arg
 
 - If enough components are specified to **uniquely identify** a single resource, the command returns a single-item **detail** response.
 - Otherwise, the command returns a **filtered list** response.
+- The optional positional **[state]** argument follows the same split: with a partial identity it filters the list; with a complete identity it **verifies** the fetched record — when the record is in a different state the command fails with an error naming both states (e.g. `deployment akash1x/12345 is closed, not active`) instead of silently printing the record. Dropping the state argument prints the record regardless of state.
 
 | Command                | Unique identity requires              |
 | ---------------------- | ------------------------------------- |
@@ -2101,7 +2102,7 @@ akt query deployment akash1abc...              # List all deployments for that o
 akt query deployment akash1abc.../12345        # Get specific deployment
 akt query deployment --state active            # DISABLED pending feedback (2026-07): use `akt query deployment active`
 akt query deployment active                    # List active deployments (positional state keyword)
-akt query deployment 12345 active              # Identity + state via the second positional argument
+akt query deployment 12345 active              # Get + state verification: errors if 12345 is not active (§3.8.3)
 akt query deployment akash1abc.../12345 active # Same, with explicit owner
 akt query deployment 12345 --state active      # DISABLED pending feedback (2026-07): use `akt query deployment 12345 active`
 ```
@@ -2115,7 +2116,7 @@ akt query market lease 12345/1/1               # List leases for order 12345/1/1
 akt query market lease akash1abc.../12345/1/1/akash1prov...  # Get specific lease
 akt query market lease --state active          # DISABLED pending feedback (2026-07): use `akt query market lease active`
 akt query market lease active                  # List active leases (positional state keyword)
-akt query market lease 12345 active            # Identity + state via the second positional argument
+akt query market lease 12345 active            # Partial identity + state: filters the lease list (state verifies only on full-identity gets, §3.8.3)
 akt query market bid open                      # List open bids (positional state keyword)
 ```
 
