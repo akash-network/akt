@@ -151,9 +151,11 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			// First-run bootstrap: if no config file exists, offer to
 			// fetch networks from github.com/akash-network/net. Help
 			// invocations never bootstrap — help must work on a machine
-			// with nothing configured.
+			// with nothing configured — and neither do commands that work
+			// entirely without configuration.
 			cfgPath := aktctx.ConfigPath(cfgRoot)
-			if _, statErr := os.Stat(cfgPath); os.IsNotExist(statErr) && !isHelpInvocation(cmd, os.Args[1:]) {
+			if _, statErr := os.Stat(cfgPath); os.IsNotExist(statErr) &&
+				!isHelpInvocation(cmd, os.Args[1:]) && requiresConfig(cmd) {
 				// Initialize glyphs before bootstrap (config not yet
 				// available — uses flag/env/auto-detect only).
 				initGlyphs(v)
@@ -384,6 +386,37 @@ func Execute(root *cobra.Command) error {
 	ctx = context.WithValue(ctx, sdkserver.ServerContextKey, sdkserver.NewDefaultContext())
 
 	return root.ExecuteContext(ctx)
+}
+
+// requiresConfig returns true if the command needs akt configuration to
+// exist, and so may trigger the first-run bootstrap wizard when none is
+// found. It is deliberately narrower than requiresContext: a command is
+// exempt here only when it produces the same output with or without any
+// configuration at all.
+//
+// Without this, `akt version` on an unconfigured machine either launched
+// the wizard (in a terminal) or printed the wizard's "no terminal
+// available" notice to stderr (outside one) before printing the version.
+// Both are wrong for the command people run to check that a binary works
+// — the first blocks a scripted smoke test on interactive input, the
+// second makes a clean run look like a failure.
+func requiresConfig(cmd *cobra.Command) bool {
+	path := cmd.CommandPath()
+
+	switch {
+	// Build metadata is compiled in; configuration cannot change it.
+	case strings.HasPrefix(path, "akt version"):
+		return false
+	// Completion scripts are generated from the command tree alone.
+	case strings.HasPrefix(path, "akt completion"):
+		return false
+	// SDL authoring is entirely local (see requiresContext), so demanding
+	// a network fetch before linting a local file would be backwards.
+	case strings.HasPrefix(path, "akt sdl"):
+		return false
+	}
+
+	return true
 }
 
 // requiresContext returns true if the command needs a fully resolved akt

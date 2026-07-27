@@ -712,3 +712,42 @@ func TestAllCommandsHelp(t *testing.T) {
 		})
 	}
 }
+
+// TestConfigFreeCommandsSkipBootstrap covers the commands that produce the
+// same output with or without configuration. On an unconfigured machine
+// they must not reach the first-run bootstrap: in a terminal it would block
+// a scripted smoke test on interactive input, and outside one it printed the
+// wizard's "no terminal available" notice to stderr, so a clean run looked
+// like a failure. Neither may write a config as a side effect.
+func TestConfigFreeCommandsSkipBootstrap(t *testing.T) {
+	commands := [][]string{
+		{"version"},
+		{"version", "--long"},
+		{"completion", "bash"},
+		// A real subcommand, not the bare `akt sdl` group: cobra prints
+		// help for a command with no RunE without running the persistent
+		// hooks at all, so the group alone would pass either way.
+		{"sdl", "scaffolds"},
+	}
+
+	for _, path := range commands {
+		name := strings.Join(path, " ")
+		t.Run(name, func(t *testing.T) {
+			// A fresh home with no config.yaml, deliberately not seeded by
+			// initHome: an already-configured home would never bootstrap
+			// and the test would pass without exercising anything.
+			home := t.TempDir()
+			stdout, stderr, exitCode := runAkt(t, home, path...)
+
+			if exitCode != 0 {
+				t.Fatalf("akt %s exited %d\nstdout: %s\nstderr: %s", name, exitCode, stdout, stderr)
+			}
+			if strings.Contains(stderr, "first-run wizard") {
+				t.Fatalf("akt %s reached the bootstrap wizard\nstderr: %s", name, stderr)
+			}
+			if _, err := os.Stat(filepath.Join(home, "config.yaml")); !os.IsNotExist(err) {
+				t.Fatalf("akt %s wrote a config on an unconfigured machine", name)
+			}
+		})
+	}
+}
