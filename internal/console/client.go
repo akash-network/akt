@@ -41,8 +41,9 @@ var (
 	ErrNotFound = errors.New("console: resource not found")
 
 	// ErrAlreadyClosed is returned by CloseDeployment when the deployment is
-	// already closed (the API answers 404 or 400). Callers that want
-	// idempotent close semantics should treat it as success:
+	// already closed (the API answers 404, or 400 with an already-closed
+	// message). Callers that want idempotent close semantics should treat it
+	// as success:
 	//
 	//	if err := c.CloseDeployment(ctx, dseq); err != nil && !errors.Is(err, console.ErrAlreadyClosed) { ... }
 	ErrAlreadyClosed = errors.New("console: deployment already closed")
@@ -145,10 +146,35 @@ func (c *Client) doData(ctx context.Context, method, path string, reqBody, resul
 
 const maxRetries = 3
 
+// retryableStatus reports whether a failed attempt with the given method and
+// status may safely be re-sent.
+//
+// Money-safety rationale: GET/HEAD/PUT/DELETE are idempotent by HTTP
+// semantics, so replaying them on 429 or 5xx is always safe. POST (and any
+// other non-idempotent method, e.g. PATCH with fallback semantics) is only
+// retried on 429 — a rate-limit rejection guarantees the server did NOT
+// process the request. A 5xx gives no such guarantee: a gateway 502 can hide
+// a write that already succeeded server-side, and replaying
+// POST /v1/deployments, /v1/leases, or /v1/deposit-deployment would create
+// duplicate deployments or charge the managed wallet twice.
+func retryableStatus(method string, status int) bool {
+	if status == http.StatusTooManyRequests {
+		return true
+	}
+
+	// Remaining retryable statuses are 5xx: idempotent methods only.
+	switch method {
+	case http.MethodGet, http.MethodHead, http.MethodPut, http.MethodDelete:
+		return true
+	default:
+		return false
+	}
+}
+
 // doJSON executes an HTTP request with JSON encoding, error mapping, and
-// retry with backoff on 429/5xx (up to maxRetries attempts). The response
-// body is unmarshaled into result as-is (no envelope handling); a nil result
-// discards the body.
+// retry with backoff (up to maxRetries attempts) on 429 and — for idempotent
+// methods only, see retryableStatus — 5xx. The response body is unmarshaled
+// into result as-is (no envelope handling); a nil result discards the body.
 func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, result any) error {
 	var payload []byte
 	if reqBody != nil {
@@ -217,7 +243,14 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, resul
 			return &HTTPError{StatusCode: resp.StatusCode, Body: string(respBody)}
 		}
 
-		// Backoff before retry for 429 and 5xx.
+		// Never replay a request that could have been processed server-side
+		// (non-idempotent method + 5xx): duplicating a deployment or a USD
+		// deposit is worse than surfacing the error.
+		if !retryableStatus(method, resp.StatusCode) {
+			return lastErr
+		}
+
+		// Backoff before retry for 429 and (idempotent-only) 5xx.
 		if attempt < maxRetries-1 {
 			backoff := time.Duration(1<<uint(attempt)) * 100 * time.Millisecond
 			select {

@@ -130,6 +130,80 @@ func TestConsoleCreateDeploymentRawSDL(t *testing.T) {
 	}
 }
 
+func TestConsoleCreateDeploymentSignTxFailure(t *testing.T) {
+	// A Console 200 whose managed-wallet broadcast failed on chain
+	// (signTx.code != 0) is a failed step: treating it as success would
+	// leave deploy.yaml hanging in wait-for-bids until timeout with the
+	// rawLog dropped.
+	sdlPath := writeTestSDL(t, "services:\n  web:\n    image: nginx\n")
+
+	c, _ := newConsoleClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"dseq":"4243","manifest":"[]","signTx":{"code":5,"transactionHash":"DEADBEEF","rawLog":"insufficient fees"}}}`))
+	})
+
+	_, err := c.BroadcastTx(context.Background(), msgCreateDeployment, map[string]string{
+		"sdl":     sdlPath,
+		"deposit": "5",
+	})
+	if err == nil {
+		t.Fatal("expected a non-zero signTx code to fail the step")
+	}
+	for _, want := range []string{"code 5", "insufficient fees", "DEADBEEF"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error %q does not surface %q", err.Error(), want)
+		}
+	}
+}
+
+func TestConsoleSDLPathMissingIsError(t *testing.T) {
+	// A value that looks like a file path but does not exist is a typo, not
+	// raw SDL content: POSTing it as content would create a garbage
+	// deployment on the managed wallet.
+	c, _ := newConsoleClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		t.Error("no request expected for a missing SDL file")
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+
+	for _, param := range []string{
+		"deply.yaml", // typo'd filename
+		"missing/deploy.yml",
+		filepath.Join(t.TempDir(), "nope.yaml"),
+		"some/dir/without/suffix",
+	} {
+		_, err := c.BroadcastTx(context.Background(), msgCreateDeployment, map[string]string{
+			"sdl":     param,
+			"deposit": "5",
+		})
+		if err == nil {
+			t.Errorf("sdl %q: expected missing-file error, got success", param)
+			continue
+		}
+		if !strings.Contains(err.Error(), "does not exist") {
+			t.Errorf("sdl %q: error %q does not mention the missing file", param, err)
+		}
+	}
+}
+
+func TestConsoleCreateDeploymentEmptyManifestNotCached(t *testing.T) {
+	// An empty manifest must not be cached (mirroring the CLI twin):
+	// lease create should fail with the clear no-cached-manifest error
+	// instead of sending an empty manifest to the provider.
+	c, root := newConsoleClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"dseq":"4244","manifest":""}}`))
+	})
+
+	if _, err := c.BroadcastTx(context.Background(), msgCreateDeployment, map[string]string{
+		"sdl":     "services:\n  web:\n    image: nginx\n",
+		"deposit": "5",
+	}); err != nil {
+		t.Fatalf("BroadcastTx: %v", err)
+	}
+
+	if _, err := console.LoadManifest(root, testConsoleCtx, "4244"); err == nil {
+		t.Fatal("empty manifest must not be cached")
+	}
+}
+
 func TestConsoleCreateDeploymentDepositValidation(t *testing.T) {
 	c, _ := newConsoleClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("no request expected for invalid deposits")

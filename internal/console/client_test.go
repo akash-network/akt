@@ -139,6 +139,66 @@ func TestRetryOn5xxExhausted(t *testing.T) {
 	assert.Equal(t, int32(3), calls.Load(), "expected max 3 attempts")
 }
 
+func TestPostNotRetriedOn5xx(t *testing.T) {
+	// A 5xx does not prove the server failed to process the request (a
+	// gateway 502 can hide a completed write). Replaying a POST could
+	// duplicate a deployment or charge the managed wallet twice, so POST
+	// must do exactly one attempt and surface the error.
+	var calls atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		assert.Equal(t, http.MethodPost, r.Method)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+
+	c := console.New(srv.URL, "key")
+	err := c.Deposit(context.Background(), "123", 5)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "server error")
+	assert.Equal(t, int32(1), calls.Load(), "POST + 5xx must not be retried")
+}
+
+func TestPostRetriedOn429(t *testing.T) {
+	// 429 means the request was rejected before processing, so replaying a
+	// POST is safe.
+	var calls atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodPost, r.Method)
+		if calls.Add(1) == 1 {
+			w.WriteHeader(http.StatusTooManyRequests)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := console.New(srv.URL, "key")
+	require.NoError(t, c.Deposit(context.Background(), "123", 5))
+	assert.Equal(t, int32(2), calls.Load(), "POST + 429 must retry")
+}
+
+func TestDeleteRetriedOn5xx(t *testing.T) {
+	// DELETE is idempotent by HTTP semantics: replaying it on 5xx is safe.
+	var calls atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, http.MethodDelete, r.Method)
+		if calls.Add(1) < 3 {
+			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	c := console.New(srv.URL, "key")
+	require.NoError(t, c.CloseDeployment(context.Background(), "1"))
+	assert.Equal(t, int32(3), calls.Load(), "DELETE + 5xx must retry")
+}
+
 func TestDataEnvelopeUnwrapping(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"balance":1500000,"deployments":500000,"total":2000000}}`))

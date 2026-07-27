@@ -118,8 +118,14 @@ func (c *consoleChainClient) createDeployment(ctx context.Context, params map[st
 
 	dseq := res.DSeq.String()
 
-	if err := console.SaveManifest(c.root, c.ctxName, dseq, res.Manifest); err != nil {
-		return nil, fmt.Errorf("deployment %s was created via Console, but caching its manifest failed (lease creation needs it): %w", dseq, err)
+	// Cache the manifest only when the API actually returned one (mirroring
+	// the CLI twin): caching an empty file would make the later lease
+	// creation send an empty manifest instead of failing with the clear
+	// no-cached-manifest error.
+	if res.Manifest != "" {
+		if err := console.SaveManifest(c.root, c.ctxName, dseq, res.Manifest); err != nil {
+			return nil, fmt.Errorf("deployment %s was created via Console, but caching its manifest failed (lease creation needs it): %w", dseq, err)
+		}
 	}
 
 	return consoleTxResult(res.SignTx, map[string]string{"dseq": dseq})
@@ -209,8 +215,15 @@ func (c *consoleChainClient) createLease(ctx context.Context, params map[string]
 
 // consoleTxResult builds a steps.TxResult from an optional Console SignTx
 // broadcast report and a flat data payload (always carrying "dseq" as a JSON
-// string, matching the keyring chain adapter).
+// string, matching the keyring chain adapter). A non-zero SignTx code means
+// the managed-wallet broadcast failed on chain even though the Console API
+// answered 200; that is a step failure (mirroring the keyring chain
+// adapter's TxResponse.Code check), not a success to wait on.
 func consoleTxResult(signTx *console.SignTx, data map[string]string) (*steps.TxResult, error) {
+	if signTx != nil && signTx.Code != 0 {
+		return nil, fmt.Errorf("tx %s failed with code %d: %s", signTx.TransactionHash, signTx.Code, signTx.RawLog)
+	}
+
 	raw, err := json.Marshal(data)
 	if err != nil {
 		return nil, fmt.Errorf("marshal tx result data: %w", err)
@@ -238,7 +251,10 @@ func requiredDSeqParam(params map[string]string, msgType string) (string, error)
 
 // sdlContent interprets the workflow "sdl" param as either a path to an SDL
 // file or raw SDL content (mirroring readSDL), returning the SDL text the
-// Console API expects.
+// Console API expects. A value that looks like a path but does not exist is
+// an error — the provider twin fails on such input too (its SDL parse
+// rejects a bare path), and silently POSTing a typo'd filename as "SDL
+// content" would create a garbage deployment on the managed wallet.
 func sdlContent(param string) (string, error) {
 	s := strings.TrimSpace(param)
 	if s == "" {
@@ -254,7 +270,26 @@ func sdlContent(param string) (string, error) {
 		return string(data), nil
 	}
 
+	if looksLikeSDLPath(s) {
+		return "", fmt.Errorf("SDL file %q does not exist", s)
+	}
+
 	return param, nil
+}
+
+// looksLikeSDLPath reports whether s is plausibly a file path rather than
+// raw SDL content: a single line ending in .yaml/.yml or containing a path
+// separator. Raw SDL is multi-line YAML, so it never matches.
+func looksLikeSDLPath(s string) bool {
+	if strings.ContainsRune(s, '\n') {
+		return false
+	}
+
+	if strings.HasSuffix(s, ".yaml") || strings.HasSuffix(s, ".yml") {
+		return true
+	}
+
+	return strings.ContainsRune(s, '/') || strings.ContainsRune(s, os.PathSeparator)
 }
 
 // parseConsoleDeposit parses the workflow "deposit" param as a USD amount.

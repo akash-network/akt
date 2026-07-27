@@ -91,8 +91,9 @@ func (c *Client) UpdateDeployment(ctx context.Context, dseq, sdl string) (*Deplo
 }
 
 // CloseDeployment closes a deployment. If the deployment is already closed
-// (the API answers 404 or 400) it returns ErrAlreadyClosed, which callers may
-// treat as success for idempotent behavior.
+// (the API answers 404, or 400 with an already-closed message) it returns
+// ErrAlreadyClosed, which callers may treat as success for idempotent
+// behavior. Any other 400 is a genuine failure and is returned as-is.
 //
 // Wire: DELETE /v1/deployments/{dseq}.
 func (c *Client) CloseDeployment(ctx context.Context, dseq string) error {
@@ -115,15 +116,26 @@ func (c *Client) CloseDeployment(ctx context.Context, dseq string) error {
 }
 
 // isAlreadyClosed reports whether a close attempt failed because the
-// deployment no longer exists or is already closed (404 or 400).
+// deployment no longer exists or is already closed. A 404 always qualifies:
+// the resource is gone, which is the desired end state. A 400 qualifies only
+// when its body actually says already-closed/not-found — the pinned contract
+// (testdata/openapi.json) documents only 200 for DELETE
+// /v1/deployments/{dseq}, so a generic 400 (validation, not-owner, active
+// leases, ...) is a real failure that must surface to the caller.
 func isAlreadyClosed(err error) bool {
 	if errors.Is(err, ErrNotFound) {
 		return true
 	}
 
 	var httpErr *HTTPError
+	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusBadRequest {
+		return false
+	}
 
-	return errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusBadRequest
+	// "closed" also covers "already closed".
+	body := strings.ToLower(httpErr.Body)
+
+	return strings.Contains(body, "closed") || strings.Contains(body, "not found")
 }
 
 // Deposit adds funds to a deployment's escrow. Amount is in USD.

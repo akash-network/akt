@@ -2922,8 +2922,8 @@ Use a context with auth-method: keyring for this operation.
 | 401         | Invalid or expired API key. Point the user at the key resolution chain (§7.1) and `akt console login`. |
 | 402         | Insufficient funds in Console account.                            |
 | 404         | Deployment not found (dseq does not exist or not owned by user).  |
-| 429         | Rate limited. Retry with backoff.                                 |
-| 5xx         | Console API server error. Retry with backoff (max 3 attempts).    |
+| 429         | Rate limited. Retry with backoff (safe for every method: the request was rejected before processing). |
+| 5xx         | Console API server error. Retry with backoff (max 3 attempts) for idempotent methods (GET/HEAD/PUT/DELETE) only. POST is never replayed on 5xx: the request may have been processed despite the error (e.g. a gateway 502 after a completed write), and replaying it could duplicate a deployment or a USD deposit. |
 
 ### 7.7 Differences from Keyring Auth
 

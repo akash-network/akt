@@ -132,11 +132,24 @@ func TestCloseDeployment(t *testing.T) {
 }
 
 func TestCloseDeploymentAlreadyClosedSentinel(t *testing.T) {
-	for _, status := range []int{http.StatusNotFound, http.StatusBadRequest} {
-		t.Run(http.StatusText(status), func(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		// 404 = resource gone = desired end state, regardless of body.
+		{"404", http.StatusNotFound, `{"error":"no such deployment"}`},
+		// 400 maps to the sentinel only when the body says so.
+		{"400 already closed", http.StatusBadRequest, `{"error":"deployment already closed"}`},
+		{"400 closed", http.StatusBadRequest, `{"error":"Deployment closed"}`},
+		{"400 not found", http.StatusBadRequest, `{"error":"Deployment Not Found"}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				w.WriteHeader(status)
-				_, _ = w.Write([]byte(`{"error":"deployment closed"}`))
+				w.WriteHeader(tt.status)
+				_, _ = w.Write([]byte(tt.body))
 			}))
 			defer srv.Close()
 
@@ -144,9 +157,32 @@ func TestCloseDeploymentAlreadyClosedSentinel(t *testing.T) {
 			err := c.CloseDeployment(context.Background(), "1")
 			require.Error(t, err)
 			assert.ErrorIs(t, err, console.ErrAlreadyClosed,
-				"HTTP %d must map to ErrAlreadyClosed for idempotent close", status)
+				"HTTP %d %q must map to ErrAlreadyClosed for idempotent close", tt.status, tt.body)
 		})
 	}
+}
+
+func TestCloseDeploymentBadRequestValidationIsRealError(t *testing.T) {
+	// The pinned contract documents only 200 for DELETE
+	// /v1/deployments/{dseq}: a 400 whose body does not indicate
+	// already-closed semantics is a genuine failure (validation, not-owner,
+	// active leases) and must NOT be swallowed as ErrAlreadyClosed.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"invalid dseq parameter"}`))
+	}))
+	defer srv.Close()
+
+	c := console.New(srv.URL, "test-key")
+	err := c.CloseDeployment(context.Background(), "1")
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, console.ErrAlreadyClosed,
+		"a validation 400 must not be reported as already-closed")
+
+	var httpErr *console.HTTPError
+	require.ErrorAs(t, err, &httpErr)
+	assert.Equal(t, http.StatusBadRequest, httpErr.StatusCode)
+	assert.Contains(t, httpErr.Body, "invalid dseq parameter")
 }
 
 func TestDepositBodyShape(t *testing.T) {

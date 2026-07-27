@@ -60,3 +60,54 @@ func TestLoadManifestMissing(t *testing.T) {
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, fs.ErrNotExist), "missing manifest must wrap fs.ErrNotExist")
 }
+
+func TestManifestDSeqTraversalRejected(t *testing.T) {
+	// The dseq lands in a filesystem path and can come from untrusted input
+	// (CLI args on load, the Console API response on save), so anything but
+	// a plain numeric sequence must be rejected before touching the disk.
+	hostile := []string{
+		"../../../../etc/passwd",
+		"../../../../x",
+		"..",
+		"/etc/passwd",
+		"12345/../../escape",
+		"12345x",
+		"-1",
+		"",
+	}
+
+	root := t.TempDir()
+
+	for _, dseq := range hostile {
+		t.Run(dseq, func(t *testing.T) {
+			// Write side: a hostile Console API response must not steer the
+			// write outside the config root.
+			err := console.SaveManifest(root, "prod", dseq, "owned")
+			require.Error(t, err, "SaveManifest must reject dseq %q", dseq)
+			assert.Contains(t, err.Error(), "invalid dseq")
+
+			// Read side: a hostile CLI argument must not read arbitrary files.
+			_, err = console.LoadManifest(root, "prod", dseq)
+			require.Error(t, err, "LoadManifest must reject dseq %q", dseq)
+			assert.Contains(t, err.Error(), "invalid dseq")
+
+			_, err = console.ManifestPath(root, "prod", dseq)
+			require.Error(t, err, "ManifestPath must reject dseq %q", dseq)
+		})
+	}
+
+	// Nothing may have been written outside the manifests directory: the
+	// root must contain no entries at all (SaveManifest failed before
+	// MkdirAll every time).
+	entries, err := os.ReadDir(root)
+	require.NoError(t, err)
+	assert.Empty(t, entries, "hostile dseqs must not create any files or directories")
+}
+
+func TestManifestPathValidDSeq(t *testing.T) {
+	root := t.TempDir()
+
+	path, err := console.ManifestPath(root, "prod", "12345")
+	require.NoError(t, err)
+	assert.Equal(t, filepath.Join(root, "contexts", "prod", "manifests", "12345.json"), path)
+}

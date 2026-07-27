@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"pkg.akt.dev/akt/internal/actionlog"
@@ -90,6 +91,41 @@ func TestCloseAlreadyClosedRecordedAsSuccess(t *testing.T) {
 	// Desired end state was reached, so the idempotent close logs as success.
 	if entries[0].Action != "close-deployment" || entries[0].Status != "success" || entries[0].DSeq != 555 {
 		t.Errorf("already-closed entry wrong: %+v", entries[0])
+	}
+}
+
+func TestCloseValidation400RecordedAsFailed(t *testing.T) {
+	// A 400 without already-closed semantics is a genuine failure: it must
+	// not be logged as a successful close.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":"cannot close: deployment has active leases pending settlement"}`))
+	}))
+	defer srv.Close()
+
+	l := openTestLog(t)
+	c := New(srv.URL, "test-key").WithActionLog(l)
+
+	err := c.CloseDeployment(context.Background(), "777")
+	if err == nil {
+		t.Fatal("expected the validation 400 to fail the close")
+	}
+	if errors.Is(err, ErrAlreadyClosed) {
+		t.Fatalf("validation 400 must not map to ErrAlreadyClosed, got %v", err)
+	}
+
+	entries, readErr := l.Read(actionlog.Filter{Type: actionlog.TypeConsole})
+	if readErr != nil {
+		t.Fatalf("read: %v", readErr)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].Action != "close-deployment" || entries[0].Status != "failed" || entries[0].DSeq != 777 {
+		t.Errorf("validation-400 close entry wrong: %+v", entries[0])
+	}
+	if !strings.Contains(entries[0].Error, "active leases") {
+		t.Errorf("entry error %q must carry the server's message", entries[0].Error)
 	}
 }
 
