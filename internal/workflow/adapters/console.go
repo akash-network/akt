@@ -13,10 +13,6 @@ import (
 	"pkg.akt.dev/akt/internal/workflow/steps"
 )
 
-// minConsoleDepositUSD is the minimum deployment deposit the Console API
-// accepts, in USD (SPEC §7.4: console-api deposits are USD, not uakt).
-const minConsoleDepositUSD = 0.5
-
 // consoleChainClient adapts the Console API client to the workflow
 // steps.ChainClient interface, routing tx steps through the Console API per
 // SPEC §7.4/§7.5. Queries are delegated to a real chain client when one is
@@ -298,7 +294,7 @@ func looksLikeSDLPath(s string) bool {
 func parseConsoleDeposit(s string) (float64, error) {
 	s = strings.TrimSpace(s)
 	if s == "" || s == depositAuto {
-		return 0, fmt.Errorf("console-api contexts require an explicit deposit in USD: pass --deposit with an amount of at least %.2f (e.g. --deposit 5)", minConsoleDepositUSD)
+		return 0, fmt.Errorf("console-api contexts require an explicit deposit in USD: pass --deposit with an amount of at least %.2f (e.g. --deposit 5)", console.MinDepositUSD)
 	}
 
 	v, err := strconv.ParseFloat(s, 64)
@@ -306,8 +302,8 @@ func parseConsoleDeposit(s string) (float64, error) {
 		return 0, fmt.Errorf("invalid deposit %q: console-api contexts take the deposit as a plain USD amount (e.g. --deposit 5)", s)
 	}
 
-	if v < minConsoleDepositUSD {
-		return 0, fmt.Errorf("deposit %s USD is below the Console minimum of %.2f USD", s, minConsoleDepositUSD)
+	if v < console.MinDepositUSD {
+		return 0, fmt.Errorf("deposit %s USD is below the Console minimum of %.2f USD", s, console.MinDepositUSD)
 	}
 
 	return v, nil

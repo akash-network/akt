@@ -27,6 +27,12 @@ import (
 // DefaultBaseURL is the production Console API endpoint.
 const DefaultBaseURL = "https://console-api.akash.network"
 
+// MinDepositUSD is the minimum deployment deposit the Console API accepts.
+// It lives here — the leaf package every Console caller already imports —
+// so the CLI, the workflow transport, and the client itself cannot drift
+// apart on the limit they enforce.
+const MinDepositUSD = 0.5
+
 // Sentinel errors returned by the client. Match with errors.Is.
 var (
 	// ErrUnauthorized indicates the API key is missing, invalid, or expired

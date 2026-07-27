@@ -133,8 +133,6 @@ func deploymentCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				}
 			}
 			// NOTE: internal/workflow/adapters/console.go carries a private
-			// copy of this minimum (minConsoleDepositUSD); it should switch
-			// to the shared transport.MinConsoleDepositUSD constant.
 			if deposit < transport.MinConsoleDepositUSD {
 				return fmt.Errorf("deposit must be at least %s (got %s): pass it as the [deposit-usd] argument", formatUSD(transport.MinConsoleDepositUSD), formatUSD(deposit))
 			}

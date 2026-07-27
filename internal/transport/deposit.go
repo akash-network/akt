@@ -3,6 +3,7 @@ package transport
 import (
 	"fmt"
 	"math"
+	"pkg.akt.dev/akt/internal/console"
 	"strconv"
 	"strings"
 
@@ -18,7 +19,7 @@ const depositAuto = "auto"
 // accepts, in USD (SPEC §7.4: console-api deposits are USD, not uakt).
 // Exported so every surface enforcing the console minimum (CLI commands,
 // workflow adapters) shares one value instead of hard-coding 0.5.
-const MinConsoleDepositUSD = 0.5
+const MinConsoleDepositUSD = console.MinDepositUSD
 
 // Deposit is a deployment deposit parsed from the unified --deposit syntax
 // accepted on every rail (see ParseDeposit).
