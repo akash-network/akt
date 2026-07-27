@@ -336,9 +336,14 @@ func TestLocalnetQueries(t *testing.T) {
 	// Queries needing no account. Chain-wide reads and every module's
 	// params, which is the one read path every module is guaranteed to
 	// have on a chain with no activity on it yet.
+	// Every entry must be a runnable query, not a command group. A group
+	// prints its help and exits 0 without reaching the chain, so it passes
+	// this matrix no matter what the node does. `query params` is the
+	// x/params group — its only subcommand, subspace, needs arguments — and
+	// it is deliberately absent for that reason. The check for a new entry:
+	// with the context pointed at a dead endpoint it must exit non-zero.
 	queries := [][]string{
 		{"query", "block"},
-		{"query", "params"},
 		{"query", "auth", "params"},
 		{"query", "bank", "total"},
 		{"query", "staking", "validators"},
