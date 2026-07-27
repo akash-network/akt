@@ -4,9 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
-  schedule:
-    # Weekly upstream-drift check (see e2e-localnet-latest).
-    - cron: "17 6 * * 1"
+  # Manual only — used to run the upstream-drift check below on demand.
   workflow_dispatch:
 
 concurrency:
@@ -106,12 +104,12 @@ jobs:
         run: go test ./e2e/ -run TestLocalnet -v -count=1 -timeout 15m
 
   e2e-localnet-latest:
-    # Upstream-drift check: same suite against the newest node image. Runs
-    # only on a schedule (and manually), never on a PR — an upstream release
-    # must not be able to redden someone else's pull request. A failure here
-    # means the node image changed in a way the bootstrap or the CLI must
-    # adapt to; fix it, then bump defaultNodeImage.
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    # Upstream-drift check: the same suite against the newest node image.
+    # Manual only — it never runs on a push or a pull request, so an upstream
+    # release cannot redden someone's PR. Worth a click before cutting a
+    # release; a failure means the node image changed in a way the bootstrap
+    # or the CLI must adapt to, after which bump defaultNodeImage.
+    if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
