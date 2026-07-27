@@ -32,7 +32,7 @@ GORELEASER_WORKDIR       := /go/src/$(GORELEASER_MOD_MOUNT)
 # Container image path akt would publish to. Nothing consumes this yet --
 # .goreleaser.yaml has no `dockers:` section because akt is a client binary,
 # not a node -- but this is the path to use when one is added.
-RELEASE_DOCKER_IMAGE     ?= ghcr.io/akash-network/akt
+RELEASE_DOCKER_IMAGE     ?= ghcr.io/ovrclk/akt
 
 GORELEASER_GOWORK        := $(GOWORK)
 

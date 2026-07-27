@@ -29,9 +29,9 @@
 | `akash-network/chain-sdk/go/cli` | All CLI command definitions (tx, query, keys, server)                                                    | **Deprecated.** Commands clean-copied into `akt`. Package removed once `akt` reaches parity.                                                                |
 | `akash-network/node`             | Blockchain node binary (`akash`). Imports chain-sdk CLI, adds server/genesis/testnet commands.           | **Keeps** only node-operator commands: `start`, `comet`, `export`, `prepare-genesis`, `testnet`, `testnetify`, `auth jwt`. Stops exporting user-facing CLI. |
 | `akash-network/provider`         | Provider binary (`provider-services`). Imports chain-sdk CLI, adds provider gateway + operator commands. | **Keeps** only provider-operator commands: `run`, `operator *`, `tools *`, `migrate`. Stops exporting user-facing CLI.                                      |
-| `ovrclk/akt`                     | MVP CLI prototype. Config system, account/network/deploy commands.                                       | Design reference. Concepts (profiles, git-like config) evolved into the context system.                                                                     |
+| `ovrclk/akt` (pre-rewrite)       | MVP CLI prototype. Config system, account/network/deploy commands.                                       | Design reference. Concepts (profiles, git-like config) evolved into the context system. Replaced in place by the rewrite below.                             |
 | `cloud-j-luna/aktop`             | Community TUI for monitoring Akash consensus state, validator voting, and provider operations.           | Design reference and prior art for TUI. Its consensus/validator/provider monitoring views inform the TUI design. Functionality subsumed by `akt monitor`. |
-| **`akash-network/akt`**          | **New.** This repository.                                                                                | The unified user CLI and TUI.                                                                                                                               |
+| **`ovrclk/akt`**                 | **New.** This repository, and the rewrite that replaced the prototype above.                             | The unified user CLI and TUI. Releases publish here; a move to `akash-network/akt` is possible later, but that repository does not exist yet.                |
 
 ### 1.4 The `monitor` Command
 
@@ -405,7 +405,7 @@ An unrecognized mode falls back to `dim`, so a config typo never silently disabl
 ## 4. Package Structure
 
 ```
-github.com/akash-network/akt/
+pkg.akt.dev/akt/                         # module path (repo: github.com/ovrclk/akt)
 ├── cmd/
 │   └── akt/                             # Binary entry point
 ├── internal/
