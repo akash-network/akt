@@ -49,14 +49,19 @@ func walletListCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			type walletRow struct {
 				Address  string `json:"address"`
 				Balance  string `json:"balance"`
+				Denom    string `json:"denom,omitempty"`
 				Trialing bool   `json:"trialing"`
 			}
 
 			rows := make([]walletRow, 0, len(wallets))
 			for _, w := range wallets {
 				rows = append(rows, walletRow{
-					Address:  w.Address,
-					Balance:  formatUSD(w.CreditAmount / 1e6), // µACT -> USD (1 ACT = 1 USD)
+					Address: w.Address,
+					// creditAmount is dollar-scale per the /v1/wallets
+					// contract (reported alongside a denom, e.g. "usdc") —
+					// unlike /v1/balances, which is µACT. No 1e6 scaling.
+					Balance:  formatUSD(w.CreditAmount),
+					Denom:    w.Denom,
 					Trialing: w.IsTrialing,
 				})
 			}
@@ -237,18 +242,34 @@ func usageCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				Spent       string `json:"spent"`
 			}
 
+			// totalSpent is the spend within the requested range: the sum
+			// of the per-day values shown in the rows. TotalUsdcSpent is
+			// the API's lifetime figure ("cumulative spent up to this
+			// date" per the vendored contract), so the range maximum — not
+			// whichever element happens to come last — is the lifetime
+			// spend as of the range end, independent of point ordering.
 			totalSpent := 0.0
+			lifetimeSpent := 0.0
 			rows := make([]usageRow, 0, len(points))
 			for _, p := range points {
-				totalSpent = p.TotalUsdcSpent
+				totalSpent += p.DailyUsdcSpent
+				if p.TotalUsdcSpent > lifetimeSpent {
+					lifetimeSpent = p.TotalUsdcSpent
+				}
 				rows = append(rows, usageRow{p.Date, p.ActiveDeployments, formatUSD(p.DailyUsdcSpent)})
 			}
 
+			lifetime := ""
+			if len(points) > 0 {
+				lifetime = formatUSD(lifetimeSpent)
+			}
+
 			return printJSON(cmd, struct {
-				TotalSpent string     `json:"totalSpent"`
-				Days       int        `json:"days"`
-				History    []usageRow `json:"history"`
-			}{formatUSD(totalSpent), len(rows), rows})
+				TotalSpent    string     `json:"totalSpent"`
+				LifetimeSpent string     `json:"lifetimeSpent,omitempty"`
+				Days          int        `json:"days"`
+				History       []usageRow `json:"history"`
+			}{formatUSD(totalSpent), lifetime, len(rows), rows})
 		},
 	}
 

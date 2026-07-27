@@ -4,16 +4,34 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strconv"
 
 	"github.com/spf13/cobra"
 
 	"pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
+	"pkg.akt.dev/akt/internal/transport"
 )
 
-// minDepositUSD is the Console API's minimum deployment deposit.
-const minDepositUSD = 0.5
+// parseConsoleUSD parses a positional deposit/amount argument using the
+// unified cross-rail deposit syntax (transport.ParseDeposit, SPEC §7.4):
+// bare numbers, "5usd", and "$5" are USD on the console rail; coin forms
+// ("5000000uakt") fail with the transport package's cross-rail error before
+// any request is made.
+func parseConsoleUSD(arg string) (float64, error) {
+	dep, err := transport.ParseDeposit(arg)
+	if err != nil {
+		return 0, err
+	}
+
+	if _, err := dep.RailValue(transport.KindConsole); err != nil {
+		return 0, err
+	}
+
+	// ""/"auto" defers to the rail default, but the console rail has none:
+	// callers' minimum/positivity checks reject the zero value with a
+	// message pointing at the positional argument.
+	return dep.USD, nil
+}
 
 func deploymentCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
@@ -109,13 +127,16 @@ func deploymentCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			// deposit, _ := cmd.Flags().GetFloat64("deposit")
 			deposit := 0.0
 			if len(args) > 1 {
-				deposit, err = strconv.ParseFloat(args[1], 64)
+				deposit, err = parseConsoleUSD(args[1])
 				if err != nil {
-					return fmt.Errorf("invalid deposit %q: expected a USD amount", args[1])
+					return err
 				}
 			}
-			if deposit < minDepositUSD {
-				return fmt.Errorf("deposit must be at least %s (got %s): pass it as the [deposit-usd] argument", formatUSD(minDepositUSD), formatUSD(deposit))
+			// NOTE: internal/workflow/adapters/console.go carries a private
+			// copy of this minimum (minConsoleDepositUSD); it should switch
+			// to the shared transport.MinConsoleDepositUSD constant.
+			if deposit < transport.MinConsoleDepositUSD {
+				return fmt.Errorf("deposit must be at least %s (got %s): pass it as the [deposit-usd] argument", formatUSD(transport.MinConsoleDepositUSD), formatUSD(deposit))
 			}
 
 			sdl, err := os.ReadFile(args[0])
@@ -237,9 +258,9 @@ func deploymentDepositCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			// amount, _ := cmd.Flags().GetFloat64("amount")
 			amount := 0.0
 			if len(args) > 1 {
-				amount, err = strconv.ParseFloat(args[1], 64)
+				amount, err = parseConsoleUSD(args[1])
 				if err != nil {
-					return fmt.Errorf("invalid amount %q: expected a USD amount", args[1])
+					return err
 				}
 			}
 			if amount <= 0 {

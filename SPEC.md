@@ -1746,10 +1746,10 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | --------------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | `akt console deployment list`                       | `--skip` (0), `--limit` (20)                   | List deployments with pagination.                                                              |
 | `akt console deployment get <dseq>`                 |                                                | Deployment with leases and escrow account.                                                     |
-| `akt console deployment create <sdl-file> [deposit-usd]` | `--deposit <usd>` (alternative to positional; min 0.5) — **disabled pending feedback** (positional only, 2026-07) | Create a deployment; prints `dseq` + tx hash. The returned manifest is cached at `contexts/<name>/manifests/<dseq>.json` for `lease create`. |
+| `akt console deployment create <sdl-file> [deposit-usd]` | `--deposit <usd>` (alternative to positional; min 0.5) — **disabled pending feedback** (positional only, 2026-07) | Create a deployment; prints `dseq` + tx hash. The deposit uses the unified cross-rail syntax (§7.4): `5`, `5usd`, or `$5` (min $0.50); coin forms like `5000000uakt` fail with the cross-rail error. The returned manifest is cached at `contexts/<name>/manifests/<dseq>.json` for `lease create`. |
 | `akt console deployment update <dseq> <sdl-file>`   |                                                | Update the deployment's SDL.                                                                   |
 | `akt console deployment close <dseq>`               |                                                | Close a deployment. Idempotent: an already-closed deployment prints a note and exits 0.        |
-| `akt console deployment deposit <dseq> [amount-usd]` | `--amount <usd>` (alternative to positional; > 0) — **disabled pending feedback** (positional only, 2026-07) | Add funds to the deployment's escrow.                                                          |
+| `akt console deployment deposit <dseq> [amount-usd]` | `--amount <usd>` (alternative to positional; > 0) — **disabled pending feedback** (positional only, 2026-07) | Add funds to the deployment's escrow. The amount uses the unified cross-rail syntax (§7.4): `10`, `10usd`, or `$10`; coin forms fail with the cross-rail error. |
 | `akt console deployment settings <dseq> [true\|false]` | `--auto-top-up true\|false` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Show settings when no value is given; set auto-top-up when a positional or flag value is present. |
 | `akt console bid list <dseq>`                       |                                                | List bids for the deployment's open orders.                                                    |
 | `akt console lease create <dseq> [provider]`        | `--gseq` (1), `--oseq` (1), `--provider` (alternative to positional) — **disabled pending feedback** (positional only, 2026-07), `--manifest <file>` | Accept a bid; the manifest defaults to the one cached by `deployment create`. |
@@ -1758,11 +1758,11 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 
 | Command                       | Flags                        | Description                                                     |
 | ----------------------------- | ---------------------------- | ---------------------------------------------------------------- |
-| `akt console wallet list`     |                              | List managed wallets (balances shown as `$X.XX`).                |
+| `akt console wallet list`     |                              | List managed wallets. `creditAmount` is dollar-scale per the `/v1/wallets` contract (shown as `$X.XX`, no µ scaling), with the wallet's `denom` when the API reports one. |
 | `akt console wallet balance`  |                              | Available / in-deployment / total balance in USD.                |
 | `akt console wallet settings [true\|false]` | `--auto-reload true\|false` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Show settings when no value is given; set auto-reload otherwise. |
 | `akt console wallet cost`     |                              | Estimated weekly cost in USD.                                    |
-| `akt console usage [from] [to]` | `--from`, `--to` (YYYY-MM-DD, alternatives) — **disabled pending feedback** (positional only, 2026-07) | Daily spend history for the managed wallet. Omitted dates use the API defaults (last 30 days). |
+| `akt console usage [from] [to]` | `--from`, `--to` (YYYY-MM-DD, alternatives) — **disabled pending feedback** (positional only, 2026-07) | Daily spend history for the managed wallet. `totalSpent` is the spend within the requested range (sum of the daily values, order-independent); `lifetimeSpent` is the API's cumulative figure as of the range end, omitted when the range is empty. Omitted dates use the API defaults (last 30 days). |
 
 **Public catalog** (no API key required):
 

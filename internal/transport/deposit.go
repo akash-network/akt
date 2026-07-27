@@ -14,6 +14,12 @@ import (
 // console rail rejects it (an explicit USD amount is required).
 const depositAuto = "auto"
 
+// MinConsoleDepositUSD is the minimum deployment deposit the Console API
+// accepts, in USD (SPEC §7.4: console-api deposits are USD, not uakt).
+// Exported so every surface enforcing the console minimum (CLI commands,
+// workflow adapters) shares one value instead of hard-coding 0.5.
+const MinConsoleDepositUSD = 0.5
+
 // Deposit is a deployment deposit parsed from the unified --deposit syntax
 // accepted on every rail (see ParseDeposit).
 type Deposit struct {
