@@ -34,7 +34,10 @@ endif
 build_tags    := $(strip $(BUILD_TAGS))
 build_tags_cs := $(subst $(WHITESPACE),$(COMMA),$(build_tags))
 
-GORELEASER_LDFLAGS := $(ldflags)
+# Release builds do NOT reuse the flags computed below: goreleaser cross
+# compiles from a container with its own toolchain, so .goreleaser.yaml carries
+# its own copy of the build tags and the -X flags. Keep the two in sync -- see
+# the header comment in .goreleaser.yaml.
 
 ldflags :=
 
@@ -70,9 +73,6 @@ endif
 ldflags += $(LDFLAGS)
 ldflags := $(strip $(ldflags))
 
-GORELEASER_TAGS  := $(BUILD_TAGS)
-GORELEASER_FLAGS := $(BUILD_FLAGS) -mod=$(GOMOD) -tags='$(build_tags)'
-
 BUILD_FLAGS += -mod=$(GOMOD) -tags='$(build_tags_cs)' -ldflags '$(ldflags)'
 
 GO                           := GO111MODULE=$(GO111MODULE) go
@@ -91,3 +91,4 @@ test-e2e: akt
 
 include $(AKT_ROOT)/make/setup-cache.mk
 include $(AKT_ROOT)/make/releasing.mk
+include $(AKT_ROOT)/make/testing.mk

@@ -4,6 +4,9 @@
 
 ### Fixed
 
+- **The release pipeline would have shipped broken binaries**: `.goreleaser.yaml` passed `{{ .Env.BUILD_LDFLAGS }}` to every build, but nothing ever set that variable — the Makefile's `GORELEASER_LDFLAGS := $(ldflags)` sat two lines *above* the `ldflags :=` assignment, so it expanded to the empty string (same for `MOD` and `BUILD_TAGS`). Every released binary would have reported `dev / none / unknown` and been built with no tags. ldflags are now literal and self-contained in the goreleaser config, driven by `{{ .Version }}`/`{{ .FullCommit }}`/`{{ .Date }}`, injecting both `main.*` and the cosmos-sdk version vars. Also fixed: darwin builds linked libwasmvm with an rpath into the *builder's* Go module cache (dead on any user's machine) — the `static_wasm` tag now links the static archive, verified with `otool -L`; the pinned `goreleaser-cross` image tag did not exist (`v1.26.1` → pinned `v1.26.2`); `project_name` was `node`; `RELEASE_DOCKER_IMAGE` pointed at the node repo and was defined twice.
+
+
 - **`akt version` always reported "dev" (AKT-221)**: the Makefile injected build info into the cosmos-sdk version vars but never into `main.version/commit/date`, which is what the CLI actually prints — so every built binary, including release builds, claimed `dev (commit: none, built: unknown)`. Both are injected now. The `--long` flag the task promised was also never implemented; it now prints version, commit, build date, Go version, platform, and build tags.
 
 
@@ -78,6 +81,9 @@
 - **Documentation refreshed to match the delivered state**: README (status paragraph, action-log scope, workflow execution no longer "not yet wired", new Console Integration section, positional-first examples, roadmap pruned of already-delivered items), DESIGN (action-log scope, console-auth section notes the full `akt console` surface, phase status bullets), SPEC (console group added to the §2.1 command tree, context create/edit flag tables, `context log --type` values, §7.3 min deposit corrected to $0.50, §7.5/§7.6 examples, §1.9 env table, §12 milestone wording). TASKS.md verified — no checkbox changes needed. Two cross-doc contradictions flagged for follow-up rather than guessed at: README's TUI "scaffolded" wording vs TASKS T093-T104 complete, and SPEC §7.4's planned `foreach` step type.
 
 ### Added
+
+- **Release pipeline (`make release*` + `.github/workflows/release.yml`)**: `make/releasing.mk` previously had no release target at all. Adds `release-libs` (fetches the libwasmvm static archives every `-L./.cache/lib` already pointed at — the directory was empty), `release-check`, `release-snapshot`, `release-dry-run`, and `release`, plus a tag-triggered workflow (`v*`) with a `workflow_dispatch` check/snapshot/dry-run mode. Verified end to end locally: config check, a full four-target cgo cross-compile producing a universal darwin binary, linux amd64/arm64, archives, deb/rpm and checksums; the produced binaries were executed on darwin/arm64, linux/amd64 and linux/arm64 and report real version strings. Publishing itself is unexercised (no tag was pushed).
+
 
 - **`akt sdl` command group (final console-axi parity item)**: transport-independent SDL authoring ported from the reference CLI — `sdl scaffolds` (web, gpu, multi-service, ip-lease; byte-faithful defaults incl. 10000 uact price ceilings), `sdl init <scaffold>` (deterministic YAML to stdout, pipeable into `akt deploy`/`akt console deployment create`, generation flags for image/port/resources/env/gpu), and `sdl validate <file|->` (parse via pkg.akt.dev/go/sdl + lint: unpinned/`:latest` images rejected, `uakt` pricing warns — softened from the reference's hard reject since akt serves both rails). Runs with no context, key, or RPC; no capability gate. SPEC §2.11. 19 tests.
 
