@@ -22,11 +22,12 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version-file: go.mod
-      - uses: golangci/golangci-lint-action@v6
+      - uses: golangci/golangci-lint-action@v7
         with:
           # Must match GOLANGCI_LINT_VERSION in the Makefile, and must be
           # built with Go >= the go directive in go.mod — older releases
           # refuse to load a config targeting a newer language version.
+          # golangci-lint v2 needs action v7; v6 rejects a v2 version string.
           version: v2.11.4
           args: --timeout=10m
 
@@ -58,6 +59,19 @@ jobs:
       # written against it are clobbered on the next copy — including it
       # would cap the repo-wide number near 62% no matter what we write.
       # See make/testing.mk for the package sets and COVER_THRESHOLD.
+      - name: Reconstruct the direnv environment
+        # The coverage targets write under $AKT_DEVCACHE. Those paths live in
+        # .env (sourced by .envrc), which CI has no direnv to load — so source
+        # it here rather than duplicating the paths in this workflow.
+        run: |
+          set -euo pipefail
+          export AKT_ROOT="$GITHUB_WORKSPACE"
+          set -a
+          # shellcheck disable=SC1091
+          . ./.env
+          set +a
+          env | grep -E '^(AKT_ROOT|AKT_DEVCACHE|AKT_RUN)' >> "$GITHUB_ENV"
+
       - name: Core coverage (gated)
         run: make test-coverage-check
       - name: Repo-wide coverage (reported, not gated)
