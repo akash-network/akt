@@ -2,11 +2,13 @@ package cli
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
 
 	"pkg.akt.dev/akt/internal/capability"
+	aktctx "pkg.akt.dev/akt/internal/context"
 )
 
 // applyCapabilityGating walks the command tree and adjusts the presentation
@@ -44,6 +46,50 @@ func applyCapabilityGating(root *cobra.Command, set capability.Set, mode capabil
 	}
 
 	walk(root)
+}
+
+// invocationCapabilities augments a context-derived feature set with the
+// capabilities this invocation supplies explicitly. Gating describes what the
+// *configuration* can do, so a per-invocation override — an explicit RPC
+// endpoint or a Console key passed on the command line — must never be
+// rejected by it (SPEC §2.10).
+//
+// argv is the raw command line because several clean-copied SDK groups
+// disable flag parsing; posArgs are the command's parsed positional
+// arguments, used for commands that take an endpoint positionally.
+func invocationCapabilities(set capability.Set, cmd *cobra.Command, argv, posArgs []string) capability.Set {
+	grantChain := func() {
+		set.ChainQuery = true
+		set.ChainTx = true
+		set.Provider = true
+	}
+
+	for _, a := range argv {
+		if a == "--" {
+			break
+		}
+
+		switch {
+		case a == "--node" || strings.HasPrefix(a, "--node="):
+			grantChain()
+		case a == "--console-api-key" || strings.HasPrefix(a, "--console-api-key="):
+			set.Console = true
+		}
+	}
+
+	// The environment carries the same Console credential the client
+	// resolves at point of use.
+	if os.Getenv(aktctx.EnvConsoleAPIKey) != "" {
+		set.Console = true
+	}
+
+	// `akt monitor [rpc-endpoint]` connects to an endpoint given
+	// positionally and works with no context at all.
+	if cmd != nil && strings.HasPrefix(cmd.CommandPath(), "akt monitor") && len(posArgs) > 0 {
+		grantChain()
+	}
+
+	return set
 }
 
 // requirementError returns the fail-fast error for cmd when it (or an

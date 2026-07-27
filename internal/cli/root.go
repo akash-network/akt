@@ -151,7 +151,7 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			// invocations never bootstrap — help must work on a machine
 			// with nothing configured.
 			cfgPath := aktctx.ConfigPath(cfgRoot)
-			if _, statErr := os.Stat(cfgPath); os.IsNotExist(statErr) && !helpRequested(os.Args[1:]) {
+			if _, statErr := os.Stat(cfgPath); os.IsNotExist(statErr) && !isHelpInvocation(cmd, os.Args[1:]) {
 				// Initialize glyphs before bootstrap (config not yet
 				// available — uses flag/env/auto-detect only).
 				initGlyphs(v)
@@ -193,7 +193,7 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			//    always allowed: SDK group commands disable flag parsing, so
 			//    cobra cannot short-circuit their --help before these hooks
 			//    run, and help must never require a context.
-			if !resolved && requiresContext(cmd) && !helpRequested(os.Args[1:]) {
+			if !resolved && requiresContext(cmd) && !isHelpInvocation(cmd, os.Args[1:]) {
 				return noContextError(mgr)
 			}
 
@@ -204,12 +204,19 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			//     defaults.command-gating: dim | hide | off) and fail fast
 			//     with an explanation instead of erroring mid-transport.
 			if resolved {
-				rc, rcErr := mgr.Resolve(v.GetString("context"))
-				if rcErr == nil {
-					set := capability.Resolve(rc)
-					applyCapabilityGating(cmd.Root(), set, capability.ParseMode(v.GetString("defaults.command-gating")))
+				if rc, rcErr := mgr.Resolve(activeContextName(mgr, v.GetString("context"))); rcErr == nil {
+					mode := capability.ParseMode(gatingMode(v, mgr))
 
-					if !helpRequested(os.Args[1:]) {
+					// The feature set describes the configuration; explicit
+					// per-invocation overrides (--node, --console-api-key, a
+					// positional monitor endpoint) grant their capability so
+					// gating never rejects a command that carries its own
+					// connection details.
+					set := invocationCapabilities(capability.Resolve(rc), cmd, os.Args[1:], args)
+
+					applyCapabilityGating(cmd.Root(), set, mode)
+
+					if mode != capability.ModeOff && !isHelpInvocation(cmd, os.Args[1:]) {
 						if err := requirementError(cmd, set); err != nil {
 							return err
 						}
@@ -303,16 +310,23 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	root.AddCommand(monitorCmd(v))
 	root.AddCommand(mcpCmd())
 	root.AddCommand(cliprovider.Commands())
-	root.AddCommand(cliconsole.Commands(mgrFn))
 	root.AddCommand(clisdl.Commands())
 	homeFn := func() string { return resolvedCfgRoot }
+	// ctxNameFn resolves the active context name for the command groups that
+	// need it. The global --context override wins over current-context so
+	// that `akt --context staging ...` stores credentials under and bills
+	// the context the user named.
 	ctxNameFn := func() string {
+		if name := v.GetString("context"); name != "" {
+			return name
+		}
 		if mgr != nil {
 			return mgr.CurrentContext()
 		}
 		return ""
 	}
 
+	root.AddCommand(cliconsole.Commands(mgrFn))
 	root.AddCommand(clistore.Commands(homeFn, ctxNameFn))
 
 	// Workflow commands are discovered dynamically from workflow definitions.
@@ -329,26 +343,24 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	// any failure falls back to ungated help rather than blocking it.
 	defaultHelp := root.HelpFunc()
 	root.SetHelpFunc(func(c *cobra.Command, args []string) {
-		if home := root.PersistentFlags().Lookup("home"); home != nil && home.Changed {
-			v.Set("home", home.Value.String())
+		// Help can run before PersistentPreRunE, so mirror the flags it
+		// would have bound. Both --home and --context matter: help must
+		// describe the context the user actually named.
+		for _, name := range []string{"home", "context"} {
+			if f := root.PersistentFlags().Lookup(name); f != nil && f.Changed {
+				v.Set(name, f.Value.String())
+			}
 		}
 
 		if cfgRoot, err := aktctx.ConfigHome(v.GetString("home")); err == nil {
 			if m, mErr := aktctx.NewManager(cfgRoot); mErr == nil {
-				ctxName := v.GetString("context")
-				if ctxName == "" {
-					ctxName = m.CurrentContext()
-				}
-				if ctxName == "" {
-					if contexts := m.ListContexts(); len(contexts) == 1 {
-						ctxName = contexts[0].Name
-					}
-				}
-
-				if ctxName != "" {
+				if ctxName := activeContextName(m, v.GetString("context")); ctxName != "" {
 					if rc, rcErr := m.Resolve(ctxName); rcErr == nil {
-						mode := capability.ParseMode(m.Config().Defaults.CommandGating)
-						applyCapabilityGating(root, capability.Resolve(rc), mode)
+						// Same mode resolution as enforcement (flag > env >
+						// config) so help and execution never disagree.
+						mode := capability.ParseMode(gatingMode(v, m))
+						set := invocationCapabilities(capability.Resolve(rc), c, os.Args[1:], nil)
+						applyCapabilityGating(root, set, mode)
 					}
 				}
 			}
@@ -391,6 +403,15 @@ func requiresContext(cmd *cobra.Command) bool {
 		return false
 	case strings.HasPrefix(path, "akt completion"):
 		return false
+	// SDL authoring is entirely local: parsing, scaffolding, and linting
+	// never touch a network or a credential.
+	case strings.HasPrefix(path, "akt sdl"):
+		return false
+	// The console group resolves its own credential (flag > env > stored)
+	// and works with no context at all when a key comes from the
+	// environment; capability gating reports a missing key instead.
+	case strings.HasPrefix(path, "akt console"):
+		return false
 	}
 
 	return true
@@ -402,13 +423,58 @@ func requiresContext(cmd *cobra.Command) bool {
 // persistent hooks execute.
 func helpRequested(args []string) bool {
 	for _, a := range args {
-		switch a {
-		case "--help", "-h", "help":
+		// Everything after the terminator is data for the command
+		// (e.g. `provider lease-shell -- sh -h`), never a help request.
+		if a == "--" {
+			return false
+		}
+
+		// Only the flag forms count. A bare "help" is matched separately
+		// via the resolved command: as a positional value (`tx deployment
+		// close help`) it must NOT disable context or capability checks.
+		if a == "--help" || a == "-h" || strings.HasPrefix(a, "--help=") {
 			return true
 		}
 	}
 
 	return false
+}
+
+// activeContextName resolves which context a run targets: the explicit
+// override, else current-context, else the sole configured context (the
+// same auto-selection the SDK client bootstrap performs). Returns "" when
+// no single context can be determined.
+func activeContextName(mgr *aktctx.Manager, override string) string {
+	if mgr == nil {
+		return override
+	}
+
+	return mgr.ActiveContext(override)
+}
+
+// gatingMode resolves the command-gating mode with the standard precedence
+// (flag/env via viper, then config file).
+func gatingMode(v *viper.Viper, mgr *aktctx.Manager) string {
+	if mode := v.GetString("defaults.command-gating"); mode != "" {
+		return mode
+	}
+
+	if mgr != nil {
+		return mgr.Config().Defaults.CommandGating
+	}
+
+	return ""
+}
+
+// isHelpInvocation reports whether this run only prints help — either via a
+// help flag or via cobra's built-in `help` command — in which case context
+// and capability requirements are not enforced.
+func isHelpInvocation(cmd *cobra.Command, args []string) bool {
+	if cmd != nil && cmd.Name() == "help" {
+		return true
+	}
+
+	return helpRequested(args)
 }
 
 // checkInteractive returns an error if interactive mode is disabled in config

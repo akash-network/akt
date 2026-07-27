@@ -195,3 +195,72 @@ func TestAuthMethodRoundTripsThroughConfig(t *testing.T) {
 		t.Errorf("console url after reload = %q", ctx.ConsoleAPIURL)
 	}
 }
+
+func TestActiveContextResolution(t *testing.T) {
+	m := newCredentialManager(t)
+
+	if got := m.ActiveContext(""); got != "" {
+		t.Errorf("no contexts: ActiveContext = %q, want empty", got)
+	}
+
+	if err := m.CreateContext(aktctx.Context{Name: "only", Network: aktctx.Network{Name: "mainnet"}}); err != nil {
+		t.Fatalf("CreateContext: %v", err)
+	}
+
+	// A single configured context is auto-selected even with no current-context.
+	if got := m.ActiveContext(""); got != "only" {
+		t.Errorf("single context: ActiveContext = %q, want only", got)
+	}
+
+	if err := m.CreateContext(aktctx.Context{Name: "second", Network: aktctx.Network{Name: "mainnet"}}); err != nil {
+		t.Fatalf("CreateContext: %v", err)
+	}
+
+	if got := m.ActiveContext(""); got != "" {
+		t.Errorf("two contexts, none current: ActiveContext = %q, want empty", got)
+	}
+
+	if err := m.UseContext("second"); err != nil {
+		t.Fatalf("UseContext: %v", err)
+	}
+	if got := m.ActiveContext(""); got != "second" {
+		t.Errorf("current-context: ActiveContext = %q, want second", got)
+	}
+
+	// The explicit override always wins.
+	if got := m.ActiveContext("only"); got != "only" {
+		t.Errorf("override: ActiveContext = %q, want only", got)
+	}
+}
+
+func TestUpdateNetworklessConsoleContext(t *testing.T) {
+	m := newCredentialManager(t)
+
+	if err := m.CreateContext(aktctx.Context{
+		Name:       "console",
+		AuthMethod: aktctx.AuthMethodConsoleAPI,
+	}); err != nil {
+		t.Fatalf("CreateContext: %v", err)
+	}
+
+	// A network-less console context must remain editable — the remedy
+	// printed by capability errors is exactly `akt context edit ...`.
+	if err := m.UpdateContext("console", func(c *aktctx.Context) error {
+		c.ConsoleAPIURL = "https://console-api.example.com"
+		return nil
+	}); err != nil {
+		t.Fatalf("UpdateContext on a network-less console context: %v", err)
+	}
+
+	if got := m.GetContext("console").ConsoleAPIURL; got != "https://console-api.example.com" {
+		t.Errorf("edit not persisted: %q", got)
+	}
+
+	// A bogus network reference is still rejected.
+	if err := m.UpdateContext("console", func(c *aktctx.Context) error {
+		c.Network = aktctx.Network{Name: "nope"}
+		return nil
+	}); err == nil {
+		t.Error("unknown network must still be rejected")
+	}
+}

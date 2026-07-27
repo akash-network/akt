@@ -19,7 +19,6 @@ import (
 	aktctx "pkg.akt.dev/akt/internal/context"
 )
 
-// Commands returns the `akt console` command group.
 func Commands(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "console",
@@ -213,7 +212,15 @@ func promptForKey(cmd *cobra.Command) (string, error) {
 func clientFromCmd(cmd *cobra.Command, mgrFn func() *aktctx.Manager, requireKey bool) (*console.Client, *aktctx.Context, error) {
 	var rc *aktctx.Context
 	if m := mgrFn(); m != nil {
-		rc, _ = m.Resolve("") // missing context is OK for public endpoints
+		// Honor the global --context override: credentials are read from and
+		// written to the context the user named, and Console operations bill
+		// that context's managed wallet.
+		override := ""
+		if f := cmd.Flags().Lookup("context"); f != nil {
+			override = f.Value.String()
+		}
+
+		rc, _ = m.Resolve(m.ActiveContext(override)) // missing context is OK for public endpoints
 	}
 
 	key, _ := cmd.Flags().GetString("console-api-key")

@@ -95,3 +95,94 @@ func TestRequirementErrorWalksAncestors(t *testing.T) {
 		t.Errorf("satisfied requirement must not error: %v", err)
 	}
 }
+
+func TestHelpRequestedIgnoresPositionalsAndTerminator(t *testing.T) {
+	cases := []struct {
+		name string
+		args []string
+		want bool
+	}{
+		{"help flag", []string{"tx", "bank", "--help"}, true},
+		{"short help flag", []string{"tx", "-h"}, true},
+		{"help with value form", []string{"tx", "--help=true"}, true},
+		// A bare "help" as a positional VALUE must not disable enforcement:
+		// `akt tx deployment close help` used to skip the no-context guard
+		// and go straight to broadcast.
+		{"help as positional value", []string{"tx", "deployment", "close", "help"}, false},
+		{"flag after terminator", []string{"provider", "lease-shell", "--", "sh", "-h"}, false},
+		{"none", []string{"query", "deployment"}, false},
+	}
+
+	for _, c := range cases {
+		if got := helpRequested(c.args); got != c.want {
+			t.Errorf("%s: helpRequested(%v) = %v, want %v", c.name, c.args, got, c.want)
+		}
+	}
+}
+
+func TestIsHelpInvocationMatchesHelpCommand(t *testing.T) {
+	// cobra resolves `akt help foo` to the help command itself.
+	helpCmd := &cobra.Command{Use: "help"}
+	if !isHelpInvocation(helpCmd, []string{"help", "tx"}) {
+		t.Error("the help command must count as a help invocation")
+	}
+
+	other := &cobra.Command{Use: "close"}
+	if isHelpInvocation(other, []string{"tx", "deployment", "close", "help"}) {
+		t.Error("a positional 'help' value must not count as a help invocation")
+	}
+}
+
+func TestInvocationCapabilitiesGrantsExplicitOverrides(t *testing.T) {
+	empty := capability.Set{}
+
+	if got := invocationCapabilities(empty, nil, []string{"query", "deployment", "--node", "https://rpc"}, nil); !got.ChainQuery {
+		t.Error("--node must grant chain capabilities")
+	}
+	if got := invocationCapabilities(empty, nil, []string{"query", "--node=https://rpc"}, nil); !got.ChainTx {
+		t.Error("--node=value form must grant chain capabilities")
+	}
+	if got := invocationCapabilities(empty, nil, []string{"console", "whoami", "--console-api-key", "sk"}, nil); !got.Console {
+		t.Error("--console-api-key must grant the console capability")
+	}
+
+	// Overrides after the terminator are command data, not akt flags.
+	if got := invocationCapabilities(empty, nil, []string{"provider", "lease-shell", "--", "sh", "--node"}, nil); got.ChainQuery {
+		t.Error("tokens after -- must not grant capabilities")
+	}
+
+	monitor := &cobra.Command{Use: "monitor"}
+	root := &cobra.Command{Use: "akt"}
+	root.AddCommand(monitor)
+	if got := invocationCapabilities(empty, monitor, []string{"monitor", "https://rpc"}, []string{"https://rpc"}); !got.ChainQuery {
+		t.Error("a positional monitor endpoint must grant chain capabilities")
+	}
+	if got := invocationCapabilities(empty, monitor, []string{"monitor"}, nil); got.ChainQuery {
+		t.Error("monitor without an endpoint must not grant capabilities")
+	}
+}
+
+func TestInvocationCapabilitiesGrantsFromEnv(t *testing.T) {
+	t.Setenv("AKT_CONSOLE_API_KEY", "sk-env")
+
+	if got := invocationCapabilities(capability.Set{}, nil, []string{"console", "whoami"}, nil); !got.Console {
+		t.Error("AKT_CONSOLE_API_KEY must grant the console capability")
+	}
+}
+
+func TestRequiresContextExemptsOfflineGroups(t *testing.T) {
+	root := &cobra.Command{Use: "akt"}
+	for _, group := range []string{"sdl", "console", "context", "version", "completion", "monitor"} {
+		g := &cobra.Command{Use: group}
+		root.AddCommand(g)
+		if requiresContext(g) {
+			t.Errorf("%s must not require a configured context", group)
+		}
+	}
+
+	tx := &cobra.Command{Use: "tx"}
+	root.AddCommand(tx)
+	if !requiresContext(tx) {
+		t.Error("tx must still require a context")
+	}
+}

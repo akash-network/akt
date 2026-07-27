@@ -239,6 +239,25 @@ func (m *Manager) CurrentContext() string {
 	return m.cfg.CurrentContext
 }
 
+// ActiveContext resolves which context a run targets: the explicit override
+// (the global --context flag), else current-context, else the sole
+// configured context. Returns "" when no single context can be determined.
+func (m *Manager) ActiveContext(override string) string {
+	if override != "" {
+		return override
+	}
+
+	if current := m.CurrentContext(); current != "" {
+		return current
+	}
+
+	if contexts := m.ListContexts(); len(contexts) == 1 {
+		return contexts[0].Name
+	}
+
+	return ""
+}
+
 // CreateContext adds a new context. The referenced network and keyring must exist.
 func (m *Manager) CreateContext(ctx Context) error {
 	m.mu.Lock()
@@ -324,7 +343,10 @@ func (m *Manager) UpdateContext(name string, apply func(*Context) error) error {
 	}
 
 	// Validate references after mutation.
-	if m.getNetwork(ctx.Network.Name) == nil {
+	// console-api contexts may be network-less (CreateContext permits it);
+	// requiring a network here would make them uneditable — including by the
+	// `akt context edit ... --console-api-key` remedy other errors suggest.
+	if ctx.Network.Name != "" && m.getNetwork(ctx.Network.Name) == nil {
 		return fmt.Errorf("network %q not found", ctx.Network.Name)
 	}
 
