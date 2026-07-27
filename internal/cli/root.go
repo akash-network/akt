@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"strings"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
@@ -777,14 +779,51 @@ in your shell. Follow the instructions for your shell below.`,
 }
 
 func versionCmd(bi BuildInfo) *cobra.Command {
-	return &cobra.Command{
-		Use:     "version",
-		Short:   "Print version information",
-		Args:    cobra.NoArgs,
-		Example: `  akt version`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := fmt.Fprintf(cmd.OutOrStdout(), "akt %s (commit: %s, built: %s)\n", bi.Version, bi.Commit, bi.Date)
+	cmd := &cobra.Command{
+		Use:   "version",
+		Short: "Print version information",
+		Args:  cobra.NoArgs,
+		Example: `  # Short form
+  akt version
+
+  # Full build info (Go version, platform, build tags)
+  akt version --long`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := cmd.OutOrStdout()
+
+			if long, _ := cmd.Flags().GetBool("long"); long {
+				info := []struct{ k, v string }{
+					{"version", bi.Version},
+					{"commit", bi.Commit},
+					{"built", bi.Date},
+					{"go", runtime.Version()},
+					{"platform", runtime.GOOS + "/" + runtime.GOARCH},
+				}
+
+				if bi, ok := debug.ReadBuildInfo(); ok {
+					for _, setting := range bi.Settings {
+						if setting.Key == "-tags" && setting.Value != "" {
+							info = append(info, struct{ k, v string }{"build tags", setting.Value})
+						}
+					}
+				}
+
+				for _, i := range info {
+					if _, err := fmt.Fprintf(out, "%-11s %s\n", i.k+":", i.v); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			}
+
+			_, err := fmt.Fprintf(out, "akt %s (commit: %s, built: %s)\n", bi.Version, bi.Commit, bi.Date)
 			return err
 		},
 	}
+
+	// Build-time detail for bug reports (TASKS T035).
+	cmd.Flags().Bool("long", false, "Print full build information")
+
+	return cmd
 }

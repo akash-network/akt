@@ -2940,6 +2940,54 @@ Use a context with auth-method: keyring for this operation.
 
 ---
 
+### 7.8 Console Compatibility Matrix
+
+Status of `akt` coverage for every Akash Console capability. "Covered" means the capability is reachable from `akt` end to end; deferred entries carry an explicit rationale. Reference points: the Console API surface (§7.1–§7.7), the `console-axi` reference CLI, and the Console web app.
+
+#### Covered
+
+| Console capability | akt equivalent | Notes |
+|---|---|---|
+| Authenticate with API key | `akt console login/logout/whoami`; per-context credential (`akt context edit --console-api-key`) | Resolution: flag > `AKT_CONSOLE_API_KEY` > per-context file (§7.1). Switching context switches Console identity. |
+| Create deployment (managed wallet) | `akt console deployment create <sdl> [deposit-usd]`; `akt deploy` in a `console-api` context | Deposit in USD (minimum $0.50), unified deposit syntax per §7.4. The manifest is cached per context for the follow-up lease. |
+| List / inspect deployments | `akt console deployment list/get` | Pagination via `--skip`/`--limit`. |
+| Update / close deployment | `akt console deployment update/close`; `akt update`, `akt close` | Close is idempotent: an already-closed deployment reports success. |
+| Escrow deposit | `akt console deployment deposit <dseq> [amount-usd]` | |
+| Auto top-up settings | `akt console deployment settings <dseq> [true\|false]` | `/v2/deployment-settings`, PATCH with POST fallback. |
+| View bids / create lease | `akt console bid list <dseq>`, `akt console lease create <dseq> [provider]` | The `akt deploy` workflow automates the bid wait and selection. |
+| Live lease status | `akt console status <dseq>` (`--watch`) | Reads the provider gateway directly using a Console-minted scoped JWT. |
+| Container logs / cluster events | `akt console logs <dseq> [service]`, `akt console events <dseq>` (`--follow`) | Same streaming paths as `akt provider lease-logs/lease-events`, authenticated by the Console JWT — no websocket relay needed. |
+| Exec / interactive shell | `akt console shell <dseq> <service> [-- command]` | Exec is the same command with an explicit command argument. |
+| Bid screening | `akt console screen <sdl-file>` | Public endpoint; resources are derived from the SDL. |
+| Wallet balances & managed wallets | `akt console wallet balance/list` | Balances are µACT rendered as USD (1 ACT = 1 USD); wallet credits are dollar-scale. |
+| Wallet auto-reload | `akt console wallet settings [true\|false]` | The only headless funding path, matching the reference CLI. |
+| Cost estimate & usage history | `akt console wallet cost`, `akt console usage [from] [to]` | Usage totals the requested range; the lifetime figure is reported separately. |
+| Provider marketplace browse | `akt console provider list/get/regions/auditors` | Public endpoints; no key required. |
+| GPU availability & pricing | `akt console gpu` | Public. |
+| Template catalog | `akt console template list/get/sdl` | `template sdl` pipes raw SDL into `akt deploy`. |
+| SDL authoring | `akt sdl scaffolds/init/validate` (§2.11) | Local scaffolding, generation, and lint; no context, key, or RPC required. |
+| API key management | `akt console apikey list/create/delete` | Create shows the secret exactly once. |
+| Provider-scoped JWT minting | `akt console jwt create` | Also the mechanism behind the live lease operations above. |
+| Action audit trail | Automatic: state-changing Console calls are recorded in the per-context action log (`akt context log`) | Beyond Console parity — Console has no client-side audit trail. |
+
+#### Deferred or not portable (with rationale)
+
+| Console capability | Status | Rationale |
+|---|---|---|
+| Adding funds by card / 3DS payment | Not portable | Stripe checkout with 3DS is inherently interactive and web-only; the reference CLI defers to auto-reload as well. Headless path: `akt console wallet settings true` plus per-deployment auto top-up. |
+| Account signup / email verification / team management | Not portable | Web-only Console account flows with no public API endpoints. |
+| Certificate management for managed wallets | Not applicable | The managed wallet signs server-side, so no client certificate exists (the reference CLI has no cert commands either). |
+| Console's `provider-proxy` websocket relay | Superseded | akt reaches provider gateways directly with a Console-minted JWT, which covers the same operations without reimplementing the relay's in-band auth protocol. |
+
+#### Behavioral differences vs the reference CLI (intentional)
+
+- Output follows akt conventions (`-o json|yaml|pretty`) rather than TOON.
+- Credentials and the manifest cache are per-context (§7.1) rather than a single global config file, so several Console accounts can be used side by side.
+- The composite `deploy` command is the existing `akt deploy` workflow with auth-aware routing (§7.4), not a separate code path.
+- Commands take their primary values positionally (§3.8); the reference CLI is flag-based.
+
+---
+
 ## 8. TUI Specification
 
 The TUI incorporates the real-time monitoring functionality of [`aktop`](https://github.com/cloud-j-luna/aktop) -- a community-built terminal UI for Akash consensus and provider monitoring. The consensus view, validator voting view, provider fleet monitor, and governance parameters view are derived from `aktop` and integrated as first-class views in the `akt` TUI.

@@ -50,6 +50,13 @@ ldflags += -X github.com/cosmos/cosmos-sdk/version.Name=akt \
 -X github.com/cosmos/cosmos-sdk/version.Version=$(shell git describe --tags | sed 's/^v//') \
 -X github.com/cosmos/cosmos-sdk/version.Commit=$(GIT_HEAD_COMMIT_LONG)
 
+# akt's own build info. The cosmos-sdk vars above feed the SDK's version
+# machinery; `akt version` reads these, so both must be injected or the
+# binary reports dev/none/unknown regardless of how it was built.
+ldflags += -X main.version=$(shell git describe --tags | sed 's/^v//') \
+-X main.commit=$(GIT_HEAD_COMMIT_LONG) \
+-X main.date=$(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+
 # check for nostrip option
 ifeq (,$(findstring nostrip,$(BUILD_OPTIONS)))
 	ldflags     += -s -w

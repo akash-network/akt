@@ -408,7 +408,7 @@ Navigation: `1`-`6` primary views (Deployments, Leases, Providers, Monitor, Gove
 Upcoming work (see [SPEC.md](SPEC.md) for full details):
 
 - **TUI**: resource views (deployments, leases, providers, governance, validators) populated with live data from the store and sync engine
-- **Console parity follow-ups**: logs/shell access for managed deployments via Console-minted JWTs, bid screening command (see [docs/console-parity.md](docs/console-parity.md))
+- **Console parity follow-ups**: logs/shell access for managed deployments via Console-minted JWTs, bid screening command (see SPEC.md §7.8, the Console compatibility matrix)
 - **Phase 4**: Plugin system, additional TUI resource views (wasm, ibc, escrow), performance optimization
 
 ## License
