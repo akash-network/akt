@@ -542,7 +542,7 @@ When enabled, navigation is `1`-`6` primary views (Deployments, Leases, Provider
 Upcoming work (see [SPEC.md](SPEC.md) for full details):
 
 - **TUI**: populate resource views (deployments, leases, providers, governance, validators) with live data from the store and sync engine, then re-enable the shell
-- **UX trial follow-up (2026-07)**: decide from feedback whether the duplicated identity/filter flags are restored, and settle the default `command-gating` mode
+- **UX trial follow-up (2026-07)**: decide from feedback whether the duplicated identity/filter flags are restored. The default `command-gating` mode is settled as `dim`; `hide` and `off` remain available.
 - **Phase 4**: Plugin system, additional TUI resource views (wasm, ibc, escrow), performance optimization
 
 ## License

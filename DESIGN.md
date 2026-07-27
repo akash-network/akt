@@ -390,7 +390,7 @@ Capabilities are deliberately coarse — they describe what the *configuration* 
 
 **Overrides grant, never revoke**: gating describes the configuration, so an invocation that carries its own connection details must never be rejected by it. `--node` grants the chain capabilities, `--console-api-key` (or `AKT_CONSOLE_API_KEY` in the environment) grants `console`, and a positional endpoint on `akt monitor` grants chain access — `akt monitor <rpc-endpoint>` works with no context at all, consistent with the standalone-operation goal in §1.4. Argument scanning stops at the `--` terminator so a user's shell command cannot masquerade as a flag. Help invocations are never enforced against, because several clean-copied SDK groups disable flag parsing and cobra therefore cannot short-circuit their `--help` before the root hooks run.
 
-**Presentation**: two modes ship deliberately, selected by `defaults.command-gating` (flag/viper value first, then the config default), because it is not yet obvious which reads better to users and the answer needs feedback rather than a guess:
+**Presentation**: two modes ship deliberately, selected by `defaults.command-gating` (flag/viper value first, then the config default), because it is not yet obvious which reads better to users and the answer needs feedback rather than a guess. `dim` is the settled default (2026-07); `hide` stays available so the comparison can still be made:
 
 | Mode | Behavior |
 |---|---|
