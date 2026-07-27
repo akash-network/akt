@@ -46,6 +46,18 @@ func TestConsoleLive(t *testing.T) {
 		{"provider regions", []string{"console", "provider", "regions"}, nil},
 		{"gpu", []string{"console", "gpu"}, []string{"availability", "models"}},
 		{"template list", []string{"console", "template", "list"}, nil},
+		// The remaining read paths that need no arguments. Every console
+		// subcommand not listed here either mutates (deployment create /
+		// close / deposit / update, lease create, apikey create / delete)
+		// or needs a live dseq (status, logs, events, shell, screen, bid
+		// list) — neither belongs in a suite that must be safe to point at
+		// a real funded account.
+		{"deployment list", []string{"console", "deployment", "list"}, nil},
+		{"provider list", []string{"console", "provider", "list"}, nil},
+		{"provider auditors", []string{"console", "provider", "auditors"}, nil},
+		{"wallet list", []string{"console", "wallet", "list"}, nil},
+		// Lists key metadata only; the secret is returned once, at create.
+		{"apikey list", []string{"console", "apikey", "list"}, nil},
 	}
 
 	for _, tc := range tests {
