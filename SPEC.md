@@ -659,7 +659,7 @@ akt
 │   ├── oracle [rpc-endpoint]            # Oracle/BME dashboard (alias)
 │   └── bme [rpc-endpoint]              # Oracle/BME dashboard (alias)
 ├── mcp                                  # MCP server for AI assistant integration (stdio)
-├── version                              # Version information
+├── version [--long]                     # Version information (--long: full build info)
 └── completion                           # Shell completion scripts
 ```
 
@@ -1883,6 +1883,53 @@ akt sdl init gpu --gpu-model h100 | akt sdl validate -
 
 ---
 
+### 2.12 Version and Completion Commands
+
+#### `akt version`
+
+Print the binary's version. Build metadata is injected at link time by the
+Makefile (`main.version`, `main.commit`, `main.date`); a binary built without
+those flags reports `dev`.
+
+| Flag     | Type | Default | Description                     |
+| -------- | ---- | ------- | ------------------------------- |
+| `--long` | bool | `false` | Print full build information    |
+
+```bash
+$ akt version
+akt 0.0.1-143-g909f173 (commit: 909f1735b99d83a9ab52a0e6bee32ca7e7402672, built: 2026-07-27T04:20:51Z)
+
+$ akt version --long
+version:    0.0.1-143-g909f173
+commit:     909f1735b99d83a9ab52a0e6bee32ca7e7402672
+built:      2026-07-27T04:20:51Z
+go:         go1.26.1
+platform:   darwin/arm64
+build tags: osusergo,netgo,ledger,muslc,gcc
+```
+
+The long form is the form to include in bug reports: the build tags and
+platform determine which keyring backends and cgo-dependent features are
+compiled in.
+
+#### `akt completion <shell>`
+
+Generate a shell completion script for `bash`, `zsh`, `fish`, or `powershell`.
+Completion is dynamic for context and network names.
+
+```bash
+# Load for the current session
+source <(akt completion bash)
+
+# Install permanently (zsh)
+akt completion zsh > "${fpath[1]}/_akt"
+```
+
+Both commands run without a configured context (§2.10): they require no
+transport.
+
+---
+
 ## 3. Flag Specification
 
 ### 3.1 Global Persistent Flags
@@ -2964,7 +3011,7 @@ Status of `akt` coverage for every Akash Console capability. "Covered" means the
 | Cost estimate & usage history | `akt console wallet cost`, `akt console usage [from] [to]` | Usage totals the requested range; the lifetime figure is reported separately. |
 | Provider marketplace browse | `akt console provider list/get/regions/auditors` | Public endpoints; no key required. |
 | GPU availability & pricing | `akt console gpu` | Public. |
-| Template catalog | `akt console template list/get/sdl` | `template sdl` pipes raw SDL into `akt deploy`. |
+| Template catalog | `akt console template list/get/sdl` | `template sdl` writes raw SDL to stdout; redirect it to a file for `akt deploy` (which takes a path, not stdin). |
 | SDL authoring | `akt sdl scaffolds/init/validate` (§2.11) | Local scaffolding, generation, and lint; no context, key, or RPC required. |
 | API key management | `akt console apikey list/create/delete` | Create shows the secret exactly once. |
 | Provider-scoped JWT minting | `akt console jwt create` | Also the mechanism behind the live lease operations above. |
