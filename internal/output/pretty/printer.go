@@ -47,5 +47,10 @@ func PrintQueryResultAny(cmd *cobra.Command, cctx sdkclient.Context, msg interfa
 	}
 
 	// Not a proto.Message — use legacy print (e.g., for amino-encoded types).
+	//nolint:staticcheck // SA1019: PrintObjectLegacy is the only client-context
+	// printer that handles non-proto (amino) values. The proto-only
+	// replacements cannot encode this branch's input, so swapping it would
+	// change the rendered encoding for amino types -- a spec decision, not a
+	// lint fix. Revisit when chain-sdk stops returning interface{}.
 	return cctx.PrintObjectLegacy(msg)
 }

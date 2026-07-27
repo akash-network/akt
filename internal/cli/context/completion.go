@@ -25,5 +25,3 @@ func completeContextNames(mgr func() *aktctx.Manager) func(*cobra.Command, []str
 		return names, cobra.ShellCompDirectiveNoFileComp
 	}
 }
-
-

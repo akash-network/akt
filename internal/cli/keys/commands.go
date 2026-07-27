@@ -109,7 +109,7 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 				return nil
 			}
 
-			recover_, _ := cmd.Flags().GetBool("recover")
+			recoverKey, _ := cmd.Flags().GetBool("recover")
 			source, _ := cmd.Flags().GetString("source")
 
 			var mnemonic string
@@ -121,7 +121,7 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 				}
 
 				mnemonic = strings.TrimSpace(string(data))
-			} else if recover_ {
+			} else if recoverKey {
 				fmt.Print("Enter your mnemonic: ")
 
 				reader := bufio.NewReader(os.Stdin)
@@ -164,7 +164,7 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 			fmt.Printf("  address: %s\n", addr.String())
 			fmt.Printf("  type: %s\n", keyType)
 
-			if !noBackup && !recover_ && source == "" {
+			if !noBackup && !recoverKey && source == "" {
 				fmt.Println("")
 				fmt.Println("**Important** write this mnemonic phrase in a safe place.")
 				fmt.Println("It is the only way to recover your account if you ever forget your password.")
@@ -234,9 +234,9 @@ func addMultisig(kr sdkkeyring.Keyring, name, keyNames string, threshold int) er
 
 func deleteCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "delete <name>",
-		Short: "Delete a key from the keyring",
-		Args:  cobra.ExactArgs(1),
+		Use:     "delete <name>",
+		Short:   "Delete a key from the keyring",
+		Args:    cobra.ExactArgs(1),
 		Example: `  akt context keys delete alice`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			kr, err := getKeyring()
@@ -255,7 +255,7 @@ func deleteCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 				fmt.Printf("Delete key %q? [y/N]: ", name)
 
 				var answer string
-				fmt.Scanln(&answer)
+				_, _ = fmt.Scanln(&answer)
 
 				if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
 					fmt.Println("Cancelled.")
@@ -274,9 +274,9 @@ func deleteCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 
 func listCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "List all keys in the current keyring",
-		Args:  cobra.NoArgs,
+		Use:     "list",
+		Short:   "List all keys in the current keyring",
+		Args:    cobra.NoArgs,
 		Example: `  akt context keys list`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			kr, err := getKeyring()
@@ -394,9 +394,9 @@ func showCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 
 func exportCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 	return &cobra.Command{
-		Use:   "export <name>",
-		Short: "Export a private key (encrypted armor)",
-		Args:  cobra.ExactArgs(1),
+		Use:     "export <name>",
+		Short:   "Export a private key (encrypted armor)",
+		Args:    cobra.ExactArgs(1),
 		Example: `  akt context keys export alice`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			kr, err := getKeyring()
@@ -430,9 +430,9 @@ func exportCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 
 func importCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 	return &cobra.Command{
-		Use:   "import <name> <keyfile>",
-		Short: "Import a private key from encrypted armor file",
-		Args:  cobra.ExactArgs(2),
+		Use:     "import <name> <keyfile>",
+		Short:   "Import a private key from encrypted armor file",
+		Args:    cobra.ExactArgs(2),
 		Example: `  akt context keys import alice ./alice-key.armor`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			kr, err := getKeyring()
@@ -467,9 +467,9 @@ func importCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 
 func renameCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 	return &cobra.Command{
-		Use:   "rename <old> <new>",
-		Short: "Rename a key",
-		Args:  cobra.ExactArgs(2),
+		Use:     "rename <old> <new>",
+		Short:   "Rename a key",
+		Args:    cobra.ExactArgs(2),
 		Example: `  akt context keys rename alice alice-main`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			kr, err := getKeyring()
@@ -490,9 +490,9 @@ func renameCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 
 func mnemonicCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "mnemonic",
-		Short: "Generate a new BIP39 mnemonic",
-		Args:  cobra.NoArgs,
+		Use:     "mnemonic",
+		Short:   "Generate a new BIP39 mnemonic",
+		Args:    cobra.NoArgs,
 		Example: `  akt context keys mnemonic`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			mnemonic, err := generateMnemonic()

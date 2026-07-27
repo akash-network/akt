@@ -1,4 +1,7 @@
-GOLANGCI_LINT_VERSION        ?= v2.3.0
+# Must be built with Go >= the go directive in go.mod: older golangci-lint
+# releases refuse to load a config targeting a newer language version
+# (v2.3.0 is built with go1.24 and cannot run against go 1.26.1).
+GOLANGCI_LINT_VERSION        ?= v2.11.4
 GIT_CHGLOG_VERSION           ?= v0.15.
 
 GIT_CHGLOG_VERSION_FILE          := $(AKT_DEVCACHE_VERSIONS)/git-chglog/$(GIT_CHGLOG_VERSION)

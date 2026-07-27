@@ -77,6 +77,9 @@ func ExtractOutputs(outputDefs map[string]string, raw json.RawMessage, state *Ru
 		// If no output definitions, return the raw result as a generic map.
 		var m map[string]any
 		if err := json.Unmarshal(raw, &m); err != nil {
+			//nolint:nilerr // with no output definitions there is nothing the
+			// caller asked for; a result that is not a JSON object simply
+			// yields no outputs rather than failing the workflow step.
 			return nil, nil
 		}
 

@@ -119,7 +119,7 @@ func (c *ProviderCache) GetProvider(owner string) (*CachedProvider, bool) {
 			return nil
 		}
 		if err := json.Unmarshal(data, &p); err != nil {
-			return nil
+			return nil //nolint:nilerr // returning the error would abort the whole bbolt scan over one unreadable row; skipping the row is the intended behaviour
 		}
 		found = true
 		return nil
@@ -141,7 +141,7 @@ func (c *ProviderCache) GetAllProviders() map[string]*CachedProvider {
 		return b.ForEach(func(k, v []byte) error {
 			var p CachedProvider
 			if err := json.Unmarshal(v, &p); err != nil {
-				return nil // skip corrupt entries
+				return nil //nolint:nilerr // returning the error would abort the whole bbolt scan over one unreadable row; skipping the row is the intended behaviour
 			}
 			result[string(k)] = &p
 			return nil
@@ -161,7 +161,7 @@ func (c *ProviderCache) GetOnlineProviders() []*CachedProvider {
 		return b.ForEach(func(k, v []byte) error {
 			var p CachedProvider
 			if err := json.Unmarshal(v, &p); err != nil {
-				return nil
+				return nil //nolint:nilerr // returning the error would abort the whole bbolt scan over one unreadable row; skipping the row is the intended behaviour
 			}
 			if p.IsOnline {
 				cp := p
@@ -186,7 +186,7 @@ func (c *ProviderCache) MarkProviderOnline(owner, version string, cpuAvail, cpuT
 		}
 		var p CachedProvider
 		if err := json.Unmarshal(data, &p); err != nil {
-			return nil
+			return nil //nolint:nilerr // returning the error would abort the whole bbolt scan over one unreadable row; skipping the row is the intended behaviour
 		}
 		p.IsOnline = true
 		p.Version = version
@@ -217,7 +217,7 @@ func (c *ProviderCache) MarkProviderOffline(owner string) {
 		}
 		var p CachedProvider
 		if err := json.Unmarshal(data, &p); err != nil {
-			return nil
+			return nil //nolint:nilerr // returning the error would abort the whole bbolt scan over one unreadable row; skipping the row is the intended behaviour
 		}
 		p.IsOnline = false
 		p.LastChecked = time.Now()
@@ -297,7 +297,7 @@ func (c *ProviderCache) GetProvidersDueForCheck() []string {
 		return b.ForEach(func(k, v []byte) error {
 			var p CachedProvider
 			if err := json.Unmarshal(v, &p); err != nil {
-				return nil
+				return nil //nolint:nilerr // returning the error would abort the whole bbolt scan over one unreadable row; skipping the row is the intended behaviour
 			}
 			var interval time.Duration
 			if p.IsOnline {
@@ -334,7 +334,7 @@ func (c *ProviderCache) GetProvidersByPriority() []string {
 		return b.ForEach(func(k, v []byte) error {
 			var p CachedProvider
 			if err := json.Unmarshal(v, &p); err != nil {
-				return nil
+				return nil //nolint:nilerr // returning the error would abort the whole bbolt scan over one unreadable row; skipping the row is the intended behaviour
 			}
 			priority := calculatePriority(&p)
 			providers = append(providers, providerPriority{string(k), priority, p.LastChecked})
@@ -381,7 +381,7 @@ func (c *ProviderCache) OnlineCount() int {
 		return b.ForEach(func(k, v []byte) error {
 			var p CachedProvider
 			if err := json.Unmarshal(v, &p); err != nil {
-				return nil
+				return nil //nolint:nilerr // returning the error would abort the whole bbolt scan over one unreadable row; skipping the row is the intended behaviour
 			}
 			if p.IsOnline {
 				count++

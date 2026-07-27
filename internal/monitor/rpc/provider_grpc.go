@@ -65,7 +65,7 @@ func QueryProviderStatusGRPC(ctx context.Context, hostURI string) ([]ProviderNod
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to provider: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	client := providerv1.NewProviderRPCClient(conn)
 

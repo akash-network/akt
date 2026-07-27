@@ -2,6 +2,7 @@ package context
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -97,7 +98,8 @@ func NewViper(root string) (*viper.Viper, error) {
 	v.SetDefault("current-context", "")
 
 	if err := v.ReadInConfig(); err != nil {
-		if _, ok := err.(viper.ConfigFileNotFoundError); !ok {
+		var notFound viper.ConfigFileNotFoundError
+		if !errors.As(err, &notFound) {
 			// If the file doesn't exist that's fine (fresh setup).
 			// Any other error (parse error, permission error) is real.
 			if !os.IsNotExist(err) {
@@ -167,7 +169,9 @@ func SaveConfig(root string, cfg *Config) error {
 	if err != nil {
 		return fmt.Errorf("create config %s: %w", path, err)
 	}
-	defer f.Close()
+	// Closed explicitly below so a failed flush is reported; the deferred
+	// close only covers the error paths.
+	defer func() { _ = f.Close() }()
 
 	var buf bytes.Buffer
 
@@ -195,6 +199,12 @@ func SaveConfig(root string, cfg *Config) error {
 
 	if _, err := f.Write(payload); err != nil {
 		return fmt.Errorf("write config: %w", err)
+	}
+
+	// A write can still fail at close time (flush to disk); reporting it here
+	// is the difference between a silently truncated config and an error.
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("write config %s: %w", path, err)
 	}
 
 	return nil

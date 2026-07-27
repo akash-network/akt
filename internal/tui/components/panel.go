@@ -39,7 +39,7 @@ func TitledPanelHeight(title, content string, width, minLines int) string {
 	if fillW < 0 {
 		fillW = 0
 	}
-	topLine := borderFg.Render("┌─ ") + titleRendered + borderFg.Render(" " + strings.Repeat("─", fillW) + "─┐")
+	topLine := borderFg.Render("┌─ ") + titleRendered + borderFg.Render(" "+strings.Repeat("─", fillW)+"─┐")
 
 	// Content lines: │ content...pad │
 	contentLines := strings.Split(content, "\n")

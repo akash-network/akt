@@ -149,17 +149,6 @@ func (v *ProposalDetailView) Refresh() tea.Cmd { return nil }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
 
-// truncateStr truncates a string to maxLen characters, appending "…" if truncated.
-func truncateStr(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	if maxLen <= 1 {
-		return "…"
-	}
-	return s[:maxLen-1] + "…"
-}
-
 // renderProgressLine renders one progress bar line with label, filled/empty blocks, and percentage.
 func renderProgressLine(label string, pct float64, detail string, barW int) string {
 	filled := int(math.Round(float64(barW) * pct / 100.0))

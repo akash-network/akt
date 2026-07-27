@@ -89,10 +89,10 @@ type ViewContext struct {
 	Oracle             OracleState
 
 	// Bubbles component models
-	ProviderTable  table.Model
-	NodeTable      table.Model
-	ValidatorTable table.Model
-	BlockTable     table.Model
+	ProviderTable   table.Model
+	NodeTable       table.Model
+	ValidatorTable  table.Model
+	BlockTable      table.Model
 	GovModuleIdx    int // selected module index
 	GovModuleScroll int // first visible module index
 	GovModuleHeight int // visible rows for module list
@@ -760,12 +760,12 @@ func renderGridSection(state *consensus.State, termWidth int) string {
 	return header + "\n" + grid + "\n\n" + mutedStyle.Render(legend)
 }
 
-func clamp(value, min, max int) int {
-	if value < min {
-		return min
+func clamp(value, lo, hi int) int {
+	if value < lo {
+		return lo
 	}
-	if value > max {
-		return max
+	if value > hi {
+		return hi
 	}
 	return value
 }

@@ -63,9 +63,13 @@ func (s *BoltStore) export(ctx context.Context, w io.Writer, format store.Export
 			return fmt.Errorf("write YAML document start: %w", err)
 		}
 		enc := yaml.NewEncoder(w)
-		defer enc.Close()
 		if err := enc.Encode(env); err != nil {
+			_ = enc.Close()
 			return fmt.Errorf("encode YAML: %w", err)
+		}
+		// Close flushes the encoder; a failure here means a truncated export.
+		if err := enc.Close(); err != nil {
+			return fmt.Errorf("flush YAML export: %w", err)
 		}
 	case store.FormatJSON:
 		enc := json.NewEncoder(w)

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"charm.land/bubbles/v2/progress"
+	"charm.land/lipgloss/v2"
 
 	"pkg.akt.dev/akt/internal/glyphs"
 	"pkg.akt.dev/akt/internal/tui/components"
@@ -17,27 +18,27 @@ var (
 	headerStyle       = theme.SectionTitle
 	labelStyle        = theme.KVLabel.Width(12)
 	valueStyle        = theme.KVValue
-	percentLowStyle   = theme.PercentLow
-	percentHighStyle  = theme.PercentHigh
-	gridVotedStyle    = theme.GridVoted
-	gridNotVotedStyle = theme.GridNotVoted
-	errorStyle        = theme.Error
-	helpStyle         = theme.HelpBar
-	statusBarStyle    = theme.StatusBar
+	percentLowStyle   = theme.StateYellow
+	percentHighStyle  = theme.StateGreen.Bold(true)
+	gridVotedStyle    = theme.StateGreen
+	gridNotVotedStyle = theme.Muted
+	errorStyle        = theme.ErrorLabel
+	helpStyle         = theme.Muted.MarginTop(1)
+	statusBarStyle    = theme.Muted.MarginTop(1)
 	mutedStyle        = theme.Muted
-	proposerStyle     = theme.Proposer
+	proposerStyle     = theme.StateYellow.Bold(true)
 	tabActiveStyle    = theme.NavTabActive
 	tabInactiveStyle  = theme.NavTabInactive
-	monikerStyle      = theme.Moniker
-	highlightStyle    = theme.Highlight
+	monikerStyle      = theme.Body
+	highlightStyle    = theme.PrimaryValue
 	detailHeaderStyle = theme.SectionTitle
 	detailLabelStyle  = theme.KVLabel
 	detailValueStyle  = theme.KVValue
-	voteYesStyle      = theme.VoteYes
-	voteNoStyle       = theme.VoteNo
+	voteYesStyle      = theme.StateGreen
+	voteNoStyle       = lipgloss.NewStyle().Foreground(theme.AccentRed)
 
 	// Progress bar color — used by DoubleProgressBar for the precommit bar.
-	precommitBarColor = theme.ProgressPrecommit
+	precommitBarColor = theme.BlueColor
 )
 
 // ProgressBar renders a progress bar with the given percentage (0-1).
@@ -75,7 +76,7 @@ func DoubleProgressBar(prevotePct, precommitPct float64, width int) string {
 	precommitPct = clamp(precommitPct)
 
 	pvBar := progress.New(
-		progress.WithColors(theme.ProgressSuccess),
+		progress.WithColors(theme.GreenColor),
 		progress.WithoutPercentage(),
 	)
 	pvBar.SetWidth(width)

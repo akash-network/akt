@@ -32,7 +32,7 @@ import (
 )
 
 const (
-	defaultNodeImage     = "ghcr.io/akash-network/node:2.1.0"
+	defaultNodeImage     = "ghcr.io/akash-network/node:2.1.1"
 	defaultLocalChainID  = "localakash"
 	validatorGenesisUakt = "100000000000000uakt" // 100M AKT
 )

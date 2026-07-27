@@ -94,7 +94,7 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		Long:              "Changes apply to ALL contexts using this network.",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeNetworkNames(mgr),
-		Example:           `  # Add a backup RPC endpoint
+		Example: `  # Add a backup RPC endpoint
   akt context network edit mainnet --rpc https://rpc.akashnet.net:443,https://rpc-backup.example.com:443
 
   # Change gas prices
@@ -158,9 +158,9 @@ func deleteCmd(mgr func() *aktctx.Manager) *cobra.Command {
 
 func listCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "List all networks",
-		Args:  cobra.NoArgs,
+		Use:     "list",
+		Short:   "List all networks",
+		Args:    cobra.NoArgs,
 		Example: `  akt context network list`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			m := mgr()
@@ -236,10 +236,10 @@ func showCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	}
 }
 
-func truncate(s string, max int) string {
-	if len(s) <= max {
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
 		return s
 	}
 
-	return s[:max-3] + "..."
+	return s[:maxLen-3] + "..."
 }

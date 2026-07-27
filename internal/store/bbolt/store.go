@@ -126,7 +126,7 @@ func (s *BoltStore) ListDeployments(_ context.Context, filter store.DeploymentFi
 		return b.ForEach(func(k, v []byte) error {
 			var d store.DeploymentRecord
 			if err := json.Unmarshal(v, &d); err != nil {
-				return nil // skip corrupt entries
+				return nil //nolint:nilerr // returning the error would abort the whole bbolt scan over one unreadable row; skipping the row is the intended behaviour
 			}
 			if matchDeployment(&d, filter) {
 				cp := d
@@ -190,7 +190,7 @@ func (s *BoltStore) ListLeases(_ context.Context, filter store.LeaseFilter) ([]*
 		return b.ForEach(func(k, v []byte) error {
 			var l store.LeaseRecord
 			if err := json.Unmarshal(v, &l); err != nil {
-				return nil // skip corrupt entries
+				return nil //nolint:nilerr // returning the error would abort the whole bbolt scan over one unreadable row; skipping the row is the intended behaviour
 			}
 			if matchLease(&l, filter) {
 				cp := l
@@ -254,7 +254,7 @@ func (s *BoltStore) ListBids(_ context.Context, filter store.BidFilter) ([]*stor
 		return b.ForEach(func(k, v []byte) error {
 			var bid store.BidRecord
 			if err := json.Unmarshal(v, &bid); err != nil {
-				return nil // skip corrupt entries
+				return nil //nolint:nilerr // returning the error would abort the whole bbolt scan over one unreadable row; skipping the row is the intended behaviour
 			}
 			if matchBid(&bid, filter) {
 				cp := bid
@@ -307,7 +307,7 @@ func (s *BoltStore) SchemaVersion() uint64 {
 	_ = s.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketMeta)
 		data := b.Get(keySchemaVersion)
-		if data == nil || len(data) < 8 {
+		if len(data) < 8 {
 			return nil
 		}
 		version = binary.BigEndian.Uint64(data)
@@ -345,7 +345,7 @@ func (s *BoltStore) Stats(_ context.Context) (*store.StoreStats, error) {
 		if err := depBucket.ForEach(func(k, v []byte) error {
 			var d store.DeploymentRecord
 			if err := json.Unmarshal(v, &d); err != nil {
-				return nil // skip corrupt
+				return nil //nolint:nilerr // returning the error would abort the whole bbolt scan over one unreadable row; skipping the row is the intended behaviour
 			}
 			stats.Deployments++
 			switch d.State {

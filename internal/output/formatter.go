@@ -98,7 +98,7 @@ func PrintTable(w io.Writer, columns []Column, rows [][]string) {
 		fmt.Fprintln(tw, strings.Join(row, "\t"))
 	}
 
-	tw.Flush()
+	_ = tw.Flush()
 }
 
 func writeYAML(w io.Writer, data any, indent int) error {

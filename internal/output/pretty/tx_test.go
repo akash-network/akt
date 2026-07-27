@@ -135,19 +135,19 @@ func TestTxFmtMultipleFormatters(t *testing.T) {
 		expectedTitle string
 	}{
 		"BankSend": {
-			msg: &banktypes.MsgSend{},
+			msg:           &banktypes.MsgSend{},
 			expectedTitle: "Send",
 		},
 		"DeploymentCreate": {
-			msg: &dv1beta.MsgCreateDeployment{},
+			msg:           &dv1beta.MsgCreateDeployment{},
 			expectedTitle: "Deployment Created",
 		},
 		"Delegate": {
-			msg: &stakingtypes.MsgDelegate{},
+			msg:           &stakingtypes.MsgDelegate{},
 			expectedTitle: "Delegate",
 		},
 		"Vote": {
-			msg: &govv1.MsgVote{},
+			msg:           &govv1.MsgVote{},
 			expectedTitle: "Vote",
 		},
 	}

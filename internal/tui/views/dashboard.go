@@ -47,9 +47,9 @@ type Dashboard struct {
 	height int
 
 	// Dependencies
-	svc data.Service      // for data loading
-	ctx DashboardContext   // static context info
-	km  keys.KeyMap        // key bindings
+	svc data.Service     // for data loading
+	ctx DashboardContext // static context info
+	km  keys.KeyMap      // key bindings
 
 	// Context
 	contextName string
@@ -240,10 +240,10 @@ func (d *Dashboard) SetPriceHistory(data []float64) {
 }
 
 // SetBlockTimes sets the block time sparkline data and summary stats.
-func (d *Dashboard) SetBlockTimes(data []float64, avg, max string) {
+func (d *Dashboard) SetBlockTimes(data []float64, avg, peak string) {
 	d.blockTimes = data
 	d.blockTimeAvg = avg
-	d.blockTimeMax = max
+	d.blockTimeMax = peak
 }
 
 // SetNetworkInfo sets network-level statistics.
@@ -536,7 +536,7 @@ func (d *Dashboard) activeContent(innerW int) string {
 
 		var totalCost string
 		for _, dep := range d.deployments[:limit] {
-			name := "—"
+			var name string
 			if dep.SDLPath != "" {
 				name = strings.TrimSuffix(
 					strings.TrimSuffix(dep.SDLPath, ".yaml"),
@@ -773,11 +773,6 @@ func keyPill(key string, accent bool) string {
 		Background(theme.Slate800).
 		Padding(0, 0).
 		Render(key)
-}
-
-// col renders text into a fixed-width column using a lipgloss style.
-func col(style lipgloss.Style, width int, text string) string {
-	return style.Render(fmt.Sprintf("%-*s", width, text))
 }
 
 // commaGroup formats an integer with comma-separated thousands.

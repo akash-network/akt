@@ -17,18 +17,18 @@ import (
 // noopService is a minimal data.Service that returns nil for every load.
 type noopService struct{}
 
-func (noopService) LoadDeployments(string) tea.Cmd                    { return nil }
-func (noopService) LoadLeases(string) tea.Cmd                         { return nil }
-func (noopService) LoadDeploymentLeases(string, uint64) tea.Cmd       { return nil }
-func (noopService) LoadBids(string, uint64) tea.Cmd                   { return nil }
-func (noopService) LoadProviders() tea.Cmd                            { return nil }
-func (noopService) LoadProposals() tea.Cmd                            { return nil }
-func (noopService) LoadTallies([]*govv1.Proposal) tea.Cmd             { return nil }
-func (noopService) LoadValidators() tea.Cmd                           { return nil }
-func (noopService) LoadStakingPool() tea.Cmd                          { return nil }
-func (noopService) LoadBalance(string) tea.Cmd                        { return nil }
-func (noopService) LoadStoreStats() tea.Cmd                           { return nil }
-func (noopService) LoadSyncState() tea.Cmd                            { return nil }
+func (noopService) LoadDeployments(string) tea.Cmd              { return nil }
+func (noopService) LoadLeases(string) tea.Cmd                   { return nil }
+func (noopService) LoadDeploymentLeases(string, uint64) tea.Cmd { return nil }
+func (noopService) LoadBids(string, uint64) tea.Cmd             { return nil }
+func (noopService) LoadProviders() tea.Cmd                      { return nil }
+func (noopService) LoadProposals() tea.Cmd                      { return nil }
+func (noopService) LoadTallies([]*govv1.Proposal) tea.Cmd       { return nil }
+func (noopService) LoadValidators() tea.Cmd                     { return nil }
+func (noopService) LoadStakingPool() tea.Cmd                    { return nil }
+func (noopService) LoadBalance(string) tea.Cmd                  { return nil }
+func (noopService) LoadStoreStats() tea.Cmd                     { return nil }
+func (noopService) LoadSyncState() tea.Cmd                      { return nil }
 
 // newTestDashboard creates a Dashboard with a noop service and empty context for tests.
 func newTestDashboard() *views.Dashboard {

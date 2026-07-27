@@ -149,7 +149,7 @@ type BidRecord struct {
 
 	// Provider info
 	ProviderAttributes map[string]string `json:"provider_attributes" yaml:"provider_attributes"`
-	ProviderAudited    bool             `json:"provider_audited"    yaml:"provider_audited"`
+	ProviderAudited    bool              `json:"provider_audited"    yaml:"provider_audited"`
 
 	// Timestamps
 	CreatedAt int64 `json:"created_at" yaml:"created_at"`

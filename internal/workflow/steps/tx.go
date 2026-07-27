@@ -2,7 +2,6 @@ package steps
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"time"
 
@@ -76,14 +75,4 @@ func (e *TxExecutor) Execute(ctx context.Context, step workflow.StepDef, state *
 		Height:    result.Height,
 		Duration:  time.Since(start),
 	}, nil
-}
-
-// Ensure the raw data can be marshalled for output extraction.
-func txResultToJSON(data json.RawMessage) map[string]any {
-	var m map[string]any
-	if err := json.Unmarshal(data, &m); err != nil {
-		return nil
-	}
-
-	return m
 }

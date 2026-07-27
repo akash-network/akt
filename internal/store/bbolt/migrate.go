@@ -43,13 +43,13 @@ func RegisterMigration(m Migration) {
 // latestVersion returns the highest registered migration version,
 // or currentSchemaVersion if no migrations are registered.
 func latestVersion() uint64 {
-	max := currentSchemaVersion
+	highest := currentSchemaVersion
 	for _, m := range migrations {
-		if m.Version > max {
-			max = m.Version
+		if m.Version > highest {
+			highest = m.Version
 		}
 	}
-	return max
+	return highest
 }
 
 // migrate applies all pending migrations within a single bbolt transaction.
@@ -81,7 +81,7 @@ func (s *BoltStore) migrate() error {
 // schemaVersionFromTx reads the schema version from the meta bucket within a transaction.
 func schemaVersionFromTx(meta *bolt.Bucket) uint64 {
 	data := meta.Get(keySchemaVersion)
-	if data == nil || len(data) < 8 {
+	if len(data) < 8 {
 		return 0
 	}
 	return binary.BigEndian.Uint64(data)

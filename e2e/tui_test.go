@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -30,7 +31,8 @@ func runAktWithTimeout(t *testing.T, timeout time.Duration, args ...string) (str
 		if ctx.Err() == context.DeadlineExceeded {
 			t.Fatalf("command timed out after %s: akt %s", timeout, strings.Join(args, " "))
 		}
-		if exitErr, ok := err.(*exec.ExitError); ok {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		} else {
 			t.Fatalf("failed to run akt: %v", err)

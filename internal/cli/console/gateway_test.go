@@ -31,14 +31,14 @@ func newGatewayConsoleServer(t *testing.T, gatewayURL, leasesJSON string, jwt *j
 	t.Helper()
 
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.URL.Path == "/v1/deployments/777":
+		switch r.URL.Path {
+		case "/v1/deployments/777":
 			writeJSON(t, w, `{"data":{"deployment":{"id":{"owner":"akash1owner","dseq":"777"},"state":"active"},"leases":`+leasesJSON+`}}`)
 
-		case r.URL.Path == "/v1/providers/"+testProviderAddr:
+		case "/v1/providers/" + testProviderAddr:
 			writeJSON(t, w, `{"owner":"`+testProviderAddr+`","hostUri":"`+gatewayURL+`","isOnline":true}`)
 
-		case r.URL.Path == "/v1/create-jwt-token":
+		case "/v1/create-jwt-token":
 			var body struct {
 				Data struct {
 					TTL    int `json:"ttl"`

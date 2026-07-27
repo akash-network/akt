@@ -11,7 +11,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/server"
 	"github.com/cosmos/cosmos-sdk/testutil"
 
-	"pkg.akt.dev/akt/internal/cli/chain"
+	cli "pkg.akt.dev/akt/internal/cli/chain"
 )
 
 func execSetContext(ctx context.Context, cctx client.Context, cmd *cobra.Command, args ...string) (testutil.BufferWriter, error) {

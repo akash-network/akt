@@ -19,19 +19,23 @@ import (
 
 // Styles used throughout pretty output. All colors are sourced from the
 // shared theme package so CLI pretty output and TUI views are consistent.
+// Each style below is byte-identical to the deprecated theme alias it
+// replaced; where the theme has no canonical style with the same rendering
+// (bold-only, underlined section, Slate500 key), the style is built here from
+// canonical theme colors rather than from a deprecated alias.
 var (
-	StyleBold    = theme.Bold
-	StyleDim     = theme.Dim
-	StyleSection = theme.Section
-	StyleKey     = theme.Key
-	StyleGreen   = theme.Green
-	StyleYellow  = theme.Yellow
-	StyleRed     = theme.Red
-	StyleGray    = theme.Gray
-	StyleCyan    = theme.Cyan
-	StyleMagenta = theme.Magenta
+	StyleBold    = lipgloss.NewStyle().Bold(true)
+	StyleDim     = theme.Secondary
+	StyleSection = lipgloss.NewStyle().Bold(true).Underline(true)
+	StyleKey     = lipgloss.NewStyle().Foreground(theme.Slate500)
+	StyleGreen   = theme.StateGreen
+	StyleYellow  = theme.StateYellow
+	StyleRed     = lipgloss.NewStyle().Foreground(theme.AccentRed)
+	StyleGray    = theme.Secondary
+	StyleCyan    = lipgloss.NewStyle().Foreground(theme.BlueColor)
+	StyleMagenta = lipgloss.NewStyle().Foreground(theme.PurpleColor)
 
-	StyleHeader = theme.Header
+	StyleHeader = lipgloss.NewStyle().Bold(true).Foreground(theme.Slate500)
 )
 
 // FormatCoin formats a Cosmos SDK Coin for human display.
@@ -66,6 +70,7 @@ func isMicroDenom(denom string) bool {
 func formatMicroDenom(amount math.Int, denom string) string {
 	base := strings.ToUpper(denom[1:]) // "uakt" → "AKT"
 
+	amount = IntOrZero(amount)
 	uamt := amount.Int64()
 
 	switch {
@@ -83,6 +88,28 @@ func formatMicroDenom(amount math.Int, denom string) string {
 	default:
 		return fmt.Sprintf("%d u%s", uamt, base)
 	}
+}
+
+// DecOrZero returns d, or zero when d carries no value. proto3 omits
+// zero-valued fields on the wire, so a field a node never set unmarshals
+// into a LegacyDec whose inner big.Int is nil — semantically zero, but any
+// arithmetic on it panics. Every formatter takes its Dec through here so a
+// sparse response renders as "0" instead of crashing the command.
+func DecOrZero(d math.LegacyDec) math.LegacyDec {
+	if d.IsNil() {
+		return math.LegacyZeroDec()
+	}
+
+	return d
+}
+
+// IntOrZero is DecOrZero for math.Int, for the same wire reason.
+func IntOrZero(i math.Int) math.Int {
+	if i.IsNil() {
+		return math.ZeroInt()
+	}
+
+	return i
 }
 
 func abs64(n int64) int64 {
@@ -104,7 +131,7 @@ func FormatDecCoin(coin sdk.DecCoin) string {
 
 // FormatDecAsAKT formats a math.LegacyDec amount (in uakt) using AKT sub-denominations.
 func FormatDecAsAKT(amount math.LegacyDec) string {
-	return formatMicroDenomDec(amount, "uakt")
+	return formatMicroDenomDec(DecOrZero(amount), "uakt")
 }
 
 // FormatDecAmount formats a LegacyDec amount with a denom.
@@ -550,7 +577,7 @@ func FormatPercent(s string) string {
 
 // FormatPercentDec converts a math.LegacyDec to a percentage string.
 func FormatPercentDec(d math.LegacyDec) string {
-	pct := d.MulInt64(100)
+	pct := DecOrZero(d).MulInt64(100)
 	return TrimDecTrailingZeros(pct.String()) + "%"
 }
 

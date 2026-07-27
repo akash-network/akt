@@ -3,9 +3,10 @@ package transport
 import (
 	"fmt"
 	"math"
-	"pkg.akt.dev/akt/internal/console"
 	"strconv"
 	"strings"
+
+	"pkg.akt.dev/akt/internal/console"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 )

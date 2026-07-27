@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"strings"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -33,12 +32,18 @@ func PrintTxResult(cmd *cobra.Command, cctx sdkclient.Context, resp interface{})
 			return cctx.WithOutputFormat("json").PrintProto(pm)
 		}
 
+		//nolint:staticcheck // SA1019: PrintObjectLegacy is the only client-context
+		// printer that accepts a non-proto (amino) value, which is exactly what
+		// this fallback branch has. See PrintQueryResultAny in printer.go.
 		return cctx.PrintObjectLegacy(resp)
 	case cflags.OutputYAML:
 		if pm, ok := resp.(proto.Message); ok {
 			return cctx.WithOutputFormat("text").PrintProto(pm)
 		}
 
+		//nolint:staticcheck // SA1019: PrintObjectLegacy is the only client-context
+		// printer that accepts a non-proto (amino) value, which is exactly what
+		// this fallback branch has. See PrintQueryResultAny in printer.go.
 		return cctx.PrintObjectLegacy(resp)
 	}
 
@@ -50,6 +55,9 @@ func PrintTxResult(cmd *cobra.Command, cctx sdkclient.Context, resp interface{})
 			return cctx.WithOutputFormat("json").PrintProto(pm)
 		}
 
+		//nolint:staticcheck // SA1019: PrintObjectLegacy is the only client-context
+		// printer that accepts a non-proto (amino) value, which is exactly what
+		// this fallback branch has. See PrintQueryResultAny in printer.go.
 		return cctx.PrintObjectLegacy(resp)
 	}
 
@@ -159,7 +167,7 @@ func renderMsgJSON(w io.Writer, cctx sdkclient.Context, msg sdk.Msg) {
 		return
 	}
 
-	WriteHighlightedJSON(w, bz)
+	_ = WriteHighlightedJSON(w, bz)
 }
 
 // decodeTxFee extracts the FeeTx interface from a TxResponse using the codec.
@@ -211,16 +219,4 @@ func extractSigner(resp *sdk.TxResponse) string {
 	}
 
 	return ""
-}
-
-// msgTypeShort returns a short name for a message type URL.
-// e.g. "/cosmos.bank.v1beta1.MsgSend" -> "MsgSend"
-func msgTypeShort(msg sdk.Msg) string {
-	name := proto.MessageName(msg)
-	parts := strings.Split(name, ".")
-	if len(parts) > 0 {
-		return parts[len(parts)-1]
-	}
-
-	return name
 }

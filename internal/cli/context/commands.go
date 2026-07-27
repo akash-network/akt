@@ -172,9 +172,9 @@ func useCmd(mgr func() *aktctx.Manager) *cobra.Command {
 
 func listCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "List all contexts",
-		Args:  cobra.NoArgs,
+		Use:     "list",
+		Short:   "List all contexts",
+		Args:    cobra.NoArgs,
 		Example: `  akt context list`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			m := mgr()
@@ -236,9 +236,9 @@ func listCmd(mgr func() *aktctx.Manager) *cobra.Command {
 
 func currentCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	return &cobra.Command{
-		Use:   "show",
-		Short: "Show the active context with full details",
-		Args:  cobra.NoArgs,
+		Use:     "show",
+		Short:   "Show the active context with full details",
+		Args:    cobra.NoArgs,
 		Example: `  akt context show`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			m := mgr()
@@ -260,7 +260,7 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		Short:             "Edit a context",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeContextNames(mgr),
-		Example:           `  # Change default account
+		Example: `  # Change default account
   akt context edit prod --default-account bob
 
   # Switch to a different network
@@ -376,7 +376,7 @@ func deleteCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		Short:             "Delete a context",
 		Args:              cobra.ExactArgs(1),
 		ValidArgsFunction: completeContextNames(mgr),
-		Example:           `  # Delete with confirmation prompt
+		Example: `  # Delete with confirmation prompt
   akt context delete staging
 
   # Skip confirmation
@@ -389,7 +389,7 @@ func deleteCmd(mgr func() *aktctx.Manager) *cobra.Command {
 				fmt.Printf("Delete context %q? This removes the state store and action log. [y/N]: ", name)
 
 				var answer string
-				fmt.Scanln(&answer)
+				_, _ = fmt.Scanln(&answer)
 
 				if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
 					fmt.Println("Cancelled.")
@@ -472,7 +472,7 @@ func logCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			defer logger.Close()
+			defer func() { _ = logger.Close() }()
 
 			limit, _ := cmd.Flags().GetInt("limit")
 			actionType, _ := cmd.Flags().GetString("type")
@@ -544,10 +544,10 @@ func logCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	return cmd
 }
 
-func truncate(s string, max int) string {
-	if len(s) <= max {
+func truncate(s string, maxLen int) string {
+	if len(s) <= maxLen {
 		return s
 	}
 
-	return s[:max-3] + "..."
+	return s[:maxLen-3] + "..."
 }

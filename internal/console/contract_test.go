@@ -209,7 +209,7 @@ func newContractServer(router routers.Router, rec *contractRecorder) *httptest.S
 func TestClientRequestsMatchOpenAPIContract(t *testing.T) {
 	// The spec uses format=uuid on request parameters (wallets userId,
 	// api-key id); kin-openapi only validates uuid when registered.
-	openapi3.DefineStringFormat("uuid", openapi3.FormatOfStringForUUIDOfRFC4122)
+	openapi3.DefineStringFormatValidator("uuid", openapi3.NewRegexpFormatValidator(openapi3.FormatOfStringForUUIDOfRFC4122))
 
 	router := loadContractRouter(t)
 	rec := &contractRecorder{}
@@ -419,7 +419,7 @@ func TestClientRequestsMatchOpenAPIContract(t *testing.T) {
 // harness flags it. If this fails, the contract suite has silently stopped
 // validating and TestClientRequestsMatchOpenAPIContract proves nothing.
 func TestContractHarnessDetectsViolations(t *testing.T) {
-	openapi3.DefineStringFormat("uuid", openapi3.FormatOfStringForUUIDOfRFC4122)
+	openapi3.DefineStringFormatValidator("uuid", openapi3.NewRegexpFormatValidator(openapi3.FormatOfStringForUUIDOfRFC4122))
 
 	router := loadContractRouter(t)
 	rec := &contractRecorder{}

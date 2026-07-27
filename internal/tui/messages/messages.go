@@ -1,8 +1,8 @@
 package messages
 
 import (
-	"cosmossdk.io/math"
 	tea "charm.land/bubbletea/v2"
+	"cosmossdk.io/math"
 	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 

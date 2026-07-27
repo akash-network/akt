@@ -156,7 +156,7 @@ func (v *DeploymentDetailView) View() tea.View {
 	b.WriteByte('\n')
 	b.WriteString(theme.Muted.Render("  esc: back"))
 	if len(lines) > visibleH {
-		b.WriteString(lipgloss.NewStyle().Foreground(theme.ColorMuted).Render(
+		b.WriteString(lipgloss.NewStyle().Foreground(theme.Slate500).Render(
 			"  j/k: scroll  1-4: tabs",
 		))
 	}

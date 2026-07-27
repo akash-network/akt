@@ -16,8 +16,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/cosmos/gogoproto/proto"
 	querytypes "github.com/cosmos/cosmos-sdk/types/query"
+	"github.com/cosmos/gogoproto/proto"
 
 	bmetypes "pkg.akt.dev/go/node/bme/v1"
 	oracletypes "pkg.akt.dev/go/node/oracle/v2"
@@ -473,11 +473,11 @@ func CompareVersions(a, b string) int {
 		if i < len(partsA) {
 			// Remove any non-numeric suffix (e.g., "6-rc3" -> "6")
 			numStr := strings.Split(partsA[i], "-")[0]
-			fmt.Sscanf(numStr, "%d", &numA)
+			_, _ = fmt.Sscanf(numStr, "%d", &numA)
 		}
 		if i < len(partsB) {
 			numStr := strings.Split(partsB[i], "-")[0]
-			fmt.Sscanf(numStr, "%d", &numB)
+			_, _ = fmt.Sscanf(numStr, "%d", &numB)
 		}
 
 		if numA > numB {
@@ -813,27 +813,6 @@ func (c *Client) probeOracleVersion(ctx context.Context) string {
 		}
 	}
 	return "none"
-}
-
-// restGet performs a GET request and returns the response body.
-func (c *Client) restGet(ctx context.Context, reqURL string) (json.RawMessage, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("status %d", resp.StatusCode)
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, err
-	}
-	return json.RawMessage(body), nil
 }
 
 // extractOracleDenoms extracts unique asset denoms from a prices response.

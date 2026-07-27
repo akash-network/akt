@@ -30,6 +30,9 @@ func formatAccountResponse(w io.Writer, _ *cobra.Command, cctx sdkclient.Context
 		// Can't unpack — show type URL as fallback.
 		fmt.Fprintln(w, Section("Account"))
 		KV(w, "Type", res.Account.TypeUrl)
+		//nolint:nilerr // the fallback above already rendered what is known
+		// about the account; a renderer that cannot decode one field should
+		// degrade, not fail the query the user just ran.
 		return nil
 	}
 
@@ -63,16 +66,16 @@ func formatAccountsResponse(w io.Writer, _ *cobra.Command, cctx sdkclient.Contex
 	headers := []string{"ADDRESS", "TYPE", "ACCOUNT #", "SEQUENCE"}
 	rows := make([][]string, 0, len(res.Accounts))
 
-	for _, any := range res.Accounts {
-		acct, err := unpackAccount(cctx.InterfaceRegistry, any)
+	for _, anyAcct := range res.Accounts {
+		acct, err := unpackAccount(cctx.InterfaceRegistry, anyAcct)
 		if err != nil {
-			rows = append(rows, []string{"?", shortTypeName(any.TypeUrl), "-", "-"})
+			rows = append(rows, []string{"?", shortTypeName(anyAcct.TypeUrl), "-", "-"})
 			continue
 		}
 
 		rows = append(rows, []string{
 			acct.GetAddress().String(),
-			shortTypeName(any.TypeUrl),
+			shortTypeName(anyAcct.TypeUrl),
 			fmt.Sprintf("%d", acct.GetAccountNumber()),
 			fmt.Sprintf("%d", acct.GetSequence()),
 		})
@@ -92,10 +95,10 @@ func formatModuleAccountsResponse(w io.Writer, _ *cobra.Command, cctx sdkclient.
 	headers := []string{"NAME", "ADDRESS", "PERMISSIONS"}
 	rows := make([][]string, 0, len(res.Accounts))
 
-	for _, any := range res.Accounts {
-		acct, err := unpackAccount(cctx.InterfaceRegistry, any)
+	for _, anyAcct := range res.Accounts {
+		acct, err := unpackAccount(cctx.InterfaceRegistry, anyAcct)
 		if err != nil {
-			rows = append(rows, []string{"-", shortTypeName(any.TypeUrl), "-"})
+			rows = append(rows, []string{"-", shortTypeName(anyAcct.TypeUrl), "-"})
 			continue
 		}
 
@@ -121,13 +124,13 @@ func formatModuleAccountsResponse(w io.Writer, _ *cobra.Command, cctx sdkclient.
 
 // unpackAccount unpacks a codectypes.Any into an AccountI using the interface
 // registry from the client context.
-func unpackAccount(registry codectypes.InterfaceRegistry, any *codectypes.Any) (sdk.AccountI, error) {
+func unpackAccount(registry codectypes.InterfaceRegistry, anyAcct *codectypes.Any) (sdk.AccountI, error) {
 	if registry == nil {
 		return nil, fmt.Errorf("no interface registry available")
 	}
 
 	var acct sdk.AccountI
-	if err := registry.UnpackAny(any, &acct); err != nil {
+	if err := registry.UnpackAny(anyAcct, &acct); err != nil {
 		return nil, err
 	}
 
