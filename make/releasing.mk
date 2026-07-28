@@ -32,7 +32,7 @@ GORELEASER_WORKDIR       := /go/src/$(GORELEASER_MOD_MOUNT)
 # Container image path akt would publish to. Nothing consumes this yet --
 # .goreleaser.yaml has no `dockers:` section because akt is a client binary,
 # not a node -- but this is the path to use when one is added.
-RELEASE_DOCKER_IMAGE     ?= ghcr.io/ovrclk/akt
+RELEASE_DOCKER_IMAGE     ?= ghcr.io/akash-network/akt
 
 GORELEASER_GOWORK        := $(GOWORK)
 
@@ -122,15 +122,28 @@ release-dry-run: release-libs $(GORELEASER_DOCKER_CONFIG)/config.json
 
 # The real thing: builds the matrix and uploads to the GitHub release for the
 # current tag. Driven by .github/workflows/release.yml on `v*` tag pushes;
-# running it by hand needs a GITHUB_TOKEN with contents:write. The token is
-# passed by name so it never lands in the echoed command line.
+# running it by hand needs a GITHUB_TOKEN with contents:write. Tokens are
+# passed by name so they never land in the echoed command line.
+#
+# HOMEBREW_TAP_TOKEN publishes the cask to akash-network/homebrew-tap, which is
+# a separate repository that GITHUB_TOKEN cannot reach. It is defaulted to the
+# empty string rather than passed through as-is: `token: "{{ .Env.X }}"` fails
+# to render when X is absent from the environment entirely, which would abort a
+# release that was never going to touch the tap. Empty renders fine, and
+# `skip_upload: auto` means a prerelease skips the upload regardless — so an
+# alpha releases without the secret, while a stable release without it fails at
+# the cask step with an auth error rather than a template error.
 .PHONY: release
 release: release-libs $(GORELEASER_DOCKER_CONFIG)/config.json
 	@if [ -z "$${GITHUB_TOKEN}" ]; then \
 		echo "GITHUB_TOKEN is required to publish a release"; \
 		exit 1; \
 	fi
-	docker run $(GORELEASER_DOCKER_ARGS) -e GITHUB_TOKEN $(GORELEASER_IMAGE) release --clean $(GORELEASER_ARGS)
+	@if [ -z "$${HOMEBREW_TAP_TOKEN}" ]; then \
+		echo "warning: HOMEBREW_TAP_TOKEN unset -- a stable release will fail at the Homebrew cask step"; \
+	fi
+	HOMEBREW_TAP_TOKEN="$${HOMEBREW_TAP_TOKEN:-}" \
+	docker run $(GORELEASER_DOCKER_ARGS) -e GITHUB_TOKEN -e HOMEBREW_TAP_TOKEN $(GORELEASER_IMAGE) release --clean $(GORELEASER_ARGS)
 
 .PHONY: bins
 bins: $(AKT)

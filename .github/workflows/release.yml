@@ -91,6 +91,12 @@ jobs:
         if: github.event_name == 'push'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Publishes the Homebrew cask to akash-network/homebrew-tap. That is
+          # a different repository, so GITHUB_TOKEN cannot write to it — this
+          # must be a PAT (or app token) with contents:write on the tap.
+          # Prereleases skip the cask entirely, so an alpha releases fine
+          # without it.
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: make release
 
       - name: Manual run (${{ inputs.mode }})
