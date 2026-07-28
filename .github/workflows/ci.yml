@@ -1,0 +1,140 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Manual only — used to run the upstream-drift check below on demand.
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GOWORK: off
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: golangci/golangci-lint-action@v7
+        with:
+          # Must match GOLANGCI_LINT_VERSION in the Makefile, and must be
+          # built with Go >= the go directive in go.mod — older releases
+          # refuse to load a config targeting a newer language version.
+          # golangci-lint v2 needs action v7; v6 rejects a v2 version string.
+          version: v2.11.4
+          args: --timeout=10m
+
+  build-and-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build
+        run: go build ./...
+      - name: Unit tests (excluding e2e)
+        # e2e is excluded here: it shells out to a built binary and has its
+        # own jobs. Piped into xargs rather than an unquoted command
+        # substitution, which relies on word splitting (SC2046).
+        run: go list ./... | grep -v /e2e | xargs go test
+
+  coverage:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      # Gates the akt-authored packages that carry risk (money, credentials,
+      # gating, action log, transports). internal/cli/chain is excluded: it
+      # is a clean copy of chain-sdk maintained by re-copying, so tests
+      # written against it are clobbered on the next copy — including it
+      # would cap the repo-wide number near 62% no matter what we write.
+      # See make/testing.mk for the package sets and COVER_THRESHOLD.
+      - name: Reconstruct the direnv environment
+        # The coverage targets write under $AKT_DEVCACHE. Those paths live in
+        # .env (sourced by .envrc), which CI has no direnv to load — so source
+        # it here rather than duplicating the paths in this workflow.
+        run: |
+          set -euo pipefail
+          export AKT_ROOT="$GITHUB_WORKSPACE"
+          set -a
+          # shellcheck disable=SC1091
+          . ./.env
+          set +a
+          env | grep -E '^(AKT_ROOT|AKT_DEVCACHE|AKT_RUN)' >> "$GITHUB_ENV"
+
+      - name: Core coverage (gated)
+        run: make test-coverage-check
+      - name: Repo-wide coverage (reported, not gated)
+        run: make test-coverage
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage
+          path: .cache/coverage/
+          retention-days: 7
+
+  e2e-offline:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build akt binary
+        # `make akt` needs the direnv-managed environment (AKT_ROOT,
+        # AKT_DEVCACHE_*, static-link toolchain); build the plain binary
+        # directly at the path the e2e harness expects instead.
+        run: go build -o .cache/bin/akt ./cmd/akt
+      - name: e2e offline suite (gated localnet tests self-skip)
+        run: go test ./e2e/... -v -count=1
+
+  e2e-localnet:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build akt binary
+        run: go build -o .cache/bin/akt ./cmd/akt
+      # The node image version lives in one place — defaultNodeImage in
+      # e2e/localnet_test.go — so this job pins by using the harness default.
+      # Pinning keeps the blocking gate reproducible: a red run means this
+      # change broke something, not that upstream published a release.
+      - name: e2e localnet suite (single-validator akash node in docker)
+        env:
+          AKT_E2E_LOCALNET: "1"
+        run: go test ./e2e/ -run TestLocalnet -v -count=1 -timeout 15m
+
+  e2e-localnet-latest:
+    # Upstream-drift check: the same suite against the newest node image.
+    # Manual only — it never runs on a push or a pull request, so an upstream
+    # release cannot redden someone's PR. Worth a click before cutting a
+    # release; a failure means the node image changed in a way the bootstrap
+    # or the CLI must adapt to, after which bump defaultNodeImage.
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build akt binary
+        run: go build -o .cache/bin/akt ./cmd/akt
+      - name: e2e localnet suite against the latest node image
+        env:
+          AKT_E2E_LOCALNET: "1"
+          AKT_E2E_NODE_IMAGE: ghcr.io/akash-network/node:latest
+        run: go test ./e2e/ -run TestLocalnet -v -count=1 -timeout 15m

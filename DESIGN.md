@@ -29,9 +29,9 @@
 | `akash-network/chain-sdk/go/cli` | All CLI command definitions (tx, query, keys, server)                                                    | **Deprecated.** Commands clean-copied into `akt`. Package removed once `akt` reaches parity.                                                                |
 | `akash-network/node`             | Blockchain node binary (`akash`). Imports chain-sdk CLI, adds server/genesis/testnet commands.           | **Keeps** only node-operator commands: `start`, `comet`, `export`, `prepare-genesis`, `testnet`, `testnetify`, `auth jwt`. Stops exporting user-facing CLI. |
 | `akash-network/provider`         | Provider binary (`provider-services`). Imports chain-sdk CLI, adds provider gateway + operator commands. | **Keeps** only provider-operator commands: `run`, `operator *`, `tools *`, `migrate`. Stops exporting user-facing CLI.                                      |
-| `ovrclk/akt`                     | MVP CLI prototype. Config system, account/network/deploy commands.                                       | Design reference. Concepts (profiles, git-like config) evolved into the context system.                                                                     |
+| `ovrclk/akt` (pre-rewrite)       | MVP CLI prototype. Config system, account/network/deploy commands.                                       | Design reference. Concepts (profiles, git-like config) evolved into the context system. Replaced in place by the rewrite below.                             |
 | `cloud-j-luna/aktop`             | Community TUI for monitoring Akash consensus state, validator voting, and provider operations.           | Design reference and prior art for TUI. Its consensus/validator/provider monitoring views inform the TUI design. Functionality subsumed by `akt monitor`. |
-| **`akash-network/akt`**          | **New.** This repository.                                                                                | The unified user CLI and TUI.                                                                                                                               |
+| **`ovrclk/akt`**                 | **New.** This repository, and the rewrite that replaced the prototype above.                             | The unified user CLI and TUI. Releases publish here; a move to `akash-network/akt` is possible later, but that repository does not exist yet.                |
 
 ### 1.4 The `monitor` Command
 
@@ -107,6 +107,8 @@ block-beta
   end
 ```
 
+Two distinct things are called *transport* in this document, at different levels. The bottom block is the **wire transport**: the concrete clients (RPC, gRPC, REST, provider gateway, Console API) and their multi-endpoint failover (§5.6). The **transport translation layer** (`internal/transport`, §3.5) sits much higher, between the command layer and core services: it translates abstract workflow actions onto a *rail* — chain or console — and each rail then uses whichever wire transports it needs.
+
 ---
 
 ## 3. Core Design Concepts
@@ -143,7 +145,7 @@ graph TB
       subgraph al ["Action Log"]
         a1["actions.log"]
         a2["tx msg + response"]
-        a3["query results"]
+        a3["console + provider ops"]
         a4["workflow steps"]
       end
     end
@@ -173,10 +175,10 @@ graph TB
 - Sync state metadata.
 
 **Action Log** (unique per context):
-- Append-only log of all user actions within the context.
+- Append-only log of all mutating user actions within the context.
 - Each entry records what was done, when, and the result.
 - A transaction action consists of two parts: the tx message and the chain response.
-- Query actions, workflow steps, and errors are also logged.
+- Workflow steps, provider operations, context changes, Console API calls, and errors are also logged. Read-only queries are not recorded by default.
 
 #### 3.1.2 Context Propagation
 
@@ -210,12 +212,25 @@ Each context has an `auth-method` that determines how transactions are signed an
 - Custodial managed wallet via the [Akash Console API](https://console.akash.network).
 - The Console backend holds the wallet keys, signs transactions, and broadcasts on the user's behalf.
 - Authenticated via an API key (created at console.akash.network > Settings > API Keys).
-- The API key is supplied via the `AKT_CONSOLE_API_KEY` environment variable or the `--console-api-key` flag. It is **not** persisted in config or keyring.
+- The API key is resolved as flag > env > per-context credential: `--console-api-key` (session only), then `AKT_CONSOLE_API_KEY`, then a per-context credential file at `contexts/<name>/console-api-key` (mode 0600, managed via `akt context create/edit --console-api-key`). It is never written to config.yaml, never printed, and never logged — each context carries its own key, so switching context switches Console identity.
 - Deposits are denominated in USD (not uakt) -- the Console handles the conversion.
-- Only deployment lifecycle operations are supported through the Console API (create, update, close, bids, leases, deposit). Query commands still work directly against chain RPC.
+- For `tx` commands and workflows, only deployment lifecycle operations route through the Console API (create, update, close, bids, leases, deposit). Chain query commands still work directly against chain RPC. The broader Console surface (wallets, usage, provider/GPU/template catalogs, API keys, provider-scoped JWTs) is exposed by the dedicated `akt console` command group.
 - No keyring, default-account, or provider-defaults are used. The context only needs a network (for query commands) and the API key.
 
 A context uses **one** auth method. Users who need both can create separate contexts (e.g., `prod` with keyring auth and `console` with console-api auth), potentially sharing the same network definition.
+
+#### 3.1.5 Console Provider Gateway Access
+
+A `console-api` context has no wallet, yet the operations users reach for most after a deployment goes live — container logs, cluster events, live lease status, an interactive shell — are served by the **provider's** gateway, not by the Console API. `akt` reaches those gateways directly from a managed context, with no wallet and no local signing key involved (`internal/cli/console/gateway.go`):
+
+1. `GET /v1/deployments/{dseq}` resolves the deployment and picks its first **active** lease. When no lease is active, the error names the states of the leases that do exist, so the user knows whether to wait or to create one.
+2. `GET /v1/providers/{address}` resolves that lease's provider to a gateway `hostUri`. A provider with no `hostUri` in the Console catalog is reported as such rather than producing a connection error later.
+3. `POST /v1/create-jwt-token` mints a Console-signed, **scoped, short-TTL** JWT that provider gateways accept as `Authorization: Bearer`. Scope is the narrowest set the command needs (`status`, `logs`, `events`, `shell`), and TTL is 300s for one-shot calls, 3600s for streaming invocations (`--follow`, `--watch`, `shell`).
+4. The standard provider REST client is constructed against that gateway — `rest.NewClient(ctx, providerAddr, rest.WithProviderURL(hostUri), rest.WithAuthToken(token))` — and the call proceeds exactly as it would on a keyring context.
+
+**Why this shape**: Akash Console fronts provider gateways with a server-side `provider-proxy` websocket relay. `akt` is a native client that can reach the gateway directly, so it deliberately does **not** reimplement that relay. Step 4 hands off to the same provider client and the same streaming code paths that back `akt provider lease-status`, `lease-logs`, `lease-events`, and `lease-shell` — one implementation of log streaming, event streaming, and PTY handling, exercised by both rails. The Console-minted JWT simply substitutes for the wallet-signed JWT a keyring context would present, so `akt console status|logs|events|shell` and their `akt provider` counterparts cannot drift apart.
+
+This is the only point at which a `console-api` context talks to a provider gateway. Deployment lifecycle operations still route through the Console API, which submits manifests internally during lease creation (SPEC §7.4).
 
 ### 3.2 Dual-Mode Architecture
 
@@ -238,6 +253,8 @@ graph LR
 ```
 
 Both modes share the same core services (context, keyring, client, store). The TUI wraps these services in bubbletea models; the CLI wraps them in cobra command handlers.
+
+The diagram above is the target architecture. The TUI shell is currently **disabled** while UX feedback is collected, so bare `akt` prints help instead of launching the resource browser — see §5.2 for the gate and what remains reachable.
 
 **Smart interactivity**: Commands auto-detect whether a TTY is attached. When interactive, they show prompts, spinners, and colored output. When piped, they output machine-readable formats silently. The `--interactive` and `--yes` flags override this behavior.
 
@@ -308,33 +325,121 @@ graph LR
 
 **Reconnection**: On WebSocket disconnect, the engine uses exponential backoff (1s, 2s, 4s, ... up to 60s) with jitter. Missed blocks are reconciled by querying the range between last-synced height and current height.
 
+### 3.5 Transport Translation Layer
+
+An **action** (`deploy`, `update`, `close`, and every action added later) is defined exactly once, as workflow YAML in `internal/workflow/builtin/`, in terms of abstract steps: `tx`, `query`, `wait`, `prompt`, `provider`, `output`. The definition says *what* happens, never *how* it is carried. A **transport** (`internal/transport`) is the boundary that translates those abstract steps onto a concrete backing rail.
+
+```mermaid
+graph LR
+  WF["Action definition\n(deploy.yaml)\n\nAbstract steps:\n- tx\n- query / wait\n- prompt\n- provider"] --> T{"Transport\nrail chosen per context\nat execution time"}
+  T -->|"KindChain\nauth-method: keyring"| CH["Chain adapter\n\n- build + sign + broadcast\n- chain RPC/gRPC queries"]
+  T -->|"KindConsole\nauth-method: console-api"| CO["Console adapter\n\n- msg type maps to REST endpoint\n- manifest cache: create then lease\n- chain queries when available"]
+  CH --> PG["Provider gateway\n(JWT / mTLS)"]
+  CO --> API["Console API\n(managed wallet)"]
+```
+
+`Transport` is a narrow interface: a `Kind()` (`chain` or `console`) plus the workflow engine's `steps.ChainClient`. Three constructors build the concrete rails, each wrapping the corresponding adapter in `internal/workflow/adapters`:
+
+| Constructor | Rail | Carries steps by |
+|---|---|---|
+| `NewChain(client)` | `KindChain` | Building, signing, and broadcasting transactions locally through the Akash node client; queries run against chain RPC/gRPC. |
+| `NewConsole(consoleClient, chainQueries, root, ctxName)` | `KindConsole` | Mapping each message type to a Console API REST endpoint (SPEC §7.5). Query steps go straight to the chain when a chain client is available; without one, `market.bids` falls back to the Console bids endpoint. `root`/`ctxName` locate the per-context manifest cache that carries the manifest from deployment create to lease create. |
+| `NewProvider(clientCtx, authType)` | chain rail only | Provider gateway calls (JWT or mTLS). The console rail has **no** provider client: the Console API submits the manifest internally during lease creation, so provider steps are dropped from the run with a note on stderr rather than failing it. |
+
+**Why a translation layer and not per-rail commands**: the alternative — a `deploy` that knows about keyrings and a separate Console `deploy` — means every new action is designed twice, and the two surfaces drift on flag names, defaults, argument order, and error text. Here, adding an action is a workflow definition plus (at most) a message mapping in the console adapter. Neither rail's command handler changes, and no rail-specific redesign is required.
+
+**One argument surface**: the CLI's argument surface is *generated* from the workflow definition (`internal/cli/workflow`). Positional arguments come from the definition's required file param and its optional `dseq` param, and every non-file param also gets a flag carrying the definition's type, default, and description. Because the definition is shared, `akt deploy`, `akt update`, and `akt close` take **identical arguments on both rails** — the rail is a property of the active context (`auth-method`), not of the command line. A user switching from a keyring context to a console-api one types the same command.
+
+**Cross-rail normalization**: rail-independent argument syntax is translated inside `Transport.BroadcastTx` before delegating to the adapter, so a cross-rail mistake fails at the transport boundary with a clear message rather than deep inside a rail's client — or, worse, on the wire. The concrete case is the deployment deposit, parsed in one place (`transport.ParseDeposit`) and rendered per rail by `Deposit.RailValue`:
+
+| Form | Examples | Meaning |
+|---|---|---|
+| USD | `5usd`, `$5`, `5.50usd` | A USD amount. The `usd` unit is case-insensitive and always wins over coin parsing, so a value ending in `usd` is never read as a chain denomination. |
+| Coin | `5000000uakt`, `5akt` | A chain coin amount, parsed as a decimal coin. |
+| Bare number | `5`, `5.50` | Unit-less: USD on the console rail, rejected on the chain rail (coins have always required a denomination). |
+| `auto` / empty | `auto` | Defer to the rail default: the chain-minimum deployment deposit on the chain rail; the console rail has no default and asks for an explicit USD amount. |
+
+Every form parses on every rail; only the *interpretation* is rail-specific, and each rejection names the rail that would accept the value ("USD deposits require a console-api context; specify a coin amount like `5000000uakt`"). SPEC §7.4 carries the full per-rail acceptance table. The Console minimum is a single exported constant (`transport.MinConsoleDepositUSD`, aliasing `console.MinDepositUSD`) so every surface that enforces it — CLI commands and workflow adapters alike — shares one value.
+
+### 3.6 Capability Gating
+
+Not every context can run every command. A context with a Console API key and no network genuinely cannot execute a chain query; a monitoring-only context with an RPC endpoint and no Console credential genuinely cannot call the Console API. Discovering that at the transport boundary — after the user has found the command in help, typed it, and waited — is poor UX. `internal/capability` derives a **feature set** from the resolved context up front, and `internal/cli/gating.go` applies it to the command tree.
+
+```mermaid
+graph LR
+  RC["Resolved context\n\n- network endpoints\n- console-api-key"] --> RES["capability.Resolve\n\nRPC present yields\nchain-query, chain-tx, provider\n\nkey resolvable yields\nconsole"]
+  OV["Per-invocation overrides\n\n--node\n--console-api-key\nAKT_CONSOLE_API_KEY\nakt monitor [endpoint]"] --> INV["invocationCapabilities\n(grant, never revoke)"]
+  RES --> INV
+  INV --> GATE["Command tree walk\n\nakt.requires annotation\nvs. feature set"]
+  GATE --> PRES["Presentation\ndim / hide / off"]
+  GATE --> FAIL["Fail fast\nwith remedy"]
+```
+
+Capabilities are deliberately coarse — they describe what the *configuration* makes possible, not what will certainly succeed:
+
+| Capability | Derived from | Declared by |
+|---|---|---|
+| `chain-query` | network has at least one RPC endpoint | `akt query`, `akt monitor` |
+| `chain-tx` | network has at least one RPC endpoint | `akt tx` |
+| `provider` | network has at least one RPC endpoint (gateway discovery + wallet auth) | `akt provider` |
+| `console` | a Console API key is resolvable (§3.1.4) | `akt console` subcommands |
+
+`chain-tx` deliberately does not probe for a funded key: opening an OS keyring can prompt for a password, and a help listing must never do that. Key and balance problems remain execution-time failures. `akt sdl` declares nothing at all — SDL scaffolding, validation, and linting run entirely locally, so gating them would be wrong.
+
+**Declaration**: commands carry their requirement in the cobra annotation `akt.requires`. Alternatives are separated by `|` and any one suffices, which is exactly what the transport layer needs: workflow commands declare `chain-tx|console` because §3.5 lets them run on either rail. An annotation the capability package does not recognize **fails open** — a typo in an annotation must never brick a command.
+
+**Overrides grant, never revoke**: gating describes the configuration, so an invocation that carries its own connection details must never be rejected by it. `--node` grants the chain capabilities, `--console-api-key` (or `AKT_CONSOLE_API_KEY` in the environment) grants `console`, and a positional endpoint on `akt monitor` grants chain access — `akt monitor <rpc-endpoint>` works with no context at all, consistent with the standalone-operation goal in §1.4. Argument scanning stops at the `--` terminator so a user's shell command cannot masquerade as a flag. Help invocations are never enforced against, because several clean-copied SDK groups disable flag parsing and cobra therefore cannot short-circuit their `--help` before the root hooks run.
+
+**Presentation**: two modes ship deliberately, selected by `defaults.command-gating` (flag/viper value first, then the config default), because it is not yet obvious which reads better to users and the answer needs feedback rather than a guess. `dim` is the settled default (2026-07); `hide` stays available so the comparison can still be made:
+
+| Mode | Behavior |
+|---|---|
+| `dim` (default) | Unavailable commands stay listed with `[unavailable]` prefixed to their short help — the user learns the command exists and why it is off. |
+| `hide` | Unavailable commands are removed from help listings entirely. |
+| `off` | No gating at all; commands fail wherever the missing transport is first touched (the pre-gating behavior), kept as an escape hatch. |
+
+An unrecognized mode falls back to `dim`, so a config typo never silently disables the safety net. Presentation and enforcement are separate: in every mode except `off`, invoking a command whose requirement is unsatisfied — including a hidden one invoked directly — fails immediately with the missing capability and its remedy ("requires console (configure a Console API key: `akt console login`, or `akt context edit <context> --console-api-key <key>`)") rather than erroring mid-transport. See SPEC §2.10 for the normative table.
+
 ---
 
 ## 4. Package Structure
 
 ```
-github.com/akash-network/akt/
+pkg.akt.dev/akt/                         # module path (repo: github.com/ovrclk/akt)
 ├── cmd/
 │   └── akt/                             # Binary entry point
 ├── internal/
 │   ├── cli/                             # CLI mode (cobra commands)
 │   │   ├── chain/                       # Clean-copied chain-sdk go/cli (tx/query)
-│   │   ├── tx/                          # Transaction commands (per-module)
-│   │   ├── query/                       # Query commands (per-module)
-│   │   ├── workflow/                    # Workflow CLI wrappers (deploy, update, close)
+│   │   │   └── flags/                   # Shared chain tx/query flag definitions
+│   │   ├── workflow/                    # Workflow commands generated from definitions (§3.5)
+│   │   ├── console/                     # Console group + gateway access (§3.1.5)
+│   │   ├── sdl/                         # SDL scaffolds, validation, lint (fully local)
 │   │   ├── context/                     # Context management commands
+│   │   ├── network/                     # Network management commands
 │   │   ├── keys/                        # Key management commands
 │   │   ├── provider/                    # Provider gateway commands
 │   │   ├── store/                       # Store management commands
-│   │   └── plugin/                      # Plugin management
+│   │   └── plugin/                      # Plugin management (planned, §5.4)
 │   ├── tui/                             # TUI mode (bubbletea)
 │   │   ├── views/                       # TUI view models (one per resource type)
 │   │   ├── components/                  # Reusable TUI components
+│   │   ├── commands/                    # Bubbletea commands (async work)
+│   │   ├── data/                        # View-model data loading
+│   │   ├── keys/                        # Keybinding definitions
 │   │   └── messages/                    # Custom bubbletea messages
+│   ├── ui/                              # Shared presentation layer (CLI + TUI)
+│   │   └── theme/                       # Unified color palette and base styles
+│   ├── glyphs/                          # ASCII-safe glyph registry (§3.2)
 │   ├── context/                         # Context management core
+│   ├── bootstrap/                       # First-run config initialization wizard
+│   ├── capability/                      # Feature set derived from the context (§3.6)
+│   ├── transport/                       # Action-to-rail translation layer (§3.5)
 │   ├── actionlog/                       # Action log (unique per context)
+│   ├── cliutil/                         # Cross-command CLI helpers (status, verbosity, errors)
 │   ├── workflow/                        # Declarative workflow engine
 │   │   ├── steps/                       # Step type implementations
+│   │   ├── adapters/                    # Rail-backed step clients wrapped by transport/
 │   │   └── builtin/                     # Embedded default workflow definitions
 │   ├── codec/                           # Application-wide encoding config
 │   ├── keyring/                         # Keyring abstraction
@@ -362,9 +467,7 @@ github.com/akash-network/akt/
 │   │       ├── provider/                # Provider queries and REST tools
 │   │       ├── audit/                   # Audited provider queries
 │   │       └── cert/                    # Certificate queries
-│   ├── plugin/                          # Plugin system
-│   ├── filter/                          # Resource filter argument parsing (§3.8)
-│   ├── flags/                           # Shared flag definitions
+│   ├── plugin/                          # Plugin system (planned, §5.4)
 │   └── output/                          # Output formatting
 │       └── pretty/                      # Pretty output for query results (registry-based)
 ├── pkg/                                 # Public API (for plugins)
@@ -393,6 +496,8 @@ The `chain-sdk` CLI package (`pkg.akt.dev/go/cli`) will be deprecated and eventu
 - **Bubbletea v2** (Elm Architecture: Model-Update-View) handles the interactive TUI. Its functional design isolates state management and rendering.
 - **Lipgloss v2** provides CSS-like styling for terminal output in both modes -- table formatting in CLI, full layout composition in TUI.
 - **Bubbles v2** provides battle-tested components: table, viewport, text input, spinner, help, key bindings, list, progress bar, paginator.
+
+**Current status of the TUI shell**: the root TUI application (the resource browser reached by bare `akt`) is **disabled** while UX feedback is collected. Bare `akt` prints help, and `--interactive` reports that the TUI is disabled rather than launching it. The code path is kept compiled and reachable behind `AKT_EXPERIMENTAL_TUI=1` so it stays exercisable — and honest — while the decision is open; re-enabling is removing one gate in the root command's `RunE`. This is a shipping decision, not an architectural one: the design above stands, and `akt monitor` (which is a separate bubbletea application, not the shell) is unaffected and fully available.
 
 **Bubbles v2 component usage by UI element:**
 
@@ -561,6 +666,8 @@ Send
 - Key management commands
 - Output formatting with pretty output: registry-based per-type formatters for all query results, lipgloss color-coded states. `--output json` and `--output yaml` for machine-readable output
 - Global flags and environment variable support
+- Capability gating (§3.6): feature set derived from the context, `akt.requires` annotations on command groups, `defaults.command-gating: dim | hide | off`, per-invocation overrides
+- `akt sdl` group: scaffolds, offline validation, and lint — transport-independent and usable with no context at all
 - Built-in network templates (mainnet, testnet, sandbox)
 - Version command with build-time injection
 - Shell completion (bash, zsh, fish)
@@ -574,15 +681,19 @@ Send
 - Store schema versioning and migration framework
 - Sync engine: WebSocket subscription, event routing, state reconciliation
 - `akt deploy` workflow command: create deployment, wait for bids, select bid (interactive or auto), create lease, send manifest, wait for active, display endpoint URLs. Workflows support **two execution modes**: TUI mode (interactive, user-friendly progress display) and JSONL mode (`--output jsonl`, JSONL output for automation and scripting).
+- Transport translation layer (§3.5): `akt deploy`, `akt update`, and `akt close` execute from a single workflow definition on either the chain rail or the console rail, chosen from the context's `auth-method`. The command surface (positionals, flags, defaults, help) is generated from that definition, so the argument syntax — including the unified `--deposit` forms — is identical on both rails.
 - Provider gateway client: status, lease-status, lease-logs, lease-events, lease-shell, send-manifest, get-manifest
 - Provider migration commands: migrate-hostnames, migrate-endpoints
 - Store export/import commands
 - Store status command (sync state, record counts)
-- Console API client: `auth-method: console-api` context support, API key via `AKT_CONSOLE_API_KEY` env var, deployment operations via Console managed wallet API (`https://console-api.akash.network`)
+- Console API client: `auth-method: console-api` context support, API key resolved flag > env > per-context stored credential, deployment operations via Console managed wallet API (`https://console-api.akash.network`), plus the `akt console` command group for the full Console surface
+- Console provider gateway access (§3.1.5): `akt console status | logs | events | shell` reach the lease's provider directly from a wallet-less managed context using a Console-minted scoped JWT, reusing the `akt provider lease-*` streaming paths
 
 ### Phase 3: TUI Mode
 
 **Goal**: A fully interactive terminal UI for real-time Akash management, incorporating the monitoring functionality of [`aktop`](https://github.com/cloud-j-luna/aktop) via the `akt monitor` command.
+
+**Status**: `akt monitor` ships and is unaffected by the gate below. The application shell and its resource views are built but **disabled** pending UX feedback (§5.2) — bare `akt` prints help, and the shell is reachable only via `AKT_EXPERIMENTAL_TUI=1`.
 
 - Bubbletea application shell: header, main area, status bar
 - Navigation system: resource type selector, breadcrumb trail, back/forward
@@ -665,7 +776,9 @@ Send
 | (none)                        | `akt deploy <sdl-file>`     | New workflow command               |
 | (none)                        | `akt update <sdl-file> [dseq]` | New workflow command            |
 | (none)                        | `akt close [dseq]`          | New workflow command               |
-| (none)                        | `akt` (no subcommand)       | Launches TUI mode by default       |
+| (none)                        | `akt` (no subcommand)       | Designed to launch TUI mode; currently prints help while the TUI shell is disabled (§5.2) |
+| (none)                        | `akt console *`             | New Console API command group (§3.1.4-§3.1.5) |
+| (none)                        | `akt sdl *`                 | New local SDL scaffolding, validation, and lint |
 | (none)                        | `akt store *`               | New store management               |
 | (none)                        | `akt plugin *`              | New plugin management              |
 

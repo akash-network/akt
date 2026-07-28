@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"fmt"
+
 	"github.com/spf13/cobra"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
@@ -36,9 +38,18 @@ func GetQueryMarketCmds() *cobra.Command {
 // When partially specified, returns a filtered list.
 func GetQueryMarketOrderCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "order [id]",
-		Short:             "Query orders",
-		Args:              cobra.MaximumNArgs(1),
+		Use:   "order [id] [state]",
+		Short: "Query orders",
+		Long: `Query orders.
+
+The optional [id] argument is [owner/]dseq[/gseq[/oseq]], a bare owner
+address, or a bare state keyword (open|active|closed) per SPEC §3.8.
+
+The optional [state] argument narrows the result: with a partial identity it
+filters the list; when the identity pins down a single order it verifies the
+record instead — the command fails if the order is in a different state
+rather than printing it.`,
+		Args:              cobra.MaximumNArgs(2),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -51,12 +62,14 @@ func GetQueryMarketOrderCmd() *cobra.Command {
 
 			defaultOwner := cl.ClientContext().GetFromAddress().String()
 
-			if len(args) == 1 {
+			if len(args) > 0 {
 				af, err := cflags.OrderFiltersFromArg(args[0], defaultOwner)
 				if err != nil {
 					return err
 				}
-				ofilters.Owner = af.Owner
+				if af.Owner != "" {
+					ofilters.Owner = af.Owner
+				}
 				if af.DSeq != 0 {
 					ofilters.DSeq = af.DSeq
 				}
@@ -65,6 +78,22 @@ func GetQueryMarketOrderCmd() *cobra.Command {
 				}
 				if af.OSeq != 0 {
 					ofilters.OSeq = af.OSeq
+				}
+				// A bare state keyword may only appear once (SPEC §3.8.2).
+				if af.State != "" {
+					if len(args) > 1 {
+						return fmt.Errorf("order filter: state keyword %q cannot be combined with a second argument %q", args[0], args[1])
+					}
+					ofilters.State = af.State
+				}
+			}
+
+			// Optional second positional: a state keyword narrowing the
+			// identity filter (SPEC §3.8), e.g.
+			// `akt query market order 12345 open`.
+			if len(args) > 1 {
+				if ofilters.State, err = cflags.OrderStateFromArg(args[1]); err != nil {
+					return err
 				}
 			}
 
@@ -83,6 +112,13 @@ func GetQueryMarketOrderCmd() *cobra.Command {
 
 				res, err := cl.Query().Market().Order(ctx, &mvbeta.QueryOrderRequest{ID: id})
 				if err != nil {
+					return err
+				}
+
+				// SPEC §3.8.3: on the get path the positional [state] is a
+				// verification, not a filter — never silently ignore it.
+				if err := requireStateMatch("order", fmt.Sprintf("%s/%d/%d/%d", id.Owner, id.DSeq, id.GSeq, id.OSeq),
+					ofilters.State, res.Order.State.String()); err != nil {
 					return err
 				}
 
@@ -120,9 +156,19 @@ func GetQueryMarketOrderCmd() *cobra.Command {
 // When partially specified, returns a filtered list.
 func GetQueryMarketBidCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "bid [id]",
-		Short:             "Query bids",
-		Args:              cobra.MaximumNArgs(1),
+		Use:   "bid [id] [state]",
+		Short: "Query bids",
+		Long: `Query bids.
+
+The optional [id] argument is [owner/]dseq[/gseq[/oseq[/provider]]] (with
+--by provider: [provider/]dseq[/gseq[/oseq[/owner]]]), a bare address, or a
+bare state keyword (open|active|lost|closed) per SPEC §3.8.
+
+The optional [state] argument narrows the result: with a partial identity it
+filters the list; when the identity pins down a single bid it verifies the
+record instead — the command fails if the bid is in a different state rather
+than printing it.`,
+		Args:              cobra.MaximumNArgs(2),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -137,7 +183,7 @@ func GetQueryMarketBidCmd() *cobra.Command {
 			byProvider, _ := cmd.Flags().GetString("by")
 			isByProvider := byProvider == "provider"
 
-			if len(args) == 1 {
+			if len(args) > 0 {
 				af, err := cflags.BidFiltersFromArg(args[0], defaultOwner, isByProvider)
 				if err != nil {
 					return err
@@ -157,6 +203,22 @@ func GetQueryMarketBidCmd() *cobra.Command {
 				if af.Provider != "" {
 					bfilters.Provider = af.Provider
 				}
+				// A bare state keyword may only appear once (SPEC §3.8.2).
+				if af.State != "" {
+					if len(args) > 1 {
+						return fmt.Errorf("bid filter: state keyword %q cannot be combined with a second argument %q", args[0], args[1])
+					}
+					bfilters.State = af.State
+				}
+			}
+
+			// Optional second positional: a state keyword narrowing the
+			// identity filter (SPEC §3.8), e.g.
+			// `akt query market bid 12345 open`.
+			if len(args) > 1 {
+				if bfilters.State, err = cflags.BidStateFromArg(args[1]); err != nil {
+					return err
+				}
 			}
 
 			// Default owner fallback when no arg and no --owner flag (owner mode only).
@@ -175,6 +237,13 @@ func GetQueryMarketBidCmd() *cobra.Command {
 
 				res, err := cl.Query().Market().Bid(ctx, &mvbeta.QueryBidRequest{ID: id})
 				if err != nil {
+					return err
+				}
+
+				// SPEC §3.8.3: on the get path the positional [state] is a
+				// verification, not a filter — never silently ignore it.
+				if err := requireStateMatch("bid", fmt.Sprintf("%s/%d/%d/%d/%s", id.Owner, id.DSeq, id.GSeq, id.OSeq, id.Provider),
+					bfilters.State, res.Bid.State.String()); err != nil {
 					return err
 				}
 
@@ -213,9 +282,19 @@ func GetQueryMarketBidCmd() *cobra.Command {
 // When partially specified, returns a filtered list.
 func GetQueryMarketLeaseCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "lease [id]",
-		Short:             "Query leases",
-		Args:              cobra.MaximumNArgs(1),
+		Use:   "lease [id] [state]",
+		Short: "Query leases",
+		Long: `Query leases.
+
+The optional [id] argument is [owner/]dseq[/gseq[/oseq[/provider]]] (with
+--by provider: [provider/]dseq[/gseq[/oseq[/owner]]]), a bare address, or a
+bare state keyword (active|insufficient_funds|closed) per SPEC §3.8.
+
+The optional [state] argument narrows the result: with a partial identity it
+filters the list; when the identity pins down a single lease it verifies the
+record instead — the command fails if the lease is in a different state
+rather than printing it.`,
+		Args:              cobra.MaximumNArgs(2),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -230,7 +309,7 @@ func GetQueryMarketLeaseCmd() *cobra.Command {
 			byProvider, _ := cmd.Flags().GetString("by")
 			isByProvider := byProvider == "provider"
 
-			if len(args) == 1 {
+			if len(args) > 0 {
 				af, err := cflags.LeaseFiltersFromArg(args[0], defaultOwner, isByProvider)
 				if err != nil {
 					return err
@@ -250,6 +329,22 @@ func GetQueryMarketLeaseCmd() *cobra.Command {
 				if af.Provider != "" {
 					lfilters.Provider = af.Provider
 				}
+				// A bare state keyword may only appear once (SPEC §3.8.2).
+				if af.State != "" {
+					if len(args) > 1 {
+						return fmt.Errorf("lease filter: state keyword %q cannot be combined with a second argument %q", args[0], args[1])
+					}
+					lfilters.State = af.State
+				}
+			}
+
+			// Optional second positional: a state keyword narrowing the
+			// identity filter (SPEC §3.8), e.g.
+			// `akt query market lease 12345 active`.
+			if len(args) > 1 {
+				if lfilters.State, err = cflags.LeaseStateFromArg(args[1]); err != nil {
+					return err
+				}
 			}
 
 			// Default owner fallback when no arg and no --owner flag (owner mode only).
@@ -268,6 +363,13 @@ func GetQueryMarketLeaseCmd() *cobra.Command {
 
 				res, err := cl.Query().Market().Lease(ctx, &mvbeta.QueryLeaseRequest{ID: id})
 				if err != nil {
+					return err
+				}
+
+				// SPEC §3.8.3: on the get path the positional [state] is a
+				// verification, not a filter — never silently ignore it.
+				if err := requireStateMatch("lease", fmt.Sprintf("%s/%d/%d/%d/%s", id.Owner, id.DSeq, id.GSeq, id.OSeq, id.Provider),
+					lfilters.State, res.Lease.State.String()); err != nil {
 					return err
 				}
 

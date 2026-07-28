@@ -6,7 +6,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/client"
 	sdktest "github.com/cosmos/cosmos-sdk/testutil"
 
-	"pkg.akt.dev/akt/internal/cli/chain"
+	cli "pkg.akt.dev/akt/internal/cli/chain"
 )
 
 // ExecEscrowDeposit is used for testing deposits into escrow account

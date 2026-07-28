@@ -25,6 +25,7 @@ const (
 	TypeWorkflow ActionType = "workflow"
 	TypeProvider ActionType = "provider"
 	TypeContext  ActionType = "context"
+	TypeConsole  ActionType = "console"
 	TypeError    ActionType = "error"
 )
 
@@ -165,7 +166,10 @@ func (l *Logger) Close() error {
 func (l *Logger) maybeRotate() error {
 	info, err := l.file.Stat()
 	if err != nil {
-		return nil // stat failure is not fatal
+		//nolint:nilerr // a stat failure only means we cannot decide whether to
+		// rotate; failing the caller here would turn an unreadable log file
+		// into a failed user action, which is worse than a late rotation.
+		return nil
 	}
 
 	if info.Size() < int64(maxLogSize) {
@@ -203,12 +207,15 @@ func readLogFile(path string, filter Filter) ([]Entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
+	defer func() { _ = f.Close() }()
 
 	var entries []Entry
 
 	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+	// A single entry may carry large params (SDL contents, raw messages);
+	// allow lines up to the rotation threshold so Read never chokes on an
+	// entry that Log accepted.
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLogSize)
 
 	for scanner.Scan() {
 		line := scanner.Bytes()

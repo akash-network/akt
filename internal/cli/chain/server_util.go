@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -168,7 +169,7 @@ func VersionCmd() *cobra.Command {
 // QueryBlocksCmd returns a command to search through blocks by events.
 func QueryBlocksCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "blocks",
+		Use:   "blocks [query]",
 		Short: "Query for paginated blocks that match a set of events",
 		Long: `Search for blocks that match the exact given events where results are paginated.
 The events query is directly passed to CometBFT's RPC BlockSearch method and must
@@ -177,15 +178,24 @@ Please refer to each module's documentation for the full set of events to query
 for. Each module documents its respective events under 'xx_events.md'.
 `,
 		Example: fmt.Sprintf(
-			"$ %s query blocks --query \"message.sender='cosmos1...' AND block.height > 7\" --page 1 --limit 30 --order_by asc",
+			"$ %[1]s query blocks \"message.sender='cosmos1...' AND block.height > 7\" --page 1 --limit 30 --order_by asc",
 			version.AppName,
 		),
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cctx, err := client.GetClientQueryContext(cmd)
+			cctx, err := GetClientQueryContext(cmd)
 			if err != nil {
 				return err
 			}
-			query, _ := cmd.Flags().GetString(cflags.FlagQuery)
+			// FEEDBACK(2026-07): --query disabled for the positional-only UX
+			// trial; the positional expression is the only source (zero
+			// fallback). Restore by uncommenting if users ask for the flag
+			// form back.
+			// query, _ := cmd.Flags().GetString(cflags.FlagQuery)
+			query := cflags.ExprFromArgs(args, "")
+			if query == "" {
+				return errors.New("query expression is required: pass it positionally")
+			}
 			page, _ := cmd.Flags().GetInt(cflags.FlagPage)
 			limit, _ := cmd.Flags().GetInt(cflags.FlagLimit)
 			orderBy, _ := cmd.Flags().GetString(cflags.FlagOrderBy)
@@ -202,9 +212,11 @@ for. Each module documents its respective events under 'xx_events.md'.
 	cflags.AddQueryFlagsToCmd(cmd)
 	cmd.Flags().Int(cflags.FlagPage, query.DefaultPage, "Query a specific page of paginated results")
 	cmd.Flags().Int(cflags.FlagLimit, query.DefaultLimit, "Query number of transactions results per page returned")
-	cmd.Flags().String(cflags.FlagQuery, "", "The blocks events query per CometBFT's query semantics")
+	// FEEDBACK(2026-07): --query disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// cmd.Flags().String(cflags.FlagQuery, "", "The blocks events query per CometBFT's query semantics")
 	cmd.Flags().String(cflags.FlagOrderBy, "", "The ordering semantics (asc|dsc)")
-	_ = cmd.MarkFlagRequired(cflags.FlagQuery)
 
 	return cmd
 }
@@ -223,7 +235,7 @@ $ %s query block --%s=%s <hash>
 			version.AppName, cflags.FlagType, cflags.TypeHash)),
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cctx, err := client.GetClientQueryContext(cmd)
+			cctx, err := GetClientQueryContext(cmd)
 			if err != nil {
 				return err
 			}
@@ -308,7 +320,7 @@ func QueryBlockResultsCmd() *cobra.Command {
 		Long:  "Query for a specific committed block's results using the CometBFT RPC `block_results` method",
 		Args:  cobra.RangeArgs(0, 1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cctx, err := client.GetClientQueryContext(cmd)
+			cctx, err := GetClientQueryContext(cmd)
 			if err != nil {
 				return err
 			}

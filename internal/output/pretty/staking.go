@@ -113,8 +113,8 @@ func RenderDelegatorDelegations(res *stakingtypes.QueryDelegatorDelegationsRespo
 func RenderStakingPool(pool *stakingtypes.Pool) string {
 	var buf strings.Builder
 	fmt.Fprintln(&buf, Section("Staking Pool"))
-	KV(&buf, "Bonded Tokens", Bold(FormatDecAsAKT(math.LegacyNewDecFromInt(pool.BondedTokens))))
-	KV(&buf, "Not Bonded", FormatDecAsAKT(math.LegacyNewDecFromInt(pool.NotBondedTokens)))
+	KV(&buf, "Bonded Tokens", Bold(FormatDecAsAKT(math.LegacyNewDecFromInt(IntOrZero(pool.BondedTokens)))))
+	KV(&buf, "Not Bonded", FormatDecAsAKT(math.LegacyNewDecFromInt(IntOrZero(pool.NotBondedTokens))))
 	return buf.String()
 }
 

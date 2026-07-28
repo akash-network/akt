@@ -23,8 +23,8 @@ const (
 // TableColumn defines a single column in a ResourceTable.
 type TableColumn struct {
 	Header     string
-	Width      int                    // character width (0 = fill remaining space)
-	Align      Alignment              // left or right alignment
+	Width      int                       // character width (0 = fill remaining space)
+	Align      Alignment                 // left or right alignment
 	RenderFunc func(value string) string // optional custom cell renderer (e.g., state tags)
 }
 
@@ -387,11 +387,4 @@ func (t ResourceTable) computeColumnWidths(totalWidth int) []int {
 	}
 
 	return widths
-}
-
-func maxInt(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }

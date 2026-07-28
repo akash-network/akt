@@ -61,9 +61,9 @@ func TestHelpOverlayViewContainsKeybindings(t *testing.T) {
 
 	// Spot-check some keybindings from each section.
 	bindings := []string{
-		"Switch views",   // Navigation
-		"Next item",      // Lists
-		"New deployment", // Actions
+		"Switch views",    // Navigation
+		"Next item",       // Lists
+		"New deployment",  // Actions
 		"Command palette", // Overlays
 	}
 	for _, b := range bindings {

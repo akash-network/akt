@@ -9,6 +9,7 @@
       [38;2;113;113;122mGas Prices:[m      0.025uakt
       [38;2;113;113;122mGas Adj:[m         1.5
 
+  [38;2;113;113;122mAuth Method:[m         keyring
   [38;2;113;113;122mKeyring:[m             default (backend: os)
   [38;2;113;113;122mDefault Account:[m     deployer
   [38;2;113;113;122mGas:[m                 auto
@@ -16,3 +17,9 @@
   [38;2;113;113;122mProvider Auth:[m       certificate
   [38;2;113;113;122mStore:[m               /home/user/.akt/contexts/production/store
   [38;2;113;113;122mAction Log:[m          /home/user/.akt/contexts/production/actions.log
+
+  [38;2;113;113;122m  Capabilities:[m
+      [38;2;113;113;122mChain queries:[m   available
+      [38;2;113;113;122mChain transactions:[m available
+      [38;2;113;113;122mProvider gateway:[m available
+      [38;2;113;113;122mConsole API:[m     [38;2;161;161;170munavailable — run akt console login[m

@@ -64,23 +64,23 @@ func (v *LogViewer) Close() {
 }
 
 // Update handles key events for the log viewer overlay.
-func (lv *LogViewer) Update(msg tea.Msg) tea.Cmd {
+func (v *LogViewer) Update(msg tea.Msg) tea.Cmd {
 	if kmsg, ok := msg.(tea.KeyPressMsg); ok {
 		switch kmsg.String() {
 		case "esc":
 			return CmdFunc(messages.StopLogStreamMsg{})
 		case " ":
-			lv.TogglePause()
+			v.TogglePause()
 		case "c":
-			lv.Clear()
+			v.Clear()
 		case "k", "up":
-			lv.ScrollUp()
+			v.ScrollUp()
 		case "j", "down":
-			lv.ScrollDown()
+			v.ScrollDown()
 		case "G":
-			lv.ScrollToBottom()
+			v.ScrollToBottom()
 		case "s":
-			lv.CycleServiceFilter()
+			v.CycleServiceFilter()
 		}
 	}
 	return nil
@@ -192,8 +192,8 @@ func (v *LogViewer) ScrollDown() {
 	if !v.paused {
 		return
 	}
-	max := v.maxScroll()
-	if v.scroll < max {
+	limit := v.maxScroll()
+	if v.scroll < limit {
 		v.scroll++
 	}
 }
@@ -393,4 +393,3 @@ func (v LogViewer) renderFooter(w int) string {
 	}
 	return components.Footer(w, hints)
 }
-

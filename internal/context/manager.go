@@ -239,6 +239,25 @@ func (m *Manager) CurrentContext() string {
 	return m.cfg.CurrentContext
 }
 
+// ActiveContext resolves which context a run targets: the explicit override
+// (the global --context flag), else current-context, else the sole
+// configured context. Returns "" when no single context can be determined.
+func (m *Manager) ActiveContext(override string) string {
+	if override != "" {
+		return override
+	}
+
+	if current := m.CurrentContext(); current != "" {
+		return current
+	}
+
+	if contexts := m.ListContexts(); len(contexts) == 1 {
+		return contexts[0].Name
+	}
+
+	return ""
+}
+
 // CreateContext adds a new context. The referenced network and keyring must exist.
 func (m *Manager) CreateContext(ctx Context) error {
 	m.mu.Lock()
@@ -252,7 +271,14 @@ func (m *Manager) CreateContext(ctx Context) error {
 		return fmt.Errorf("context %q already exists", ctx.Name)
 	}
 
-	if m.getNetwork(ctx.Network.Name) == nil {
+	// console-api contexts may omit the network entirely: they operate
+	// through the Console API alone and gain chain access only when a
+	// network is attached later.
+	if ctx.Network.Name == "" {
+		if ctx.AuthMethod != AuthMethodConsoleAPI {
+			return fmt.Errorf("a network is required unless auth-method is %q", AuthMethodConsoleAPI)
+		}
+	} else if m.getNetwork(ctx.Network.Name) == nil {
 		return fmt.Errorf("network %q not found", ctx.Network.Name)
 	}
 
@@ -270,6 +296,12 @@ func (m *Manager) CreateContext(ctx Context) error {
 
 	if ctx.ProviderDefaults.AuthType == "" {
 		ctx.ProviderDefaults.AuthType = "jwt"
+	}
+
+	switch ctx.AuthMethod {
+	case "", AuthMethodKeyring, AuthMethodConsoleAPI:
+	default:
+		return fmt.Errorf("invalid auth-method %q: must be %q or %q", ctx.AuthMethod, AuthMethodKeyring, AuthMethodConsoleAPI)
 	}
 
 	m.cfg.Contexts = append(m.cfg.Contexts, ctx)
@@ -311,7 +343,10 @@ func (m *Manager) UpdateContext(name string, apply func(*Context) error) error {
 	}
 
 	// Validate references after mutation.
-	if m.getNetwork(ctx.Network.Name) == nil {
+	// console-api contexts may be network-less (CreateContext permits it);
+	// requiring a network here would make them uneditable — including by the
+	// `akt context edit ... --console-api-key` remedy other errors suggest.
+	if ctx.Network.Name != "" && m.getNetwork(ctx.Network.Name) == nil {
 		return fmt.Errorf("network %q not found", ctx.Network.Name)
 	}
 
@@ -460,9 +495,14 @@ func (m *Manager) Resolve(name string) (*Context, error) {
 		return nil, fmt.Errorf("context %q not found", name)
 	}
 
-	net := m.getNetwork(ctx.Network.Name)
-	if net == nil {
-		return nil, fmt.Errorf("network %q (referenced by context %q) not found", ctx.Network.Name, name)
+	// Network-less console-api contexts resolve with an empty network;
+	// capability gating then disables chain-backed commands.
+	net := &Network{}
+	if ctx.Network.Name != "" {
+		net = m.getNetwork(ctx.Network.Name)
+		if net == nil {
+			return nil, fmt.Errorf("network %q (referenced by context %q) not found", ctx.Network.Name, name)
+		}
 	}
 
 	kr := m.getKeyring(ctx.Keyring.Name)
@@ -470,10 +510,22 @@ func (m *Manager) Resolve(name string) (*Context, error) {
 		return nil, fmt.Errorf("keyring %q (referenced by context %q) not found", ctx.Keyring.Name, name)
 	}
 
+	authMethod := ctx.AuthMethod
+	if authMethod == "" {
+		authMethod = AuthMethodKeyring
+	}
+
+	consoleURL := ctx.ConsoleAPIURL
+	if consoleURL == "" {
+		consoleURL = DefaultConsoleAPIURL
+	}
+
 	return &Context{
 		Name:             ctx.Name,
 		Network:          *net,
 		Keyring:          *kr,
+		AuthMethod:       authMethod,
+		ConsoleAPIURL:    consoleURL,
 		DefaultAccount:   ctx.DefaultAccount,
 		Gas:              ctx.Gas,
 		Fees:             ctx.Fees,
@@ -482,5 +534,6 @@ func (m *Manager) Resolve(name string) (*Context, error) {
 		GasAdjustment:    net.GasAdjustment,
 		AuthType:         ctx.ProviderDefaults.AuthType,
 		Root:             m.root,
+		ConsoleAPIKey:    ResolveConsoleAPIKey(m.root, ctx.Name),
 	}, nil
 }

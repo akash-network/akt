@@ -75,7 +75,7 @@ type Config struct {
 type App struct {
 	keys       keys.KeyMap
 	router     Router
-	palette    *views.Palette       // will be nil until palette.go is created
+	palette    *views.Palette // will be nil until palette.go is created
 	confirm    *components.ConfirmDialog
 	help       *views.HelpOverlay
 	logView    *views.LogViewer
@@ -866,38 +866,6 @@ func (a *App) showToast(msg string, tone components.ToastTone) tea.Cmd {
 	})
 }
 
-// monitorStatusLines returns lines 1 and 2 for the status bar when the
-// monitor is active.
-func (a App) monitorStatusLines() (string, string) {
-	if a.monitor == nil {
-		return "", ""
-	}
-
-	// Type-assert to get StatusInfo from the embedded top model.
-	type statusProvider interface {
-		StatusInfo() monitorui.StatusInfo
-	}
-
-	sp, ok := a.monitor.(statusProvider)
-	if !ok {
-		return "", ""
-	}
-
-	si := sp.StatusInfo()
-
-	// Line 1: tab-specific keybindings.
-	line1 := si.TabHelpText()
-
-	// Line 2: RPC endpoint + connection mode.
-	mode := "HTTP"
-	if si.WSConnected {
-		mode = "WS"
-	}
-	line2 := fmt.Sprintf("RPC: %s [%s]", si.Endpoint, mode)
-
-	return line1, line2
-}
-
 // ─── Log streaming ───────────────────────────────────────────────────
 
 // streamLogs returns a tea.Cmd that reads the next message from a log stream.
@@ -1086,13 +1054,13 @@ func buildMonitorModel(cfg Config) (tea.Model, pubsub.Bus, func()) {
 
 	provCache, err := monitorcache.Open(db)
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, nil, nil
 	}
 
 	monCache, err := monitorcache.OpenMonikerCache(db)
 	if err != nil {
-		db.Close()
+		_ = db.Close()
 		return nil, nil, nil
 	}
 
@@ -1136,7 +1104,7 @@ func buildMonitorModel(cfg Config) (tea.Model, pubsub.Bus, func()) {
 			_ = cometClient.Stop()
 		}
 		bus.Close()
-		db.Close()
+		_ = db.Close()
 	}
 
 	return model, bus, cleanup

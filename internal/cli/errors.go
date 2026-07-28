@@ -19,10 +19,10 @@ const (
 type CLIError = cliutil.CLIError
 
 var (
-	ExitCode      = cliutil.ExitCode
-	ErrUsage      = cliutil.ErrUsage
-	ErrConfig     = cliutil.ErrConfig
-	ErrConnection = cliutil.ErrConnection
+	ExitCode       = cliutil.ExitCode
+	ErrUsage       = cliutil.ErrUsage
+	ErrConfig      = cliutil.ErrConfig
+	ErrConnection  = cliutil.ErrConnection
 	ErrTransaction = cliutil.ErrTransaction
-	ErrAuth       = cliutil.ErrAuth
+	ErrAuth        = cliutil.ErrAuth
 )

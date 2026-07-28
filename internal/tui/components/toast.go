@@ -16,7 +16,7 @@ const ToastDuration = 2500 * time.Millisecond
 type ToastTone int
 
 const (
-	ToastOK   ToastTone = iota
+	ToastOK ToastTone = iota
 	ToastInfo
 	ToastError
 )

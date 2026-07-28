@@ -8,6 +8,7 @@ import (
 	ibctransfer "github.com/cosmos/ibc-go/v10/modules/apps/transfer"
 	ibccore "github.com/cosmos/ibc-go/v10/modules/core"
 
+	"pkg.akt.dev/akt/internal/capability"
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	aclient "pkg.akt.dev/go/node/client/discovery"
 )
@@ -45,6 +46,8 @@ func QueryCmd() *cobra.Command {
 		Use:     "query",
 		Aliases: []string{"q"},
 		Short:   "Querying subcommands",
+		// Capability gating: chain queries require a chain RPC endpoint.
+		Annotations: map[string]string{capability.AnnotationKey: string(capability.ChainQuery)},
 	}
 
 	cmd.AddCommand(

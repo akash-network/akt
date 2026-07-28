@@ -151,7 +151,8 @@ contexts:
     auth-method: console-api            # use Console managed wallet instead of keyring
     console-api-url: ""                 # empty = default (https://console-api.akash.network)
     # keyring, default-account, and provider-defaults are not used with console-api auth
-    # API key is supplied via AKT_CONSOLE_API_KEY env var or --console-api-key flag
+    # API key: --console-api-key flag > AKT_CONSOLE_API_KEY env var > per-context
+    # credential file (contexts/<name>/console-api-key, see §7.1); never stored here
 
 # TUI settings
 tui:
@@ -205,7 +206,7 @@ Contexts compose a network, keyring, and context-specific settings. The state st
 | Field                         | Type   | Required | Default                                | Description                                                                  |
 | ----------------------------- | ------ | -------- | -------------------------------------- | ---------------------------------------------------------------------------- |
 | `name`                        | string | yes      | --                                     | Unique context identifier                                                    |
-| `network`                     | string | yes      | --                                     | Name of network definition to use                                            |
+| `network`                     | string | see note | --                                     | Name of network definition to use. Required for `keyring` auth; optional for `console-api` auth (a network-less context operates through the Console API alone and chain commands are capability-gated until a network is attached, §2.10). |
 | `auth-method`                 | string | no       | `"keyring"`                            | Authentication method: `keyring` or `console-api`                            |
 | `console-api-url`             | string | no       | `"https://console-api.akash.network"` | Console API base URL (only with `console-api` auth)                          |
 | `keyring`                     | string | no       | `"default"`                            | Keyring name for signing keys (only with `keyring` auth)                     |
@@ -214,6 +215,8 @@ Contexts compose a network, keyring, and context-specific settings. The state st
 | `gas`                         | string | no       | `"auto"`                               | Gas limit or `"auto"` (only with `keyring` auth)                             |
 | `fees`                        | string | no       | `""`                                   | Fixed fees (only with `keyring` auth)                                        |
 | `provider-defaults.auth-type` | string | no       | `"jwt"`                                | Provider gateway auth: `jwt` or `mtls` (only with `keyring` auth)            |
+
+**Console API key**: the per-context Console API key is deliberately **not** a config.yaml field. It is stored as a separate credential file at `<config-root>/contexts/<name>/console-api-key` with `0600` permissions and is managed via `akt context create/edit --console-api-key`. See §7.1 for the full resolution order and handling rules.
 
 ### 1.5 Keyring Schema
 
@@ -295,7 +298,7 @@ All environment variables use the `AKT_` prefix. When set, they override the cor
 | `AKT_FEES`            | `contexts[*].fees`                                      | `5000uakt`                     |
 | `AKT_BROADCAST_MODE`  | `defaults.broadcast-mode`                               | `sync`                         |
 | `AKT_OUTPUT`          | `defaults.output`                                       | `json`                         |
-| `AKT_CONSOLE_API_KEY` | Console API key (required for `console-api` auth method) | `akt_abc123...`                |
+| `AKT_CONSOLE_API_KEY` | Console API key (overrides the per-context stored credential; see §7.1) | `akt_abc123...`                |
 
 ### 1.10 Built-in Network Templates
 
@@ -380,7 +383,9 @@ Implementation note: `tx` and `query` commands are clean-copied from `akash-netw
 
 When `akt` is invoked with no subcommand, the following flow determines what happens:
 
-1. **No config exists** (first run): The bootstrap wizard runs (§1.11, `internal/bootstrap/wizard.go`). It prompts the user to select networks, select a keyring backend (`os`, `file`, or `test`; default: `os`), and configure an initial context. After bootstrap completes, the root command continues to step 2.
+1. **No config exists** (first run): The bootstrap wizard runs (§1.11, `internal/bootstrap/wizard.go`). It prompts the user to select networks, select a keyring backend (`os`, `file`, or `test`; default: `os`), and configure an initial context. It then offers optional Akash Console onboarding: the user may enter a Console API key (validated best-effort against `/v1/user/me`, stored as the initial context's per-context credential per §7.1) and choose whether deployments for that context should be routed through Console (`auth-method: console-api`). Both prompts default to "no" and are skipped entirely in non-interactive runs. The wizard runs only when stdin is a terminal: in headless environments it declines to bootstrap (no network fetch, no config written) and prints guidance to create a config via `akt context network create` / `akt context create`; the root command then continues to step 2 without a config. After bootstrap completes, the root command continues to step 2.
+> **TUI shell status (2026-07): DISABLED pending UX feedback.** Bare `akt` prints the help text and `--interactive`/`-i` reports that the TUI is disabled. The launch path remains compiled behind `AKT_EXPERIMENTAL_TUI=1` for feedback sessions, and `akt monitor` (§2.6) is unaffected. Steps 2–5 below describe the behavior that resumes when the TUI is re-enabled.
+
 2. **Config exists, `defaults.interactive` is `true` (default), and a TTY is attached**: The interactive TUI application launches (§8).
 3. **Config exists, `defaults.interactive` is `false`**: Print the help text (equivalent to `akt --help`). The user has opted out of TUI mode and must use explicit subcommands.
 4. **Config exists, no TTY attached** (e.g., `akt | cat`): Print the help text. The TUI requires a terminal.
@@ -421,20 +426,20 @@ akt
 │   │   └── multi-send <from> <to1,to2,...> <amount>
 │   ├── deployment
 │   │   ├── create <sdl-file>
-│   │   ├── update <sdl-file>
-│   │   ├── close
+│   │   ├── update <sdl-file> <dseq>     # dseq required positionally (--dseq disabled 2026-07); fails fast when missing
+│   │   ├── close <dseq>                 # dseq required positionally (--dseq disabled 2026-07); fails fast when missing
 │   │   └── group
-│   │       ├── close
-│   │       ├── pause
-│   │       └── start
+│   │       ├── close [dseq] [gseq]
+│   │       ├── pause [dseq] [gseq]
+│   │       └── start [dseq] [gseq]
 │   ├── market
 │   │   ├── bid
 │   │   │   ├── create
 │   │   │   └── close
 │   │   └── lease
-│   │       ├── create
-│   │       ├── withdraw
-│   │       └── close
+│   │       ├── create [dseq] [provider]
+│   │       ├── withdraw [dseq] [provider]
+│   │       └── close [dseq] [provider]
 │   ├── provider
 │   │   ├── create <config-file>
 │   │   └── update <config-file>
@@ -523,20 +528,20 @@ akt
 │   │   ├── total
 │   │   ├── denom-metadata
 │   │   └── send-enabled [denom1...]
-│   ├── deployment [filter]              # [owner/]dseq; no arg → list; --state flag
+│   ├── deployment [filter] [state]      # [owner/]dseq [state]; no arg → list; --state flag — **disabled pending feedback** (positional only, 2026-07)
 │   │   ├── group [filter]               # [owner/]dseq[/gseq]
 │   │   └── params
 │   ├── market
-│   │   ├── order [filter]               # [owner/]dseq[/gseq/oseq]; --state flag
-│   │   ├── bid [filter]                 # [owner/]dseq[/gseq/oseq[/prov]]; --by; --state
-│   │   ├── lease [filter]               # [owner/]dseq[/gseq/oseq[/prov]]; --by; --state
+│   │   ├── order [filter] [state]       # [owner/]dseq[/gseq/oseq] [state]; --state flag — **disabled pending feedback** (positional only, 2026-07)
+│   │   ├── bid [filter] [state]         # [owner/]dseq[/gseq/oseq[/prov]] [state]; --by; --state — **disabled pending feedback** (positional only, 2026-07)
+│   │   ├── lease [filter] [state]       # [owner/]dseq[/gseq/oseq[/prov]] [state]; --by; --state — **disabled pending feedback** (positional only, 2026-07)
 │   │   └── params
 │   ├── provider [address]               # List or get (address → single)
-│   ├── cert [owner]                     # Owner or default account; --state flag
+│   ├── cert [owner] [state]             # Owner or default account, plus [state]; --owner/--state flags — **disabled pending feedback** (positional only, 2026-07)
 │   ├── audit [owner]                    # Owner or default account; --auditor flag
 │   ├── escrow [filter]                  # [owner[/dseq]]; --state flag
 │   │   ├── payment [filter]             # [owner[/dseq]]
-│   │   └── blocks-remaining
+│   │   └── blocks-remaining [filter]    # [owner/]dseq
 │   ├── staking
 │   │   ├── validator <val-addr>
 │   │   ├── validators
@@ -606,22 +611,36 @@ akt
 │   ├── ibc-transfer                     # IBC transfer (passthrough from cosmos-sdk, subcommands not expanded)
 │   ├── upgrade
 │   ├── block [height]
-│   ├── blocks
+│   ├── blocks [query]                   # CometBFT query expr; --query override — **disabled pending feedback** (positional only, 2026-07)
 │   ├── block-results [height]
 │   ├── tx <hash>
-│   ├── txs
+│   ├── txs [events]                     # event list expr; --events override — **disabled pending feedback** (positional only, 2026-07)
 │   └── module-name-to-address <module>
 ├── deploy <sdl-file>                    # Workflow: full deployment lifecycle
 ├── update <sdl-file> [dseq]             # Workflow: update deployment + send manifest
 ├── close [dseq]                         # Workflow: close deployment
+├── console                              # Akash Console managed-wallet API (§2.9)
+│   ├── login [key]                      # Validate + store per-context API key credential
+│   ├── logout                           # Remove stored credential
+│   ├── whoami                           # Authenticated user info
+│   ├── deployment                       # list | get | create | update | close | deposit | settings
+│   ├── bid list <dseq>                  # Bids for a deployment's open orders
+│   ├── lease create <dseq> [provider]   # Accept a bid (uses cached manifest)
+│   ├── wallet                           # list | balance | settings | cost
+│   ├── usage [from] [to]                # Daily spend history
+│   ├── provider                         # list | get | regions | auditors (public, no key)
+│   ├── gpu                              # GPU availability/pricing (public, no key)
+│   ├── template                         # list | get | sdl (public, no key)
+│   ├── apikey                           # list | create | delete
+│   └── jwt create                       # Mint provider-scoped JWT
 ├── provider                             # Provider gateway commands
 │   ├── status [provider-addr]
-│   ├── lease-status
-│   ├── lease-logs
-│   ├── lease-events
+│   ├── lease-status [dseq]
+│   ├── lease-logs [dseq]
+│   ├── lease-events [dseq]
 │   ├── lease-shell
 │   ├── send-manifest <sdl-file>
-│   ├── get-manifest
+│   ├── get-manifest [dseq]
 │   ├── migrate-hostnames
 │   └── migrate-endpoints
 ├── store                                # Local store management
@@ -640,7 +659,7 @@ akt
 │   ├── oracle [rpc-endpoint]            # Oracle/BME dashboard (alias)
 │   └── bme [rpc-endpoint]              # Oracle/BME dashboard (alias)
 ├── mcp                                  # MCP server for AI assistant integration (stdio)
-├── version                              # Version information
+├── version [--long]                     # Version information (--long: full build info)
 └── completion                           # Shell completion scripts
 ```
 
@@ -655,6 +674,7 @@ Create a new named context. A context references a network and keyring by name.
 | `--network`           | string | `""`        | Network name to use (required; must exist)                       |
 | `--auth-method`       | string | `"keyring"` | Authentication method: `keyring` or `console-api`                |
 | `--console-api-url`   | string | `""`        | Console API base URL (empty = default; only with `console-api`)  |
+| `--console-api-key`   | string | `""`        | Console API key stored as a per-context credential (§7.1; never written to config.yaml) |
 | `--keyring`           | string | `"default"` | Keyring name (only with `keyring` auth)                          |
 | `--default-account`   | string | `""`        | Default account name (only with `keyring` auth)                  |
 | `--gas`               | string | `"auto"`    | Gas limit override (only with `keyring` auth)                    |
@@ -673,7 +693,8 @@ akt context create monitoring --network mainnet
 akt context create staging --network testnet --keyring test-keyring --default-account testaccount
 
 # Create context using Console API managed wallet
-# API key is supplied via AKT_CONSOLE_API_KEY env var at runtime
+# Store the API key as the context credential with --console-api-key,
+# or later via `akt console login` (see §7.1)
 akt context create console --network mainnet --auth-method console-api --set-current
 ```
 
@@ -733,6 +754,9 @@ Edit context-level settings. For network-level changes (endpoints, gas-prices), 
 | `--default-account` | string | `""`    | Change default account                 |
 | `--gas`             | string | `""`    | Change gas setting                     |
 | `--fees`            | string | `""`    | Change fees setting                    |
+| `--auth-method`     | string | `""`    | Change authentication method: `keyring` or `console-api` |
+| `--console-api-url` | string | `""`    | Change Console API base URL (empty = default) |
+| `--console-api-key` | string | `""`    | Set the per-context Console API key (empty string removes it; §7.1) |
 | `--fork-network`    | bool   | `false` | Force fork when editing network fields |
 
 ```bash
@@ -767,7 +791,7 @@ View the action log for the current context.
 | ----------- | ------ | --------- | ------------------------------------------------------------------- |
 | `--context` | string | current   | Context to view log for                                             |
 | `--limit`   | int    | `50`      | Number of entries to show                                           |
-| `--type`    | string | `""`      | Filter by action type: `tx`, `query`, `workflow`, `error`           |
+| `--type`    | string | `""`      | Filter by action type: `tx`, `workflow`, `provider`, `context`, `console`, `error` (see §5.6) |
 | `--since`   | string | `""`      | Show entries since timestamp or duration (e.g., `1h`, `2024-01-01`) |
 | `--output`  | string | `pretty`  | Output format: `pretty` (table), `json` (raw JSONL entries, one per line) |
 
@@ -777,7 +801,7 @@ $ akt context log --limit 5
   2026-03-23 10:15:32     tx        deployment create (dseq: 12345)            success
   2026-03-23 10:15:45     tx        market lease create (dseq: 12345)          success
   2026-03-23 10:15:50     workflow  send-manifest -> akash1prov1...            success
-  2026-03-23 10:20:01     query     deployment deployments --dseq 12345        success
+  2026-03-23 10:20:01     context   edit (default-account: bob)                success
   2026-03-23 10:25:00     tx        deployment close (dseq: 12345)             success
 ```
 
@@ -865,6 +889,8 @@ akt context keys show test1 -a
 
 Workflow commands (`akt deploy`, `akt update`, `akt close`) are driven by a **declarative workflow engine**. Instead of hardcoded command logic, each workflow is a YAML definition that the engine interprets step by step. Users can override built-in workflows or create custom ones.
 
+**Transports**: actions are defined once — as workflow definitions — and translated per transport by `internal/transport`. Each transport carries the same abstract steps onto its backing rail: the **chain** transport (keyring auth) signs and broadcasts transactions locally plus provider-gateway calls, while the **console** transport (console-api auth) maps the same steps onto Console API REST calls (§7.4–§7.5). Because the command surface (positionals and flags) is generated from the workflow definition and the transport is chosen per context at execution time, `akt deploy/update/close` accept identical arguments on both rails, and adding a new action never requires per-rail redesign. Cross-rail argument syntax (notably `--deposit`, §7.4) is normalized in the transport layer.
+
 #### 2.3.1 Workflow Definition Location
 
 Workflow definitions are resolved in order:
@@ -873,6 +899,8 @@ Workflow definitions are resolved in order:
 3. **Embedded built-in**: compiled into the binary
 
 Top-level commands (`akt deploy`, `akt update`, `akt close`) are thin wrappers that load and run the corresponding workflow. CLI flags are **auto-generated** from the workflow's declared `params` section.
+
+**Dynamic surfacing**: Workflow commands are generated at CLI startup from the set of workflows returned by the loader. A top-level command exists **if and only if** a workflow with that name resolves. The embedded built-ins (`deploy`, `update`, `close`) always resolve and therefore always appear; user-defined workflows in the global or per-context directories add further top-level commands, and removing a user workflow removes its command. Help output reflects only the resolved set.
 
 #### 2.3.2 Workflow Definition Format
 
@@ -889,7 +917,7 @@ params:
   deposit:
     type: string
     default: "auto"
-    description: Initial deposit amount (auto = chain minimum or SDL-specified)
+    description: "Initial deposit: 5usd or $5 (USD, console-api contexts), 5000000uakt (coin, keyring contexts), auto = chain minimum (keyring)"
   bid-timeout:
     type: duration
     default: "5m"
@@ -1085,7 +1113,7 @@ On error:
 | `workflow` | string   | Workflow name (e.g., `deploy`, `update`, `close`)               |
 | `id`       | string   | Unique workflow run ID (generated at start, same for all steps) |
 | `step`     | string   | Step name from the workflow definition                          |
-| `result`   | string   | `completed` or `error`                                          |
+| `result`   | string   | `completed`, `error`, or `skipped` (step skipped by its on-error policy) |
 | `errors`   | []string | Array of error messages (empty when `result` is `completed`)    |
 | `txs`      | []object | Array of raw transaction results (empty for non-tx steps)       |
 
@@ -1095,7 +1123,7 @@ On error:
 | ---------- | ------ | --------------------------------------------- |
 | `hash`     | string | Transaction hash                              |
 | `height`   | int64  | Block height where the tx was included        |
-| `gas_used` | int64  | Gas consumed                                  |
+| `gas_used` | int64  | Gas consumed (omitted when the executor does not report gas) |
 | `code`     | uint32 | Response code (0 = success)                   |
 | `raw_log`  | string | Raw log output (present on error, omitted otherwise) |
 
@@ -1137,32 +1165,14 @@ steps:
       dseq: "{{ .Params.dseq }}"
     on-error: abort
 
-  - name: send-manifests
-    type: foreach
-    query: market.leases
-    params:
-      owner: "{{ .Account }}"
-      dseq: "{{ .Params.dseq }}"
-      state: active
-    as: lease
-    step:
-      type: provider
-      action: send-manifest
-      params:
-        provider: "{{ .Item.lease.id.provider }}"
-        dseq: "{{ .Params.dseq }}"
-        sdl: "{{ index .Params \"sdl-file\" }}"
-      retry:
-        max: 3
-        delay: "5s"
-    on-error: continue
-
   - name: display-result
     type: output
     template: |
       Deployment updated!
         DSEQ: {{ .Params.dseq }}
 ```
+
+Manifest re-send to providers with active leases (a `foreach` over `market.leases` running `provider`/`send-manifest` sub-steps) is planned for when the engine gains the `foreach` step type; until then, keyring users re-send manifests with `akt provider send-manifest` after an update, and console-api contexts get manifest handling from the Console API automatically.
 
 **Close workflow definition:**
 
@@ -1207,7 +1217,7 @@ The flagship workflow command. Orchestrates the full deployment lifecycle:
 | Flag               | Type     | Default         | Description                                                 |
 | ------------------ | -------- | --------------- | ----------------------------------------------------------- |
 | `--from`           | string   | context default | Account to deploy from                                      |
-| `--deposit`        | string   | auto-detect     | Initial deposit amount                                      |
+| `--deposit`        | string   | `auto`          | Initial deposit, unified syntax on both rails (see §7.4): `5usd`/`$5`, `5000000uakt`, or `auto` |
 | `--bid-timeout`    | duration | `5m`            | Maximum time to wait for bids                               |
 | `--min-bids`       | int      | `1`             | Minimum bids before selection                               |
 | `--bid-select`     | string   | `"interactive"` | Bid selection: `interactive`, `cheapest`, `provider=<addr>` |
@@ -1358,26 +1368,26 @@ Query provider status. If `provider-addr` is omitted, uses the provider from the
 | `--provider`  | string | `""`            | Provider address         |
 | `--auth-type` | string | context default | Auth type: `jwt`, `mtls` |
 
-#### `akt provider lease-status`
+#### `akt provider lease-status [dseq]`
 
-Query lease deployment status from the provider gateway.
+Query lease deployment status from the provider gateway. The positional `dseq` supplies the deployment sequence. The `--dseq` flag is **disabled pending feedback** (positional only, 2026-07).
 
 | Flag          | Type   | Default         | Description         |
 | ------------- | ------ | --------------- | ------------------- |
-| `--dseq`      | uint64 | required        | Deployment sequence |
+| `--dseq`      | uint64 | required unless positional `dseq` given | Deployment sequence — **disabled pending feedback** (positional only, 2026-07) |
 | `--gseq`      | uint32 | `1`             | Group sequence      |
 | `--oseq`      | uint32 | `1`             | Order sequence      |
 | `--provider`  | string | required        | Provider address    |
 | `--from`      | string | context default | Owner account       |
 | `--auth-type` | string | context default | Auth type           |
 
-#### `akt provider lease-logs`
+#### `akt provider lease-logs [dseq]`
 
-Stream container logs from a lease.
+Stream container logs from a lease. The positional `dseq` supplies the deployment sequence. The `--dseq` flag is **disabled pending feedback** (positional only, 2026-07).
 
 | Flag          | Type   | Default         | Description               |
 | ------------- | ------ | --------------- | ------------------------- |
-| `--dseq`      | uint64 | required        | Deployment sequence       |
+| `--dseq`      | uint64 | required unless positional `dseq` given | Deployment sequence — **disabled pending feedback** (positional only, 2026-07) |
 | `--gseq`      | uint32 | `1`             | Group sequence            |
 | `--oseq`      | uint32 | `1`             | Order sequence            |
 | `--provider`  | string | required        | Provider address          |
@@ -1387,9 +1397,9 @@ Stream container logs from a lease.
 | `--tail`      | int64  | `-1`            | Lines from end (-1 = all) |
 | `--auth-type` | string | context default | Auth type                 |
 
-#### `akt provider lease-events`
+#### `akt provider lease-events [dseq]`
 
-Stream Kubernetes events from a lease.
+Stream Kubernetes events from a lease. The positional `dseq` behaves as in `lease-logs` (`--dseq` — **disabled pending feedback**, positional only, 2026-07).
 
 Same flags as `lease-logs` (minus `--service`, `--tail`), plus `--follow`.
 
@@ -1426,9 +1436,9 @@ Send an SDL manifest to provider(s) for an existing lease.
 | `--provider`  | string | `""`            | Specific provider (default: all providers with active leases) |
 | `--auth-type` | string | context default | Auth type                                                     |
 
-#### `akt provider get-manifest`
+#### `akt provider get-manifest [dseq]`
 
-Retrieve the current manifest from a provider.
+Retrieve the current manifest from a provider. The positional `dseq` supplies the deployment sequence. The `--dseq` flag is **disabled pending feedback** (positional only, 2026-07).
 
 #### `akt provider migrate-hostnames`
 
@@ -1711,6 +1721,213 @@ With write tools:
 }
 ```
 
+### 2.9 Console Commands
+
+The `akt console` group drives the Akash Console managed-wallet API (§7): deployments are created, funded, and closed by the Console's server-side wallet — no local keyring or gas handling is involved. Authenticated commands resolve the API key per §7.1 (`--console-api-key` flag > `AKT_CONSOLE_API_KEY` > per-context stored credential) and fail with a pointer to `akt console login` when none is found. The base URL resolves per §7.2 (`--console-api-url` flag > context `console-api-url` > default). Public catalog commands (`provider`, `gpu`, `template`) work without a key and without a configured context.
+
+**Group persistent flags:**
+
+| Flag                | Type   | Default | Description                                                          |
+| ------------------- | ------ | ------- | -------------------------------------------------------------------- |
+| `--console-api-url` | string | `""`    | Console API base URL (overrides the context setting)                 |
+| `--console-api-key` | string | `""`    | Console API key (overrides env var and stored credential, session only) |
+
+**Authentication:**
+
+| Command                    | Description                                                                                                     |
+| -------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `akt console login [key]`  | Validate a key against `GET /v1/user/me` and store it as the active context's credential (§7.1). The key is taken from the positional argument or a hidden stdin prompt. Requires an active context. Prints the username; never prints the key. |
+| `akt console logout`       | Remove the active context's stored credential.                                                                    |
+| `akt console whoami`       | Show the authenticated user (username, email, verified).                                                          |
+
+**Deployments** (positional `dseq` per §3.8.2):
+
+| Command                                             | Flags                                          | Description                                                                                   |
+| --------------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| `akt console deployment list`                       | `--skip` (0), `--limit` (20)                   | List deployments with pagination.                                                              |
+| `akt console deployment get <dseq>`                 |                                                | Deployment with leases and escrow account.                                                     |
+| `akt console deployment create <sdl-file> [deposit-usd]` | `--deposit <usd>` (alternative to positional; min 0.5) — **disabled pending feedback** (positional only, 2026-07) | Create a deployment; prints `dseq` + tx hash. The deposit uses the unified cross-rail syntax (§7.4): `5`, `5usd`, or `$5` (min $0.50); coin forms like `5000000uakt` fail with the cross-rail error. The returned manifest is cached at `contexts/<name>/manifests/<dseq>.json` for `lease create`. |
+| `akt console deployment update <dseq> <sdl-file>`   |                                                | Update the deployment's SDL.                                                                   |
+| `akt console deployment close <dseq>`               |                                                | Close a deployment. Idempotent: an already-closed deployment prints a note and exits 0.        |
+| `akt console deployment deposit <dseq> [amount-usd]` | `--amount <usd>` (alternative to positional; > 0) — **disabled pending feedback** (positional only, 2026-07) | Add funds to the deployment's escrow. The amount uses the unified cross-rail syntax (§7.4): `10`, `10usd`, or `$10`; coin forms fail with the cross-rail error. |
+| `akt console deployment settings <dseq> [true\|false]` | `--auto-top-up true\|false` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Show settings when no value is given; set auto-top-up when a positional or flag value is present. |
+| `akt console bid list <dseq>`                       |                                                | List bids for the deployment's open orders.                                                    |
+| `akt console lease create <dseq> [provider]`        | `--gseq` (1), `--oseq` (1), `--provider` (alternative to positional) — **disabled pending feedback** (positional only, 2026-07), `--manifest <file>` | Accept a bid; the manifest defaults to the one cached by `deployment create`. |
+
+**Wallet and usage:**
+
+| Command                       | Flags                        | Description                                                     |
+| ----------------------------- | ---------------------------- | ---------------------------------------------------------------- |
+| `akt console wallet list`     |                              | List managed wallets. `creditAmount` is dollar-scale per the `/v1/wallets` contract (shown as `$X.XX`, no µ scaling), with the wallet's `denom` when the API reports one. |
+| `akt console wallet balance`  |                              | Available / in-deployment / total balance in USD.                |
+| `akt console wallet settings [true\|false]` | `--auto-reload true\|false` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Show settings when no value is given; set auto-reload otherwise. |
+| `akt console wallet cost`     |                              | Estimated weekly cost in USD.                                    |
+| `akt console usage [from] [to]` | `--from`, `--to` (YYYY-MM-DD, alternatives) — **disabled pending feedback** (positional only, 2026-07) | Daily spend history for the managed wallet. `totalSpent` is the spend within the requested range (sum of the daily values, order-independent); `lifetimeSpent` is the API's cumulative figure as of the range end, omitted when the range is empty. Omitted dates use the API defaults (last 30 days). |
+
+**Public catalog** (no API key required):
+
+| Command                             | Flags            | Description                                             |
+| ----------------------------------- | ---------------- | -------------------------------------------------------- |
+| `akt console provider list`         | `--limit` (20, 0 = all) | List providers (limit applied client-side).       |
+| `akt console provider get <address>` |                 | One provider's full catalog record.                      |
+| `akt console provider regions`      |                  | Regions providers advertise.                             |
+| `akt console provider auditors`     |                  | Known auditors.                                          |
+| `akt console gpu`                   |                  | Network-wide GPU availability and price catalog.         |
+| `akt console template list`         |                  | Template catalog.                                        |
+| `akt console template get <id>`     |                  | One template.                                            |
+| `akt console template sdl <id>`     |                  | Print the template's raw SDL to stdout (for piping).     |
+
+**API keys and JWTs:**
+
+| Command                          | Flags                                          | Description                                                    |
+| -------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------- |
+| `akt console apikey list`        |                                                | List API keys (secrets are never shown).                         |
+| `akt console apikey create <name> [expires-at]` | `--name`, `--expires-at` (RFC 3339, alternatives) — **disabled pending feedback** (positional only, 2026-07) | Create a key; the secret is printed exactly once with a warning. |
+| `akt console apikey delete <id>` |                                                | Delete a key; a missing key (404) is a no-op.                    |
+| `akt console jwt create`         | `--ttl` (300), `--scope` (csv, default `status,logs,events,shell,send-manifest,get-manifest`) | Mint a short-lived provider-scoped JWT. |
+
+**Provider gateway (live lease operations):**
+
+Managed (Console-API) contexts reach provider gateways directly, without a wallet or local key: each command resolves the deployment's first active lease via the Console API, looks up the provider's `hostUri`, and mints a scoped JWT via `POST /v1/create-jwt-token` that the gateway accepts as `Authorization: Bearer`. One-shot calls use a 300 s token; streaming/interactive modes (`--follow`, `--watch`, `shell`) use 3600 s. Without an active lease the commands fail listing the states of the leases that do exist.
+
+| Command                                            | Flags                                       | Description                                                                                        |
+| -------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `akt console logs <dseq> [service]`                | `--follow`, `--tail N`, `--service` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Stream container logs from the lease's provider (JWT scope `logs`).                           |
+| `akt console events <dseq>`                        | `--follow`                                  | Stream Kubernetes events from the lease's provider (JWT scope `events`).                            |
+| `akt console status <dseq>`                        | `--watch`, `--interval` (5s)                | Live lease status from the provider gateway (JWT scope `status`); with `--watch`, snapshots are re-printed each interval until interrupted. `deployment get` remains the Console-API view. |
+| `akt console shell <dseq> <service> [-- command...]` |                                           | Interactive shell in a lease container, default `/bin/sh`; exec is the same operation with an explicit command (JWT scope `shell`). TTY auto-detected. |
+| `akt console screen <sdl-file>`                    |                                             | Client-side bid screening: derive resources from the SDL and list the providers able to run it (public endpoint, no key needed). |
+
+Per the positional-primary convention (§3.8), every console command takes its primary value(s) positionally; the equivalent flags remain as overrides and a positional value wins when both are given. (2026-07: the flag twins marked *disabled pending feedback* above are commented out in code for the positional-only UX trial — the positional form is the only way while the trial runs; the original flag definitions are preserved in `FEEDBACK(2026-07)` comments for restoration.) Output is indented JSON; USD values are rendered as `$X.XX`. State-changing calls are recorded in the context's action log as `type=console` entries (§5.6). No command ever prints a Console API key, except the one-time secret from `apikey create`.
+
+---
+
+### 2.10 Capability Gating
+
+The active context's configuration determines a **feature set**: which transports are usable and therefore which command groups can work.
+
+| Capability | Derived from | Gates |
+|---|---|---|
+| `chain-query` | network has ≥1 RPC endpoint | `query`, `monitor` |
+| `chain-tx` | network has ≥1 RPC endpoint | `tx` |
+| `provider` | network has ≥1 RPC endpoint | `provider` |
+| `console` | Console API key resolvable (§7.1) | Console-backed command groups |
+
+Commands declare requirements via a cobra annotation (`akt.requires`, package `internal/capability`); alternatives are separated by `|` (e.g. workflow commands require `chain-tx|console`). A command whose requirement the context cannot satisfy fails fast with the missing capability and its remedy instead of erroring mid-transport.
+
+Presentation is configurable while UX feedback is collected (`defaults.command-gating`):
+
+| Mode | Behavior |
+|---|---|
+| `dim` (default) | Unavailable commands stay listed, marked `[unavailable]` in help, and fail fast with an explanation. |
+| `hide` | Unavailable commands are removed from help listings (direct invocation still fails fast with the explanation). |
+| `off` | No gating; commands fail wherever the missing transport is first touched. |
+
+Example: a network-less `console-api` context (API key only) lists and runs only Console commands; `tx`, `query`, `provider`, and `monitor` are dimmed or hidden and explain that an RPC endpoint must be added.
+
+---
+
+### 2.11 SDL Commands
+
+Transport-independent SDL authoring, ported from console-axi (`src/sdl/templates`, `src/sdl/lint.ts`). All `akt sdl` subcommands run entirely locally: no context, key, or RPC endpoint is required, and the group declares no capability requirements.
+
+#### `akt sdl scaffolds`
+
+List the built-in SDL scaffolds (alias: `akt sdl templates`, matching the reference CLI's historical name).
+
+| Scaffold        | Shape                                                                                        |
+| --------------- | -------------------------------------------------------------------------------------------- |
+| `web`           | Single web service with one HTTP port exposed to the internet (nginx:1.27, 0.5 CPU / 512Mi)  |
+| `gpu`           | GPU workload (ML/inference) with an nvidia model requirement (pytorch image, a100, 4 CPU / 16Gi) |
+| `multi-service` | App + postgres:16 database with a persistent volume (`beta2`) and service-to-service networking |
+| `ip-lease`      | Service with a dedicated public IP — SDL v2.1 `endpoints` + `expose ... to ip`               |
+
+#### `akt sdl init <scaffold>`
+
+Generate SDL YAML on stdout, pipeable into `akt sdl validate -` or redirected to a file for `akt deploy`. The output is self-checked against the validator before printing. Flags are generation parameters with per-scaffold defaults — not positional-argument twins — so the zero-flag invocation always produces a deployable SDL. An int flag left unset keeps its per-scaffold default; an explicitly set value is range-checked up front, so out-of-range input (including an explicit `0`) is a usage error (exit 2), never an internal generation error. Pricing defaults to a 10000 uact/block ceiling (100000 for `gpu`) so bids arrive.
+
+| Flag          | Type        | Description                                              |
+| ------------- | ----------- | --------------------------------------------------------- |
+| `--name`      | string      | Service name (default per scaffold: `web` / `app`)        |
+| `--image`     | string      | Container image; must be tagged, e.g. `nginx:1.27`        |
+| `--port`      | int         | Container port, 1-65535 (default 80; 8080 for `gpu`)      |
+| `--as`        | int         | External port, 1-65535 (default 80)                       |
+| `--cpu`       | string      | CPU units, e.g. `0.5` or `500m`                           |
+| `--memory`    | string      | Memory size, e.g. `512Mi`, `2Gi`                          |
+| `--storage`   | string      | Storage size, e.g. `1Gi` (sizes the persistent volume for `multi-service`) |
+| `--count`     | int         | Replica count, minimum 1 (default 1)                      |
+| `--price`     | int         | Max price per block in uact, minimum 1                    |
+| `--env`       | stringArray | Environment variable `KEY=value` (repeatable)             |
+| `--gpu`       | int         | GPU units, minimum 1 (`gpu` scaffold, default 1)          |
+| `--gpu-model` | string      | NVIDIA GPU model (`gpu` scaffold, default `a100`)         |
+
+#### `akt sdl validate <file>`
+
+Validate an SDL offline (`-` reads stdin). Parsing and schema/relational validation use `pkg.akt.dev/go/sdl` — the same parser behind `akt deploy` and the chain tx commands — followed by lint rules ported from the reference:
+
+- **Unpinned image** (error): every service image must carry an explicit tag or `@sha256:` digest; untagged images and `:latest` are rejected as non-reproducible.
+- **Pricing denom**: `uact` passes; `uakt` produces a **warning**, not an error — a deliberate deviation from the reference, which hard-rejects `uakt` because it only serves the managed Console API. akt serves both rails: `uakt` is valid on-chain, but console-api (managed) contexts price in `uact`. Any other denom is an error, matching the reference.
+
+Exit `0` when valid, printing a summary (`valid: N service(s), M group(s), K warning(s)`) plus any warnings; exit `1` when invalid, listing every parse/lint error.
+
+```bash
+# Generate, self-check, and validate
+akt sdl init web --image nginx:1.27 > deploy.yaml
+akt sdl validate deploy.yaml
+
+# Pipe without touching disk
+akt sdl init gpu --gpu-model h100 | akt sdl validate -
+```
+
+---
+
+---
+
+### 2.12 Version and Completion Commands
+
+#### `akt version`
+
+Print the binary's version. Build metadata is injected at link time by the
+Makefile (`main.version`, `main.commit`, `main.date`); a binary built without
+those flags reports `dev`.
+
+| Flag     | Type | Default | Description                     |
+| -------- | ---- | ------- | ------------------------------- |
+| `--long` | bool | `false` | Print full build information    |
+
+```bash
+$ akt version
+akt 0.0.1-143-g909f173 (commit: 909f1735b99d83a9ab52a0e6bee32ca7e7402672, built: 2026-07-27T04:20:51Z)
+
+$ akt version --long
+version:    0.0.1-143-g909f173
+commit:     909f1735b99d83a9ab52a0e6bee32ca7e7402672
+built:      2026-07-27T04:20:51Z
+go:         go1.26.1
+platform:   darwin/arm64
+build tags: osusergo,netgo,ledger,muslc,gcc
+```
+
+The long form is the form to include in bug reports: the build tags and
+platform determine which keyring backends and cgo-dependent features are
+compiled in.
+
+#### `akt completion <shell>`
+
+Generate a shell completion script for `bash`, `zsh`, `fish`, or `powershell`.
+Completion is dynamic for context and network names.
+
+```bash
+# Load for the current session
+source <(akt completion bash)
+
+# Install permanently (zsh)
+akt completion zsh > "${fpath[1]}/_akt"
+```
+
+Both commands run without a configured context (§2.10): they require no
+transport.
+
 ---
 
 ## 3. Flag Specification
@@ -1734,7 +1951,7 @@ Two flags control confirmation and safety bypass behavior across the CLI. They s
 
 | Flag | Short | Semantics | Example |
 |---|---|---|---|
-| `--yes` | `-y` | Skip interactive confirmation prompts. The operation proceeds as if the user answered "yes" to all prompts. The operation itself is unchanged. | `akt tx deployment close --dseq 12345 --yes` |
+| `--yes` | `-y` | Skip interactive confirmation prompts. The operation proceeds as if the user answered "yes" to all prompts. The operation itself is unchanged. | `akt tx deployment close 12345 --yes` |
 | `--force` | | Override a safety guard that would otherwise prevent the operation. The operation may behave differently or bypass a check. | `akt context network delete mainnet --force` (deletes even if contexts reference it) |
 
 `--yes` / `-y` is **not a global flag**. It is added individually to commands that have confirmation prompts: all `tx` commands (via `AddTxFlagsToCmd()`, §3.2), workflow commands (`deploy`, `update`, `close`), and destructive context/store management commands (`context delete`, `store import --replace`). `--force` is used sparingly on specific commands where a structural safety check exists (e.g., deleting a network that is referenced by contexts). Commands should never use `--force` as a synonym for `--yes`.
@@ -1808,36 +2025,38 @@ Added to list-type query commands via `AddPaginationFlagsToCmd()`.
 
 Used by `tx` commands and `provider` gateway commands for resource identification. These compose hierarchically: LeaseID includes BidID includes OrderID includes GroupID includes DeploymentID.
 
-> **Note:** For `query` commands, resource identity filtering is done via the positional filter argument instead of these flags. See [section 3.8](#38-resource-filter-argument) for the filter syntax. The flags below continue to be used by `tx` commands (e.g., `akt tx deployment close --dseq 12345`) and `provider` commands (e.g., `akt provider lease-logs --dseq 12345 --provider akash1...`) where the filter argument does not apply.
+> **Note:** For `query` commands, resource identity filtering is done via the positional filter argument instead of these flags. See [section 3.8](#38-resource-filter-argument) for the filter syntax. The flags below continue to be used by `tx` and `provider` commands where no positional twin exists (e.g. `tx deployment create`, `tx market bid create/close`, `provider send-manifest`, `provider lease-shell`, `provider migrate-*`).
+>
+> **2026-07 positional-only trial:** on commands where a positional twin exists — `tx deployment close/update`, `tx deployment group close/pause/start`, `tx market lease create/withdraw/close`, `provider lease-status/lease-logs/lease-events/get-manifest` — the duplicated identity flags are **disabled pending feedback** (positional only, 2026-07); see the per-flag notes below.
 
 | Flag         | Type   | Default                   | Description                |
 | ------------ | ------ | ------------------------- | -------------------------- |
 | `--owner`    | string | context `default-account` | Deployment owner address   |
-| `--dseq`     | uint64 | `0`                       | Deployment sequence number |
-| `--gseq`     | uint32 | `1`                       | Group sequence number      |
+| `--dseq`     | uint64 | `0`                       | Deployment sequence number — **disabled pending feedback** (positional only, 2026-07) on `tx deployment close/update`, `tx deployment group *`, `tx market lease *`, `provider lease-status/lease-logs/lease-events/get-manifest` |
+| `--gseq`     | uint32 | `1`                       | Group sequence number — **disabled pending feedback** (positional only, 2026-07) on `tx deployment group *` |
 | `--oseq`     | uint32 | `1`                       | Order sequence number      |
-| `--provider` | string | `""`                      | Provider address           |
+| `--provider` | string | `""`                      | Provider address — **disabled pending feedback** (positional only, 2026-07) on `tx market lease *` |
 
 ### 3.6 Deployment Query Flags
 
-Used by `query deployment`. Resource identity (owner, dseq) is supplied via the positional filter argument (see [section 3.8](#38-resource-filter-argument)). When enough components are provided to identify a single deployment, returns detail format; otherwise returns a filtered list.
+Used by `query deployment`. Resource identity (owner, dseq) is supplied via the positional filter argument (see [section 3.8](#38-resource-filter-argument)); the duplicated `--owner`/`--dseq` filter flags are **disabled pending feedback** (positional only, 2026-07). When enough components are provided to identify a single deployment, returns detail format; otherwise returns a filtered list.
 
 | Flag      | Type   | Default | Description                                           |
 | --------- | ------ | ------- | ----------------------------------------------------- |
-| `--state` | string | `""`    | Filter by state: `active`, `closed`, or empty for all |
+| `--state` | string | `""`    | Filter by state: `active`, `closed`, or empty for all — **disabled pending feedback** (positional only, 2026-07; use the positional state keyword, including the second positional form `akt query deployment akash1x/12345 active`) |
 
 ### 3.7 Market Query Flags
 
-Used by `query market order`, `query market bid`, and `query market lease`. Resource identity is supplied via the positional filter argument (see [section 3.8](#38-resource-filter-argument)). When enough components are provided to uniquely identify a single resource, returns detail format; otherwise returns a filtered list.
+Used by `query market order`, `query market bid`, and `query market lease`. Resource identity is supplied via the positional filter argument (see [section 3.8](#38-resource-filter-argument)); the duplicated `--owner`/`--dseq`/`--gseq`/`--oseq`/`--provider` filter flags are **disabled pending feedback** (positional only, 2026-07). When enough components are provided to uniquely identify a single resource, returns detail format; otherwise returns a filtered list. `--by` remains enabled (it is a mode switch with no positional twin).
 
 | Flag      | Type   | Default   | Description                               |
 | --------- | ------ | --------- | ----------------------------------------- |
 | `--by`    | string | `"owner"` | Filter perspective: `owner` or `provider`. Controls how the filter argument is parsed. See [section 3.8](#38-resource-filter-argument). Only applies to `bid` and `lease` queries. |
-| `--state` | string | `""`      | Filter by state                           |
+| `--state` | string | `""`      | Filter by state — **disabled pending feedback** (positional only, 2026-07; use the positional state keyword, including the second positional form `akt query market lease 12345 active`) |
 
 ### 3.8 Resource Filter Argument
 
-Akash `query` commands for deployment, market, certificate, audit, and escrow resources accept an optional positional **filter argument** that replaces flag-based identity filtering (the `--owner`, `--dseq`, `--gseq`, `--oseq`, `--provider` flags documented in section 3.5). This supports the [argument-driven filtering](DESIGN.md#11-goals) design goal.
+Akash `query` commands for deployment, market, certificate, audit, and escrow resources accept an optional positional **filter argument** that replaces flag-based identity filtering (the `--owner`, `--dseq`, `--gseq`, `--oseq`, `--provider` flags documented in section 3.5). This supports the [argument-driven filtering](DESIGN.md#11-goals) design goal. The deployment, order, bid, lease, and cert queries additionally accept an optional **second positional argument** — a state keyword — so identity+state combinations stay expressible without `--state` (e.g. `akt query deployment akash1x/12345 active`, `akt query market lease 123 active`).
 
 #### 3.8.1 General Format
 
@@ -1865,13 +2084,24 @@ The first component is classified by its format:
 | ----------------------------- | ----------------------------- | ------------------ |
 | Bech32 address (`akash1...`)  | Leading address (owner or provider per `--by` mode) | `akash1abc...def` |
 | Unsigned integer              | `dseq` — the leading address defaults to the context's `default-account` (in `--by owner` mode) | `12345` |
+| State keyword (per-resource vocabulary) | State filter — equivalent to `--state <keyword>` | `active` |
 
 Subsequent `/`-separated components are parsed positionally: after the leading address comes `dseq` (uint64), then `gseq` (uint32), then `oseq` (uint32), then the trailing address (provider or owner, opposite of the leading address).
+
+State keywords are only recognized as the sole/first component of the filter argument; they do not combine with identity paths inside a single argument. Since 2026-07 the identity+state combination is expressed with the optional **second positional argument** (`akt query deployment akash1abc/12345 active`); two state keywords (a bare-keyword first argument plus a second argument) are an error, and the `--state` flag is **disabled pending feedback** (positional only, 2026-07). On a fully-specified identity the second positional state **verifies** the fetched record rather than filtering (see §3.8.3). Each resource has its own state vocabulary, derived from the on-chain state enums:
+
+| Resource       | State keywords                        |
+| -------------- | ------------------------------------- |
+| `deployment`   | `active`, `closed`                    |
+| `market order` | `open`, `active`, `closed`            |
+| `market bid`   | `open`, `active`, `lost`, `closed`    |
+| `market lease` | `active`, `insufficient_funds`, `closed` |
 
 #### 3.8.3 Get-vs-List Heuristic
 
 - If enough components are specified to **uniquely identify** a single resource, the command returns a single-item **detail** response.
 - Otherwise, the command returns a **filtered list** response.
+- The optional positional **[state]** argument follows the same split: with a partial identity it filters the list; with a complete identity it **verifies** the fetched record — when the record is in a different state the command fails with an error naming both states (e.g. `deployment akash1x/12345 is closed, not active`) instead of silently printing the record. Dropping the state argument prints the record regardless of state.
 
 | Command                | Unique identity requires              |
 | ---------------------- | ------------------------------------- |
@@ -1902,10 +2132,11 @@ Subsequent `/`-separated components are parsed positionally: after the leading a
 | `query market bid`       | `[owner/]dseq[/gseq/oseq[/provider]]`          | yes            |
 | `query market lease`     | `[owner/]dseq[/gseq/oseq[/provider]]`          | yes            |
 | `query provider`         | `[address]`                                     | no             |
-| `query cert`             | `[owner]`                                       | no             |
+| `query cert`             | `[owner] [state]`                               | no             |
 | `query audit`            | `[owner]`                                       | no             |
 | `query escrow`           | `[owner[/dseq]]`                                | no             |
 | `query escrow payment`   | `[owner[/dseq]]`                                | no             |
+| `query escrow blocks-remaining` | `[owner/]dseq`                           | no             |
 
 #### 3.8.6 Examples
 
@@ -1916,8 +2147,11 @@ akt query deployment                           # List all deployments for defaul
 akt query deployment 12345                     # Get deployment dseq 12345 (owner from context)
 akt query deployment akash1abc...              # List all deployments for that owner
 akt query deployment akash1abc.../12345        # Get specific deployment
-akt query deployment --state active            # List active deployments for default account
-akt query deployment 12345 --state active      # Get dseq 12345 (--state ignored on single get)
+akt query deployment --state active            # DISABLED pending feedback (2026-07): use `akt query deployment active`
+akt query deployment active                    # List active deployments (positional state keyword)
+akt query deployment 12345 active              # Get + state verification: errors if 12345 is not active (§3.8.3)
+akt query deployment akash1abc.../12345 active # Same, with explicit owner
+akt query deployment 12345 --state active      # DISABLED pending feedback (2026-07): use `akt query deployment 12345 active`
 ```
 
 **Market lease queries — owner perspective** (default):
@@ -1927,7 +2161,10 @@ akt query market lease                         # List all leases for default acc
 akt query market lease 12345                   # List leases for dseq 12345 (owner from context)
 akt query market lease 12345/1/1               # List leases for order 12345/1/1
 akt query market lease akash1abc.../12345/1/1/akash1prov...  # Get specific lease
-akt query market lease --state active          # List active leases for default account
+akt query market lease --state active          # DISABLED pending feedback (2026-07): use `akt query market lease active`
+akt query market lease active                  # List active leases (positional state keyword)
+akt query market lease 12345 active            # Partial identity + state: filters the lease list (state verifies only on full-identity gets, §3.8.3)
+akt query market bid open                      # List open bids (positional state keyword)
 ```
 
 **Market lease queries — provider perspective** (`--by provider`):
@@ -2373,6 +2610,7 @@ Each context has its own action log at:
 | `workflow` | A multi-step workflow (e.g., `akt deploy`) | Workflow name, step sequence, each step's type and result             |
 | `provider` | A provider gateway operation               | Operation (send-manifest, lease-logs, etc.), provider address, result |
 | `context`  | A context management operation             | Operation (switch, edit, etc.), old/new values                        |
+| `console`  | A state-changing Console API operation     | Operation (create-deployment, close-deployment, etc.), dseq, result   |
 | `error`    | A failed operation                         | Original action type, error message, context                          |
 
 ### 5.3 Action Entry Format
@@ -2458,12 +2696,13 @@ The action log records entries for the following command categories:
 | Command category | Logged | Entry type | When |
 |---|---|---|---|
 | `tx *` | Always | `tx` | After broadcast (success or failure). On success: includes tx hash, height, gas used. On failure: includes error message and result code. |
-| `query *` | Always | `query` | After query completes. Includes query path, duration. |
+| `query *` | Never by default | `query` | Read-only queries are not state changes and are not recorded by default (see verbose row below). |
 | Workflow commands (`deploy`, `update`, `close`) | Always | `workflow` | One entry per workflow step. Each entry includes the step name, result, and workflow run ID. |
-| `provider *` | Always | `provider` | After provider gateway operation completes. |
+| `provider *` (state-changing: `send-manifest`, `migrate-hostnames`, `migrate-endpoints`, `lease-shell`) | Always | `provider` | After the provider gateway operation completes (success or failure). Read-only provider queries (`status`, `lease-status`, `lease-logs`, `lease-events`, `get-manifest`) are not recorded. |
 | `context *` | Always | `context` | After context management operation (switch, edit, create, delete). |
+| Console API state changes (create/update/close deployment, create lease, deposit) | Always | `console` | After the Console API call completes (success or failure). Read-only Console queries are not recorded. |
 | All commands | On failure | `error` | When any command fails. Includes original action type and error message. |
-| `query` (read-only, no side effects) | When `-v` is set | `query` | Verbose mode logs all queries for debugging. In default mode, only queries from interactive commands (not internal queries by the sync engine) are logged. |
+| `query` (read-only, no side effects) | When `-v` is set (future) | `query` | Verbose-mode query logging for debugging is planned but not yet implemented. Internal queries (e.g. by the sync engine) are never logged. |
 
 The action logger is opened in the root command's `PersistentPreRunE` and closed in `PersistentPostRunE`. Commands retrieve it via `cliutil.ActionLogFromContext(cmd.Context())`.
 
@@ -2581,9 +2820,20 @@ All Console API requests require the `x-api-key` header. The API key is resolved
 
 1. `--console-api-key` flag (highest priority, session only)
 2. `AKT_CONSOLE_API_KEY` environment variable
-3. If neither is set, the command fails with an error instructing the user to set `AKT_CONSOLE_API_KEY`.
+3. The per-context stored credential (see below)
+4. If none is available, the command fails with an error explaining how to configure a key.
 
-The API key is **never** persisted in config.yaml or the keyring.
+**Per-context credential storage.** A Console API key can be stored on a context so that switching contexts switches Console identity with no manual credential juggling. The key is stored at:
+
+```
+<config-root>/contexts/<context-name>/console-api-key
+```
+
+- The file is created with `0600` permissions and contains only the key.
+- The key is **never** written to `config.yaml` and is **never** printed by any command or recorded in logs; `akt context show` reports only whether a key is configured.
+- Because the credential lives in the context's data directory, `akt context rename` moves it and `akt context delete` removes it (unless `--keep-data`).
+- The credential is written via `akt context create --console-api-key ...` or `akt context edit --console-api-key ...`; passing an empty string via `akt context edit --console-api-key ""` removes it.
+- Different contexts hold independent keys; Console calls always use the active context's key (subject to the flag/env overrides above).
 
 API keys are created at [console.akash.network](https://console.akash.network) > Settings > API Keys.
 
@@ -2599,12 +2849,14 @@ API keys are created at [console.akash.network](https://console.akash.network) >
 
 All requests include `Content-Type: application/json` and `x-api-key` headers.
 
+The endpoints below cover the deployment lifecycle used by command and workflow routing (§7.4-§7.5). The client's full surface — user info, wallets, usage, provider/GPU/template catalogs, API keys, and provider-scoped JWTs — is documented per command in §2.9 and contract-tested against the vendored OpenAPI spec (`internal/console/testdata/openapi.json`).
+
 #### `POST /v1/deployments` -- Create Deployment
 
 | Field           | Type   | Required | Description                           |
 | --------------- | ------ | -------- | ------------------------------------- |
 | `data.sdl`      | string | yes      | SDL content as string                 |
-| `data.deposit`  | number | yes      | Deposit in USD (minimum $5)           |
+| `data.deposit`  | number | yes      | Deposit in USD (minimum $0.50)        |
 
 Returns `{ data: { dseq: string, manifest: string } }`.
 
@@ -2679,7 +2931,14 @@ When a workflow runs in a context with `auth-method: console-api`, the workflow 
 | `provider` | Provider gateway call (JWT/mTLS) | Not supported — Console API contexts do not interact with provider gateways directly. The Console API handles manifest submission internally during lease creation. |
 | `foreach` | Iterate and execute nested step | Same, with nested step routing rules applied |
 
-**Deposit handling**: When `auth-method: console-api`, the `--deposit` flag is interpreted as USD (not uakt). The workflow engine passes the value directly to the Console API's `data.deposit` field.
+**Deposit handling**: `--deposit` accepts one unified syntax on both rails, parsed in one place (`internal/transport.ParseDeposit`) and translated per transport. The `usd` unit is case-insensitive and always wins over coin parsing.
+
+| Form | Examples | `keyring` (chain rail) | `console-api` (console rail) |
+|---|---|---|---|
+| USD | `5usd`, `$5`, `5.50usd` | Error: `USD deposits require a console-api context; specify a coin amount like 5000000uakt` | Sent as USD in the Console API's `data.deposit` field (Console minimum: 0.50 USD) |
+| Coin | `5000000uakt`, `5akt` | Attached to the deployment as the coin deposit | Error: `console deposits are in USD; use e.g. 5usd` |
+| Bare number | `5`, `5.50` | Error (coins require a denomination — the historical chain behavior, with cross-rail guidance) | Interpreted as USD, same as `5usd` |
+| `auto` / empty | `auto` | Chain-minimum deployment deposit, queried on chain | Error: an explicit USD deposit is required |
 
 **Manifest handling**: The Console API's `POST /v1/deployments` returns a `manifest` field in the response. The workflow engine stores this value and passes it to `POST /v1/leases` when creating leases, instead of calling the provider's `send-manifest` endpoint directly.
 
@@ -2692,7 +2951,7 @@ When a context uses `console-api` auth, the following commands are routed throug
 | `akt tx deployment create <sdl>`     | `POST /v1/deployments`               | `--deposit` flag in USD                  |
 | `akt tx deployment update <sdl>`     | `PUT /v1/deployments/{dseq}`         |                                          |
 | `akt tx deployment close`            | `DELETE /v1/deployments/{dseq}`      |                                          |
-| `akt query market bid --dseq`        | `GET /v1/bids?dseq=`                 |                                          |
+| `akt query market bid <dseq>`        | `GET /v1/bids?dseq=`                 |                                          |
 | `akt tx market lease create`         | `POST /v1/leases`                    | Requires manifest from deployment create |
 | `akt tx escrow deposit`              | `POST /v1/deposit-deployment`        | `--deposit` flag in USD                  |
 | `akt query deployment`               | `GET /v1/deployments`                | Paginated via `--skip`/`--limit`         |
@@ -2708,11 +2967,11 @@ Use a context with auth-method: keyring for this operation.
 
 | HTTP Status | Handling                                                          |
 | ----------- | ----------------------------------------------------------------- |
-| 401         | Invalid or expired API key. Prompt user to check `AKT_CONSOLE_API_KEY`. |
+| 401         | Invalid or expired API key. Point the user at the key resolution chain (§7.1) and `akt console login`. |
 | 402         | Insufficient funds in Console account.                            |
 | 404         | Deployment not found (dseq does not exist or not owned by user).  |
-| 429         | Rate limited. Retry with backoff.                                 |
-| 5xx         | Console API server error. Retry with backoff (max 3 attempts).    |
+| 429         | Rate limited. Retry with backoff (safe for every method: the request was rejected before processing). |
+| 5xx         | Console API server error. Retry with backoff (max 3 attempts) for idempotent methods (GET/HEAD/PUT/DELETE) only. POST is never replayed on 5xx: the request may have been processed despite the error (e.g. a gateway 502 after a completed write), and replaying it could duplicate a deployment or a USD deposit. |
 
 ### 7.7 Differences from Keyring Auth
 
@@ -2725,6 +2984,54 @@ Use a context with auth-method: keyring for this operation.
 | Supported commands | All tx + query                     | Deployment lifecycle + queries via chain  |
 | Provider auth      | JWT / mTLS                         | Not applicable                            |
 | Gas/fees           | Configurable per-context            | Managed by Console                        |
+
+---
+
+### 7.8 Console Compatibility Matrix
+
+Status of `akt` coverage for every Akash Console capability. "Covered" means the capability is reachable from `akt` end to end; deferred entries carry an explicit rationale. Reference points: the Console API surface (§7.1–§7.7), the `console-axi` reference CLI, and the Console web app.
+
+#### Covered
+
+| Console capability | akt equivalent | Notes |
+|---|---|---|
+| Authenticate with API key | `akt console login/logout/whoami`; per-context credential (`akt context edit --console-api-key`) | Resolution: flag > `AKT_CONSOLE_API_KEY` > per-context file (§7.1). Switching context switches Console identity. |
+| Create deployment (managed wallet) | `akt console deployment create <sdl> [deposit-usd]`; `akt deploy` in a `console-api` context | Deposit in USD (minimum $0.50), unified deposit syntax per §7.4. The manifest is cached per context for the follow-up lease. |
+| List / inspect deployments | `akt console deployment list/get` | Pagination via `--skip`/`--limit`. |
+| Update / close deployment | `akt console deployment update/close`; `akt update`, `akt close` | Close is idempotent: an already-closed deployment reports success. |
+| Escrow deposit | `akt console deployment deposit <dseq> [amount-usd]` | |
+| Auto top-up settings | `akt console deployment settings <dseq> [true\|false]` | `/v2/deployment-settings`, PATCH with POST fallback. |
+| View bids / create lease | `akt console bid list <dseq>`, `akt console lease create <dseq> [provider]` | The `akt deploy` workflow automates the bid wait and selection. |
+| Live lease status | `akt console status <dseq>` (`--watch`) | Reads the provider gateway directly using a Console-minted scoped JWT. |
+| Container logs / cluster events | `akt console logs <dseq> [service]`, `akt console events <dseq>` (`--follow`) | Same streaming paths as `akt provider lease-logs/lease-events`, authenticated by the Console JWT — no websocket relay needed. |
+| Exec / interactive shell | `akt console shell <dseq> <service> [-- command]` | Exec is the same command with an explicit command argument. |
+| Bid screening | `akt console screen <sdl-file>` | Public endpoint; resources are derived from the SDL. |
+| Wallet balances & managed wallets | `akt console wallet balance/list` | Balances are µACT rendered as USD (1 ACT = 1 USD); wallet credits are dollar-scale. |
+| Wallet auto-reload | `akt console wallet settings [true\|false]` | The only headless funding path, matching the reference CLI. |
+| Cost estimate & usage history | `akt console wallet cost`, `akt console usage [from] [to]` | Usage totals the requested range; the lifetime figure is reported separately. |
+| Provider marketplace browse | `akt console provider list/get/regions/auditors` | Public endpoints; no key required. |
+| GPU availability & pricing | `akt console gpu` | Public. |
+| Template catalog | `akt console template list/get/sdl` | `template sdl` writes raw SDL to stdout; redirect it to a file for `akt deploy` (which takes a path, not stdin). |
+| SDL authoring | `akt sdl scaffolds/init/validate` (§2.11) | Local scaffolding, generation, and lint; no context, key, or RPC required. |
+| API key management | `akt console apikey list/create/delete` | Create shows the secret exactly once. |
+| Provider-scoped JWT minting | `akt console jwt create` | Also the mechanism behind the live lease operations above. |
+| Action audit trail | Automatic: state-changing Console calls are recorded in the per-context action log (`akt context log`) | Beyond Console parity — Console has no client-side audit trail. |
+
+#### Deferred or not portable (with rationale)
+
+| Console capability | Status | Rationale |
+|---|---|---|
+| Adding funds by card / 3DS payment | Not portable | Stripe checkout with 3DS is inherently interactive and web-only; the reference CLI defers to auto-reload as well. Headless path: `akt console wallet settings true` plus per-deployment auto top-up. |
+| Account signup / email verification / team management | Not portable | Web-only Console account flows with no public API endpoints. |
+| Certificate management for managed wallets | Not applicable | The managed wallet signs server-side, so no client certificate exists (the reference CLI has no cert commands either). |
+| Console's `provider-proxy` websocket relay | Superseded | akt reaches provider gateways directly with a Console-minted JWT, which covers the same operations without reimplementing the relay's in-band auth protocol. |
+
+#### Behavioral differences vs the reference CLI (intentional)
+
+- Output follows akt conventions (`-o json|yaml|pretty`) rather than TOON.
+- Credentials and the manifest cache are per-context (§7.1) rather than a single global config file, so several Console accounts can be used side by side.
+- The composite `deploy` command is the existing `akt deploy` workflow with auth-aware routing (§7.4), not a separate code path.
+- Commands take their primary values positionally (§3.8); the reference CLI is flag-based.
 
 ---
 
@@ -4612,7 +4919,7 @@ Cobra provides this feature via `Command.SuggestionsMinimumDistance` and `Comman
 | 1.4  | Context manager       | Context CRUD, switching, composition (network + keyring + store + log), fork/edit-parent for networks                                                                                       | All `akt context *` commands work, fork/edit-parent works, context propagation works                    |
 | 1.5  | Context live-reload   | Config file watching, propagation of changes to running session                                                                                                                             | Config changes reflected in session; TUI overrides flags/env; CLI respects override chain               |
 | 1.6  | Keyring integration   | Shared multi-keyring support, keys visible to all contexts using the keyring                                                                                                                | Keys can be created, listed, and used for signing; adding key to shared keyring visible in all contexts |
-| 1.7  | Action log            | Append-only JSONL action log per context, log reading/filtering                                                                                                                             | All tx/query actions logged, `akt context log` shows entries, log rotation works                        |
+| 1.7  | Action log            | Append-only JSONL action log per context, log reading/filtering                                                                                                                             | All mutating actions (tx, workflow, provider, context, console) logged per §5.6 — read-only queries are not recorded by default; `akt context log` shows entries newest-first; log rotation works |
 | 1.8  | Chain client          | Full and light client with multi-endpoint failover                                                                                                                                          | Successful tx broadcast and query with automatic failover when primary endpoint is down                 |
 | 1.9  | Transaction commands  | All `tx` module commands (bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, slashing, vesting, upgrade, crisis, IBC) | Each command matches the behavioral output of the current `akash` binary                                |
 | 1.10 | Query commands        | All `query` module commands                                                                                                                                                                 | Each command matches the behavioral output of the current `akash` binary                                |
@@ -4644,7 +4951,7 @@ Cobra provides this feature via `Command.SuggestionsMinimumDistance` and `Comman
 | 2.8  | Store export/import     | YAML and JSON export, import with merge/replace                                                                                | Round-trip: export then import produces identical store state             |
 | 2.9  | Store status command    | Display store info, sync state, record counts                                                                                  | Accurate reporting of store contents                                      |
 | 2.10 | Events command          | Live blockchain event streaming                                                                                                | `akt events` shows real-time events                                       |
-| 2.11 | Console API client      | `auth-method: console-api` support, API key via env var, deployment CRUD via Console managed wallet API                        | Create, update, close deployments; list bids; create leases via Console API with `AKT_CONSOLE_API_KEY` |
+| 2.11 | Console API client      | `auth-method: console-api` support, API key resolved flag > env > per-context stored credential (§7.1), deployment CRUD via Console managed wallet API, `akt console` command group (§2.9) | Create, update, close deployments; list bids; create leases via Console API with the API key resolved per §7.1 |
 | 2.12 | MCP server              | `akt mcp` command with stdio JSON-RPC transport, 21 read-only tools, 4 write tools gated behind `--enable-writes`              | Read-only tools query chain state; write tools send transactions. Config resolved from active context. |
 
 ### Phase 3: TUI Mode

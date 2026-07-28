@@ -122,17 +122,17 @@ func ParseHeightRoundStep(hrs string) (height int64, round int, step int, err er
 
 	height, err = strconv.ParseInt(parts[0], 10, 64)
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("invalid height: %v", err)
+		return 0, 0, 0, fmt.Errorf("invalid height: %w", err)
 	}
 
 	round, err = strconv.Atoi(parts[1])
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("invalid round: %v", err)
+		return 0, 0, 0, fmt.Errorf("invalid round: %w", err)
 	}
 
 	step, err = strconv.Atoi(parts[2])
 	if err != nil {
-		return 0, 0, 0, fmt.Errorf("invalid step: %v", err)
+		return 0, 0, 0, fmt.Errorf("invalid step: %w", err)
 	}
 
 	return height, round, step, nil

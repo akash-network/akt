@@ -1,104 +1,151 @@
 ---
+# goreleaser configuration for the akt CLI.
+#
+# This runs inside ghcr.io/goreleaser/goreleaser-cross (see make/releasing.mk),
+# which ships osxcross for the darwin targets and the gnu cross toolchains for
+# linux. CGO cannot be disabled here: the cosmos-sdk keyring, the ledger HID
+# bindings and libwasmvm are all C libraries.
+#
+# The static libwasmvm archives that the `muslc` (linux) and `static_wasm`
+# (darwin) build tags link against are not shipped inside the Go module; they
+# are fetched into ./.cache/lib by `make release-libs` before goreleaser is
+# invoked, which is what the `-L./.cache/lib` in every extldflags points at.
+#
+# Build tags and the injected version variables are deliberately kept in sync
+# with BUILD_TAGS / ldflags in the root Makefile. A release binary whose
+# `akt version` reports "dev" is a bug -- both the cosmos-sdk version vars and
+# akt's own main.* vars have to be set.
 version: 2
-project_name: node
-dist: ./.cache/goreleaser/main
+project_name: akt
+dist: ./.cache/goreleaser
+
 env:
   - GO111MODULE=on
   - CGO_ENABLED=1
-before:
-  hooks:
-    - apt update
-    - apt install -y pkg-config libudev-dev:amd64 libudev-dev:arm64
+
 builds:
   - id: akt-darwin-amd64
     binary: akt
     main: ./cmd/akt
-    goarch:
-      - amd64
     goos:
       - darwin
+    goarch:
+      - amd64
     env:
       - CC=o64-clang
       - CXX=o64-clang++
-      - CGO_CFLAGS=-mmacosx-version-min=10.12
+      - CGO_CFLAGS=-mmacosx-version-min=11.0
     flags:
-      - "-mod={{ .Env.MOD }}"
-      - "-tags={{ .Env.BUILD_TAGS }}"
+      - -mod=readonly
+      - -tags=osusergo,netgo,ledger,muslc,gcc,static_wasm
       - -trimpath
     ldflags:
-      - "{{ .Env.BUILD_LDFLAGS }}"
       - -s -w
       - -linkmode=external
-      - -extldflags "-L./.cache/lib -mmacosx-version-min=10.12"
+      - -extldflags "-L./.cache/lib -mmacosx-version-min=11.0"
+      - -X github.com/cosmos/cosmos-sdk/version.Name=akt
+      - -X github.com/cosmos/cosmos-sdk/version.AppName=akt
+      - -X github.com/cosmos/cosmos-sdk/version.BuildTags=osusergo,netgo,ledger,muslc,gcc,static_wasm
+      - -X github.com/cosmos/cosmos-sdk/version.Version={{ .Version }}
+      - -X github.com/cosmos/cosmos-sdk/version.Commit={{ .FullCommit }}
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .FullCommit }}
+      - -X main.date={{ .Date }}
+
   - id: akt-darwin-arm64
     binary: akt
     main: ./cmd/akt
-    goarch:
-      - arm64
     goos:
       - darwin
+    goarch:
+      - arm64
     env:
       - CC=oa64-clang
       - CXX=oa64-clang++
-      - CGO_CFLAGS=-mmacosx-version-min=10.12
+      - CGO_CFLAGS=-mmacosx-version-min=11.0
     flags:
-      - "-mod={{ .Env.MOD }}"
-      - "-tags={{ .Env.BUILD_TAGS }}"
+      - -mod=readonly
+      - -tags=osusergo,netgo,ledger,muslc,gcc,static_wasm
       - -trimpath
     ldflags:
-      - "{{ .Env.BUILD_LDFLAGS }}"
       - -s -w
       - -linkmode=external
-      - -extldflags "-L./.cache/lib -mmacosx-version-min=10.12"
+      - -extldflags "-L./.cache/lib -mmacosx-version-min=11.0"
+      - -X github.com/cosmos/cosmos-sdk/version.Name=akt
+      - -X github.com/cosmos/cosmos-sdk/version.AppName=akt
+      - -X github.com/cosmos/cosmos-sdk/version.BuildTags=osusergo,netgo,ledger,muslc,gcc,static_wasm
+      - -X github.com/cosmos/cosmos-sdk/version.Version={{ .Version }}
+      - -X github.com/cosmos/cosmos-sdk/version.Commit={{ .FullCommit }}
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .FullCommit }}
+      - -X main.date={{ .Date }}
+
   - id: akt-linux-amd64
     binary: akt
     main: ./cmd/akt
+    goos:
+      - linux
+    goarch:
+      - amd64
     env:
       - CC=x86_64-linux-gnu-gcc
       - CXX=x86_64-linux-gnu-g++
-    goarch:
-      - amd64
-    goos:
-      - linux
     flags:
-      - "-mod={{ .Env.MOD }}"
-      - "-tags={{ .Env.BUILD_TAGS }}"
+      - -mod=readonly
+      - -tags=osusergo,netgo,ledger,muslc,gcc,static_wasm
       - -trimpath
     ldflags:
-      - "{{ .Env.BUILD_LDFLAGS }}"
       - -s -w
       - -linkmode=external
-      # yamllint disable-line rule:line-length
+      # libwasmvm_muslc.*.a is built against musl; -z muldefs lets it coexist
+      # with the glibc symbols pulled in by the gnu cross toolchain.
       - -extldflags "-L./.cache/lib -Wl,-z,muldefs -lm -lrt -lc"
+      - -X github.com/cosmos/cosmos-sdk/version.Name=akt
+      - -X github.com/cosmos/cosmos-sdk/version.AppName=akt
+      - -X github.com/cosmos/cosmos-sdk/version.BuildTags=osusergo,netgo,ledger,muslc,gcc,static_wasm
+      - -X github.com/cosmos/cosmos-sdk/version.Version={{ .Version }}
+      - -X github.com/cosmos/cosmos-sdk/version.Commit={{ .FullCommit }}
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .FullCommit }}
+      - -X main.date={{ .Date }}
+
   - id: akt-linux-arm64
     binary: akt
     main: ./cmd/akt
-    goarch:
-      - arm64
     goos:
       - linux
+    goarch:
+      - arm64
     env:
       - CC=aarch64-linux-gnu-gcc
       - CXX=aarch64-linux-gnu-g++
     flags:
-      - "-mod={{ .Env.MOD }}"
-      - "-tags={{ .Env.BUILD_TAGS }}"
+      - -mod=readonly
+      - -tags=osusergo,netgo,ledger,muslc,gcc,static_wasm
       - -trimpath
     ldflags:
-      - "{{ .Env.BUILD_LDFLAGS }}"
       - -s -w
       - -linkmode=external
-      # yamllint disable-line rule:line-length
       - -extldflags "-L./.cache/lib -Wl,-z,muldefs -lm -lrt -lc"
+      - -X github.com/cosmos/cosmos-sdk/version.Name=akt
+      - -X github.com/cosmos/cosmos-sdk/version.AppName=akt
+      - -X github.com/cosmos/cosmos-sdk/version.BuildTags=osusergo,netgo,ledger,muslc,gcc,static_wasm
+      - -X github.com/cosmos/cosmos-sdk/version.Version={{ .Version }}
+      - -X github.com/cosmos/cosmos-sdk/version.Commit={{ .FullCommit }}
+      - -X main.version={{ .Version }}
+      - -X main.commit={{ .FullCommit }}
+      - -X main.date={{ .Date }}
+
 universal_binaries:
   - id: akt-darwin-universal
     ids:
       - akt-darwin-amd64
       - akt-darwin-arm64
     replace: true
-    name_template: "akt"
+    name_template: akt
+
 archives:
-  - id: w/version
+  - id: akt
     ids:
       - akt-darwin-universal
       - akt-linux-amd64
@@ -108,48 +155,67 @@ archives:
     formats:
       - zip
     files:
-      - none*
-  - id: wo/version
-    ids:
-      - akt-darwin-universal
-      - akt-linux-amd64
-      - akt-linux-arm64
-    name_template: "akt_{{ .Os }}_{{ .Arch }}"
-    wrap_in_directory: false
-    formats:
-      - zip
-    files:
-      - none*
+      - LICENSE
+      - README.md
 
 checksum:
-  # You can change the name of the checksums file.
-  # Default is `{{ .ProjectName }}_{{ .Version }}_checksums.txt`.
-  name_template: "akt_checksums.txt"
+  name_template: "akt_{{ .Version }}_checksums.txt"
+  algorithm: sha256
 
 nfpms:
-  - id: w/version
+  - id: akt
+    ids:
+      - akt-linux-amd64
+      - akt-linux-arm64
+    package_name: akt
     vendor: "Akash Network"
     homepage: "https://akash.network"
     maintainer: "Akash Network <hello@akash.network>"
+    description: "Unified CLI and TUI for the Akash Network."
+    license: "Apache-2.0"
     file_name_template: "akt_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - deb
       - rpm
-    license: Apache 2.0
-  - id: wo/version
-    vendor: "Akash Network"
-    homepage: "https://akash.network"
-    maintainer: "Akash Network <hello@akash.network>"
-    file_name_template: "akt_{{ .Os }}_{{ .Arch }}"
-    formats:
-      - deb
-      - rpm
-    license: Apache 2.0
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
+
+changelog:
+  # `use: git` (the default) keeps `release --skip=publish` working without a
+  # GitHub token; switching to `use: github` would make dry runs need one.
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^chore:"
+      - "^ci:"
+      - "^style:"
+      - "^refactor\\(docs\\):"
+      - "Merge pull request"
+      - "Merge branch"
+  groups:
+    - title: Features
+      regexp: '^.*?feat(\(.+\))??!?:.+$'
+      order: 0
+    - title: Bug fixes
+      regexp: '^.*?fix(\(.+\))??!?:.+$'
+      order: 1
+    - title: Refactors
+      regexp: '^.*?refactor(\(.+\))??!?:.+$'
+      order: 2
+    - title: Other work
+      order: 999
 
 release:
-  github:
-    owner: akash-network
-    name: akt
+  # owner/name are intentionally not pinned: goreleaser derives them from the
+  # git remote of the checkout, which is what GitHub Actions gives us and what
+  # keeps this correct if the repository is ever transferred between orgs. Pin
+  # `github: {owner: ..., name: ...}` here if it ever needs to be forced.
   prerelease: auto
   mode: replace
   draft: false
+  name_template: "akt {{ .Version }}"
+
+report_sizes: true

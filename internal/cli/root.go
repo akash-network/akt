@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
+	"runtime/debug"
 	"strings"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
@@ -16,10 +18,13 @@ import (
 
 	"pkg.akt.dev/akt/internal/actionlog"
 	"pkg.akt.dev/akt/internal/bootstrap"
+	"pkg.akt.dev/akt/internal/capability"
 	chaincli "pkg.akt.dev/akt/internal/cli/chain"
 
+	cliconsole "pkg.akt.dev/akt/internal/cli/console"
 	clicontext "pkg.akt.dev/akt/internal/cli/context"
 	cliprovider "pkg.akt.dev/akt/internal/cli/provider"
+	clisdl "pkg.akt.dev/akt/internal/cli/sdl"
 	clistore "pkg.akt.dev/akt/internal/cli/store"
 	cliworkflow "pkg.akt.dev/akt/internal/cli/workflow"
 	aktclient "pkg.akt.dev/akt/internal/client"
@@ -144,9 +149,13 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			resolvedCfgRoot = cfgRoot
 
 			// First-run bootstrap: if no config file exists, offer to
-			// fetch networks from github.com/akash-network/net.
+			// fetch networks from github.com/akash-network/net. Help
+			// invocations never bootstrap — help must work on a machine
+			// with nothing configured — and neither do commands that work
+			// entirely without configuration.
 			cfgPath := aktctx.ConfigPath(cfgRoot)
-			if _, statErr := os.Stat(cfgPath); os.IsNotExist(statErr) {
+			if _, statErr := os.Stat(cfgPath); os.IsNotExist(statErr) &&
+				!isHelpInvocation(cmd, os.Args[1:]) && requiresConfig(cmd) {
 				// Initialize glyphs before bootstrap (config not yet
 				// available — uses flag/env/auto-detect only).
 				initGlyphs(v)
@@ -184,9 +193,39 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			}
 
 			// 4. If no context was resolved, only allow commands that do not
-			//    require a configured context to proceed.
-			if !resolved && requiresContext(cmd) {
+			//    require a configured context to proceed. Help requests are
+			//    always allowed: SDK group commands disable flag parsing, so
+			//    cobra cannot short-circuit their --help before these hooks
+			//    run, and help must never require a context.
+			if !resolved && requiresContext(cmd) && !isHelpInvocation(cmd, os.Args[1:]) {
 				return noContextError(mgr)
+			}
+
+			// 4b. Capability gating: derive the feature set from the active
+			//     context (chain RPC present? Console key present?) and gate
+			//     the command surface accordingly — commands whose transport
+			//     is not configured are dimmed or hidden in help (mode from
+			//     defaults.command-gating: dim | hide | off) and fail fast
+			//     with an explanation instead of erroring mid-transport.
+			if resolved {
+				if rc, rcErr := mgr.Resolve(activeContextName(mgr, v.GetString("context"))); rcErr == nil {
+					mode := capability.ParseMode(gatingMode(v, mgr))
+
+					// The feature set describes the configuration; explicit
+					// per-invocation overrides (--node, --console-api-key, a
+					// positional monitor endpoint) grant their capability so
+					// gating never rejects a command that carries its own
+					// connection details.
+					set := invocationCapabilities(capability.Resolve(rc), cmd, os.Args[1:], args)
+
+					applyCapabilityGating(cmd.Root(), set, mode)
+
+					if mode != capability.ModeOff && !isHelpInvocation(cmd, os.Args[1:]) {
+						if err := requirementError(cmd, set); err != nil {
+							return err
+						}
+					}
+				}
 			}
 
 			// 5. Open the action log for the current context (if any).
@@ -202,20 +241,41 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			return nil
 		},
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := checkInteractive(v); err != nil {
-				return err
+			// The TUI shell is DISABLED pending UX feedback (2026-07): bare
+			// akt prints help instead of launching the dashboard. The code
+			// path is kept compiled behind AKT_EXPERIMENTAL_TUI=1 so it can
+			// be exercised while feedback is collected; akt monitor (the
+			// real-time monitoring hub) is unaffected. Re-enable by removing
+			// this gate once the TUI resource views are production-ready.
+			if os.Getenv("AKT_EXPERIMENTAL_TUI") == "1" {
+				if err := checkInteractive(v); err != nil {
+					return err
+				}
+
+				cctx := sdkclient.GetClientContextFromCmd(cmd)
+				cfgRoot, _ := aktctx.ConfigHome(v.GetString("home"))
+
+				return akttui.Run(akttui.Config{
+					Viper:        v,
+					RPCEndpoint:  cctx.NodeURI,
+					RESTEndpoint: "", // resolved by rpc.NewClient default when empty
+					CacheDir:     filepath.Join(cfgRoot, "cache"),
+					Insecure:     true,
+				})
 			}
 
-			cctx := sdkclient.GetClientContextFromCmd(cmd)
-			cfgRoot, _ := aktctx.ConfigHome(v.GetString("home"))
+			if interactive, _ := cmd.Flags().GetBool("interactive"); interactive {
+				return fmt.Errorf("the TUI is currently disabled while UX feedback is collected; use the CLI commands or akt monitor")
+			}
 
-			return akttui.Run(akttui.Config{
-				Viper:        v,
-				RPCEndpoint:  cctx.NodeURI,
-				RESTEndpoint: "", // resolved by rpc.NewClient default when empty
-				CacheDir:     filepath.Join(cfgRoot, "cache"),
-				Insecure:     true,
-			})
+			return cmd.Help()
+		},
+		PersistentPostRunE: func(cmd *cobra.Command, _ []string) error {
+			// Close the action logger opened in PersistentPreRunE (SPEC §5.6).
+			if l := cliutil.ActionLogFromContext(cmd.Context()); l != nil {
+				return l.Close()
+			}
+			return nil
 		},
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -254,23 +314,64 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	root.AddCommand(monitorCmd(v))
 	root.AddCommand(mcpCmd())
 	root.AddCommand(cliprovider.Commands())
+	root.AddCommand(clisdl.Commands())
 	homeFn := func() string { return resolvedCfgRoot }
+	// ctxNameFn resolves the active context name for the command groups that
+	// need it. The global --context override wins over current-context so
+	// that `akt --context staging ...` stores credentials under and bills
+	// the context the user named.
 	ctxNameFn := func() string {
+		if name := v.GetString("context"); name != "" {
+			return name
+		}
 		if mgr != nil {
 			return mgr.CurrentContext()
 		}
 		return ""
 	}
 
+	root.AddCommand(cliconsole.Commands(mgrFn))
 	root.AddCommand(clistore.Commands(homeFn, ctxNameFn))
 
 	// Workflow commands are discovered dynamically from workflow definitions.
 	// Only workflows that exist (built-in or user-defined YAML) produce commands.
-	for _, wfCmd := range cliworkflow.Commands(homeFn, ctxNameFn) {
+	for _, wfCmd := range cliworkflow.CommandsWithManager(homeFn, ctxNameFn, mgrFn) {
 		root.AddCommand(wfCmd)
 	}
 	root.AddCommand(versionCmd(bi))
 	root.AddCommand(completionCmd())
+
+	// Capability gating must also shape help output when cobra
+	// short-circuits --help before the persistent hooks run (parsed help
+	// flags never reach PersistentPreRunE). Resolution here is best-effort:
+	// any failure falls back to ungated help rather than blocking it.
+	defaultHelp := root.HelpFunc()
+	root.SetHelpFunc(func(c *cobra.Command, args []string) {
+		// Help can run before PersistentPreRunE, so mirror the flags it
+		// would have bound. Both --home and --context matter: help must
+		// describe the context the user actually named.
+		for _, name := range []string{"home", "context"} {
+			if f := root.PersistentFlags().Lookup(name); f != nil && f.Changed {
+				v.Set(name, f.Value.String())
+			}
+		}
+
+		if cfgRoot, err := aktctx.ConfigHome(v.GetString("home")); err == nil {
+			if m, mErr := aktctx.NewManager(cfgRoot); mErr == nil {
+				if ctxName := activeContextName(m, v.GetString("context")); ctxName != "" {
+					if rc, rcErr := m.Resolve(ctxName); rcErr == nil {
+						// Same mode resolution as enforcement (flag > env >
+						// config) so help and execution never disagree.
+						mode := capability.ParseMode(gatingMode(v, m))
+						set := invocationCapabilities(capability.Resolve(rc), c, os.Args[1:], nil)
+						applyCapabilityGating(root, set, mode)
+					}
+				}
+			}
+		}
+
+		defaultHelp(c, args)
+	})
 
 	return root
 }
@@ -285,6 +386,37 @@ func Execute(root *cobra.Command) error {
 	ctx = context.WithValue(ctx, sdkserver.ServerContextKey, sdkserver.NewDefaultContext())
 
 	return root.ExecuteContext(ctx)
+}
+
+// requiresConfig returns true if the command needs akt configuration to
+// exist, and so may trigger the first-run bootstrap wizard when none is
+// found. It is deliberately narrower than requiresContext: a command is
+// exempt here only when it produces the same output with or without any
+// configuration at all.
+//
+// Without this, `akt version` on an unconfigured machine either launched
+// the wizard (in a terminal) or printed the wizard's "no terminal
+// available" notice to stderr (outside one) before printing the version.
+// Both are wrong for the command people run to check that a binary works
+// — the first blocks a scripted smoke test on interactive input, the
+// second makes a clean run look like a failure.
+func requiresConfig(cmd *cobra.Command) bool {
+	path := cmd.CommandPath()
+
+	switch {
+	// Build metadata is compiled in; configuration cannot change it.
+	case strings.HasPrefix(path, "akt version"):
+		return false
+	// Completion scripts are generated from the command tree alone.
+	case strings.HasPrefix(path, "akt completion"):
+		return false
+	// SDL authoring is entirely local (see requiresContext), so demanding
+	// a network fetch before linting a local file would be backwards.
+	case strings.HasPrefix(path, "akt sdl"):
+		return false
+	}
+
+	return true
 }
 
 // requiresContext returns true if the command needs a fully resolved akt
@@ -306,9 +438,78 @@ func requiresContext(cmd *cobra.Command) bool {
 		return false
 	case strings.HasPrefix(path, "akt completion"):
 		return false
+	// SDL authoring is entirely local: parsing, scaffolding, and linting
+	// never touch a network or a credential.
+	case strings.HasPrefix(path, "akt sdl"):
+		return false
+	// The console group resolves its own credential (flag > env > stored)
+	// and works with no context at all when a key comes from the
+	// environment; capability gating reports a missing key instead.
+	case strings.HasPrefix(path, "akt console"):
+		return false
 	}
 
 	return true
+}
+
+// helpRequested reports whether the invocation asks for help. Detection is
+// argv-based because several clean-copied SDK group commands set
+// DisableFlagParsing, which prevents cobra from seeing --help before the
+// persistent hooks execute.
+func helpRequested(args []string) bool {
+	for _, a := range args {
+		// Everything after the terminator is data for the command
+		// (e.g. `provider lease-shell -- sh -h`), never a help request.
+		if a == "--" {
+			return false
+		}
+
+		// Only the flag forms count. A bare "help" is matched separately
+		// via the resolved command: as a positional value (`tx deployment
+		// close help`) it must NOT disable context or capability checks.
+		if a == "--help" || a == "-h" || strings.HasPrefix(a, "--help=") {
+			return true
+		}
+	}
+
+	return false
+}
+
+// activeContextName resolves which context a run targets: the explicit
+// override, else current-context, else the sole configured context (the
+// same auto-selection the SDK client bootstrap performs). Returns "" when
+// no single context can be determined.
+func activeContextName(mgr *aktctx.Manager, override string) string {
+	if mgr == nil {
+		return override
+	}
+
+	return mgr.ActiveContext(override)
+}
+
+// gatingMode resolves the command-gating mode with the standard precedence
+// (flag/env via viper, then config file).
+func gatingMode(v *viper.Viper, mgr *aktctx.Manager) string {
+	if mode := v.GetString("defaults.command-gating"); mode != "" {
+		return mode
+	}
+
+	if mgr != nil {
+		return mgr.Config().Defaults.CommandGating
+	}
+
+	return ""
+}
+
+// isHelpInvocation reports whether this run only prints help — either via a
+// help flag or via cobra's built-in `help` command — in which case context
+// and capability requirements are not enforced.
+func isHelpInvocation(cmd *cobra.Command, args []string) bool {
+	if cmd != nil && cmd.Name() == "help" {
+		return true
+	}
+
+	return helpRequested(args)
 }
 
 // checkInteractive returns an error if interactive mode is disabled in config
@@ -413,6 +614,8 @@ func monitorCmd(v *viper.Viper) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "monitor [rpc-endpoint]",
 		Short: "Real-time monitoring hub",
+		// Capability gating: monitoring needs a chain RPC endpoint.
+		Annotations: map[string]string{capability.AnnotationKey: string(capability.ChainQuery)},
 		Long: `Interactive TUI for monitoring Akash Network state in real time.
 
 The monitor hub provides three dashboards navigable via Tab/Shift-Tab:
@@ -609,14 +812,51 @@ in your shell. Follow the instructions for your shell below.`,
 }
 
 func versionCmd(bi BuildInfo) *cobra.Command {
-	return &cobra.Command{
-		Use:     "version",
-		Short:   "Print version information",
-		Args:    cobra.NoArgs,
-		Example: `  akt version`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := fmt.Fprintf(cmd.OutOrStdout(), "akt %s (commit: %s, built: %s)\n", bi.Version, bi.Commit, bi.Date)
+	cmd := &cobra.Command{
+		Use:   "version",
+		Short: "Print version information",
+		Args:  cobra.NoArgs,
+		Example: `  # Short form
+  akt version
+
+  # Full build info (Go version, platform, build tags)
+  akt version --long`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			out := cmd.OutOrStdout()
+
+			if long, _ := cmd.Flags().GetBool("long"); long {
+				info := []struct{ k, v string }{
+					{"version", bi.Version},
+					{"commit", bi.Commit},
+					{"built", bi.Date},
+					{"go", runtime.Version()},
+					{"platform", runtime.GOOS + "/" + runtime.GOARCH},
+				}
+
+				if bi, ok := debug.ReadBuildInfo(); ok {
+					for _, setting := range bi.Settings {
+						if setting.Key == "-tags" && setting.Value != "" {
+							info = append(info, struct{ k, v string }{"build tags", setting.Value})
+						}
+					}
+				}
+
+				for _, i := range info {
+					if _, err := fmt.Fprintf(out, "%-11s %s\n", i.k+":", i.v); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			}
+
+			_, err := fmt.Fprintf(out, "akt %s (commit: %s, built: %s)\n", bi.Version, bi.Commit, bi.Date)
 			return err
 		},
 	}
+
+	// Build-time detail for bug reports (TASKS T035).
+	cmd.Flags().Bool("long", false, "Print full build information")
+
+	return cmd
 }

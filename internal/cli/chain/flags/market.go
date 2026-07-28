@@ -2,6 +2,7 @@ package flags
 
 import (
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -117,87 +118,154 @@ func LeaseIDFromFlags(flags *pflag.FlagSet, opts ...MarketOption) (mv1.LeaseID, 
 
 // AddOrderFilterFlags add flags to filter for order list
 func AddOrderFilterFlags(flags *pflag.FlagSet) {
-	flags.String(FlagOwner, "", "order owner address to filter")
-	flags.String(FlagState, "", "order state to filter (open,matched,closed)")
-	flags.Uint64(FlagDSeq, 0, "deployment sequence to filter")
-	flags.Uint32(FlagGSeq, 0, "group sequence to filter")
-	flags.Uint32(FlagOSeq, 0, "order sequence to filter")
+	// FEEDBACK(2026-07): --owner disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// flags.String(FlagOwner, "", "order owner address to filter")
+	// FEEDBACK(2026-07): --state disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// flags.String(FlagState, "", "order state to filter (open,active,closed)")
+	// FEEDBACK(2026-07): --dseq disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// flags.Uint64(FlagDSeq, 0, "deployment sequence to filter")
+	// FEEDBACK(2026-07): --gseq disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// flags.Uint32(FlagGSeq, 0, "group sequence to filter")
+	// FEEDBACK(2026-07): --oseq disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// flags.Uint32(FlagOSeq, 0, "order sequence to filter")
+	_ = flags
 }
 
 // OrderFiltersFromFlags returns OrderFilters with given flags and error if occurred
 func OrderFiltersFromFlags(flags *pflag.FlagSet) (mvbeta.OrderFilters, error) {
-	dfilters, err := DepFiltersFromFlags(flags)
-	if err != nil {
-		return mvbeta.OrderFilters{}, err
-	}
-	ofilters := mvbeta.OrderFilters{
-		Owner: dfilters.Owner,
-		DSeq:  dfilters.DSeq,
-		State: dfilters.State,
-	}
+	// FEEDBACK(2026-07): the order filter flags are disabled for the
+	// positional-only UX trial (see AddOrderFilterFlags), so this returns
+	// empty filters and the positional filter argument is the only source.
+	// Restore by uncommenting if the flags come back.
+	// dfilters, err := DepFiltersFromFlags(flags)
+	// if err != nil {
+	// 	return mvbeta.OrderFilters{}, err
+	// }
+	// ofilters := mvbeta.OrderFilters{
+	// 	Owner: dfilters.Owner,
+	// 	DSeq:  dfilters.DSeq,
+	// 	State: dfilters.State,
+	// }
+	//
+	// if ofilters.GSeq, err = flags.GetUint32(FlagGSeq); err != nil {
+	// 	return ofilters, err
+	// }
+	//
+	// if ofilters.OSeq, err = flags.GetUint32(FlagOSeq); err != nil {
+	// 	return ofilters, err
+	// }
+	_ = flags
 
-	if ofilters.GSeq, err = flags.GetUint32(FlagGSeq); err != nil {
-		return ofilters, err
-	}
-
-	if ofilters.OSeq, err = flags.GetUint32(FlagOSeq); err != nil {
-		return ofilters, err
-	}
-
-	return ofilters, nil
+	return mvbeta.OrderFilters{}, nil
 }
 
 // AddBidFilterFlags add flags to filter for bid list
 func AddBidFilterFlags(flags *pflag.FlagSet) {
-	flags.String(FlagOwner, "", "bid owner address to filter")
-	flags.String(FlagState, "", "bid state to filter (open,matched,lost,closed)")
-	flags.Uint64(FlagDSeq, 0, "deployment sequence to filter")
-	flags.Uint32(FlagGSeq, 0, "group sequence to filter")
-	flags.Uint32(FlagOSeq, 0, "order sequence to filter")
-	flags.String(FlagProvider, "", "bid provider address to filter")
+	// FEEDBACK(2026-07): --owner disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// flags.String(FlagOwner, "", "bid owner address to filter")
+	// FEEDBACK(2026-07): --state disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// flags.String(FlagState, "", "bid state to filter (open,active,lost,closed)")
+	// FEEDBACK(2026-07): --dseq disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// flags.Uint64(FlagDSeq, 0, "deployment sequence to filter")
+	// FEEDBACK(2026-07): --gseq disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// flags.Uint32(FlagGSeq, 0, "group sequence to filter")
+	// FEEDBACK(2026-07): --oseq disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// flags.Uint32(FlagOSeq, 0, "order sequence to filter")
+	// FEEDBACK(2026-07): --provider disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// flags.String(FlagProvider, "", "bid provider address to filter")
+	_ = flags
 }
 
 // BidFiltersFromFlags returns BidFilters with given flags and error if occurred
 func BidFiltersFromFlags(flags *pflag.FlagSet) (mvbeta.BidFilters, error) {
-	ofilters, err := OrderFiltersFromFlags(flags)
-	if err != nil {
-		return mvbeta.BidFilters{}, err
-	}
-	bfilters := mvbeta.BidFilters{
-		Owner: ofilters.Owner,
-		DSeq:  ofilters.DSeq,
-		GSeq:  ofilters.GSeq,
-		OSeq:  ofilters.OSeq,
-		State: ofilters.State,
-	}
+	// FEEDBACK(2026-07): the bid filter flags are disabled for the
+	// positional-only UX trial (see AddBidFilterFlags), so this returns
+	// empty filters and the positional filter argument is the only source.
+	// Restore by uncommenting if the flags come back.
+	// ofilters, err := OrderFiltersFromFlags(flags)
+	// if err != nil {
+	// 	return mvbeta.BidFilters{}, err
+	// }
+	// bfilters := mvbeta.BidFilters{
+	// 	Owner: ofilters.Owner,
+	// 	DSeq:  ofilters.DSeq,
+	// 	GSeq:  ofilters.GSeq,
+	// 	OSeq:  ofilters.OSeq,
+	// 	State: ofilters.State,
+	// }
+	//
+	// provider, err := flags.GetString(FlagProvider)
+	// if err != nil {
+	// 	return bfilters, err
+	// }
+	//
+	// if provider != "" {
+	// 	_, err = sdk.AccAddressFromBech32(provider)
+	// 	if err != nil {
+	// 		return bfilters, err
+	// 	}
+	// }
+	// bfilters.Provider = provider
+	_ = flags
 
-	provider, err := flags.GetString(FlagProvider)
-	if err != nil {
-		return bfilters, err
-	}
-
-	if provider != "" {
-		_, err = sdk.AccAddressFromBech32(provider)
-		if err != nil {
-			return bfilters, err
-		}
-	}
-	bfilters.Provider = provider
-
-	return bfilters, nil
+	return mvbeta.BidFilters{}, nil
 }
 
 // AddLeaseFilterFlags add flags to filter for a lease list
 func AddLeaseFilterFlags(flags *pflag.FlagSet) {
-	flags.String(FlagOwner, "", "lease owner address to filter")
-	flags.String(FlagState, "", "lease state to filter (active,insufficient_funds,closed)")
-	flags.Uint64(FlagDSeq, 0, "deployment sequence to filter")
-	flags.Uint32(FlagGSeq, 0, "group sequence to filter")
-	flags.Uint32(FlagOSeq, 0, "order sequence to filter")
-	flags.String(FlagProvider, "", "bid provider address to filter")
+	// FEEDBACK(2026-07): --owner disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// flags.String(FlagOwner, "", "lease owner address to filter")
+	// FEEDBACK(2026-07): --state disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// flags.String(FlagState, "", "lease state to filter (active,insufficient_funds,closed)")
+	// FEEDBACK(2026-07): --dseq disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// flags.Uint64(FlagDSeq, 0, "deployment sequence to filter")
+	// FEEDBACK(2026-07): --gseq disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// flags.Uint32(FlagGSeq, 0, "group sequence to filter")
+	// FEEDBACK(2026-07): --oseq disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// flags.Uint32(FlagOSeq, 0, "order sequence to filter")
+	// FEEDBACK(2026-07): --provider disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// flags.String(FlagProvider, "", "bid provider address to filter")
+	_ = flags
 }
 
-// LeaseFiltersFromFlags returns LeaseFilters with given flags and error if occurred
+// LeaseFiltersFromFlags returns LeaseFilters with given flags and error if occurred.
+// FEEDBACK(2026-07): the lease filter flags are disabled for the positional-only
+// UX trial (see AddLeaseFilterFlags), so this returns empty filters via the
+// (also gutted) BidFiltersFromFlags.
 func LeaseFiltersFromFlags(flags *pflag.FlagSet) (mv1.LeaseFilters, error) {
 	bfilters, err := BidFiltersFromFlags(flags)
 	if err != nil {
@@ -230,12 +298,25 @@ func LeaseFiltersIsID(f mv1.LeaseFilters) bool {
 //   - [owner/]dseq[/gseq[/oseq]]
 //   - If the first component is a number, it is dseq and defaultOwner is used.
 //   - If the first component is a bech32 address, it is the owner.
+//   - If the arg is a bare state keyword (open|active|closed), it is a state
+//     filter. State keywords do not combine with identity paths inside one
+//     argument; pass the state as the optional second positional instead.
 func OrderFiltersFromArg(arg string, defaultOwner string) (mvbeta.OrderFilters, error) {
 	parts := strings.Split(arg, "/")
 	var f mvbeta.OrderFilters
 
 	if len(parts) < 1 || parts[0] == "" {
 		return f, fmt.Errorf("order filter: argument is required")
+	}
+
+	// A bare state keyword as the sole argument selects a state filter (SPEC §3.8.2).
+	if val, exists := mvbeta.Order_State_value[parts[0]]; exists && mvbeta.Order_State(val) != mvbeta.OrderStateInvalid {
+		if len(parts) > 1 {
+			return f, fmt.Errorf("order filter: state keyword %q cannot be combined with identity path %q; pass the state as a separate second argument instead", parts[0], arg)
+		}
+		f.State = parts[0]
+
+		return f, nil
 	}
 
 	idx := 0
@@ -293,12 +374,26 @@ func OrderFiltersFromArg(arg string, defaultOwner string) (mvbeta.OrderFilters, 
 // When byProvider is true, the leading address is the provider and the trailing
 // address is the owner. Otherwise the leading address is the owner and the
 // trailing address is the provider.
+//
+// A bare state keyword (open|active|lost|closed) as the sole argument is a
+// state filter. State keywords do not combine with identity paths inside one
+// argument; pass the state as the optional second positional instead.
 func BidFiltersFromArg(arg string, defaultOwner string, byProvider bool) (mvbeta.BidFilters, error) {
 	parts := strings.Split(arg, "/")
 	var f mvbeta.BidFilters
 
 	if len(parts) < 1 || parts[0] == "" {
 		return f, fmt.Errorf("bid filter: argument is required")
+	}
+
+	// A bare state keyword as the sole argument selects a state filter (SPEC §3.8.2).
+	if val, exists := mvbeta.Bid_State_value[parts[0]]; exists && mvbeta.Bid_State(val) != mvbeta.BidStateInvalid {
+		if len(parts) > 1 {
+			return f, fmt.Errorf("bid filter: state keyword %q cannot be combined with identity path %q; pass the state as a separate second argument instead", parts[0], arg)
+		}
+		f.State = parts[0]
+
+		return f, nil
 	}
 
 	idx := 0
@@ -373,12 +468,88 @@ func BidFiltersFromArg(arg string, defaultOwner string, byProvider bool) (mvbeta
 
 // LeaseFiltersFromArg parses a partial lease path into LeaseFilters.
 // See BidFiltersFromArg for format details.
+//
+// A bare state keyword (active|insufficient_funds|closed) as the sole argument
+// is a state filter. The lease state vocabulary differs
+// from the bid vocabulary, so it is handled here before delegating identity
+// parsing to BidFiltersFromArg.
 func LeaseFiltersFromArg(arg string, defaultOwner string, byProvider bool) (mv1.LeaseFilters, error) {
+	parts := strings.Split(arg, "/")
+
+	// A bare state keyword as the sole argument selects a state filter (SPEC §3.8.2).
+	if val, exists := mv1.Lease_State_value[parts[0]]; exists && mv1.Lease_State(val) != mv1.LeaseStateInvalid {
+		if len(parts) > 1 {
+			return mv1.LeaseFilters{}, fmt.Errorf("lease filter: state keyword %q cannot be combined with identity path %q; pass the state as a separate second argument instead", parts[0], arg)
+		}
+
+		return mv1.LeaseFilters{State: parts[0]}, nil
+	}
+
 	bf, err := BidFiltersFromArg(arg, defaultOwner, byProvider)
 	if err != nil {
 		return mv1.LeaseFilters{}, err
 	}
+
+	// BidFiltersFromArg recognizes bid state keywords; reject those that are
+	// not valid lease states (e.g. "open", "lost").
+	if bf.State != "" {
+		if _, exists := mv1.Lease_State_value[bf.State]; !exists {
+			return mv1.LeaseFilters{}, fmt.Errorf("lease filter: %q is not a valid lease state (%s)", bf.State, stateKeywords(mv1.Lease_State_value))
+		}
+	}
+
 	return mv1.LeaseFilters(bf), nil
+}
+
+// OrderStateFromArg validates a positional order state keyword against the
+// order state vocabulary (open|active|closed). It backs the optional second
+// positional state argument of `query market order` (SPEC §3.8).
+func OrderStateFromArg(arg string) (string, error) {
+	return stateFromArg("order", arg, mvbeta.Order_State_value)
+}
+
+// BidStateFromArg validates a positional bid state keyword against the bid
+// state vocabulary (open|active|lost|closed). It backs the optional second
+// positional state argument of `query market bid` (SPEC §3.8).
+func BidStateFromArg(arg string) (string, error) {
+	return stateFromArg("bid", arg, mvbeta.Bid_State_value)
+}
+
+// LeaseStateFromArg validates a positional lease state keyword against the
+// lease state vocabulary (active|insufficient_funds|closed). It backs the
+// optional second positional state argument of `query market lease`
+// (SPEC §3.8).
+func LeaseStateFromArg(arg string) (string, error) {
+	return stateFromArg("lease", arg, mv1.Lease_State_value)
+}
+
+// stateFromArg validates a positional state keyword against a resource's
+// protobuf State_value vocabulary — the same check the *FiltersFromArg
+// parsers apply to a bare-keyword first argument. The zero enum value is the
+// per-resource "invalid" placeholder and is never a valid keyword.
+func stateFromArg(resource, arg string, values map[string]int32) (string, error) {
+	if val, exists := values[arg]; exists && val != 0 {
+		return arg, nil
+	}
+
+	return "", fmt.Errorf("%s filter: %q is not a valid state (%s)", resource, arg, stateKeywords(values))
+}
+
+// stateKeywords returns the valid state keywords of a protobuf State_value
+// enum map joined with "|", ordered by enum value and excluding the zero
+// (invalid) placeholder.
+func stateKeywords(values map[string]int32) string {
+	names := make([]string, 0, len(values))
+	for name, val := range values {
+		if val == 0 {
+			continue
+		}
+		names = append(names, name)
+	}
+
+	sort.Slice(names, func(i, j int) bool { return values[names[i]] < values[names[j]] })
+
+	return strings.Join(names, "|")
 }
 
 // AddBidClosedReasonFlag add the reason flag when the provider initiates lease close

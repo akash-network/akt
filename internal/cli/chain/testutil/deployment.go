@@ -6,7 +6,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/client"
 	sdktest "github.com/cosmos/cosmos-sdk/testutil"
 
-	"pkg.akt.dev/akt/internal/cli/chain"
+	cli "pkg.akt.dev/akt/internal/cli/chain"
 )
 
 // ExecDeploymentCreate is used for testing create deployment tx
@@ -20,13 +20,13 @@ func ExecDeploymentUpdate(ctx context.Context, cctx client.Context, args ...stri
 }
 
 // ExecDeploymentClose is used for testing close deployment tx
-// requires --dseq, --fees
+// requires a positional dseq and --fees
 func ExecDeploymentClose(ctx context.Context, cctx client.Context, args ...string) (sdktest.BufferWriter, error) {
 	return ExecTestCLICmd(ctx, cctx, cli.GetTxDeploymentCloseCmd(), args...)
 }
 
 // ExecDeploymentGroupClose is used for testing close deployment group tx
-// requires --dseq, --fees
+// requires positional dseq/gseq and --fees
 func ExecDeploymentGroupClose(ctx context.Context, cctx client.Context, args ...string) (sdktest.BufferWriter, error) {
 	return ExecTestCLICmd(ctx, cctx, cli.GetTxDeploymentGroupCloseCmd(), args...)
 }

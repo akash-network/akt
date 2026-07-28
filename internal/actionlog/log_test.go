@@ -1,6 +1,9 @@
 package actionlog_test
 
 import (
+	"encoding/json"
+	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -174,5 +177,50 @@ func TestEmptyRead(t *testing.T) {
 
 	if len(result) != 0 {
 		t.Errorf("expected 0 entries from empty log, got %d", len(result))
+	}
+}
+
+func TestLogRotation(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "actions.log")
+
+	l, err := actionlog.Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	t.Cleanup(func() { _ = l.Close() })
+
+	// Each entry carries ~1 MB of params, so the 10 MB threshold trips
+	// after ~10 entries and rotation shifts the current file to .1.
+	blob, _ := json.Marshal(map[string]string{"pad": strings.Repeat("x", 1<<20)})
+
+	const total = 12
+	for i := 0; i < total; i++ {
+		if err := l.Log(actionlog.Entry{
+			Type:   actionlog.TypeTx,
+			Action: fmt.Sprintf("action-%d", i),
+			Params: blob,
+		}); err != nil {
+			t.Fatalf("log %d: %v", i, err)
+		}
+	}
+
+	if _, err := os.Stat(path + ".1"); err != nil {
+		t.Fatalf("expected rotated file %s.1 to exist: %v", path, err)
+	}
+
+	// Read must span rotated files transparently, newest first.
+	entries, err := l.Read(actionlog.Filter{})
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(entries) != total {
+		t.Fatalf("expected %d entries across rotated files, got %d", total, len(entries))
+	}
+	if entries[0].Action != fmt.Sprintf("action-%d", total-1) {
+		t.Errorf("newest entry = %s, want action-%d", entries[0].Action, total-1)
+	}
+	if entries[total-1].Action != "action-0" {
+		t.Errorf("oldest entry = %s, want action-0", entries[total-1].Action)
 	}
 }

@@ -1,0 +1,229 @@
+# golangci-lint configuration for akt.
+#
+# Requires golangci-lint >= v2.11.x. Anything built with a Go toolchain older
+# than this module's `go` directive (1.26.1) refuses to start with
+# "the Go language version used to build golangci-lint is lower than the
+# targeted Go version", so the Makefile pin must stay >= the toolchain in
+# go.mod.
+#
+# Guiding principle: every linter here catches a correctness bug or enforces a
+# convention that AGENTS.md already states in prose. Style-only nags that would
+# produce hundreds of doc-comment diffs are deliberately left off -- a gate that
+# people ignore is not a gate.
+version: "2"
+
+run:
+  # The module pulls in cosmos-sdk, wasmd, ibc-go and cometbft. A run over
+  # ~58 packages with both the golangci-lint and Go build caches cleared
+  # measured 61s on an M-series laptop; a cold GitHub-hosted runner is
+  # several times slower, so 10m leaves real headroom without letting a
+  # genuinely hung run sit for the full job timeout.
+  timeout: 10m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    # --- correctness -------------------------------------------------------
+    - govet          # stdlib vet suite: printf verbs, struct tags, lost cancel, copylocks.
+    - staticcheck    # SA/S/ST/QF: real bug patterns plus deprecation (SA1019) tracking.
+    - errcheck       # unhandled errors; the #1 source of silent failure in CLI code.
+    - ineffassign    # assignments never read -- almost always a dropped result.
+    - unused         # dead unexported code; keeps the clean-copy tree from rotting.
+    - nilerr         # `return nil` on a non-nil error: swallowed failures.
+    - errorlint      # %v instead of %w, and error type-asserts that break on wrapping.
+    - bodyclose      # leaked HTTP response bodies (this CLI talks to RPC/Console/provider gateways).
+    - unconvert      # redundant type conversions, usually leftovers from a refactor.
+    # --- conventions from AGENTS.md ---------------------------------------
+    - gochecknoinits # AGENTS.md: "every init usage must be explicitly approved".
+    - revive         # curated rule set below -- naming, error handling, builtin shadowing.
+    # --- hygiene -----------------------------------------------------------
+    - misspell       # typos in comments and user-facing strings.
+
+  settings:
+    errcheck:
+      exclude-functions:
+        # Terminal/stdout writes in a CLI: the process is printing its result
+        # and has nothing useful to do with an EPIPE except exit, which it is
+        # already about to do. Real writes (files, encoders, the store) are
+        # still checked.
+        - fmt.Fprint
+        - fmt.Fprintf
+        - fmt.Fprintln
+        - (*os.File).WriteString
+        # Closing a body you only read from cannot lose data -- the error is
+        # at most a connection teardown detail. `defer func() { _ =
+        # resp.Body.Close() }()` at 17 call sites buries the request logic it
+        # is wrapped around. Write-side closers (*os.File, encoders, the
+        # store) are deliberately NOT excluded: a dropped error there is
+        # silent data loss.
+        - (io.ReadCloser).Close
+
+    staticcheck:
+      checks:
+        - all
+        # The ST1000/ST1003/ST1016/ST1020-ST1022 line repeats golangci-lint's
+        # own default exclusions, spelled out so that adding "all" above does
+        # not silently switch them on. They are doc-comment and naming style
+        # ("package should have a comment", "comment on exported X should be
+        # of the form ..."); revive's `exported` rule is left off for the same
+        # reason -- it alone accounted for ~230 findings, none of them defects.
+        - -ST1000
+        - -ST1003
+        - -ST1016
+        - -ST1020
+        - -ST1021
+        - -ST1022
+        # QF1008 (omit embedded field from selector) and QF1012 (rewrite
+        # x.WriteString(fmt.Sprintf(..)) as fmt.Fprintf) are refactoring
+        # suggestions, not defects. QF1012 in particular would make the
+        # strings.Builder-based renderers in internal/output/pretty and
+        # internal/tui strictly less readable.
+        - -QF1008
+        - -QF1012
+
+    revive:
+      # Only the rules listed here run. The set is deliberately small: naming,
+      # error handling and genuine footguns. Rules that would demand a doc
+      # comment on every exported symbol (`exported`, `package-comments`) or
+      # rename every unused callback parameter (`unused-parameter`) are
+      # omitted -- together they were ~350 of revive's 441 default findings and
+      # none of them describe a defect.
+      rules:
+        - name: blank-imports
+        - name: bool-literal-in-expr
+        - name: constant-logical-expr
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: datarace
+        - name: defer
+        - name: dot-imports
+        - name: duplicated-imports
+        - name: empty-block
+        - name: error-naming
+        - name: error-return
+        - name: error-strings
+        - name: errorf
+        - name: identical-branches
+        - name: increment-decrement
+        - name: indent-error-flow
+        - name: modifies-value-receiver
+        - name: range
+        - name: receiver-naming
+        - name: redefines-builtin-id
+        - name: string-of-int
+        - name: superfluous-else
+        - name: time-naming
+        - name: unconditional-recursion
+        - name: unexported-return
+        - name: unreachable-code
+        - name: useless-break
+        - name: var-declaration
+        - name: var-naming
+        - name: waitgroup-by-value
+
+  exclusions:
+    generated: lax
+    rules:
+      # -------------------------------------------------------------------
+      # internal/cli/chain is a CLEAN COPY of the akash-network/chain-sdk
+      # `go/cli` tree (DESIGN.md 5.1). It is maintained by re-copying from
+      # upstream and re-applying the akt context adaptations, so every
+      # cosmetic diff we introduce here is a merge conflict we pay for on the
+      # next copy. Correctness linters (govet, errcheck, staticcheck,
+      # ineffassign, unused, bodyclose, nilerr) stay ON for this tree --
+      # a real bug is worth the conflict. Style-only ones are off.
+      # -------------------------------------------------------------------
+      - path: internal/cli/chain/
+        linters:
+          - revive
+          - misspell
+          - unconvert
+      # Same tree: upstream wraps with %v in fmt.Errorf throughout. Rewriting
+      # ~57 call sites to %w would diverge from chain-sdk on every line that
+      # returns an error, for no behavioural change in a CLI that prints
+      # err.Error() rather than unwrapping.
+      - path: internal/cli/chain/
+        linters:
+          - errorlint
+        text: non-wrapping format verb
+      # Same tree: the upstream root/flags packages register their command
+      # tree from init(). Removing them is an upstream change, not ours.
+      # AGENTS.md's no-init rule is enforced everywhere we actually author.
+      - path: internal/cli/chain/
+        linters:
+          - gochecknoinits
+      # Same tree: deprecated cosmos-sdk APIs (sdk.MustSortJSON,
+      # cli.ReadGovPropFlags). Migrating them here means diverging from the
+      # upstream file we re-copy from; upstream owns that migration. SA1019
+      # stays on everywhere else, which is where it earns its keep.
+      - path: internal/cli/chain/
+        linters:
+          - staticcheck
+        text: "SA1019"
+      # Same tree: two unchecked deferred Close calls (gov_tx.go proposal
+      # file, server_export.go genesis file). Both are read-only opens
+      # (os.Open / O_RDONLY), so nothing can be lost -- not a correctness bug,
+      # and not worth a diff against upstream. Write-side closers elsewhere in
+      # the repo are still checked.
+      - path: internal/cli/chain/
+        linters:
+          - errcheck
+        text: "Error return value of `(fl|f)\\.Close` is not checked"
+      # -------------------------------------------------------------------
+      # internal/monitor/ui carries the not-yet-wired Provider/Network
+      # dashboard. model.go says so at the tick handlers: "Provider
+      # monitoring ticks are currently disabled; they will be activated when
+      # the Provider dashboard implementation starts the chain sync and
+      # provider check tick chains in Init()." `unused` is technically right
+      # about every symbol below, but deleting them deletes an in-progress
+      # feature. This is an explicit allowlist, not a package-wide opt-out:
+      # any NEW dead code in internal/monitor/ui is still reported, and each
+      # entry should be deleted from this list as the dashboard is wired up.
+      # -------------------------------------------------------------------
+      - path: internal/monitor/ui/
+        linters:
+          - unused
+        text: "(loadFromCache|syncChain|fetchProviders|providerCheckTick|chainSyncTick|cacheSaveTick|sortProviders|selectPreviousVersion|selectNextVersion|renderValidatorRowWithSelection|renderProviderRow|formatProviderGPUStyled|formatVersionDisplay|versionMarker|formatGPUDisplay|overviewScroll|selectedBlock|newProviders|networkTabCount)"
+      # internal/output/pretty is the registry-based formatter package
+      # (DESIGN.md 5.5): each formatter file self-registers its response type
+      # in init() so that adding a formatter is one new file with no central
+      # list to edit. This is the one approved init() usage in the codebase.
+      - path: internal/output/pretty/
+        linters:
+          - gochecknoinits
+      # Test helpers are frequently written a commit ahead of the test that
+      # uses them; `unused` on _test.go turns that into a build break and
+      # pushes people to delete scaffolding they are about to need. Dead
+      # non-test code is still reported.
+      - path: _test\.go
+        linters:
+          - unused
+      # Deferred Close/cleanup in tests: a failure to close a temp file or db
+      # in a test that is about to exit tells us nothing, and `defer func() {
+      # _ = f.Close() }()` at every site buries the actual test.
+      - path: _test\.go
+        linters:
+          - errcheck
+        text: Error return value of .*\.Close|Error return value of .*\.Flush
+
+issues:
+  # Report everything; a truncated report makes "fix the lint" an unbounded
+  # loop of re-running to discover the next batch.
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+formatters:
+  # gofmt, not gofumpt. The repo is not gofumpt-clean (36 files differ,
+  # including 7 under internal/cli/chain), and gofumpt would rewrite the
+  # upstream clean-copy tree. gofmt + goimports keeps the chain copy
+  # byte-identical to upstream formatting.
+  #
+  # goimports runs without `local-prefixes`. Requiring a separate import group
+  # for pkg.akt.dev/akt took the finding count from 11 to 46, and 36 of those
+  # 46 were in the internal/cli/chain clean copy -- a guaranteed conflict on
+  # the next upstream re-copy, in exchange for an import grouping the repo has
+  # never used. std-vs-external grouping and sorting are still enforced.
+  enable:
+    - gofmt
+    - goimports

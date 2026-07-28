@@ -244,7 +244,7 @@ func GetQueryAuthModuleAccountByNameCmd() *cobra.Command {
 // GetQueryAuthTxsByEventsCmd returns a command to search through transactions by events.
 func GetQueryAuthTxsByEventsCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "txs",
+		Use:   "txs [events]",
 		Short: "Query for paginated transactions that match a set of events",
 		Long: strings.TrimSpace(
 			fmt.Sprintf(`
@@ -254,16 +254,25 @@ to each module's documentation for the full set of events to query for. Each mod
 documents its respective events under 'xx_events.md'.
 
 Example:
-$ %s query txs --%s 'message.sender=akash1...&message.action=withdraw_delegator_reward' --page 1 --limit 30
-`, eventFormat, version.AppName, cflags.FlagEvents),
+$ %[2]s query txs 'message.sender=akash1...&message.action=withdraw_delegator_reward' --page 1 --limit 30
+`, eventFormat, version.AppName),
 		),
+		Args:              cobra.MaximumNArgs(1),
 		PersistentPreRunE: QueryPersistentPreRunE,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)
 			cctx := cl.ClientContext()
 
-			eventsRaw, _ := cmd.Flags().GetString(cflags.FlagEvents)
+			// FEEDBACK(2026-07): --events disabled for the positional-only UX
+			// trial; the positional expression is the only source (zero
+			// fallback). Restore by uncommenting if users ask for the flag
+			// form back.
+			// eventsRaw, _ := cmd.Flags().GetString(cflags.FlagEvents)
+			eventsRaw := cflags.ExprFromArgs(args, "")
+			if eventsRaw == "" {
+				return fmt.Errorf("events are required: pass them positionally")
+			}
 			eventsStr := strings.Trim(eventsRaw, "'")
 
 			var events []string
@@ -307,8 +316,10 @@ $ %s query txs --%s 'message.sender=akash1...&message.action=withdraw_delegator_
 	cflags.AddQueryFlagsToCmd(cmd)
 	cmd.Flags().Int(cflags.FlagPage, query.DefaultPage, "Query a specific page of paginated results")
 	cmd.Flags().Int(cflags.FlagLimit, query.DefaultLimit, "Query number of transactions results per page returned")
-	cmd.Flags().String(cflags.FlagEvents, "", fmt.Sprintf("list of transaction events in the form of %s", eventFormat))
-	_ = cmd.MarkFlagRequired(cflags.FlagEvents)
+	// FEEDBACK(2026-07): --events disabled for the positional-only UX trial
+	// (use the positional form instead). Restore by uncommenting if users
+	// ask for the flag form back.
+	// cmd.Flags().String(cflags.FlagEvents, "", fmt.Sprintf("list of transaction events in the form of %s", eventFormat))
 
 	return cmd
 }

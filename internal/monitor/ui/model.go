@@ -189,10 +189,10 @@ type Model struct {
 	governanceParams *governance.AllParams
 
 	// Bubbles component models for tables/lists/viewports
-	providerTable  table.Model
-	nodeTable      table.Model
-	validatorTable table.Model
-	blockTable     table.Model
+	providerTable   table.Model
+	nodeTable       table.Model
+	validatorTable  table.Model
+	blockTable      table.Model
 	govModuleIdx    int // selected module index in governance.ModuleOrder
 	govModuleScroll int // first visible module index (scroll offset)
 	govModuleHeight int // visible rows for the module list
@@ -311,7 +311,6 @@ type ModelConfig struct {
 	InitialDashboard   string     // "network" (default), "provider", "oracle", "bme"
 	Bus                pubsub.Bus // shared event bus; may be nil
 }
-
 
 // NewModel creates a new UI model
 func NewModel(cfg ModelConfig) Model {

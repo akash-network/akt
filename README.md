@@ -4,15 +4,27 @@ Unified CLI and TUI for the [Akash Network](https://akash.network).
 
 ## Overview
 
-`akt` replaces the user-facing CLI functionality currently spread across `akash-network/node` (`akash`), `akash-network/provider` (`provider-services`), and `akash-network/chain-sdk/go/cli` with a single binary. It adds a context system for managing multiple networks/accounts, a local deployment store, an interactive TUI, and `akt monitor` -- a hub-based real-time monitoring tool for network state, provider fleet health, and BME state (incorporating [`aktop`](https://github.com/cloud-j-luna/aktop) functionality).
+`akt` replaces the user-facing CLI functionality currently spread across `akash-network/node` (`akash`), `akash-network/provider` (`provider-services`), and `akash-network/chain-sdk/go/cli` with a single binary. It adds a context system for managing multiple networks/accounts, a local deployment store, offline SDL authoring, Akash Console integration, and `akt monitor` -- a hub-based real-time monitoring tool for network state, provider fleet health, and BME state (incorporating [`aktop`](https://github.com/cloud-j-luna/aktop) functionality).
 
-The CLI is designed for **flag-minimal operation**: after initial context configuration, the majority of commands require zero additional flags. Query commands use **positional filter arguments** (`akt query deployment 12345`) instead of flag-based filters (`--owner`, `--dseq`), following the Akash resource hierarchy.
+The CLI is designed for **flag-minimal operation with no surprises**: after initial context configuration, the majority of commands require zero additional flags, and commands the active context is not configured to run say so up front instead of failing somewhere inside a transport (see [Capability Gating](#capability-gating)).
+
+Commands take their primary values **positionally**, following the Akash resource hierarchy, rather than through filter flags:
+
+```bash
+# State keyword, identity + state, dseq, and a date range -- all positional
+akt query deployment active
+akt query deployment akash1abc.../12345 closed
+akt tx deployment close 12345
+akt console usage 2026-01-01 2026-01-31
+```
+
+The duplicated identity and filter flags (`--owner`, `--dseq`, `--gseq`, `--oseq`, `--state`, `--provider`, and the Console positional twins such as `--from`/`--to` on `console usage`) are **disabled during a UX trial** (2026-07): they are commented out in code behind `FEEDBACK(2026-07)` markers and can be restored wholesale if feedback calls for it. While the trial runs, the positional form is the only form. Transaction flags (`--from`, `--gas`, `--fees`, ...) are unaffected.
 
 See [DESIGN.md](DESIGN.md) for architecture and [SPEC.md](SPEC.md) for the full technical specification.
 
 ## Status
 
-Under active development. Phase 1 (Foundation) is in progress. Provider gateway, deployment store, sync engine, and full TUI views are in progress.
+Under active development. Phase 1 (Foundation) is complete: context system, key management, all chain tx/query commands, output formatting, action log, and shell completion. Workflow execution (`akt deploy/update/close`) and Akash Console integration have landed -- including live lease operations (logs, events, status, shell) against provider gateways -- along with capability gating, the offline `akt sdl` authoring group, offline e2e suites, and CI. The deployment store, sync engine, and provider gateway commands are implemented. The **TUI shell is disabled pending UX feedback** (see [TUI Shell](#tui-shell)); `akt monitor` is unaffected.
 
 ## What's Implemented
 
@@ -27,6 +39,29 @@ Under active development. Phase 1 (Foundation) is in progress. Provider gateway,
 - First-run bootstrap that fetches networks from `akash-network/net`
 - Config live-reload via fsnotify
 - Environment variable overrides (`AKT_CONTEXT`, `AKT_HOME`, `AKT_FROM`, etc.)
+
+### Capability Gating
+
+The active context's configuration determines a **feature set** -- what `akt` can actually do:
+
+- A network with at least one RPC endpoint enables `chain-query`, `chain-tx`, and `provider`, which gate the `query`, `tx`, `monitor`, and `provider` command groups.
+- A resolvable Console API key enables `console`, which gates the Console-backed commands.
+
+Commands declare their requirement as a cobra annotation (`internal/capability`), and alternatives are allowed -- the workflow commands need `chain-tx|console` and run on either rail. A command the configuration cannot run is dimmed in help (its summary prefixed with `[unavailable]`) and fails fast naming the missing capability and its remedy:
+
+```
+akt console whoami is unavailable with the current context configuration: requires
+console (configure a Console API key (akt console login, or akt context edit
+<context> --console-api-key <key>))
+```
+
+Presentation is configurable while UX feedback is collected, via `defaults.command-gating` in `config.yaml`:
+
+- **`dim`** (default) -- unavailable commands stay listed, marked `[unavailable]`, and fail fast with an explanation.
+- **`hide`** -- unavailable commands are removed from help listings; direct invocation still fails fast.
+- **`off`** -- no gating; commands fail wherever the missing transport is first touched.
+
+Per-invocation overrides that carry their own connection details (`--node`, `--console-api-key`, a positional `akt monitor` endpoint) grant the capability they supply, so gating never rejects a command that can connect on its own. Help is never gated. `akt context show` reports the resolved feature set. See [SPEC.md §2.10](SPEC.md#210-capability-gating).
 
 ### Key Management
 
@@ -55,7 +90,7 @@ Subcommands for direct access: `akt monitor network`, `akt monitor provider`, `a
 
 ### Action Log
 
-Per-context append-only JSONL log recording all tx, query, workflow, provider, and context operations. Supports filtering by type, time range, deployment sequence, and account. Automatic rotation at 10 MB.
+Per-context append-only JSONL log recording every mutating operation: tx, workflow, provider, context, and console actions. Read-only queries are not recorded by design. `akt context log` reads entries newest-first with `--type`, `--since`, and `--limit` filters. Automatic rotation at 10 MB (up to 5 rotated files kept).
 
 ### Output Formatting
 
@@ -67,11 +102,35 @@ All commands support `--output pretty|json|yaml` with pretty formatting by defau
 
 ### Workflow Engine
 
-Core engine with 3-level definition resolution (per-context > global > embedded), Go template evaluation, 8 step types (tx, query, wait, prompt, provider, output, shell, check), and retry/error handling. Workflows support two execution modes: **TUI mode** (interactive progress display) and **JSONL mode** (`--output jsonl`, JSONL output for CI/CD and scripting). Built-in workflow definitions (deploy, update, close) are not yet wired.
+Core engine with 3-level definition resolution (per-context > global > embedded), Go template evaluation, 8 step types (tx, query, wait, prompt, provider, output, shell, check), and retry/error handling. Workflows support two execution modes: **TUI mode** (interactive progress display) and **JSONL mode** (`--output jsonl`, JSONL output for CI/CD and scripting). The built-in workflows (`akt deploy`, `akt update`, `akt close`) execute end-to-end with auth-aware routing: keyring contexts sign and broadcast locally, while console-api contexts route through the Console API (provider manifest steps are skipped -- Console submits manifests internally). Every step is recorded in the action log.
+
+### SDL Authoring (`akt sdl`)
+
+Transport-independent SDL scaffolding, generation, and linting. Every `akt sdl` subcommand runs entirely locally: no context, no key, no RPC endpoint, and the group declares no capability requirements.
+
+- **`akt sdl scaffolds`** -- list the built-in scaffolds (`web`, `gpu`, `multi-service`, `ip-lease`) and the flags each honors.
+- **`akt sdl init <scaffold>`** -- print a deployable SDL to stdout, self-checked against the validator before it is printed. Flags (`--image`, `--cpu`, `--memory`, `--gpu-model`, `--price`, ...) are generation parameters with per-scaffold defaults, so the zero-flag invocation always produces valid output. Pipe it into `akt sdl validate -`, or redirect it to a file for `akt deploy` / `akt console deployment create`.
+- **`akt sdl validate <file>`** -- validate offline (`-` reads stdin). Parsing uses `pkg.akt.dev/go/sdl`, the same parser behind `akt deploy` and the chain tx commands, followed by lint rules.
+
+Lint rules: an unpinned image is an **error** -- every service image must carry an explicit tag or `@sha256:` digest, so untagged images and `:latest` are rejected as non-reproducible. For pricing, `uact` passes, `uakt` is a **warning** (valid on-chain, but managed console-api deployments are priced in `uact`), and any other denom is an error. Exit 0 when valid, 1 when not. See [SPEC.md §2.11](SPEC.md#211-sdl-commands).
+
+### Console Integration (`akt console`)
+
+Full command group for the [Akash Console](https://console.akash.network) managed-wallet API:
+
+- **Authentication** -- `login` (validates the key, then stores it for the active context), `logout`, `whoami`.
+- **Deployment lifecycle** -- `deployment list/get/create/update/close/deposit/settings`. Deposits and amounts are USD (minimum $0.50), accepted as `5`, `5usd`, or `$5`.
+- **Bids and leases** -- `bid list <dseq>` and `lease create <dseq> [provider]`, which defaults to the manifest cached per context by `deployment create`.
+- **Wallet and usage** -- `wallet list/balance/settings/cost` and `usage [from] [to]` spend history, all rendered in USD.
+- **Keyless marketplace** -- `provider list/get/regions/auditors`, `gpu`, `template list/get/sdl`, and `screen <sdl-file>` bid screening. These hit public endpoints and need neither an API key nor a configured context.
+- **Credentials** -- `apikey list/create/delete` (the secret is printed exactly once) and `jwt create` for short-lived provider-scoped tokens.
+- **Live lease operations** -- `logs <dseq> [service]` and `events <dseq>` (both `--follow`), `status <dseq>` (`--watch`, `--interval`), and `shell <dseq> <service> [-- command]` (exec is the same command with an explicit command). Each resolves the deployment's active lease, looks up the provider's gateway URI, and mints a scoped JWT via the Console, so **managed contexts reach providers with no wallet and no local key**. One-shot calls use a 300 s token; streaming and interactive modes use 3600 s.
+
+The API key is stored per context at `contexts/<name>/console-api-key` (mode 0600, never written to `config.yaml`, never printed) and resolved `--console-api-key` flag > `AKT_CONSOLE_API_KEY` env var > stored credential, so switching context switches Console identity. Write it with `akt console login` or `akt context edit <context> --console-api-key <key>`; `akt context rename` moves it and `akt context delete` removes it. The first-run bootstrap offers Console onboarding, and state-changing Console calls are recorded in the action log. [SPEC.md §7.8](SPEC.md#78-console-compatibility-matrix) tracks coverage of every Console capability.
 
 ### TUI Shell
 
-Bubbletea application with dashboard, view routing (query, tx, top), vim-style `:` command input, `ctrl+p` search dialog, and configurable keybindings. Resource views are scaffolded but not yet populated with live data.
+**Disabled pending UX feedback (2026-07).** Bare `akt` prints the help text instead of launching the dashboard, and `-i`/`--interactive` reports that the TUI is disabled. The bubbletea application (dashboard, view routing, vim-style `:` command input, `ctrl+p` search dialog, configurable keybindings) is still compiled in and launches under `AKT_EXPERIMENTAL_TUI=1` for feedback sessions; its resource views are scaffolded but not yet populated with live data. `akt monitor` is a separate application and is unaffected -- it is fully functional.
 
 ## Build
 
@@ -81,7 +140,15 @@ Requires Go 1.26+, make, and the [Akash chain SDK](https://github.com/akash-netw
 make akt
 ```
 
-The binary is placed in `.cache/bin/akt`.
+The binary is placed in `.cache/bin/akt`. Version, commit, and build date are injected at link time:
+
+```bash
+# Short form: version, commit, build date
+akt version
+
+# Full build info: version, commit, build date, Go version, platform, build tags
+akt version --long
+```
 
 Run tests:
 
@@ -130,7 +197,7 @@ akt context create prod --network mainnet --default-account alice --set-current
 # Switch active context
 akt context use staging
 
-# Show active context details (resolved network, keyring, store path)
+# Show active context details (resolved network, keyring, store path, capabilities)
 akt context show
 
 # Edit a context
@@ -143,6 +210,18 @@ akt context create console --network mainnet --auth-method console-api --set-cur
 akt context rename prod production
 akt context delete staging --yes
 ```
+
+`akt context show` ends with a Capabilities block reporting the resolved feature set, naming the remedy for anything the configuration cannot do:
+
+```
+  Capabilities:
+      Chain queries:       available
+      Chain transactions:  available
+      Provider gateway:    available
+      Console API:         unavailable — run akt console login
+```
+
+Commands outside that set are dimmed in help and refuse to run. Set `defaults.command-gating` to `hide` in `config.yaml` to drop them from help listings entirely, or to `off` to disable gating.
 
 ### Network Management
 
@@ -189,6 +268,38 @@ akt context keys import alice-backup alice.key
 akt context keys parse akash1abc...
 ```
 
+### SDL Authoring
+
+`akt sdl` runs entirely locally -- it works before any context exists and never touches the network.
+
+```bash
+# List the built-in scaffolds and the flags each honors
+akt sdl scaffolds
+
+# Generate a web service SDL
+akt sdl init web --image nginx:1.27 > deploy.yaml
+
+# GPU workload with a specific model
+akt sdl init gpu --gpu-model h100 --image myorg/model:1.0 > gpu.yaml
+
+# Generate and validate without touching disk
+akt sdl init web --image nginx:1.27 | akt sdl validate -
+
+# Validate a file (exit 0 valid, exit 1 invalid)
+akt sdl validate deploy.yaml
+```
+
+A valid document prints `valid: 1 service(s), 1 group(s), 0 warning(s)`. Problems are listed with a hint:
+
+```
+invalid: 1 error(s), 1 warning(s)
+  error: services/web/image: image "nginx" has no tag; pin an explicit version for reproducible deployments
+    hint: use "nginx:<version>" instead of an untagged image
+  warning: profiles/placement/dcloud/pricing: pricing denom "uakt" is on-chain only; managed (console-api) deployments are priced in "uact" (micro-ACT, 1:1 USD)
+```
+
+Redirect the generated SDL to a file to feed `akt deploy` or `akt console deployment create`; both take a file path.
+
 ### Transactions
 
 ```bash
@@ -198,11 +309,11 @@ akt tx bank send alice akash1dest... 1000000uakt
 # Create a deployment
 akt tx deployment create deployment.yaml
 
-# Close a deployment
-akt tx deployment close --dseq 12345
+# Close a deployment (positional dseq)
+akt tx deployment close 12345
 
-# Create a lease
-akt tx market lease create --dseq 12345 --gseq 1 --oseq 1 --provider akash1prov...
+# Create a lease (positional dseq and provider; gseq/oseq default to 1)
+akt tx market lease create 12345 akash1prov...
 
 # Delegate to a validator
 akt tx staking delegate akashvaloper1... 1000000uakt
@@ -217,11 +328,11 @@ akt tx cert publish client
 
 All transaction commands accept `--from`, `--gas`, `--fees`, `--broadcast-mode`, `--yes`, `--dry-run`, and other standard flags. Defaults come from the active context.
 
-### Workflows (Planned)
+### Workflows
 
-Workflow commands orchestrate multi-step operations. They support two execution modes:
+Workflow commands orchestrate multi-step operations, routing each step through the active context's auth method (local signing for `keyring`, Console API for `console-api`). They support two execution modes:
 
-**TUI mode** (default, interactive):
+**TUI mode** (default, interactive) -- a per-workflow progress display, independent of the [TUI shell](#tui-shell):
 ```bash
 # Full deployment lifecycle with interactive bid selection
 akt deploy deployment.yaml
@@ -233,14 +344,11 @@ akt deploy deployment.yaml
 akt deploy deployment.yaml --bid-select cheapest --yes -o jsonl
 ```
 
-Output (one JSON object per line):
+Output is one JSON object per line, one line per step (`create-deployment`, `wait-for-bids`, `select-bid`, `create-lease`, `send-manifest`, `display-result`):
 ```jsonl
 {"workflow":"deploy","id":"wf_a1b2c3","step":"create-deployment","result":"completed","errors":[],"txs":[{"hash":"ABCD...","height":12345,"gas_used":150000,"code":0}]}
 {"workflow":"deploy","id":"wf_a1b2c3","step":"wait-for-bids","result":"completed","errors":[],"txs":[]}
-{"workflow":"deploy","id":"wf_a1b2c3","step":"select-bid","result":"completed","errors":[],"txs":[]}
 {"workflow":"deploy","id":"wf_a1b2c3","step":"create-lease","result":"completed","errors":[],"txs":[{"hash":"EFGH...","height":12350,"gas_used":120000,"code":0}]}
-{"workflow":"deploy","id":"wf_a1b2c3","step":"send-manifest","result":"completed","errors":[],"txs":[]}
-{"workflow":"deploy","id":"wf_a1b2c3","step":"display-result","result":"completed","errors":[],"txs":[]}
 ```
 
 Parse with `jq`:
@@ -252,7 +360,7 @@ akt deploy deployment.yaml --bid-select cheapest --yes -o jsonl \
 
 ### Queries
 
-Akash query commands use a **positional filter argument** instead of `--owner`/`--dseq` flags. The filter follows the resource hierarchy (`owner/dseq/gseq/oseq/provider`) with smart type detection: a bech32 address is an owner, a number is a dseq. When no owner is given, the context's default account is used. Non-identity filters like `--state` remain as flags. See [SPEC.md §3.8](SPEC.md#38-resource-filter-argument) for full details.
+Akash query commands use a **positional filter argument** instead of `--owner`/`--dseq` flags (see the UX trial note in the [Overview](#overview)). The filter follows the resource hierarchy (`owner/dseq/gseq/oseq/provider`) with smart type detection: a bech32 address is an owner, a number is a dseq. When no owner is given, the context's default account is used. State keywords are also positional: `akt query deployment active` lists active deployments, and identity + state combine as two positional arguments (`akt query deployment 12345 active`). When the identity pins down a single record, the state argument verifies it — the command fails if the record is in a different state instead of printing it. See [SPEC.md §3.8](SPEC.md#38-resource-filter-argument) for full details.
 
 ```bash
 # Check balances
@@ -270,8 +378,8 @@ akt query deployment akash1abc...
 # Get a specific deployment by owner and dseq
 akt query deployment akash1abc.../12345
 
-# List active leases
-akt query market lease --state active
+# List active leases (positional state keyword)
+akt query market lease active
 
 # Leases for a specific deployment
 akt query market lease 12345
@@ -331,15 +439,11 @@ Hub navigation: `Tab`/`Shift-Tab` cycle between Network, Provider, Oracle/BME da
 # Pretty table (default) -- color-coded states, bold identifiers
 akt query deployment
 
-# Pretty JSON -- syntax-highlighted
-akt query deployment --output json
-
-# Machine-readable YAML
-akt query bank balances akash1abc... -o yaml
-
-# Machine-readable JSON (for scripts and pipes)
+# JSON, for scripts and pipes
 akt query deployment -o json
-akt query bank balances akash1abc... -o json
+
+# YAML
+akt query bank balances akash1abc... -o yaml
 ```
 
 ### Action Log
@@ -364,8 +468,10 @@ Contexts with `--auth-method console-api` use the [Akash Console Managed Wallet 
 # Set up a console-api context
 akt context create console --network mainnet --auth-method console-api --set-current
 
-# Set your API key (created at console.akash.network > Settings > API Keys)
-export AKT_CONSOLE_API_KEY="your-api-key-here"
+# Store your API key as the context credential (created at
+# console.akash.network > Settings > API Keys). Validates the key and
+# writes it to contexts/<name>/console-api-key (0600).
+akt console login
 
 # Deploy using the Console managed wallet
 akt tx deployment create deploy.yaml --deposit 5
@@ -374,30 +480,69 @@ akt tx deployment create deploy.yaml --deposit 5
 akt query deployment
 
 # Update a deployment
-akt tx deployment update deploy.yaml --dseq 12345
+akt tx deployment update deploy.yaml 12345
 
 # Close a deployment
-akt tx deployment close --dseq 12345
+akt tx deployment close 12345
+
+# Drive the Console API directly
+akt console deployment list
+akt console wallet balance
+
+# Spend history for an explicit range (positional dates)
+akt console usage 2026-01-01 2026-01-31
 ```
 
-Query commands that read directly from the chain (e.g., `akt query bank balances`) still work normally. Commands that require local signing (e.g., `akt tx bank send`, `akt tx gov vote`) are not supported with `console-api` auth -- use a `keyring` context for those.
+The API key resolves `--console-api-key` flag > `AKT_CONSOLE_API_KEY` env var > per-context stored credential, so switching context switches Console identity. Store or replace it without the interactive prompt with `akt context edit <context> --console-api-key <key>` (an empty string removes it). Query commands that read directly from the chain (e.g., `akt query bank balances`) still work normally. Commands that require local signing (e.g., `akt tx bank send`, `akt tx gov vote`) are not supported with `console-api` auth -- use a `keyring` context for those.
+
+Live lease operations reach the provider gateway directly, authorized by a short-lived Console-minted JWT -- no wallet and no local key involved:
+
+```bash
+# Stream logs for one service
+akt console logs 12345 web --follow
+
+# Last 100 lines across all services
+akt console logs 12345 --tail 100
+
+# Kubernetes events for the lease
+akt console events 12345 --follow
+
+# One live status snapshot from the provider gateway
+akt console status 12345
+
+# Re-poll every 30s until Ctrl-C
+akt console status 12345 --watch --interval 30s
+
+# Interactive shell in a container (defaults to /bin/sh)
+akt console shell 12345 web
+
+# Run a single command (a.k.a. exec)
+akt console shell 12345 web -- ls -la
+
+# Which providers can run this SDL? (public endpoint, no key required)
+akt console screen deploy.yaml
+```
 
 ### TUI Mode
 
-Running `akt` with no subcommand launches the interactive TUI dashboard:
+The TUI shell is **disabled pending UX feedback** (2026-07). Running `akt` with no subcommand prints the help text, and `-i`/`--interactive` reports that the TUI is disabled:
 
 ```bash
+# Prints help
 akt
+
+# Launch the TUI anyway, for a feedback session
+AKT_EXPERIMENTAL_TUI=1 akt
 ```
 
-Navigation: `1`-`6` primary views (Deployments, Leases, Providers, Monitor, Governance, Staking), `q` query panel, `t` tx panel, `:` or `ctrl+p` command palette, `?` help, `esc` back, `ctrl+c` quit.
+When enabled, navigation is `1`-`6` primary views (Deployments, Leases, Providers, Monitor, Governance, Staking), `q` query panel, `t` tx panel, `:` or `ctrl+p` command palette, `?` help, `esc` back, `ctrl+c` quit. `akt monitor` is a separate application and remains fully functional.
 
 ## Roadmap
 
 Upcoming work (see [SPEC.md](SPEC.md) for full details):
 
-- **Phase 2**: Deployment store (bbolt), sync engine, `akt deploy` workflow, provider gateway commands (`akt provider status/lease-status/lease-logs/lease-shell/send-manifest`), Console API client (`auth-method: console-api`), store export/import
-- **Phase 3**: Full TUI with live resource views (deployments, leases, providers, governance, validators), `akt monitor` hub (network, provider, oracle/BME dashboards), command palette, themes
+- **TUI**: populate resource views (deployments, leases, providers, governance, validators) with live data from the store and sync engine, then re-enable the shell
+- **UX trial follow-up (2026-07)**: decide from feedback whether the duplicated identity/filter flags are restored. The default `command-gating` mode is settled as `dim`; `hide` and `off` remain available.
 - **Phase 4**: Plugin system, additional TUI resource views (wasm, ibc, escrow), performance optimization
 
 ## License

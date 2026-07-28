@@ -9,6 +9,7 @@ import (
 	ibctransfer "github.com/cosmos/ibc-go/v10/modules/apps/transfer"
 	ibccore "github.com/cosmos/ibc-go/v10/modules/core"
 
+	"pkg.akt.dev/akt/internal/capability"
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	aclient "pkg.akt.dev/go/node/client/discovery"
 )
@@ -46,7 +47,10 @@ func TxPersistentPreRunE(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 
-		ctx = context.WithValue(ctx, ContextTypeClient, cl)
+		// Record every broadcast in the per-context action log (SPEC §5.6).
+		wrapped := withActionLog(ctx, cl)
+
+		ctx = context.WithValue(ctx, ContextTypeClient, wrapped)
 
 		cmd.SetContext(ctx)
 	}
@@ -58,6 +62,8 @@ func TxCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "tx",
 		Short: "Transactions subcommands",
+		// Capability gating: broadcasting requires a chain RPC endpoint.
+		Annotations: map[string]string{capability.AnnotationKey: string(capability.ChainTx)},
 	}
 
 	cmd.AddCommand(

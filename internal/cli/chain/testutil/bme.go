@@ -6,7 +6,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/client"
 	sdktest "github.com/cosmos/cosmos-sdk/testutil"
 
-	"pkg.akt.dev/akt/internal/cli/chain"
+	cli "pkg.akt.dev/akt/internal/cli/chain"
 )
 
 // ExecBMEBurnMint is used for testing BME burn-mint tx

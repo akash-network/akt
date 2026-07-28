@@ -76,7 +76,7 @@ func RenderAggregatedPrice(res *types.QueryAggregatedPriceResponse) string {
 
 	Newline(&buf)
 	fmt.Fprintln(&buf, Section("Price Health"))
-	healthy := "yes"
+	var healthy string
 	if !ph.IsHealthy {
 		healthy = StyleRed.Render("no")
 		if len(ph.FailureReason) > 0 {

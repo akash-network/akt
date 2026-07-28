@@ -46,9 +46,12 @@ type mockMonitor struct {
 	receivedNonKey bool
 }
 
-func (m *mockMonitor) Init() tea.Cmd                           { return nil }
-func (m *mockMonitor) Update(msg tea.Msg) (tea.Model, tea.Cmd) { m.receivedNonKey = true; return m, nil }
-func (m *mockMonitor) View() tea.View                          { return tea.NewView("monitor") }
+func (m *mockMonitor) Init() tea.Cmd { return nil }
+func (m *mockMonitor) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.receivedNonKey = true
+	return m, nil
+}
+func (m *mockMonitor) View() tea.View { return tea.NewView("monitor") }
 
 func TestAppRenderHeader(t *testing.T) {
 	a := newTestApp()

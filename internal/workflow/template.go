@@ -8,6 +8,21 @@ import (
 	"text/template"
 )
 
+// templateFuncs returns the functions available to workflow templates in
+// addition to the text/template builtins.
+func templateFuncs() template.FuncMap {
+	return template.FuncMap{
+		// toJson marshals a value to compact JSON. Steps that pass
+		// structured data to other steps (e.g. the bid list handed to a
+		// prompt step) must serialize it with toJson so the receiving step
+		// can parse it back instead of getting Go's fmt representation.
+		"toJson": func(v any) (string, error) {
+			b, err := json.Marshal(v)
+			return string(b), err
+		},
+	}
+}
+
 // ResolveTemplate evaluates a Go template string against the workflow run state.
 // Templates use {{ .Params.key }}, {{ .Steps.name.key }}, {{ .Account }}, etc.
 func ResolveTemplate(tmpl string, state *RunState) (string, error) {
@@ -20,7 +35,7 @@ func ResolveTemplate(tmpl string, state *RunState) (string, error) {
 		return tmpl, nil
 	}
 
-	t, err := template.New("").Option("missingkey=zero").Parse(tmpl)
+	t, err := template.New("").Funcs(templateFuncs()).Option("missingkey=zero").Parse(tmpl)
 	if err != nil {
 		return "", fmt.Errorf("parse template %q: %w", tmpl, err)
 	}
@@ -62,6 +77,9 @@ func ExtractOutputs(outputDefs map[string]string, raw json.RawMessage, state *Ru
 		// If no output definitions, return the raw result as a generic map.
 		var m map[string]any
 		if err := json.Unmarshal(raw, &m); err != nil {
+			//nolint:nilerr // with no output definitions there is nothing the
+			// caller asked for; a result that is not a JSON object simply
+			// yields no outputs rather than failing the workflow step.
 			return nil, nil
 		}
 
@@ -179,7 +197,7 @@ func resolveWithResult(tmpl string, state *RunState, result any) (any, error) {
 	data := buildTemplateData(state)
 	data["Result"] = result
 
-	t, err := template.New("").Option("missingkey=zero").Parse(tmpl)
+	t, err := template.New("").Funcs(templateFuncs()).Option("missingkey=zero").Parse(tmpl)
 	if err != nil {
 		return nil, fmt.Errorf("parse template %q: %w", tmpl, err)
 	}

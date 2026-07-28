@@ -182,4 +182,3 @@ func TestRenderWasmContractsByCreator(t *testing.T) {
 		})
 	}
 }
-

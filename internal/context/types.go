@@ -43,6 +43,8 @@ type Context struct {
 	Name             string           `yaml:"-"                           json:"name"`
 	Network          Network          `yaml:"-"                           json:"network"`
 	Keyring          Keyring          `yaml:"-"                           json:"keyring"`
+	AuthMethod       string           `yaml:"auth-method,omitempty"       json:"auth_method,omitempty"`
+	ConsoleAPIURL    string           `yaml:"console-api-url,omitempty"   json:"console_api_url,omitempty"`
 	DefaultAccount   string           `yaml:"default-account,omitempty"   json:"default_account,omitempty"`
 	Gas              string           `yaml:"gas,omitempty"               json:"gas,omitempty"`
 	Fees             string           `yaml:"fees,omitempty"              json:"fees,omitempty"`
@@ -54,6 +56,9 @@ type Context struct {
 	GasAdjustment string `yaml:"-" json:"-"`
 	AuthType      string `yaml:"-" json:"-"`
 	Root          string `yaml:"-" json:"-"` // config root directory
+	// ConsoleAPIKey is the resolved Console API key (env var overrides the
+	// per-context credential file, SPEC §7.1). Never serialized.
+	ConsoleAPIKey string `yaml:"-" json:"-"`
 }
 
 // contextYAML is the on-disk representation where Network and Keyring are name strings.
@@ -61,6 +66,8 @@ type contextYAML struct {
 	Name             string           `yaml:"name"`
 	Network          string           `yaml:"network"`
 	Keyring          string           `yaml:"keyring,omitempty"`
+	AuthMethod       string           `yaml:"auth-method,omitempty"`
+	ConsoleAPIURL    string           `yaml:"console-api-url,omitempty"`
 	DefaultAccount   string           `yaml:"default-account,omitempty"`
 	Gas              string           `yaml:"gas,omitempty"`
 	Fees             string           `yaml:"fees,omitempty"`
@@ -73,6 +80,8 @@ func (c Context) MarshalYAML() (interface{}, error) {
 		Name:             c.Name,
 		Network:          c.Network.Name,
 		Keyring:          c.Keyring.Name,
+		AuthMethod:       c.AuthMethod,
+		ConsoleAPIURL:    c.ConsoleAPIURL,
 		DefaultAccount:   c.DefaultAccount,
 		Gas:              c.Gas,
 		Fees:             c.Fees,
@@ -92,6 +101,8 @@ func (c *Context) UnmarshalYAML(value *yaml.Node) error {
 	c.Name = raw.Name
 	c.Network = Network{Name: raw.Network}
 	c.Keyring = Keyring{Name: raw.Keyring}
+	c.AuthMethod = raw.AuthMethod
+	c.ConsoleAPIURL = raw.ConsoleAPIURL
 	c.DefaultAccount = raw.DefaultAccount
 	c.Gas = raw.Gas
 	c.Fees = raw.Fees
@@ -118,6 +129,10 @@ type PluginSettings struct {
 type Defaults struct {
 	Output        string `yaml:"output,omitempty"         json:"output,omitempty"`
 	BroadcastMode string `yaml:"broadcast-mode,omitempty" json:"broadcast_mode,omitempty"`
+	// CommandGating selects how commands the context configuration cannot
+	// execute are presented: dim (default), hide, or off. Both dim and
+	// hide are supported while UX feedback is collected.
+	CommandGating string `yaml:"command-gating,omitempty" json:"command_gating,omitempty"`
 }
 
 // Config is the top-level configuration structure persisted in config.yaml.

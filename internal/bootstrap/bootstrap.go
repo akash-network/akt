@@ -55,6 +55,16 @@ type metaJSON struct {
 
 // Run performs first-run initialization.
 func Run(cfgRoot string) error {
+	// The wizard is interactive by design. Without a terminal it must not
+	// silently fetch networks and write a config with fallback answers
+	// (SPEC §2.0: no TTY -> print and exit); headless environments create
+	// their config explicitly via akt context/network commands.
+	if !term.IsTerminal(int(os.Stdin.Fd())) {
+		fmt.Fprintln(os.Stderr, "no akt configuration found and no terminal is available for the first-run wizard;")
+		fmt.Fprintln(os.Stderr, "run akt from a terminal to bootstrap, or create a config with \"akt context network create\" and \"akt context create\"")
+		return nil
+	}
+
 	fmt.Println("Welcome to akt! No configuration found.")
 	fmt.Println()
 	fmt.Println("Fetching available networks from github.com/akash-network/net ...")
@@ -113,8 +123,27 @@ func Run(cfgRoot string) error {
 		})
 	}
 
+	// Optional Console API key onboarding for the initial context.
+	consoleKey, routeConsole := consoleOnboarding(currentCtx)
+	if routeConsole {
+		for i := range cfg.Contexts {
+			if cfg.Contexts[i].Name == currentCtx {
+				cfg.Contexts[i].AuthMethod = aktctx.AuthMethodConsoleAPI
+			}
+		}
+	}
+
 	if err := aktctx.SaveConfig(cfgRoot, cfg); err != nil {
 		return fmt.Errorf("write config: %w", err)
+	}
+
+	// The credential lives outside config.yaml (SPEC §7.1).
+	if consoleKey != "" {
+		if err := aktctx.SetConsoleAPIKey(cfgRoot, currentCtx, consoleKey); err != nil {
+			return fmt.Errorf("store console api key: %w", err)
+		}
+
+		fmt.Printf("Console API key stored for context %q.\n", currentCtx)
 	}
 
 	fmt.Printf("\nConfig written to %s\n", aktctx.ConfigPath(cfgRoot))
@@ -150,7 +179,7 @@ func multiSelect(networks []aktctx.Network) []aktctx.Network {
 	if err != nil {
 		return networks
 	}
-	defer term.Restore(int(os.Stdin.Fd()), oldState)
+	defer func() { _ = term.Restore(int(os.Stdin.Fd()), oldState) }()
 
 	render := func() {
 		g := glyphs.G()
@@ -214,7 +243,7 @@ func multiSelect(networks []aktctx.Network) []aktctx.Network {
 	// Total rendered lines: header(1) + blank(1) + select-all(1) + blank(1) + networks(n) + blank(1) + hint(1) = n+6
 	renderLines := n + 6
 
-	clear := func() {
+	clearLines := func() {
 		for i := 0; i < renderLines; i++ {
 			os.Stdout.WriteString("\033[A\033[2K")
 		}
@@ -232,7 +261,7 @@ func multiSelect(networks []aktctx.Network) []aktctx.Network {
 		if nr == 1 {
 			switch buf[0] {
 			case ' ':
-				clear()
+				clearLines()
 				if cursor == 0 {
 					allOn := allSelected(checked)
 					for i := range checked {
@@ -244,7 +273,7 @@ func multiSelect(networks []aktctx.Network) []aktctx.Network {
 				render()
 			case '\r', '\n':
 				os.Stdout.WriteString("\r\n")
-				term.Restore(int(os.Stdin.Fd()), oldState)
+				_ = term.Restore(int(os.Stdin.Fd()), oldState)
 
 				var result []aktctx.Network
 				for i, net := range networks {
@@ -254,21 +283,21 @@ func multiSelect(networks []aktctx.Network) []aktctx.Network {
 				}
 				return result
 			case 'j':
-				clear()
+				clearLines()
 				cursor = (cursor + 1) % totalItems
 				render()
 			case 'k':
-				clear()
+				clearLines()
 				cursor = (cursor - 1 + totalItems) % totalItems
 				render()
 			case 'q', 3:
 				os.Stdout.WriteString("\r\n")
-				term.Restore(int(os.Stdin.Fd()), oldState)
+				_ = term.Restore(int(os.Stdin.Fd()), oldState)
 				fmt.Println("Aborted.")
 				os.Exit(0)
 			}
 		} else if nr == 3 && buf[0] == 27 && buf[1] == 91 {
-			clear()
+			clearLines()
 			switch buf[2] {
 			case 65: // Up
 				cursor = (cursor - 1 + totalItems) % totalItems
@@ -319,7 +348,7 @@ func selectKeyringBackend() string {
 	if err != nil {
 		return "os" // fallback
 	}
-	defer term.Restore(int(os.Stdin.Fd()), oldState)
+	defer func() { _ = term.Restore(int(os.Stdin.Fd()), oldState) }()
 
 	render := func() {
 		g := glyphs.G()
@@ -354,7 +383,7 @@ func selectKeyringBackend() string {
 	// header(1) + blank(1) + options(3) + blank(1) = 6
 	renderLines := len(options) + 3
 
-	clear := func() {
+	clearLines := func() {
 		for i := 0; i < renderLines; i++ {
 			os.Stdout.WriteString("\033[A\033[2K")
 		}
@@ -374,24 +403,24 @@ func selectKeyringBackend() string {
 			switch buf[0] {
 			case '\r', '\n':
 				os.Stdout.WriteString("\r\n")
-				term.Restore(int(os.Stdin.Fd()), oldState)
+				_ = term.Restore(int(os.Stdin.Fd()), oldState)
 				return options[cursor].value
 			case 'j':
-				clear()
+				clearLines()
 				cursor = (cursor + 1) % totalItems
 				render()
 			case 'k':
-				clear()
+				clearLines()
 				cursor = (cursor - 1 + totalItems) % totalItems
 				render()
 			case 'q', 3:
 				os.Stdout.WriteString("\r\n")
-				term.Restore(int(os.Stdin.Fd()), oldState)
+				_ = term.Restore(int(os.Stdin.Fd()), oldState)
 				fmt.Println("Aborted.")
 				os.Exit(0)
 			}
 		} else if nr == 3 && buf[0] == 27 && buf[1] == 91 {
-			clear()
+			clearLines()
 			switch buf[2] {
 			case 65: // Up
 				cursor = (cursor - 1 + totalItems) % totalItems
