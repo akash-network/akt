@@ -1,6 +1,6 @@
 # AGENTS.md
 
-## Project: akt - Akash Network Unified CLI & TUI
+## Project: akt - Akash Network Unified CLI
 
 ### Required Context
 
@@ -67,7 +67,7 @@ All commit messages MUST follow the [Conventional Commits](https://www.conventio
 - **No reading flags into Go variables**: Do not use `cmd.Flags().StringVar(&myVar, ...)`. Bind flags to Viper keys; read values from Viper or the cobra command at point of use.
 - **Addresses**: Never truncate or shorten addresses in output. Addresses (bech32, operator, consensus) must always be displayed in full. Truncation risks ambiguity and breaks copy-paste.
 - **Amounts and prices**: All micro-denominated values (`u`-prefixed denoms) must be scaled to the most readable unit in pretty output: base (>= 1M micro, e.g., `5.3 AKT`), milli (>= 1K micro, e.g., `3 mAKT`), or micro (< 1K, e.g., `500 uAKT`). Trailing zeros must always be stripped. This applies uniformly to every pretty output: balances, prices, escrow, staking, rewards, fees. Use `FormatCoin()` from `internal/output/pretty/helpers.go` — never format amounts manually.
-- **Pretty/TUI visual parity**: The pretty-printed output of a single-shot CLI command (e.g. `akt q bme status`) and the corresponding section in the TUI or `akt monitor` dashboard must be visually identical. Both paths must call the same `Render*` functions from `internal/output/pretty/`. Never duplicate formatting logic in the TUI — always delegate to the shared renderers.
+- **Rendering parity**: The pretty-printed output of a single-shot CLI command (e.g. `akt q bme status`) and the corresponding section of the `akt monitor` dashboard must be visually identical. Both paths must call the same `Render*` functions from `internal/output/pretty/`. Never duplicate formatting logic in a full-screen view — always delegate to the shared renderers. This applies to every consumer of the renderers, including `internal/tui/`.
 - **Build**: `GOWORK=off make akt` — the compiled binary is placed in `.cache/bin/`. `make` needs the direnv-managed environment (`AKT_ROOT`, `AKT_DEVCACHE_*`); without direnv, build the binary directly with `GOWORK=off go build -o .cache/bin/akt ./cmd/akt`, as CI does.
 - **Tests**: `GOWORK=off go test ./...`. The `e2e/` package shells out to the compiled binary at `.cache/bin/akt`, so build before running the full suite; to run unit tests alone, exclude it the way CI does (`go test $(go list ./... | grep -v /e2e)` with `GOWORK=off` exported). The localnet and live-Console e2e tests self-skip unless `AKT_E2E_LOCALNET`/`AKT_E2E_RPC` or `AKT_E2E_CONSOLE_API_KEY` is set.
 

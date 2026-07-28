@@ -1,6 +1,6 @@
 # akt
 
-Unified CLI and TUI for the [Akash Network](https://akash.network).
+Unified CLI for the [Akash Network](https://akash.network).
 
 ## Overview
 
@@ -24,7 +24,7 @@ See [DESIGN.md](DESIGN.md) for architecture and [SPEC.md](SPEC.md) for the full 
 
 ## Status
 
-Under active development. Phase 1 (Foundation) is complete: context system, key management, all chain tx/query commands, output formatting, action log, and shell completion. Workflow execution (`akt deploy/update/close`) and Akash Console integration have landed -- including live lease operations (logs, events, status, shell) against provider gateways -- along with capability gating, the offline `akt sdl` authoring group, offline e2e suites, and CI. The deployment store, sync engine, and provider gateway commands are implemented. The **TUI shell is disabled pending UX feedback** (see [TUI Shell](#tui-shell)); `akt monitor` is unaffected.
+Under active development. Phase 1 (Foundation) is complete: context system, key management, all chain tx/query commands, output formatting, action log, and shell completion. Workflow execution (`akt deploy/update/close`) and Akash Console integration have landed -- including live lease operations (logs, events, status, shell) against provider gateways -- along with capability gating, the offline `akt sdl` authoring group, offline e2e suites, and CI. The deployment store, sync engine, and provider gateway commands are implemented, as is the `akt monitor` dashboard.
 
 ## What's Implemented
 
@@ -102,7 +102,7 @@ All commands support `--output pretty|json|yaml` with pretty formatting by defau
 
 ### Workflow Engine
 
-Core engine with 3-level definition resolution (per-context > global > embedded), Go template evaluation, 8 step types (tx, query, wait, prompt, provider, output, shell, check), and retry/error handling. Workflows support two execution modes: **TUI mode** (interactive progress display) and **JSONL mode** (`--output jsonl`, JSONL output for CI/CD and scripting). The built-in workflows (`akt deploy`, `akt update`, `akt close`) execute end-to-end with auth-aware routing: keyring contexts sign and broadcast locally, while console-api contexts route through the Console API (provider manifest steps are skipped -- Console submits manifests internally). Every step is recorded in the action log.
+Core engine with 3-level definition resolution (per-context > global > embedded), Go template evaluation, 8 step types (tx, query, wait, prompt, provider, output, shell, check), and retry/error handling. Workflows support two execution modes: **interactive mode** (a progress display) and **JSONL mode** (`--output jsonl`, JSONL output for CI/CD and scripting). The built-in workflows (`akt deploy`, `akt update`, `akt close`) execute end-to-end with auth-aware routing: keyring contexts sign and broadcast locally, while console-api contexts route through the Console API (provider manifest steps are skipped -- Console submits manifests internally). Every step is recorded in the action log.
 
 ### SDL Authoring (`akt sdl`)
 
@@ -127,10 +127,6 @@ Full command group for the [Akash Console](https://console.akash.network) manage
 - **Live lease operations** -- `logs <dseq> [service]` and `events <dseq>` (both `--follow`), `status <dseq>` (`--watch`, `--interval`), and `shell <dseq> <service> [-- command]` (exec is the same command with an explicit command). Each resolves the deployment's active lease, looks up the provider's gateway URI, and mints a scoped JWT via the Console, so **managed contexts reach providers with no wallet and no local key**. One-shot calls use a 300 s token; streaming and interactive modes use 3600 s.
 
 The API key is stored per context at `contexts/<name>/console-api-key` (mode 0600, never written to `config.yaml`, never printed) and resolved `--console-api-key` flag > `AKT_CONSOLE_API_KEY` env var > stored credential, so switching context switches Console identity. Write it with `akt console login` or `akt context edit <context> --console-api-key <key>`; `akt context rename` moves it and `akt context delete` removes it. The first-run bootstrap offers Console onboarding, and state-changing Console calls are recorded in the action log. [SPEC.md §7.8](SPEC.md#78-console-compatibility-matrix) tracks coverage of every Console capability.
-
-### TUI Shell
-
-**Disabled pending UX feedback (2026-07).** Bare `akt` prints the help text instead of launching the dashboard, and `-i`/`--interactive` reports that the TUI is disabled. The bubbletea application (dashboard, view routing, vim-style `:` command input, `ctrl+p` search dialog, configurable keybindings) is still compiled in and launches under `AKT_EXPERIMENTAL_TUI=1` for feedback sessions; its resource views are scaffolded but not yet populated with live data. `akt monitor` is a separate application and is unaffected -- it is fully functional.
 
 ## Build
 
@@ -332,7 +328,7 @@ All transaction commands accept `--from`, `--gas`, `--fees`, `--broadcast-mode`,
 
 Workflow commands orchestrate multi-step operations, routing each step through the active context's auth method (local signing for `keyring`, Console API for `console-api`). They support two execution modes:
 
-**TUI mode** (default, interactive) -- a per-workflow progress display, independent of the [TUI shell](#tui-shell):
+**Interactive mode** (default) -- a per-workflow progress display:
 ```bash
 # Full deployment lifecycle with interactive bid selection
 akt deploy deployment.yaml
@@ -523,27 +519,12 @@ akt console shell 12345 web -- ls -la
 akt console screen deploy.yaml
 ```
 
-### TUI Mode
-
-The TUI shell is **disabled pending UX feedback** (2026-07). Running `akt` with no subcommand prints the help text, and `-i`/`--interactive` reports that the TUI is disabled:
-
-```bash
-# Prints help
-akt
-
-# Launch the TUI anyway, for a feedback session
-AKT_EXPERIMENTAL_TUI=1 akt
-```
-
-When enabled, navigation is `1`-`6` primary views (Deployments, Leases, Providers, Monitor, Governance, Staking), `q` query panel, `t` tx panel, `:` or `ctrl+p` command palette, `?` help, `esc` back, `ctrl+c` quit. `akt monitor` is a separate application and remains fully functional.
-
 ## Roadmap
 
 Upcoming work (see [SPEC.md](SPEC.md) for full details):
 
-- **TUI**: populate resource views (deployments, leases, providers, governance, validators) with live data from the store and sync engine, then re-enable the shell
 - **UX trial follow-up (2026-07)**: decide from feedback whether the duplicated identity/filter flags are restored. The default `command-gating` mode is settled as `dim`; `hide` and `off` remain available.
-- **Phase 4**: Plugin system, additional TUI resource views (wasm, ibc, escrow), performance optimization
+- **Phase 4**: Plugin system, performance optimization
 
 ## License
 
