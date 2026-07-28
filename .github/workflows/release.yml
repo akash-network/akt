@@ -91,13 +91,10 @@ jobs:
         if: github.event_name == 'push'
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Publishes the Homebrew cask to akash-network/homebrew-tap. That is
-          # a different repository, so GITHUB_TOKEN cannot write to it. Same
-          # secret name akash-network/node already uses to reach the tap, so
-          # an org-level secret covers both; node only needs actions:write to
-          # dispatch a workflow there, while writing the cask needs
-          # contents:write. Prereleases skip the cask, so an alpha releases
-          # fine without it.
+          # Writes the Homebrew cask to akash-network/homebrew-tap, which
+          # GITHUB_TOKEN cannot reach. Same secret node uses, but node only
+          # dispatches a workflow (actions:write) -- writing the cask needs
+          # contents:write.
           GORELEASER_ACCESS_TOKEN: ${{ secrets.GORELEASER_ACCESS_TOKEN }}
         run: make release
 
