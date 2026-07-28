@@ -171,12 +171,62 @@ nfpms:
     vendor: "Akash Network"
     homepage: "https://akash.network"
     maintainer: "Akash Network <hello@akash.network>"
-    description: "Unified CLI and TUI for the Akash Network."
+    description: "Unified CLI for the Akash Network."
     license: "Apache-2.0"
     file_name_template: "akt_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     formats:
       - deb
       - rpm
+
+# Homebrew, published straight into akash-network/homebrew-tap as part of the
+# release. node reaches the same tap by dispatching an event to it and
+# regenerating akash.rb from a template there; goreleaser writes the cask
+# itself, so there is no dispatch, no second workflow, and no template to keep
+# in step with the archives.
+#
+# A cask rather than a formula: `brews` is deprecated and goreleaser exits
+# non-zero on it, which would break `make release-check`. No platform is lost
+# by the switch -- `binary` is a portable stanza, so the generated cask carries
+# working on_macos and on_linux blocks and `brew install` covers both, same as
+# node's akash.rb formula does.
+homebrew_casks:
+  - name: akt
+    binaries:
+      - akt
+    ids:
+      - akt
+    # The tap is a different repository, so the release job's GITHUB_TOKEN --
+    # scoped to this one -- cannot write to it. Needs a token with
+    # contents:write on akash-network/homebrew-tap, exported as
+    # GORELEASER_ACCESS_TOKEN.
+    repository:
+      owner: akash-network
+      name: homebrew-tap
+      branch: main
+      token: "{{ .Env.GORELEASER_ACCESS_TOKEN }}"
+    directory: Casks
+    homepage: "https://akash.network"
+    description: "Unified CLI for the Akash Network"
+    license: "Apache-2.0"
+    # `brew install akt` must keep resolving to the newest stable build, so an
+    # alpha or rc never overwrites the cask. `auto` skips the upload when the
+    # version is a prerelease, which is the gate node applies with
+    # is_prerelease.sh before notifying the tap.
+    skip_upload: auto
+    hooks:
+      post:
+        # The darwin binaries are neither signed nor notarized, so Gatekeeper
+        # quarantines them on download and the first run dies with "cannot be
+        # opened because the developer cannot be verified". Strip the attribute
+        # at install time. Remove this once the release is signed and notarized.
+        #
+        # Guarded on OS.mac?: the hook is emitted outside the on_macos block and
+        # so runs on Linux too, where /usr/bin/xattr does not exist and the
+        # install would fail on a quarantine flag that platform never sets.
+        install: |
+          if OS.mac?
+            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/akt"]
+          end
 
 snapshot:
   version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"

@@ -31,7 +31,7 @@
 | `akash-network/provider`         | Provider binary (`provider-services`). Imports chain-sdk CLI, adds provider gateway + operator commands. | **Keeps** only provider-operator commands: `run`, `operator *`, `tools *`, `migrate`. Stops exporting user-facing CLI.                                      |
 | `ovrclk/akt` (pre-rewrite)       | MVP CLI prototype. Config system, account/network/deploy commands.                                       | Design reference. Concepts (profiles, git-like config) evolved into the context system. Replaced in place by the rewrite below.                             |
 | `cloud-j-luna/aktop`             | Community TUI for monitoring Akash consensus state, validator voting, and provider operations.           | Design reference and prior art for TUI. Its consensus/validator/provider monitoring views inform the TUI design. Functionality subsumed by `akt monitor`. |
-| **`ovrclk/akt`**                 | **New.** This repository, and the rewrite that replaced the prototype above.                             | The unified user CLI and TUI. Releases publish here; a move to `akash-network/akt` is possible later, but that repository does not exist yet.                |
+| **`akash-network/akt`**          | **New.** This repository, and the rewrite that replaced the prototype above.                             | The unified user CLI. Transferred from `ovrclk/akt`, which now redirects here; releases and the Homebrew cask publish under this name.                       |
 
 ### 1.4 The `monitor` Command
 
@@ -405,7 +405,7 @@ An unrecognized mode falls back to `dim`, so a config typo never silently disabl
 ## 4. Package Structure
 
 ```
-pkg.akt.dev/akt/                         # module path (repo: github.com/ovrclk/akt)
+pkg.akt.dev/akt/                         # module path (repo: github.com/akash-network/akt)
 ├── cmd/
 │   └── akt/                             # Binary entry point
 ├── internal/
