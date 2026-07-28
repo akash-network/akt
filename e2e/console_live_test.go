@@ -85,3 +85,101 @@ func TestConsoleLive(t *testing.T) {
 		})
 	}
 }
+
+// activeConsoleDSeq returns the dseq of a Console deployment that is active
+// and has an active lease, or "" when the account has none. The gateway read
+// paths resolve their provider from the active lease, so a deployment without
+// one cannot exercise them.
+func activeConsoleDSeq(t *testing.T, home string) string {
+	t.Helper()
+
+	stdout, stderr, exit := runAkt(t, home, "console", "deployment", "list")
+	if exit != 0 {
+		t.Fatalf("console deployment list failed (exit %d): %s", exit, stderr)
+	}
+
+	var listing struct {
+		Deployments []struct {
+			Deployment struct {
+				State string `json:"state"`
+				ID    struct {
+					DSeq string `json:"dseq"`
+				} `json:"id"`
+			} `json:"deployment"`
+			Leases []struct {
+				State string `json:"state"`
+			} `json:"leases"`
+		} `json:"deployments"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &listing); err != nil {
+		t.Fatalf("could not parse console deployment list: %v", err)
+	}
+
+	for _, d := range listing.Deployments {
+		if d.Deployment.State != "active" {
+			continue
+		}
+		for _, l := range d.Leases {
+			if l.State == "" || l.State == "active" {
+				return d.Deployment.ID.DSeq
+			}
+		}
+	}
+
+	return ""
+}
+
+// TestConsoleLiveDeploymentReads covers the read paths that need a live dseq,
+// which the argument-free matrix cannot reach: lease status, the bid list,
+// and the provider-gateway log fetch. All are read-only.
+//
+// These run against whatever the account already has; they never create a
+// deployment, because doing so spends real funds.
+func TestConsoleLiveDeploymentReads(t *testing.T) {
+	key := os.Getenv(envConsoleLiveKey)
+	if key == "" {
+		t.Skipf("skipping live Console API smoke tests: %s is not set", envConsoleLiveKey)
+	}
+
+	home := setupContextHome(t)
+	if _, stderr, exit := runAkt(t, home, "context", "edit", "prod", "--console-api-key", key); exit != 0 {
+		t.Fatalf("failed to store Console API key on context (exit %d): %s", exit, stderr)
+	}
+
+	dseq := activeConsoleDSeq(t, home)
+	if dseq == "" {
+		t.Skip("account has no active deployment with an active lease")
+	}
+
+	t.Run("status", func(t *testing.T) {
+		stdout, stderr, exit := runAkt(t, home, "console", "status", dseq)
+		if exit != 0 {
+			t.Fatalf("console status %s failed (exit %d): %s", dseq, exit, stderr)
+		}
+		if !json.Valid([]byte(strings.TrimSpace(stdout))) {
+			t.Fatalf("console status output is not valid JSON:\n%s", stdout)
+		}
+	})
+
+	t.Run("bid list", func(t *testing.T) {
+		stdout, stderr, exit := runAkt(t, home, "console", "bid", "list", dseq)
+		if exit != 0 {
+			t.Fatalf("console bid list %s failed (exit %d): %s", dseq, exit, stderr)
+		}
+		if !json.Valid([]byte(strings.TrimSpace(stdout))) {
+			t.Fatalf("console bid list output is not valid JSON:\n%s", stdout)
+		}
+	})
+
+	// A one-shot log fetch ends when the provider closes the connection,
+	// which arrives as an EOF. That used to be reported as an error, so the
+	// command exited non-zero after printing every line — this asserts the
+	// exit status, not just the output.
+	t.Run("logs exit status", func(t *testing.T) {
+		stdout, stderr, exit := runAkt(t, home, "console", "logs", dseq)
+		if exit != 0 {
+			t.Fatalf("console logs %s exited %d after streaming\nstdout: %s\nstderr: %s",
+				dseq, exit, stdout, stderr)
+		}
+	})
+}
