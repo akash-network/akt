@@ -93,6 +93,30 @@ func gatewayForDeployment(cmd *cobra.Command, cl *console.Client, dseq string, t
 	return gw, lid, nil
 }
 
+// streamCloseErr converts a closed stream's reason into an error, or nil when
+// the close is simply the end of the output.
+//
+// A provider ends a one-shot (non-follow) stream by closing the connection
+// once it has sent everything rather than by sending a close frame, which the
+// websocket layer surfaces as "unexpected EOF". Reporting that as a failure
+// exits non-zero after every line has already been printed, so
+// `akt console logs <dseq> && next` never runs next despite the fetch having
+// completely succeeded.
+//
+// In follow mode the user asked for an open-ended stream, so an EOF really did
+// cut it short and is still reported.
+func streamCloseErr(kind, reason string, follow bool) error {
+	if reason == "" {
+		return nil
+	}
+
+	if !follow && strings.Contains(strings.ToLower(reason), "eof") {
+		return nil
+	}
+
+	return fmt.Errorf("%s stream closed: %s", kind, reason)
+}
+
 // activeLease returns the deployment's first active lease, or an error that
 // names the states of the leases that do exist.
 func activeLease(detail *console.DeploymentDetail, dseq string) (*console.Lease, error) {
@@ -200,10 +224,7 @@ func logsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 					if !ok {
 						return nil
 					}
-					if reason != "" {
-						return fmt.Errorf("log stream closed: %s", reason)
-					}
-					return nil
+					return streamCloseErr("log", reason, follow)
 				}
 			}
 		},
@@ -270,10 +291,7 @@ func eventsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 					if !ok {
 						return nil
 					}
-					if reason != "" {
-						return fmt.Errorf("event stream closed: %s", reason)
-					}
-					return nil
+					return streamCloseErr("event", reason, follow)
 				}
 			}
 		},

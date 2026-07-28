@@ -357,3 +357,38 @@ func TestScreenRequestShape(t *testing.T) {
 		t.Errorf("timezone = %q, want a non-UTC IANA zone name", tz)
 	}
 }
+
+func TestStreamCloseErr(t *testing.T) {
+	tests := []struct {
+		name    string
+		reason  string
+		follow  bool
+		wantErr bool
+	}{
+		// A clean close carries no reason and always succeeds.
+		{"clean close", "", false, false},
+		{"clean close following", "", true, false},
+		// The regression: a one-shot fetch ends when the provider closes the
+		// connection, which surfaces as an EOF after every line was printed.
+		{"one-shot eof", "unexpected EOF", false, false},
+		{"one-shot plain eof", "EOF", false, false},
+		{"one-shot eof mixed case", "Unexpected Eof", false, false},
+		// Following asks for an open-ended stream, so an EOF cut it short.
+		{"following eof", "unexpected EOF", true, true},
+		// Genuine failures are reported either way.
+		{"one-shot abnormal", "close 1006 (abnormal closure)", false, true},
+		{"following abnormal", "connection reset by peer", true, true},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := streamCloseErr("log", tc.reason, tc.follow)
+			if tc.wantErr && err == nil {
+				t.Fatalf("reason %q follow=%v: expected an error, got nil", tc.reason, tc.follow)
+			}
+			if !tc.wantErr && err != nil {
+				t.Fatalf("reason %q follow=%v: expected nil, got %v", tc.reason, tc.follow, err)
+			}
+		})
+	}
+}
