@@ -125,7 +125,7 @@ release-dry-run: release-libs $(GORELEASER_DOCKER_CONFIG)/config.json
 # running it by hand needs a GITHUB_TOKEN with contents:write. Tokens are
 # passed by name so they never land in the echoed command line.
 #
-# HOMEBREW_TAP_TOKEN publishes the cask to akash-network/homebrew-tap, which is
+# GORELEASER_ACCESS_TOKEN publishes the cask to akash-network/homebrew-tap, which is
 # a separate repository that GITHUB_TOKEN cannot reach. It is defaulted to the
 # empty string rather than passed through as-is: `token: "{{ .Env.X }}"` fails
 # to render when X is absent from the environment entirely, which would abort a
@@ -139,11 +139,11 @@ release: release-libs $(GORELEASER_DOCKER_CONFIG)/config.json
 		echo "GITHUB_TOKEN is required to publish a release"; \
 		exit 1; \
 	fi
-	@if [ -z "$${HOMEBREW_TAP_TOKEN}" ]; then \
-		echo "warning: HOMEBREW_TAP_TOKEN unset -- a stable release will fail at the Homebrew cask step"; \
+	@if [ -z "$${GORELEASER_ACCESS_TOKEN}" ]; then \
+		echo "warning: GORELEASER_ACCESS_TOKEN unset -- a stable release will fail at the Homebrew cask step"; \
 	fi
-	HOMEBREW_TAP_TOKEN="$${HOMEBREW_TAP_TOKEN:-}" \
-	docker run $(GORELEASER_DOCKER_ARGS) -e GITHUB_TOKEN -e HOMEBREW_TAP_TOKEN $(GORELEASER_IMAGE) release --clean $(GORELEASER_ARGS)
+	GORELEASER_ACCESS_TOKEN="$${GORELEASER_ACCESS_TOKEN:-}" \
+	docker run $(GORELEASER_DOCKER_ARGS) -e GITHUB_TOKEN -e GORELEASER_ACCESS_TOKEN $(GORELEASER_IMAGE) release --clean $(GORELEASER_ARGS)
 
 .PHONY: bins
 bins: $(AKT)

@@ -198,12 +198,12 @@ homebrew_casks:
     # The tap is a different repository, so the release job's GITHUB_TOKEN --
     # scoped to this one -- cannot write to it. Needs a token with
     # contents:write on akash-network/homebrew-tap, exported as
-    # HOMEBREW_TAP_TOKEN.
+    # GORELEASER_ACCESS_TOKEN.
     repository:
       owner: akash-network
       name: homebrew-tap
       branch: main
-      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+      token: "{{ .Env.GORELEASER_ACCESS_TOKEN }}"
     directory: Casks
     homepage: "https://akash.network"
     description: "Unified CLI for the Akash Network"
