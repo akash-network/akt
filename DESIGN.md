@@ -492,6 +492,11 @@ The `chain-sdk` CLI package (`pkg.akt.dev/go/cli`) will be deprecated and eventu
 
 ### 5.2 Cobra for CLI, Bubbletea for TUI
 
+> **The TUI shell is not shipped (2026-07).** It is disabled and incomplete,
+> so the Bubbletea half below describes intent rather than delivered
+> behavior, and is not documented for users. The Cobra half is shipped and
+> current. See the status note at the end of this section.
+
 - **Cobra** handles command parsing, flag management, help generation, and shell completion for CLI mode. It is the standard in the Go and Cosmos SDK ecosystem.
 - **Bubbletea v2** (Elm Architecture: Model-Update-View) handles the interactive TUI. Its functional design isolates state management and rendering.
 - **Lipgloss v2** provides CSS-like styling for terminal output in both modes -- table formatting in CLI, full layout composition in TUI.

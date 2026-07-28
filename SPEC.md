@@ -3037,6 +3037,13 @@ Status of `akt` coverage for every Akash Console capability. "Covered" means the
 
 ## 8. TUI Specification
 
+> **Not shipped (2026-07).** The TUI shell is disabled and incomplete — its
+> resource views are scaffolded but not populated with live data. Everything
+> below describes intended design, not delivered behavior, and is not
+> documented for users. The code remains in `internal/tui/` and launches only
+> under `AKT_EXPERIMENTAL_TUI=1`. `akt monitor` (§2.6) is a separate
+> application and is fully functional.
+
 The TUI incorporates the real-time monitoring functionality of [`aktop`](https://github.com/cloud-j-luna/aktop) -- a community-built terminal UI for Akash consensus and provider monitoring. The consensus view, validator voting view, provider fleet monitor, and governance parameters view are derived from `aktop` and integrated as first-class views in the `akt` TUI.
 
 ### 8.1 Application Shell Layout
