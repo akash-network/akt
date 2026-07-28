@@ -208,11 +208,10 @@ homebrew_casks:
     homepage: "https://akash.network"
     description: "Unified CLI for the Akash Network"
     license: "Apache-2.0"
-    # `brew install akt` must keep resolving to the newest stable build, so an
-    # alpha or rc never overwrites the cask. `auto` skips the upload when the
-    # version is a prerelease, which is the gate node applies with
-    # is_prerelease.sh before notifying the tap.
-    skip_upload: auto
+    # Publish on prereleases too -- there is no stable release yet, so `auto`
+    # would leave the tap empty. Switch to `auto` at the first stable tag, or
+    # an alpha will downgrade `brew install akt` users.
+    skip_upload: false
     hooks:
       post:
         # The darwin binaries are neither signed nor notarized, so Gatekeeper
