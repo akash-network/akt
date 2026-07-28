@@ -125,14 +125,11 @@ release-dry-run: release-libs $(GORELEASER_DOCKER_CONFIG)/config.json
 # running it by hand needs a GITHUB_TOKEN with contents:write. Tokens are
 # passed by name so they never land in the echoed command line.
 #
-# GORELEASER_ACCESS_TOKEN publishes the cask to akash-network/homebrew-tap, which is
-# a separate repository that GITHUB_TOKEN cannot reach. It is defaulted to the
-# empty string rather than passed through as-is: `token: "{{ .Env.X }}"` fails
-# to render when X is absent from the environment entirely, which would abort a
-# release that was never going to touch the tap. Empty renders fine, and
-# `skip_upload: auto` means a prerelease skips the upload regardless — so an
-# alpha releases without the secret, while a stable release without it fails at
-# the cask step with an auth error rather than a template error.
+# GORELEASER_ACCESS_TOKEN writes the cask to akash-network/homebrew-tap, which
+# GITHUB_TOKEN cannot reach. Needs contents:write, and is required for every
+# release since skip_upload is false. Defaulted to empty because
+# `{{ .Env.X }}` fails to render when X is unset at all, which would kill the
+# release before it built anything.
 .PHONY: release
 release: release-libs $(GORELEASER_DOCKER_CONFIG)/config.json
 	@if [ -z "$${GITHUB_TOKEN}" ]; then \
@@ -140,7 +137,7 @@ release: release-libs $(GORELEASER_DOCKER_CONFIG)/config.json
 		exit 1; \
 	fi
 	@if [ -z "$${GORELEASER_ACCESS_TOKEN}" ]; then \
-		echo "warning: GORELEASER_ACCESS_TOKEN unset -- a stable release will fail at the Homebrew cask step"; \
+		echo "warning: GORELEASER_ACCESS_TOKEN unset -- this release will fail at the Homebrew cask step"; \
 	fi
 	GORELEASER_ACCESS_TOKEN="$${GORELEASER_ACCESS_TOKEN:-}" \
 	docker run $(GORELEASER_DOCKER_ARGS) -e GITHUB_TOKEN -e GORELEASER_ACCESS_TOKEN $(GORELEASER_IMAGE) release --clean $(GORELEASER_ARGS)
