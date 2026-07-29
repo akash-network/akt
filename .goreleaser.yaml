@@ -264,6 +264,11 @@ release:
   # `github: {owner: ..., name: ...}` here if it ever needs to be forced.
   prerelease: auto
   mode: replace
+  # mode: replace swaps the release notes, not the uploaded files. Without
+  # this, re-running a release that failed partway -- which is exactly when a
+  # retry is wanted -- dies with 422 already_exists on the first asset and
+  # never reaches the steps that failed.
+  replace_existing_artifacts: true
   draft: false
   name_template: "akt {{ .Version }}"
 
