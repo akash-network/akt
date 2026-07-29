@@ -1,4 +1,4 @@
-// Package keys implements the `akt keys` CLI commands for managing
+// Package keys implements the `akt context keys` CLI commands for managing
 // cryptographic keys within the context's keyring.
 package keys
 
@@ -290,7 +290,7 @@ func listCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 			}
 
 			if len(records) == 0 {
-				fmt.Println("No keys found. Add one with: akt keys add <name>")
+				fmt.Println("No keys found. Add one with: akt context keys add <name>")
 				return nil
 			}
 

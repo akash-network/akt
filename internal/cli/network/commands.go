@@ -167,7 +167,7 @@ func listCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			nets := m.ListNetworks()
 
 			if len(nets) == 0 {
-				fmt.Println("No networks configured. Create one with: akt network create <name> --template mainnet")
+				fmt.Println("No networks configured. Create one with: akt context network create <name> --template mainnet")
 				return nil
 			}
 
