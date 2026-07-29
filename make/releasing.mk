@@ -83,25 +83,11 @@ endif
 # The image entrypoint is goreleaser itself, so arguments are appended directly.
 GORELEASER := docker run $(GORELEASER_DOCKER_ARGS) $(GORELEASER_IMAGE)
 
-# The Go module for libwasmvm ships only shared objects (.so/.dylib) that are
-# linked with an rpath into the module cache, which is useless in a released
-# binary. The static archives that the `muslc` (linux) and `static_wasm`
-# (darwin) build tags link against are published on the wasmvm release page
-# instead, so fetch them into .cache/lib -- that is the directory every
-# `-extldflags "-L./.cache/lib ..."` in .goreleaser.yaml points at.
-WASMVM_VERSION  = $(shell go list -m -f '{{ .Version }}' github.com/CosmWasm/wasmvm/v3)
-WASMVM_LIBS     := libwasmvm_muslc.x86_64.a libwasmvm_muslc.aarch64.a libwasmvmstatic_darwin.a
-RELEASE_LIBS    := $(patsubst %,$(AKT_DEVCACHE_LIB)/%,$(WASMVM_LIBS))
-
-# More specific than the catch-all $(AKT_DEVCACHE_LIB)/% rule in setup-cache.mk,
-# so make prefers this one for the libwasmvm archives.
-$(AKT_DEVCACHE_LIB)/libwasmvm%: | $(AKT_DEVCACHE)
-	@echo "fetching $(@F) ($(WASMVM_VERSION)) ..."
-	curl -sSfL -o $@ \
-		https://github.com/CosmWasm/wasmvm/releases/download/$(WASMVM_VERSION)/$(@F)
-
+# akt builds with nolink_libwasmvm, so the CosmWasm VM is never linked and none
+# of its static archives are fetched. release-libs is kept as a no-op so the
+# release targets and any external caller keep working.
 .PHONY: release-libs
-release-libs: $(RELEASE_LIBS)
+release-libs:
 
 # Validate .goreleaser.yaml. Cheap, needs no build.
 .PHONY: release-check

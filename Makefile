@@ -47,7 +47,12 @@ ifneq ($(UNAME_OS),Darwin)
 BUILD_OPTIONS          ?= static-link
 endif
 
-BUILD_TAGS             := osusergo netgo ledger muslc gcc
+# nolink_libwasmvm keeps the CosmWasm VM out of the binary. akt only builds
+# and queries wasm messages over gRPC -- it never executes a contract -- so the
+# VM is dead weight that would otherwise force static libwasmvm archives, cgo
+# cross-compilation and ~18 MB of binary. cgo itself is still needed, for the
+# ledger HID bindings and the cosmos keyring.
+BUILD_TAGS             := osusergo netgo ledger muslc gcc nolink_libwasmvm
 
 ifneq (,$(findstring cgotrace,$(BUILD_OPTIONS)))
 	BUILD_TAGS += cgotrace
