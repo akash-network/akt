@@ -156,3 +156,53 @@ func TestGetUsageHistoryValidatesDateFormat(t *testing.T) {
 		t.Fatal("expected invalid date format to be rejected client-side")
 	}
 }
+
+// TestUpdateWalletSettingsCreatesWhenAbsent covers the account state that is
+// most common: auto-reload has never been configured, so there is no settings
+// record and PUT answers 404. Without the POST fallback the update fails on
+// exactly the accounts that need it.
+func TestUpdateWalletSettingsCreatesWhenAbsent(t *testing.T) {
+	var methods []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method)
+
+		if r.Method == http.MethodPut {
+			w.WriteHeader(http.StatusNotFound)
+			_, _ = w.Write([]byte(`{"error":"NotFound","message":"no wallet settings"}`))
+
+			return
+		}
+
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"autoReloadEnabled":true}}`))
+	}))
+	defer srv.Close()
+
+	c := console.New(srv.URL, "key")
+
+	got, err := c.UpdateWalletSettings(context.Background(), true)
+	require.NoError(t, err)
+	assert.True(t, got.AutoReloadEnabled)
+	assert.Equal(t, []string{http.MethodPut, http.MethodPost}, methods,
+		"a 404 from PUT must fall back to POST to create the record")
+}
+
+// TestUpdateWalletSettingsUsesPutWhenPresent guards the other direction: an
+// account that already has settings must not be sent a redundant create.
+func TestUpdateWalletSettingsUsesPutWhenPresent(t *testing.T) {
+	var methods []string
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		methods = append(methods, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":{"autoReloadEnabled":false}}`))
+	}))
+	defer srv.Close()
+
+	c := console.New(srv.URL, "key")
+
+	_, err := c.UpdateWalletSettings(context.Background(), false)
+	require.NoError(t, err)
+	assert.Equal(t, []string{http.MethodPut}, methods, "an existing record needs only the PUT")
+}

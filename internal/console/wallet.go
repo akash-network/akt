@@ -2,6 +2,7 @@ package console
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -64,14 +65,25 @@ func (c *Client) GetWalletSettings(ctx context.Context) (*WalletSettings, error)
 // UpdateWalletSettings enables or disables wallet auto-reload and returns the
 // stored settings.
 //
-// Wire: PUT /v1/wallet-settings, body {"data":{"autoReloadEnabled":...}},
-// data-enveloped response.
+// Wire: PUT /v1/wallet-settings, body {"data":{"autoReloadEnabled":...}};
+// on 404, POST the same body to create the record. Data-enveloped response.
+//
+// An account that has never configured auto-reload has no settings record at
+// all, and PUT reports that as 404 — so the update would fail on exactly the
+// accounts that have never set it, which is most of them. The API exposes
+// POST for creation; falling back to it mirrors SetDeploymentAutoTopUp.
 func (c *Client) UpdateWalletSettings(ctx context.Context, autoReloadEnabled bool) (*WalletSettings, error) {
 	body := envelope(map[string]any{"autoReloadEnabled": autoReloadEnabled})
 
 	var out WalletSettings
+
 	err := c.doData(ctx, http.MethodPut, "/v1/wallet-settings", body, &out)
+	if errors.Is(err, ErrNotFound) {
+		err = c.doData(ctx, http.MethodPost, "/v1/wallet-settings", body, &out)
+	}
+
 	c.record("update-wallet-settings", "", err)
+
 	if err != nil {
 		return nil, err
 	}

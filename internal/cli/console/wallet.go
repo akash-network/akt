@@ -1,10 +1,12 @@
 package console
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/spf13/cobra"
 
+	"pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
 )
 
@@ -139,6 +141,17 @@ func walletSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			}
 
 			settings, err := cl.GetWalletSettings(cmd.Context())
+			// An account that has never configured auto-reload has no
+			// settings record, which the API reports as 404. That is the
+			// normal state, not a failure -- report the defaults rather than
+			// exiting non-zero.
+			if errors.Is(err, console.ErrNotFound) {
+				return printJSON(cmd, struct {
+					AutoReloadEnabled bool   `json:"autoReloadEnabled"`
+					Configured        bool   `json:"configured"`
+					Note              string `json:"note"`
+				}{false, false, "no wallet settings configured; enable auto-reload with `akt console wallet settings true`"})
+			}
 			if err != nil {
 				return fmt.Errorf("get wallet settings: %w", err)
 			}
