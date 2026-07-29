@@ -1,6 +1,14 @@
 package mcp
 
-import "testing"
+import (
+	"context"
+	"strings"
+	"testing"
+
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
+
+	aktconsole "pkg.akt.dev/akt/internal/console"
+)
 
 // mustBool reads an annotation pointer, failing when the hint was never set.
 //
@@ -67,5 +75,35 @@ func TestQueryAndWriteAnnotationsDiffer(t *testing.T) {
 	}
 	if *q.DestructiveHint == *w.DestructiveHint {
 		t.Error("read and write tools must not advertise the same destructiveHint")
+	}
+}
+
+// TestNewWithoutChainOrConsoleFails covers the case where neither rail is
+// usable. The chain client constructors accept an empty context and return
+// something that fails on every call, so without an explicit endpoint check
+// the server would start and advertise 19 chain tools that cannot work --
+// and the "nothing available" error could never fire.
+func TestNewWithoutChainOrConsoleFails(t *testing.T) {
+	_, err := New(context.Background(), sdkclient.Context{}, false, nil)
+	if err == nil {
+		t.Fatal("expected an error when there is no chain endpoint and no Console key")
+	}
+
+	for _, want := range []string{"no tools available", "Console API key"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should mention %q, got: %v", want, err)
+		}
+	}
+}
+
+// TestNewWithConsoleOnlySucceeds is the point of the change: a managed setup
+// has an API key and no wallet or RPC endpoint, and must still get a server.
+func TestNewWithConsoleOnlySucceeds(t *testing.T) {
+	s, err := New(context.Background(), sdkclient.Context{}, false, aktconsole.New("", "key"))
+	if err != nil {
+		t.Fatalf("a Console key alone must be enough to start: %v", err)
+	}
+	if s == nil {
+		t.Fatal("expected a server")
 	}
 }

@@ -447,6 +447,13 @@ func requiresContext(cmd *cobra.Command) bool {
 	// environment; capability gating reports a missing key instead.
 	case strings.HasPrefix(path, "akt console"):
 		return false
+	// The MCP server resolves a Console credential the same way, and serves
+	// the Console tools off it alone. Requiring a context here would refuse a
+	// server to anyone holding only an API key, which is exactly the managed
+	// setup that has no wallet to configure. It reports for itself when
+	// neither rail is available.
+	case strings.HasPrefix(path, "akt mcp"):
+		return false
 	}
 
 	return true

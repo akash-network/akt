@@ -5,6 +5,7 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -48,25 +49,16 @@ func New(ctx context.Context, cctx sdkclient.Context, enableWrites bool, console
 
 	s := &Server{mcp: srv}
 
-	if enableWrites {
-		cl, err := client.NewClient(ctx, cctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create chain client: %w", err)
-		}
-		s.registerQueryTools(cl)
-		s.registerWriteTools(cl)
-	} else {
-		cl, err := client.NewLightClient(cctx)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create chain client: %w", err)
-		}
-		s.registerQueryTools(cl)
-	}
+	// A chain client is not a prerequisite when the Console rail is
+	// available: a managed context reaches deployments, wallet, providers and
+	// pricing over the Console API and never touches a node, so refusing to
+	// start without a wallet and an RPC endpoint would deny that user a
+	// server they can fully use. The failure is only fatal when it leaves the
+	// server with nothing at all.
+	chainErr := s.registerChainTools(ctx, cctx, enableWrites)
 
-	// The Console rail is additive: a managed context reaches deployments,
-	// wallet and providers through the Console API instead of a chain node, so
-	// an assistant with only a Console key still has tools. Registered only
-	// when a key resolved -- otherwise every call would fail on auth.
+	// The Console rail is additive, and registered only when a key resolved --
+	// otherwise every call would fail on auth.
 	if consoleClient != nil {
 		s.registerConsoleQueryTools(consoleClient)
 
@@ -75,7 +67,46 @@ func New(ctx context.Context, cctx sdkclient.Context, enableWrites bool, console
 		}
 	}
 
+	if chainErr != nil && consoleClient == nil {
+		return nil, fmt.Errorf("no tools available: chain client unavailable (%w) and no Console API key configured", chainErr)
+	}
+
 	return s, nil
+}
+
+// registerChainTools registers the chain-backed tools, returning the error
+// that prevented it rather than failing the server. A context with no RPC
+// endpoint -- which a console-api context is allowed to be -- simply has no
+// chain tools.
+func (s *Server) registerChainTools(ctx context.Context, cctx sdkclient.Context, enableWrites bool) error {
+	// Checked before building a client, because the constructors accept an
+	// empty context happily and hand back something that fails on every call.
+	// Registering those tools would advertise a chain rail that cannot work,
+	// and would mask the case where no rail is available at all.
+	if cctx.NodeURI == "" {
+		return errors.New("no chain RPC endpoint configured for the active context")
+	}
+
+	if enableWrites {
+		cl, err := client.NewClient(ctx, cctx)
+		if err != nil {
+			return err
+		}
+
+		s.registerQueryTools(cl)
+		s.registerWriteTools(cl)
+
+		return nil
+	}
+
+	cl, err := client.NewLightClient(cctx)
+	if err != nil {
+		return err
+	}
+
+	s.registerQueryTools(cl)
+
+	return nil
 }
 
 // registerConsoleQueryTools registers the read-only Console API tools.
