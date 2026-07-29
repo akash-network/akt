@@ -150,3 +150,52 @@ func TestDeploymentListZeroFlagValues(t *testing.T) {
 		t.Errorf("limit=0 must be omitted so the server default applies, got query %v", gotQuery)
 	}
 }
+
+func TestManifestFromFile(t *testing.T) {
+	dir := t.TempDir()
+
+	write := func(name, content string) string {
+		t.Helper()
+		p := filepath.Join(dir, name)
+		if err := os.WriteFile(p, []byte(content), 0o600); err != nil {
+			t.Fatalf("write %s: %v", name, err)
+		}
+
+		return p
+	}
+
+	t.Run("accepts a rendered manifest", func(t *testing.T) {
+		p := write("manifest.json", `[{"name":"dcloud","services":[]}]`)
+
+		got, err := manifestFromFile(p)
+		if err != nil {
+			t.Fatalf("expected the JSON manifest to be accepted, got %v", err)
+		}
+		if got == "" {
+			t.Fatal("expected the file contents back")
+		}
+	})
+
+	// The regression: passing the SDL got as far as Console, which replied
+	// "invalid character '-' in numeric literal" -- its JSON parser hitting
+	// the leading `---`. Nothing about that names the real mistake.
+	t.Run("rejects an SDL with a message that names the cause", func(t *testing.T) {
+		p := write("deploy.yaml", "---\nversion: \"2.0\"\nservices:\n  web:\n    image: nginx\n")
+
+		_, err := manifestFromFile(p)
+		if err == nil {
+			t.Fatal("expected an SDL file to be rejected")
+		}
+		for _, want := range []string{"not JSON", "not the SDL"} {
+			if !strings.Contains(err.Error(), want) {
+				t.Errorf("error should mention %q, got: %v", want, err)
+			}
+		}
+	})
+
+	t.Run("reports a missing file", func(t *testing.T) {
+		if _, err := manifestFromFile(filepath.Join(dir, "absent.json")); err == nil {
+			t.Fatal("expected a missing file to error")
+		}
+	})
+}
