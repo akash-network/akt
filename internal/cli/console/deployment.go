@@ -1,6 +1,7 @@
 package console
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -149,12 +150,22 @@ func deploymentCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 			// Cache the manifest so `lease create` can default to it.
 			note := ""
+			// Emitted only when the manifest could not be cached. `lease
+			// create` needs the manifest Console rendered from the SDL, and it
+			// is returned exactly once, here -- telling the user to pass
+			// --manifest without handing them the file leaves a deployment
+			// that can be leased but never gets a workload, quietly burning
+			// escrow.
+			uncachedManifest := ""
+
 			switch {
 			case rc == nil:
-				note = "manifest not cached (no active context); pass --manifest to `lease create`"
+				note = "manifest not cached (no active context): save the manifest field below and pass it to `lease create --manifest`"
+				uncachedManifest = result.Manifest
 			case result.Manifest != "":
 				if err := console.SaveManifest(rc.Root, rc.Name, result.DSeq.String(), result.Manifest); err != nil {
-					note = fmt.Sprintf("manifest not cached: %v", err)
+					note = fmt.Sprintf("manifest not cached (%v): save the manifest field below and pass it to `lease create --manifest`", err)
+					uncachedManifest = result.Manifest
 				}
 			}
 
@@ -164,11 +175,12 @@ func deploymentCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			}
 
 			return printJSON(cmd, struct {
-				DSeq   string `json:"dseq"`
-				TxHash string `json:"txHash,omitempty"`
-				State  string `json:"state"`
-				Note   string `json:"note,omitempty"`
-			}{result.DSeq.String(), txHash, "open", note})
+				DSeq     string `json:"dseq"`
+				TxHash   string `json:"txHash,omitempty"`
+				State    string `json:"state"`
+				Note     string `json:"note,omitempty"`
+				Manifest string `json:"manifest,omitempty"`
+			}{result.DSeq.String(), txHash, "open", note, uncachedManifest})
 		},
 	}
 
@@ -416,11 +428,10 @@ func leaseCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 			var manifest string
 			switch {
 			case manifestFile != "":
-				data, err := os.ReadFile(manifestFile)
+				manifest, err = manifestFromFile(manifestFile)
 				if err != nil {
-					return fmt.Errorf("read manifest file: %w", err)
+					return err
 				}
-				manifest = string(data)
 
 			case rc != nil:
 				manifest, err = console.LoadManifest(rc.Root, rc.Name, dseq)
@@ -457,4 +468,26 @@ func leaseCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd.AddCommand(create)
 
 	return cmd
+}
+
+// manifestFromFile reads a --manifest file, rejecting anything that is not
+// JSON.
+//
+// The file wanted here is the manifest Console renders from the SDL, not the
+// SDL itself. Passing the SDL is the obvious mistake -- same file, same
+// directory -- and Console replies "invalid character '-' in numeric literal",
+// which is its JSON parser hitting the leading `---` of the YAML. Checking
+// locally names the actual cause and costs no API call.
+func manifestFromFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", fmt.Errorf("read manifest file: %w", err)
+	}
+
+	if !json.Valid(data) {
+		return "", fmt.Errorf("manifest file %s is not JSON: --manifest takes the manifest Console renders "+
+			"(reported by `akt console deployment create`, cached per context), not the SDL", path)
+	}
+
+	return string(data), nil
 }
