@@ -392,3 +392,32 @@ func TestStreamCloseErr(t *testing.T) {
 		})
 	}
 }
+
+func TestMatchesService(t *testing.T) {
+	tests := []struct {
+		name    string
+		pod     string
+		service string
+		want    bool
+	}{
+		// No filter requested: everything passes.
+		{"empty filter", "web-5cfc6c7b4b-4cl7z", "", true},
+		// The provider reports pod names, so the service name has to match
+		// through the replicaset/pod suffix Kubernetes appends.
+		{"pod of the service", "web-5cfc6c7b4b-4cl7z", "web", true},
+		{"pod named exactly", "web", "web", true},
+		// The bug this guards: asking for one service used to return them all.
+		{"pod of another service", "cache-666dd889cf-zpbn5", "web", false},
+		// A prefix that is not a name boundary must not match, or `web` would
+		// silently include `webhook`.
+		{"prefix but different service", "webhook-abc-123", "web", false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := matchesService(tc.pod, tc.service); got != tc.want {
+				t.Fatalf("matchesService(%q, %q) = %v, want %v", tc.pod, tc.service, got, tc.want)
+			}
+		})
+	}
+}

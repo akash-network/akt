@@ -211,20 +211,65 @@ func logsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return fmt.Errorf("stream lease logs: %w", err)
 			}
 
+			// Neither filter survives the round trip, so both are applied
+			// here as well and the flags do what they claim:
+			//
+			//   - tail: the provider client takes the parameter and drops it
+			//     (`_ int64` in its LeaseLogs signature), so nothing is sent.
+			//   - service: the client does send ?services=, and the provider
+			//     returns every service anyway.
+			//
+			// Buffering only happens for a bounded one-shot read; --follow
+			// streams as before, since "last N lines of an endless stream"
+			// has no meaning and buffering it would hang.
+			buffered := !follow && tail > 0
+			var tailBuf []string
+
+			emit := func(msg providerLogMsg) {
+				if !matchesService(msg.Name, service) {
+					return
+				}
+
+				line := fmt.Sprintf("[%s] %s", msg.Name, msg.Message)
+				if buffered {
+					tailBuf = append(tailBuf, line)
+					if int64(len(tailBuf)) > tail {
+						tailBuf = tailBuf[len(tailBuf)-int(tail):]
+					}
+
+					return
+				}
+
+				fmt.Fprintln(cmd.OutOrStdout(), line)
+			}
+
+			flush := func() {
+				for _, line := range tailBuf {
+					fmt.Fprintln(cmd.OutOrStdout(), line)
+				}
+			}
+
 			for {
 				select {
 				case <-ctx.Done():
 					return ctx.Err()
 				case msg, ok := <-logs.Stream:
 					if !ok {
+						flush()
 						return nil
 					}
-					fmt.Fprintf(cmd.OutOrStdout(), "[%s] %s\n", msg.Name, msg.Message)
+					emit(providerLogMsg{Name: msg.Name, Message: msg.Message})
 				case reason, ok := <-logs.OnClose:
 					if !ok {
+						flush()
 						return nil
 					}
-					return streamCloseErr("log", reason, follow)
+					if err := streamCloseErr("log", reason, follow); err != nil {
+						return err
+					}
+					flush()
+
+					return nil
 				}
 			}
 		},
@@ -588,4 +633,26 @@ func screeningAttrs(attrs attrv1.Attributes) []console.Attribute {
 	}
 
 	return out
+}
+
+// providerLogMsg is the shape the log stream yields, narrowed to the fields
+// the CLI prints so the filtering helpers can be tested without a provider.
+type providerLogMsg struct {
+	Name    string
+	Message string
+}
+
+// matchesService reports whether a log line from pod `name` belongs to
+// `service`. An empty service matches everything.
+//
+// The provider returns pod names ("web-5cfc6c7b4b-4cl7z"), not service names,
+// so an exact comparison would drop every line. Kubernetes builds those names
+// as <service>-<replicaset>-<pod>, hence the prefix match on "<service>-";
+// the bare equality covers a pod named exactly for its service.
+func matchesService(name, service string) bool {
+	if service == "" {
+		return true
+	}
+
+	return name == service || strings.HasPrefix(name, service+"-")
 }
