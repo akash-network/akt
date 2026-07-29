@@ -271,7 +271,7 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 
 			forkNetwork, _ := cmd.Flags().GetBool("fork-network")
 			if forkNetwork && cmd.Flags().Changed("network") {
-				return fmt.Errorf("cannot use --fork-network with --network; use akt network create to fork manually")
+				return fmt.Errorf("cannot use --fork-network with --network; use akt context network create to fork manually")
 			}
 
 			changed := map[string]string{}

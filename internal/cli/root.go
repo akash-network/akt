@@ -99,8 +99,8 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 
 	root := &cobra.Command{
 		Use:   "akt",
-		Short: "Akash Network CLI and TUI",
-		Long:  "akt is the unified command-line interface and terminal user interface for the Akash Network.",
+		Short: "Akash Network CLI",
+		Long:  "akt is the unified command-line interface for the Akash Network.",
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// 1. Seed the SDK client.Context with encoding config so that
 			//    downstream PersistentPreRunE hooks (tx/query) always find
@@ -286,7 +286,7 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	root.PersistentFlags().String("home", "", "Home directory for config, contexts, and keyrings (default: $AKT_HOME or ~/.config/akt)")
 	root.PersistentFlags().String("context", "", "Active context name (overrides current-context in config)")
 	root.PersistentFlags().StringP("output", "o", "pretty", "Output format: pretty, json, yaml")
-	root.PersistentFlags().BoolP("interactive", "i", false, "Force interactive (TUI) mode even if disabled in config")
+	root.PersistentFlags().BoolP("interactive", "i", false, "Launch the TUI. Currently disabled while UX feedback is collected; set AKT_EXPERIMENTAL_TUI=1 to opt in")
 	root.PersistentFlags().CountP("verbose", "v", "Increase output verbosity (-v verbose, -vv debug)")
 	root.PersistentFlags().BoolP("quiet", "q", false, "Suppress all output except errors")
 

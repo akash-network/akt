@@ -8,7 +8,7 @@ import (
 )
 
 // RenderNetworkShow renders a network definition as a styled string.
-// Used by both CLI "akt network show" and TUI network detail views.
+// Used by both CLI "akt context network show" and TUI network detail views.
 func RenderNetworkShow(net aktctx.Network, usedBy []string) string {
 	var buf strings.Builder
 
@@ -47,7 +47,7 @@ func RenderNetworkShow(net aktctx.Network, usedBy []string) string {
 }
 
 // RenderNetworkList renders a list of networks as a styled table string.
-// Used by both CLI "akt network list" and TUI network list views.
+// Used by both CLI "akt context network list" and TUI network list views.
 func RenderNetworkList(nets []aktctx.Network, getUsedBy func(name string) []string) string {
 	var buf strings.Builder
 
