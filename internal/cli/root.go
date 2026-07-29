@@ -312,7 +312,7 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	root.AddCommand(chaincli.QueryCmd())
 
 	root.AddCommand(monitorCmd(v))
-	root.AddCommand(mcpCmd())
+	root.AddCommand(mcpCmd(mgrFn))
 	root.AddCommand(cliprovider.Commands())
 	root.AddCommand(clisdl.Commands())
 	homeFn := func() string { return resolvedCfgRoot }
