@@ -9,14 +9,12 @@ import (
 	"os"
 	"strconv"
 
-	wasmvm "github.com/CosmWasm/wasmvm/v3"
 	"github.com/spf13/cobra"
 	flag "github.com/spf13/pflag"
 
 	"github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
-	"github.com/CosmWasm/wasmd/x/wasm/keeper"
 	"github.com/CosmWasm/wasmd/x/wasm/types"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
@@ -41,34 +39,11 @@ func GetQueryWasmCmd() *cobra.Command {
 		GetQueryWasmContractHistoryCmd(),
 		GetQueryWasmContractStateCmd(),
 		GetQueryWasmListPinnedCodeCmd(),
-		GetQueryWasmLibVersionCmd(),
 		GetQueryWasmParamsCmd(),
 		GetQueryWasmBuildAddressCmd(),
 		GetQueryWasmListContractsByCreatorCmd(),
 	)
 	return queryCmd
-}
-
-// GetQueryWasmLibVersionCmd gets current libwasmvm version.
-func GetQueryWasmLibVersionCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:               "libwasmvm-version",
-		Short:             "Get libwasmvm version",
-		Long:              "Get libwasmvm version",
-		Aliases:           []string{"lib-version"},
-		Args:              cobra.ExactArgs(0),
-		PersistentPreRunE: QueryPersistentPreRunE,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			version, err := wasmvm.LibwasmvmVersion()
-			if err != nil {
-				return fmt.Errorf("error retrieving libwasmvm version: %w", err)
-			}
-			fmt.Println(version)
-			return nil
-		},
-		SilenceUsage: true,
-	}
-	return cmd
 }
 
 // GetQueryWasmBuildAddressCmd build a contract address
@@ -91,7 +66,7 @@ func GetQueryWasmBuildAddressCmd() *cobra.Command {
 				return fmt.Errorf("salt: %w", err)
 			}
 
-			res, err := keeper.BuildAddressPredictable(
+			res, err := buildAddressPredictable(
 				&types.QueryBuildAddressRequest{
 					CodeHash:       args[0],
 					CreatorAddress: args[1],

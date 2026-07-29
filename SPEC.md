@@ -596,8 +596,7 @@ akt
 │   │   ├── pinned
 │   │   ├── params
 │   │   ├── build-address <code-hash> <creator> <salt>
-│   │   ├── list-contracts-by-creator <creator>
-│   │   └── libwasmvm-version
+│   │   └── list-contracts-by-creator <creator>
 │   ├── oracle
 │   │   ├── prices
 │   │   ├── aggregated-price <denom>

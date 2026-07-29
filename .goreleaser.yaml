@@ -3,13 +3,13 @@
 #
 # This runs inside ghcr.io/goreleaser/goreleaser-cross (see make/releasing.mk),
 # which ships osxcross for the darwin targets and the gnu cross toolchains for
-# linux. CGO cannot be disabled here: the cosmos-sdk keyring, the ledger HID
-# bindings and libwasmvm are all C libraries.
+# linux. CGO cannot be disabled here: the cosmos-sdk keyring and the ledger HID
+# bindings are C libraries.
 #
-# The static libwasmvm archives that the `muslc` (linux) and `static_wasm`
-# (darwin) build tags link against are not shipped inside the Go module; they
-# are fetched into ./.cache/lib by `make release-libs` before goreleaser is
-# invoked, which is what the `-L./.cache/lib` in every extldflags points at.
+# akt builds with nolink_libwasmvm: it constructs and queries wasm messages
+# over gRPC and never executes a contract, so the CosmWasm VM is not linked and
+# no libwasmvm archives are needed. cgo stays on for the ledger HID bindings
+# and the cosmos keyring.
 #
 # Build tags and the injected version variables are deliberately kept in sync
 # with BUILD_TAGS / ldflags in the root Makefile. A release binary whose
@@ -37,15 +37,15 @@ builds:
       - CGO_CFLAGS=-mmacosx-version-min=11.0
     flags:
       - -mod=readonly
-      - -tags=osusergo,netgo,ledger,muslc,gcc,static_wasm
+      - -tags=osusergo,netgo,ledger,muslc,gcc,nolink_libwasmvm
       - -trimpath
     ldflags:
       - -s -w
       - -linkmode=external
-      - -extldflags "-L./.cache/lib -mmacosx-version-min=11.0"
+      - -extldflags "-mmacosx-version-min=11.0"
       - -X github.com/cosmos/cosmos-sdk/version.Name=akt
       - -X github.com/cosmos/cosmos-sdk/version.AppName=akt
-      - -X github.com/cosmos/cosmos-sdk/version.BuildTags=osusergo,netgo,ledger,muslc,gcc,static_wasm
+      - -X github.com/cosmos/cosmos-sdk/version.BuildTags=osusergo,netgo,ledger,muslc,gcc,nolink_libwasmvm
       - -X github.com/cosmos/cosmos-sdk/version.Version={{ .Version }}
       - -X github.com/cosmos/cosmos-sdk/version.Commit={{ .FullCommit }}
       - -X main.version={{ .Version }}
@@ -65,15 +65,15 @@ builds:
       - CGO_CFLAGS=-mmacosx-version-min=11.0
     flags:
       - -mod=readonly
-      - -tags=osusergo,netgo,ledger,muslc,gcc,static_wasm
+      - -tags=osusergo,netgo,ledger,muslc,gcc,nolink_libwasmvm
       - -trimpath
     ldflags:
       - -s -w
       - -linkmode=external
-      - -extldflags "-L./.cache/lib -mmacosx-version-min=11.0"
+      - -extldflags "-mmacosx-version-min=11.0"
       - -X github.com/cosmos/cosmos-sdk/version.Name=akt
       - -X github.com/cosmos/cosmos-sdk/version.AppName=akt
-      - -X github.com/cosmos/cosmos-sdk/version.BuildTags=osusergo,netgo,ledger,muslc,gcc,static_wasm
+      - -X github.com/cosmos/cosmos-sdk/version.BuildTags=osusergo,netgo,ledger,muslc,gcc,nolink_libwasmvm
       - -X github.com/cosmos/cosmos-sdk/version.Version={{ .Version }}
       - -X github.com/cosmos/cosmos-sdk/version.Commit={{ .FullCommit }}
       - -X main.version={{ .Version }}
@@ -92,17 +92,17 @@ builds:
       - CXX=x86_64-linux-gnu-g++
     flags:
       - -mod=readonly
-      - -tags=osusergo,netgo,ledger,muslc,gcc,static_wasm
+      - -tags=osusergo,netgo,ledger,muslc,gcc,nolink_libwasmvm
       - -trimpath
     ldflags:
       - -s -w
       - -linkmode=external
-      # libwasmvm_muslc.*.a is built against musl; -z muldefs lets it coexist
-      # with the glibc symbols pulled in by the gnu cross toolchain.
-      - -extldflags "-L./.cache/lib -Wl,-z,muldefs -lm -lrt -lc"
+      # -z muldefs tolerates duplicate symbols between the musl-built
+      # dependencies and the glibc cross toolchain.
+      - -extldflags "-Wl,-z,muldefs -lm -lrt -lc"
       - -X github.com/cosmos/cosmos-sdk/version.Name=akt
       - -X github.com/cosmos/cosmos-sdk/version.AppName=akt
-      - -X github.com/cosmos/cosmos-sdk/version.BuildTags=osusergo,netgo,ledger,muslc,gcc,static_wasm
+      - -X github.com/cosmos/cosmos-sdk/version.BuildTags=osusergo,netgo,ledger,muslc,gcc,nolink_libwasmvm
       - -X github.com/cosmos/cosmos-sdk/version.Version={{ .Version }}
       - -X github.com/cosmos/cosmos-sdk/version.Commit={{ .FullCommit }}
       - -X main.version={{ .Version }}
@@ -121,15 +121,15 @@ builds:
       - CXX=aarch64-linux-gnu-g++
     flags:
       - -mod=readonly
-      - -tags=osusergo,netgo,ledger,muslc,gcc,static_wasm
+      - -tags=osusergo,netgo,ledger,muslc,gcc,nolink_libwasmvm
       - -trimpath
     ldflags:
       - -s -w
       - -linkmode=external
-      - -extldflags "-L./.cache/lib -Wl,-z,muldefs -lm -lrt -lc"
+      - -extldflags "-Wl,-z,muldefs -lm -lrt -lc"
       - -X github.com/cosmos/cosmos-sdk/version.Name=akt
       - -X github.com/cosmos/cosmos-sdk/version.AppName=akt
-      - -X github.com/cosmos/cosmos-sdk/version.BuildTags=osusergo,netgo,ledger,muslc,gcc,static_wasm
+      - -X github.com/cosmos/cosmos-sdk/version.BuildTags=osusergo,netgo,ledger,muslc,gcc,nolink_libwasmvm
       - -X github.com/cosmos/cosmos-sdk/version.Version={{ .Version }}
       - -X github.com/cosmos/cosmos-sdk/version.Commit={{ .FullCommit }}
       - -X main.version={{ .Version }}
