@@ -180,19 +180,22 @@ nfpms:
 
 # Homebrew, published straight into akash-network/homebrew-tap as part of the
 # release. node reaches the same tap by dispatching an event to it and
-# regenerating akash.rb from a template there; goreleaser writes the cask
+# regenerating akash.rb from a template there; goreleaser writes the formula
 # itself, so there is no dispatch, no second workflow, and no template to keep
 # in step with the archives.
 #
-# A cask rather than a formula: `brews` is deprecated and goreleaser exits
-# non-zero on it, which would break `make release-check`. No platform is lost
-# by the switch -- `binary` is a portable stanza, so the generated cask carries
-# working on_macos and on_linux blocks and `brew install` covers both, same as
-# node's akash.rb formula does.
-homebrew_casks:
+# A formula at the tap root, alongside akash.rb and akash-provider-services.rb,
+# rather than a cask under Casks/. Two reasons beyond matching the siblings:
+# Homebrew refuses to install a cask from an untrusted third-party tap until
+# the user runs `brew trust`, which a formula does not require, and akt is a
+# plain CLI binary rather than a macOS application bundle.
+#
+# `brews` is deprecated in favour of `homebrew_casks` and goreleaser will drop
+# it eventually; when that happens this has to move to a formula generated some
+# other way, not to a cask, or the trust prompt comes back. See release-check
+# in make/releasing.mk, which tolerates the deprecation warning.
+brews:
   - name: akt
-    binaries:
-      - akt
     ids:
       - akt
     # The tap is a different repository, so the release job's GITHUB_TOKEN --
@@ -204,28 +207,17 @@ homebrew_casks:
       name: homebrew-tap
       branch: main
       token: "{{ .Env.GORELEASER_ACCESS_TOKEN }}"
-    directory: Casks
+    # Repository root, where akash.rb and akash-provider-services.rb live.
+    directory: .
     homepage: "https://akash.network"
     description: "Unified CLI for the Akash Network"
     license: "Apache-2.0"
-    # Publish on prereleases too -- there is no stable release yet, so `auto`
-    # would leave the tap empty. Switch to `auto` at the first stable tag, or
-    # an alpha will downgrade `brew install akt` users.
-    skip_upload: false
-    hooks:
-      post:
-        # The darwin binaries are neither signed nor notarized, so Gatekeeper
-        # quarantines them on download and the first run dies with "cannot be
-        # opened because the developer cannot be verified". Strip the attribute
-        # at install time. Remove this once the release is signed and notarized.
-        #
-        # Guarded on OS.mac?: the hook is emitted outside the on_macos block and
-        # so runs on Linux too, where /usr/bin/xattr does not exist and the
-        # install would fail on a quarantine flag that platform never sets.
-        install: |
-          if OS.mac?
-            system_command "/usr/bin/xattr", args: ["-dr", "com.apple.quarantine", "#{staged_path}/akt"]
-          end
+    # Skip prereleases: `brew install akt` must keep resolving to the newest
+    # stable build, and an alpha reaching the tap would downgrade everyone on
+    # it. Same gate node applies with is_prerelease.sh.
+    skip_upload: auto
+    test: |
+      system "#{bin}/akt", "version"
 
 snapshot:
   version_template: "{{ incpatch .Version }}-snapshot-{{ .ShortCommit }}"
