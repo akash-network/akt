@@ -321,20 +321,35 @@ func deploymentSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			// 	if len(args) > 1 {
 			// 		value = args[1]
 			// 	}
-			if len(args) > 1 {
-				value := args[1]
+			//
+			// Parsed before anything is sent: a rejected boolean must not
+			// reach the API.
+			var enabled bool
 
-				enabled, err := parseBoolValue(value, "auto-top-up")
-				if err != nil {
+			if len(args) > 1 {
+				if enabled, err = parseBoolValue(args[1], "auto-top-up"); err != nil {
 					return err
 				}
+			}
 
+			// GET /v2/deployment-settings/{dseq} is get-or-create: it answers
+			// 200 for any dseq and mints a settings record as a side effect,
+			// so a command documented as a view both wrote and reported
+			// auto-top-up -- the setting that spends money unattended -- as
+			// enabled on deployments that do not exist and on deployments
+			// belonging to other accounts. Resolve the deployment first, which
+			// is the 404 the sibling `deployment get` already returns.
+			if _, err := cl.GetDeployment(cmd.Context(), args[0]); err != nil {
+				return fmt.Errorf("deployment %s: %w", args[0], err)
+			}
+
+			if len(args) > 1 {
 				settings, err := cl.SetDeploymentAutoTopUp(cmd.Context(), args[0], enabled)
 				if err != nil {
 					return fmt.Errorf("update deployment settings for %s: %w", args[0], err)
 				}
 
-				return printJSON(cmd, settings)
+				return printJSON(cmd, renderSettings(settings))
 			}
 
 			settings, err := cl.GetDeploymentSettings(cmd.Context(), args[0])
@@ -342,7 +357,7 @@ func deploymentSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return fmt.Errorf("get deployment settings for %s: %w", args[0], err)
 			}
 
-			return printJSON(cmd, settings)
+			return printJSON(cmd, renderSettings(settings))
 		},
 	}
 
@@ -380,7 +395,16 @@ func bidCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 			}
 
 			if len(bids) == 0 {
+				// An empty list means "no bids", which is only worth waiting
+				// on if the deployment exists. Reporting "providers may still
+				// be bidding" for a mistyped dseq turned a typo into an
+				// indefinite retry loop, in scripts as well as by hand.
+				if _, err := cl.GetDeployment(cmd.Context(), args[0]); err != nil {
+					return fmt.Errorf("deployment %s: %w", args[0], err)
+				}
+
 				fmt.Fprintln(cmd.OutOrStdout(), "No bids yet (providers may still be bidding). Re-run in a few seconds.")
+
 				return nil
 			}
 
@@ -494,4 +518,20 @@ func manifestFromFile(path string) (string, error) {
 	}
 
 	return string(data), nil
+}
+
+// renderSettings formats deployment settings for display, putting the top-up
+// estimate through formatUSD like every other money value on this rail.
+func renderSettings(s *console.DeploymentSettings) any {
+	return struct {
+		DSeq                 string `json:"dseq"`
+		AutoTopUpEnabled     bool   `json:"autoTopUpEnabled"`
+		EstimatedTopUpAmount string `json:"estimatedTopUpAmount"`
+		TopUpFrequencyMs     int64  `json:"topUpFrequencyMs"`
+	}{
+		DSeq:                 s.DSeq.String(),
+		AutoTopUpEnabled:     s.AutoTopUpEnabled,
+		EstimatedTopUpAmount: formatUSD(s.EstimatedTopUpUSD()),
+		TopUpFrequencyMs:     s.TopUpFrequencyMs,
+	}
 }

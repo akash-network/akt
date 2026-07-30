@@ -57,7 +57,50 @@ func (c *Client) ListDeployments(ctx context.Context, skip, limit int) (*Deploym
 		return nil, err
 	}
 
+	regroupLeases(out.Deployments)
+
 	return &out, nil
+}
+
+// regroupLeases re-files each lease under the deployment its own ID names.
+//
+// GET /v1/deployments hands back leases attached to the wrong deployments --
+// typically 10 to 13 of 13 entries mispaired, as a permutation that differs on
+// every call, so `deployment list` reported the wrong provider and the wrong
+// price for nearly every row while GET /v1/deployments/{dseq} returned the
+// right ones. The defect is upstream, but every lease carries its own dseq, so
+// the correct pairing is already in the response and is recoverable without
+// another request.
+//
+// A lease whose dseq matches no deployment in the page is dropped: it belongs
+// to a deployment the caller did not ask about, and guessing a home for it
+// would reintroduce the bug this fixes.
+func regroupLeases(items []DeploymentListItem) {
+	if len(items) == 0 {
+		return
+	}
+
+	byDSeq := make(map[string]int, len(items))
+	for i := range items {
+		byDSeq[items[i].Deployment.ID.DSeq.String()] = i
+	}
+
+	regrouped := make([][]Lease, len(items))
+
+	for i := range items {
+		for _, lease := range items[i].Leases {
+			owner, ok := byDSeq[lease.ID.DSeq.String()]
+			if !ok {
+				continue
+			}
+
+			regrouped[owner] = append(regrouped[owner], lease)
+		}
+	}
+
+	for i := range items {
+		items[i].Leases = regrouped[i]
+	}
 }
 
 // GetDeployment fetches a single deployment with its leases and escrow

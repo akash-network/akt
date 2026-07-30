@@ -217,6 +217,13 @@ func TestDeploymentSettingsCreatesWhenAbsent(t *testing.T) {
 	var methods []string
 	var postBody string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The command resolves the deployment before touching settings, so a
+		// dseq that does not exist cannot have auto-top-up enabled on it.
+		if strings.HasPrefix(r.URL.Path, "/v1/deployments/") {
+			writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"12345"}}}}`)
+			return
+		}
+
 		methods = append(methods, r.Method)
 
 		if r.Method == http.MethodPatch {
@@ -457,6 +464,13 @@ func TestBidListReportsEmptyResultPlainly(t *testing.T) {
 	m := newAuthedManager(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// "no bids yet" is only honest for a deployment that exists, so the
+		// empty case resolves it first.
+		if strings.HasPrefix(r.URL.Path, "/v1/deployments/") {
+			writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"12345"}}}}`)
+			return
+		}
+
 		if r.URL.Query().Get("dseq") != "12345" {
 			t.Errorf("dseq not forwarded: %v", r.URL.Query())
 		}

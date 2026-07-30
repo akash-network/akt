@@ -213,6 +213,15 @@ type DeploymentSettings struct {
 	TopUpFrequencyMs     int64      `json:"topUpFrequencyMs"`
 }
 
+// EstimatedTopUpUSD returns the estimated top-up in USD.
+//
+// The field is µACT like the rest of this rail, and was printed raw while
+// every other money value goes through formatUSD -- so a $0.22 top-up read as
+// "222945" on the setting that governs unattended spending.
+func (s DeploymentSettings) EstimatedTopUpUSD() float64 {
+	return s.EstimatedTopUpAmount / 1e6
+}
+
 // --- API keys / auth --------------------------------------------------------
 
 // APIKey describes an existing API key (GET /v1/api-keys). The secret is
