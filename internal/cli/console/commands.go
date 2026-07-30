@@ -18,6 +18,7 @@ import (
 	"pkg.akt.dev/akt/internal/cliutil"
 	"pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
+	"pkg.akt.dev/akt/internal/output"
 )
 
 func Commands(mgrFn func() *aktctx.Manager) *cobra.Command {
@@ -253,14 +254,23 @@ func clientFromCmd(cmd *cobra.Command, mgrFn func() *aktctx.Manager, requireKey 
 	return cl, rc, nil
 }
 
-// printJSON marshals v to indented JSON and writes it to the command's output.
+// printJSON renders v in the format --output asks for and writes it to the
+// command's output.
+//
+// It used to marshal JSON unconditionally, so `-o yaml` returned JSON with
+// exit 0 on every command in this group and a YAML consumer silently parsed
+// the wrong format. Table stays JSON: the console payloads are nested API
+// objects rather than rows, and there is no column layout to render them as.
 func printJSON(cmd *cobra.Command, v interface{}) error {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
+	format := output.FormatFromCmd(cmd)
+	if format != output.FormatYAML {
+		format = output.FormatJSON
+	}
+
+	if err := output.Fprint(cmd.OutOrStdout(), format, v); err != nil {
 		return fmt.Errorf("marshal output: %w", err)
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout(), string(data))
 	return nil
 }
 

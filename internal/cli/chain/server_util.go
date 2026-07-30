@@ -259,13 +259,22 @@ $ %s query block --%s=%s <hash>
 					heightStr = args[0]
 				}
 
-				if heightStr == "" {
-					cmd.Println("Falling back to latest block height:")
+				switch {
+				case heightStr == "" && cctx.Height != 0:
+					// --height is the documented way to pin a query to a block.
+					// It was parsed into the client context and then ignored
+					// here, so `query block --height N` answered with the latest
+					// block at exit 0 -- every conclusion drawn from it about
+					// historical state was about the wrong point in time.
+					height = cctx.Height
+				case heightStr == "":
 					height, err = rpc.GetChainHeight(cctx)
 					if err != nil {
 						return fmt.Errorf("failed to get chain height: %w", err)
 					}
-				} else {
+
+					fmt.Fprintf(cmd.ErrOrStderr(), "no height given; using latest block %d\n", height)
+				default:
 					height, err = strconv.ParseInt(heightStr, 10, 64)
 					if err != nil {
 						return fmt.Errorf("failed to parse block height: %w", err)
@@ -333,17 +342,23 @@ func QueryBlockResultsCmd() *cobra.Command {
 
 			// optional height
 			var height int64
-			if len(args) > 0 {
+
+			switch {
+			case len(args) > 0:
 				height, err = strconv.ParseInt(args[0], 10, 64)
 				if err != nil {
 					return err
 				}
-			} else {
-				cmd.Println("Falling back to latest block height:")
+			case cctx.Height != 0:
+				// See QueryBlockCmd: --height was read and then dropped here.
+				height = cctx.Height
+			default:
 				height, err = rpc.GetChainHeight(cctx)
 				if err != nil {
 					return fmt.Errorf("failed to get chain height: %w", err)
 				}
+
+				fmt.Fprintf(cmd.ErrOrStderr(), "no height given; using latest block %d\n", height)
 			}
 
 			blockRes, err := node.BlockResults(context.Background(), &height)

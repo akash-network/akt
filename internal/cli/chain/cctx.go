@@ -104,6 +104,23 @@ func ReadQueryCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) (sdkc
 		cctx = cctx.WithUseLedger(useLedger)
 	}
 
+	// --chain-id names a chain, but a query's endpoint comes from the active
+	// context and nothing reconciled the two: `--chain-id sandbox-2` against a
+	// mainnet context returned mainnet data at exit 0. The flag cannot
+	// retarget the endpoint, so the honest outcomes are to agree with the
+	// context or to say so.
+	//
+	// Queries only. A tx may legitimately name another chain while building an
+	// unsigned or offline payload, and that path does not come through here.
+	if flagSet.Changed(cflags.FlagChainID) {
+		if chainID, _ := flagSet.GetString(cflags.FlagChainID); chainID != "" &&
+			cctx.ChainID != "" && chainID != cctx.ChainID {
+			return cctx, fmt.Errorf(
+				"--chain-id %q does not match the active context's chain %q; switch context with --context, or point at another node with --node",
+				chainID, cctx.ChainID)
+		}
+	}
+
 	return ReadPersistentCommandFlags(cctx, flagSet)
 }
 
@@ -154,6 +171,7 @@ func ReadPersistentCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) 
 
 	if cctx.ChainID == "" || flagSet.Changed(cflags.FlagChainID) {
 		chainID, _ := flagSet.GetString(cflags.FlagChainID)
+
 		cctx = cctx.WithChainID(chainID)
 	}
 
