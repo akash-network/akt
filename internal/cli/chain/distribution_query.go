@@ -207,7 +207,7 @@ func GetQueryDistributionValidatorSlashesCmd() *cobra.Command {
 			fmt.Sprintf(`Query all slashes of a validator for a given block range.
 
 Example:
-$ %s query distribution slashes %svaloper1gghjut3ccd8ay0zduzj64hwre2fxs9ldmqhffj 0 100
+$ %s query distribution slashes %s1gghjut3ccd8ay0zduzj64hwre2fxs9ldmqhffj 0 100
 `,
 				version.AppName, bech32PrefixValAddr,
 			),

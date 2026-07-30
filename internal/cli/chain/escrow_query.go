@@ -10,7 +10,6 @@ import (
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/version"
-	"github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
@@ -106,7 +105,7 @@ $ %[1]s query %[2]s accounts open deployment
 3. Return accounts in open state for deployment scope
 $ %[1]s query %[2]s accounts open deployment/akash1...
 `,
-				version.AppName, authz.ModuleName)),
+				version.AppName, module.ModuleName)),
 		Args:              cobra.RangeArgs(0, 2),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -180,7 +179,7 @@ $ %[1]s query %[2]s accounts open deployment
 3. Return accounts in open state for deployment scope
 $ %[1]s query %[2]s accounts open deployment/akash1...
 `,
-				version.AppName, authz.ModuleName)),
+				version.AppName, module.ModuleName)),
 		Args:              cobra.RangeArgs(0, 2),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
