@@ -90,9 +90,24 @@ GORELEASER := docker run $(GORELEASER_DOCKER_ARGS) $(GORELEASER_IMAGE)
 release-libs:
 
 # Validate .goreleaser.yaml. Cheap, needs no build.
+#
+# `goreleaser check` exits non-zero on a deprecated property even when the
+# config is otherwise valid, and akt uses one deliberately: `brews`, to publish
+# a Homebrew formula rather than a cask (see .goreleaser.yaml for why). Failing
+# the gate on that would mean either dropping the gate or shipping a cask, so
+# the deprecation-only outcome is tolerated -- and only that one. Any other
+# error still fails, and the warning is printed so the eventual removal of
+# `brews` is not a surprise.
 .PHONY: release-check
 release-check: $(GORELEASER_DOCKER_CONFIG)/config.json
-	$(GORELEASER) check $(GORELEASER_ARGS)
+	@out=$$($(GORELEASER) check $(GORELEASER_ARGS) 2>&1); status=$$?; \
+	echo "$$out"; \
+	if [ $$status -eq 0 ]; then exit 0; fi; \
+	if echo "$$out" | grep -q 'configuration is valid, but uses deprecated properties'; then \
+		echo "release-check: passing on deprecation warnings only"; \
+		exit 0; \
+	fi; \
+	exit $$status
 
 # Full cross-compile with a synthetic version, no tag and no publishing.
 # Artifacts land in .cache/goreleaser.
@@ -111,11 +126,12 @@ release-dry-run: release-libs $(GORELEASER_DOCKER_CONFIG)/config.json
 # running it by hand needs a GITHUB_TOKEN with contents:write. Tokens are
 # passed by name so they never land in the echoed command line.
 #
-# GORELEASER_ACCESS_TOKEN writes the cask to akash-network/homebrew-tap, which
-# GITHUB_TOKEN cannot reach. Needs contents:write, and is required for every
-# release since skip_upload is false. Defaulted to empty because
-# `{{ .Env.X }}` fails to render when X is unset at all, which would kill the
-# release before it built anything.
+# GORELEASER_ACCESS_TOKEN writes the Homebrew formula to
+# akash-network/homebrew-tap, which GITHUB_TOKEN cannot reach. Needs
+# contents:write. Only stable releases touch the tap (skip_upload: auto), so a
+# prerelease succeeds without it. Defaulted to empty because `{{ .Env.X }}`
+# fails to render when X is unset at all, which would kill the release before
+# it built anything.
 .PHONY: release
 release: release-libs $(GORELEASER_DOCKER_CONFIG)/config.json
 	@if [ -z "$${GITHUB_TOKEN}" ]; then \
@@ -123,7 +139,7 @@ release: release-libs $(GORELEASER_DOCKER_CONFIG)/config.json
 		exit 1; \
 	fi
 	@if [ -z "$${GORELEASER_ACCESS_TOKEN}" ]; then \
-		echo "warning: GORELEASER_ACCESS_TOKEN unset -- this release will fail at the Homebrew cask step"; \
+		echo "warning: GORELEASER_ACCESS_TOKEN unset -- a stable release will fail at the Homebrew formula step"; \
 	fi
 	GORELEASER_ACCESS_TOKEN="$${GORELEASER_ACCESS_TOKEN:-}" \
 	docker run $(GORELEASER_DOCKER_ARGS) -e GITHUB_TOKEN -e GORELEASER_ACCESS_TOKEN $(GORELEASER_IMAGE) release --clean $(GORELEASER_ARGS)
