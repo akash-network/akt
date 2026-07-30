@@ -42,8 +42,12 @@ func GetQueryMarketOrderCmd() *cobra.Command {
 		Short: "Query orders",
 		Long: `Query orders.
 
-The optional [id] argument is [owner/]dseq[/gseq[/oseq]], a bare owner
-address, or a bare state keyword (open|active|closed) per SPEC §3.8.
+[id] identifies what to look at, and accepts any of:
+
+  <owner>                        every order for that address
+  <owner>/<dseq>[/gseq[/oseq]]   narrows to a deployment, group, or order
+  <dseq>[/gseq[/oseq]]           the same, owned by the default account
+  open | active | closed         every order of the default account in that state
 
 The optional [state] argument narrows the result: with a partial identity it
 filters the list; when the identity pins down a single order it verifies the
@@ -160,9 +164,15 @@ func GetQueryMarketBidCmd() *cobra.Command {
 		Short: "Query bids",
 		Long: `Query bids.
 
-The optional [id] argument is [owner/]dseq[/gseq[/oseq[/provider]]] (with
---by provider: [provider/]dseq[/gseq[/oseq[/owner]]]), a bare address, or a
-bare state keyword (open|active|lost|closed) per SPEC §3.8.
+[id] identifies what to look at, and accepts any of:
+
+  <owner>                                  every bid for that address
+  <owner>/<dseq>[/gseq[/oseq[/provider]]]  narrows to a deployment, group, order, or bid
+  <dseq>[/gseq[/oseq[/provider]]]          the same, owned by the default account
+  open | active | lost | closed            every bid of the default account in that state
+
+With --by provider the leading address is the provider instead of the owner,
+and the trailing one is the owner.
 
 The optional [state] argument narrows the result: with a partial identity it
 filters the list; when the identity pins down a single bid it verifies the
@@ -286,9 +296,15 @@ func GetQueryMarketLeaseCmd() *cobra.Command {
 		Short: "Query leases",
 		Long: `Query leases.
 
-The optional [id] argument is [owner/]dseq[/gseq[/oseq[/provider]]] (with
---by provider: [provider/]dseq[/gseq[/oseq[/owner]]]), a bare address, or a
-bare state keyword (active|insufficient_funds|closed) per SPEC §3.8.
+[id] identifies what to look at, and accepts any of:
+
+  <owner>                                  every lease for that address
+  <owner>/<dseq>[/gseq[/oseq[/provider]]]  narrows to a deployment, group, order, or lease
+  <dseq>[/gseq[/oseq[/provider]]]          the same, owned by the default account
+  active | insufficient_funds | closed     every lease of the default account in that state
+
+With --by provider the leading address is the provider instead of the owner,
+and the trailing one is the owner.
 
 The optional [state] argument narrows the result: with a partial identity it
 filters the list; when the identity pins down a single lease it verifies the
