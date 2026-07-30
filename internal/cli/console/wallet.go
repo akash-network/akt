@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
 	"pkg.akt.dev/akt/internal/console"
@@ -13,6 +14,7 @@ import (
 func walletCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "wallet",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Managed wallet balance, settings, and cost",
 	}
 
@@ -58,11 +60,8 @@ func walletListCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			rows := make([]walletRow, 0, len(wallets))
 			for _, w := range wallets {
 				rows = append(rows, walletRow{
-					Address: w.Address,
-					// creditAmount is dollar-scale per the /v1/wallets
-					// contract (reported alongside a denom, e.g. "usdc") —
-					// unlike /v1/balances, which is µACT. No 1e6 scaling.
-					Balance:  formatUSD(w.CreditAmount),
+					Address:  w.Address,
+					Balance:  formatUSD(w.CreditUSD()),
 					Denom:    w.Denom,
 					Trialing: w.IsTrialing,
 				})

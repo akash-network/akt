@@ -1,6 +1,9 @@
 package console
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // FlexString unmarshals from either a JSON string or a JSON number, since the
 // Console API is inconsistent about numeric identifiers (dseq, amounts).
@@ -65,6 +68,21 @@ type Wallet struct {
 	CreditAmount float64 `json:"creditAmount"`
 	IsTrialing   bool    `json:"isTrialing"`
 	Denom        string  `json:"denom"`
+}
+
+// CreditUSD returns the wallet credit in USD.
+//
+// creditAmount is denominated in the units its own denom names, and that denom
+// is "uact" -- micro-ACT, the same 1e6 scale as /v1/balances, with ACT pegged
+// 1:1 to USD. Taking it for dollars printed an $11.35 wallet as
+// $11,350,924.00 while `wallet balance` reported $57.49 for the same account.
+// Any other denom is passed through unscaled rather than guessed at.
+func (w Wallet) CreditUSD() float64 {
+	if strings.EqualFold(w.Denom, "uact") {
+		return w.CreditAmount / 1e6
+	}
+
+	return w.CreditAmount
 }
 
 // WalletSettings holds account-level wallet settings
