@@ -155,3 +155,103 @@ func TestMCPWriteToolsRequireOptIn(t *testing.T) {
 		t.Error("--enable-writes registered no tools marked as mutating")
 	}
 }
+
+// mcpCallTool performs the initialize handshake and one tools/call, returning
+// the call's result plus whatever the server wrote to stderr. Both matter: a
+// handler that dereferences a missing dependency takes the process down, and
+// that only shows up on stderr.
+func mcpCallTool(t *testing.T, home, tool string) (result map[string]any, stderr string) {
+	t.Helper()
+
+	call, err := json.Marshal(map[string]any{
+		"jsonrpc": "2.0", "id": 2, "method": "tools/call",
+		"params": map[string]any{"name": tool, "arguments": map[string]any{}},
+	})
+	if err != nil {
+		t.Fatalf("marshal call: %v", err)
+	}
+
+	cmd := exec.Command(aktBinary(t), "--home", home, "mcp")
+	cmd.Stdin = strings.NewReader(strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"e2e","version":"1"}}}`,
+		string(call),
+	}, "\n") + "\n")
+
+	var out, errb bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = &errb
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start akt mcp: %v", err)
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	select {
+	case <-done:
+	case <-time.After(60 * time.Second):
+		_ = cmd.Process.Kill()
+		t.Fatalf("akt mcp did not exit; stderr:\n%s", errb.String())
+	}
+
+	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		var resp struct {
+			ID     int            `json:"id"`
+			Result map[string]any `json:"result"`
+		}
+		if json.Unmarshal([]byte(line), &resp) == nil && resp.ID == 2 {
+			return resp.Result, errb.String()
+		}
+	}
+
+	return nil, errb.String()
+}
+
+// TestMCPChainToolReachesTheNode calls a chain-backed tool, which is the only
+// way to catch a server that lists its tools correctly and then cannot run
+// them.
+//
+// The command builds its client context from the cobra command, which carries
+// a node URI but no RPC client — the tx and query trees each construct one in
+// their own PersistentPreRunE, and mcp has neither. Every chain tool therefore
+// failed: the query tools reported being offline, and the node tools
+// dereferenced the missing client and killed the process. Listing the tools
+// and calling a Console tool both pass in that state, which is how it shipped.
+//
+// The node here is unreachable on purpose, so the call must fail — but it has
+// to fail as a transport error, having reached the point of dialling.
+func TestMCPChainToolReachesTheNode(t *testing.T) {
+	home := t.TempDir()
+	initHome(t, home)
+	mustRunAkt(t, home, "context", "network", "create", "net", "--chain-id", "akashnet-2", "--rpc", unreachableNode)
+	mustRunAkt(t, home, "context", "create", "ctx", "--network", "net", "--set-current")
+
+	// A node tool: these are the ones that panicked rather than erroring.
+	result, stderr := mcpCallTool(t, home, "akash_block_height")
+
+	if strings.Contains(stderr, "panic:") {
+		t.Fatalf("calling a chain tool panicked:\n%s", stderr)
+	}
+
+	if result == nil {
+		t.Fatalf("no response to tools/call; the server likely died\nstderr:\n%s", stderr)
+	}
+
+	text := ""
+	if content, ok := result["content"].([]any); ok && len(content) > 0 {
+		if first, ok := content[0].(map[string]any); ok {
+			text, _ = first["text"].(string)
+		}
+	}
+
+	// "offline mode" is what the client reports when it was handed no RPC
+	// client at all -- the bug -- as distinct from failing to reach the node.
+	if strings.Contains(text, "no RPC client") || strings.Contains(text, "offline mode") {
+		t.Fatalf("the chain tool was given no RPC client: %s", text)
+	}
+
+	if !strings.Contains(text, "connection refused") && !strings.Contains(text, "dial") {
+		t.Fatalf("expected a transport error from the unreachable node, got: %s", text)
+	}
+}
