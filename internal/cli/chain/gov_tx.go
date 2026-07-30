@@ -781,7 +781,7 @@ func GetTxGovWasmProposalInstantiateContract2Cmd() *cobra.Command {
 func GetTxGovWasmProposalStoreAndInstantiateContractCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "store-instantiate [wasm file] [json_encoded_init_args] --authority [address] --label [text] --title [text] --summary [text]" +
-			"--unpin-code [unpin_code,optional] --source [source,optional] --builder [builder,optional] --code-hash [code_hash,optional] --admin [address,optional] --amount [coins,optional]",
+			"--unpin-code [unpin_code,optional] --code-source-url [url,optional] --builder [builder,optional] --code-hash [code_hash,optional] --admin [address,optional] --amount [coins,optional]",
 		Short: "Submit a store and instantiate wasm contract proposal",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {

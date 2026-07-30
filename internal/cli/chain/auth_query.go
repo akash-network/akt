@@ -249,9 +249,8 @@ func GetQueryAuthTxsByEventsCmd() *cobra.Command {
 		Long: strings.TrimSpace(
 			fmt.Sprintf(`
 Search for transactions that match the exact given events where results are paginated.
-Each event takes the form of '%s'. Please refer
-to each module's documentation for the full set of events to query for. Each module
-documents its respective events under 'xx_events.md'.
+Each event takes the form of '%s'. Refer to the
+documentation of the module you are querying for the events it emits.
 
 Example:
 $ %[2]s query txs 'message.sender=akash1...&message.action=withdraw_delegator_reward' --page 1 --limit 30
