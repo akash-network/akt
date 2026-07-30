@@ -61,7 +61,7 @@ func GetQueryAuthParamsCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		Long: strings.TrimSpace(`Query the current auth parameters:
 
-$ <appd> query auth params
+$ akt query auth params
 `),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, _ []string) error {

@@ -22,7 +22,7 @@ flag and signed with the sign command. Read a transaction from [file_path] and
 broadcast it to a node. If you supply a dash (-) argument in place of an input
 filename, the command reads from standard input.
 
-$ <appd> tx broadcast ./mytxn.json
+$ akt tx broadcast ./mytxn.json
 `),
 		Args:    cobra.ExactArgs(1),
 		PreRunE: TxPersistentPreRunE,

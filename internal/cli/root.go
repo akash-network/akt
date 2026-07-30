@@ -100,7 +100,25 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "akt",
 		Short: "Akash Network CLI",
-		Long:  "akt is the unified command-line interface for the Akash Network.",
+		Long: `akt deploys containerized workloads to the Akash Network, a decentralized
+compute marketplace. You describe a workload in an SDL file, providers bid on
+it, you take a bid, and your containers run.
+
+Getting started:
+  akt sdl init web > deploy.yaml     # generate a starter SDL
+  akt deploy deploy.yaml             # deploy it and pick a bid
+  akt context show                   # see the active configuration
+
+Running akt for the first time in a terminal walks you through creating a
+context: the network to talk to, the keyring that signs, and where akt keeps
+its record of your deployments.
+
+Two ways to pay and sign, chosen per context:
+  keyring       you hold the key, akt signs and broadcasts, costs are in AKT
+  console-api   Akash Console holds a managed wallet and signs for you, in USD
+
+Deployments are identified by a dseq (deployment sequence number), printed when
+the deployment is created.`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// 1. Seed the SDK client.Context with encoding config so that
 			//    downstream PersistentPreRunE hooks (tx/query) always find
