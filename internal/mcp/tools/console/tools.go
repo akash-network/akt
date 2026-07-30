@@ -155,9 +155,33 @@ func ToolUsageHistory() mcp.Tool {
 // HandleUsageHistory returns the handler for console_usage_history.
 func HandleUsageHistory(cl *console.Client) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// The address is resolved server-side from the API key, so it is not
-		// exposed as a tool argument.
-		resp, err := cl.GetUsageHistory(ctx, "",
+		// The endpoint needs the managed wallet's on-chain address; it is not
+		// derived from the API key, and sending an empty one is rejected. Look
+		// it up the same way `akt console usage` does rather than making the
+		// caller supply an address they have no way to know.
+		user, err := cl.GetUser(ctx)
+		if err != nil {
+			return marshal.ErrResultf("get user: %v", err), nil
+		}
+
+		wallets, err := cl.ListWallets(ctx, user.ID)
+		if err != nil {
+			return marshal.ErrResultf("list wallets: %v", err), nil
+		}
+
+		address := ""
+		for _, w := range wallets {
+			if w.Address != "" {
+				address = w.Address
+				break
+			}
+		}
+
+		if address == "" {
+			return marshal.ErrResult("no managed wallet with an on-chain address was found"), nil
+		}
+
+		resp, err := cl.GetUsageHistory(ctx, address,
 			marshal.OptionalString(req, "start_date"),
 			marshal.OptionalString(req, "end_date"),
 		)
