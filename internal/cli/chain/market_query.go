@@ -98,7 +98,10 @@ rather than printing it.`,
 			}
 
 			// Default owner fallback when no arg and no --owner flag.
-			if ofilters.Owner == "" && defaultOwner != "" {
+			if ofilters.Owner == "" {
+				if defaultOwner == "" {
+					return requireOwnerScope("order filter")
+				}
 				ofilters.Owner = defaultOwner
 			}
 
@@ -222,7 +225,14 @@ than printing it.`,
 			}
 
 			// Default owner fallback when no arg and no --owner flag (owner mode only).
-			if !isByProvider && bfilters.Owner == "" && defaultOwner != "" {
+			if isByProvider {
+				if bfilters.Provider == "" {
+					return requireProviderScope("bid filter")
+				}
+			} else if bfilters.Owner == "" {
+				if defaultOwner == "" {
+					return requireOwnerScope("bid filter")
+				}
 				bfilters.Owner = defaultOwner
 			}
 
@@ -348,7 +358,14 @@ rather than printing it.`,
 			}
 
 			// Default owner fallback when no arg and no --owner flag (owner mode only).
-			if !isByProvider && lfilters.Owner == "" && defaultOwner != "" {
+			if isByProvider {
+				if lfilters.Provider == "" {
+					return requireProviderScope("lease filter")
+				}
+			} else if lfilters.Owner == "" {
+				if defaultOwner == "" {
+					return requireOwnerScope("lease filter")
+				}
 				lfilters.Owner = defaultOwner
 			}
 

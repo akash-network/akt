@@ -71,7 +71,10 @@ state rather than printing it.`,
 			}
 
 			// Default owner fallback when no arg and no --owner flag.
-			if dfilters.Owner == "" && defaultOwner != "" {
+			if dfilters.Owner == "" {
+				if defaultOwner == "" {
+					return requireOwnerScope("deployment filter")
+				}
 				dfilters.Owner = defaultOwner
 			}
 
