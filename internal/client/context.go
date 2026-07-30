@@ -42,8 +42,27 @@ func BuildClientContext(
 		WithKeyringDir(aktctx.KeyringDir(rc.Root, rc.Keyring))
 
 	// Set default account if configured.
+	//
+	// WithFrom records the name only; FromName and FromAddress stay empty
+	// until something resolves the name against the keyring. Tx commands do
+	// that themselves, queries never do -- so every query that falls back to
+	// the default account saw no address and reported "no default account
+	// set" on a context that had one configured and displayed. Resolve it
+	// here so both paths agree.
+	//
+	// A name that is not in the keyring is left as the bare From value rather
+	// than failing: the context is built for every command, including the
+	// keys and context commands someone would use to fix it.
 	if rc.DefaultAccount != "" {
 		cctx = cctx.WithFrom(rc.DefaultAccount)
+
+		if kr != nil {
+			if rec, err := kr.Key(rc.DefaultAccount); err == nil {
+				if addr, err := rec.GetAddress(); err == nil {
+					cctx = cctx.WithFromName(rc.DefaultAccount).WithFromAddress(addr)
+				}
+			}
+		}
 	}
 
 	// Set broadcast mode.
