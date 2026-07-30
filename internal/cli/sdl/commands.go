@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"text/tabwriter"
 
@@ -98,6 +99,10 @@ self-checked against "akt sdl validate" before it is printed.`,
 					Message:    fmt.Sprintf("unknown scaffold %q", args[0]),
 					Suggestion: fmt.Sprintf("Available scaffolds: %s (see \"akt sdl scaffolds\").", strings.Join(ScaffoldNames(), ", ")),
 				}
+			}
+
+			if err := rejectInapplicableFlags(cmd, sc); err != nil {
+				return err
 			}
 
 			opts, err := optionsFromFlags(cmd)
@@ -302,4 +307,63 @@ func intFlag(fl *pflag.FlagSet, name string, minVal, maxVal int) (*int, error) {
 	}
 
 	return &v, nil
+}
+
+// rejectInapplicableFlags fails when the user set a flag the chosen scaffold
+// does not implement.
+//
+// Every scaffold declares the flags it honours, and `akt sdl scaffolds` prints
+// them, but nothing checked the two against each other -- so
+// `akt sdl init web --gpu 4` silently produced a CPU-only SDL that deploys and
+// bills perfectly well while the user believes they provisioned a GPU. The
+// generated file contains the string "gpu" zero times.
+func rejectInapplicableFlags(cmd *cobra.Command, sc *Scaffold) error {
+	applicable := make(map[string]struct{}, len(sc.Params))
+	for _, p := range sc.Params {
+		applicable[strings.TrimPrefix(p, "--")] = struct{}{}
+	}
+
+	var offenders []string
+
+	cmd.Flags().Visit(func(f *pflag.Flag) {
+		// Visit reports only flags the user actually set. Globals such as
+		// --output are not scaffold parameters and are never offenders.
+		if _, ok := applicable[f.Name]; ok {
+			return
+		}
+
+		if _, scaffoldParam := allScaffoldParams()[f.Name]; !scaffoldParam {
+			return
+		}
+
+		offenders = append(offenders, "--"+f.Name)
+	})
+
+	if len(offenders) == 0 {
+		return nil
+	}
+
+	sort.Strings(offenders)
+
+	return &cliutil.CLIError{
+		Code: cliutil.ExitUsage,
+		Message: fmt.Sprintf("scaffold %q does not use %s",
+			sc.Name, strings.Join(offenders, ", ")),
+		Suggestion: fmt.Sprintf("%q accepts: %s (see \"akt sdl scaffolds\").",
+			sc.Name, strings.Join(sc.Params, " ")),
+	}
+}
+
+// allScaffoldParams is the union of every scaffold's parameters, used to tell a
+// scaffold parameter apart from a global flag.
+func allScaffoldParams() map[string]struct{} {
+	all := map[string]struct{}{}
+
+	for i := range scaffoldRegistry {
+		for _, p := range scaffoldRegistry[i].Params {
+			all[strings.TrimPrefix(p, "--")] = struct{}{}
+		}
+	}
+
+	return all
 }

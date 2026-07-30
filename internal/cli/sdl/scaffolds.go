@@ -108,7 +108,7 @@ func Marshal(doc *yaml.Node) ([]byte, error) {
 var webScaffold = Scaffold{
 	Name:        "web",
 	Description: "Single web service with one HTTP port exposed to the internet.",
-	Params:      []string{"--image", "--port", "--as", "--cpu", "--memory", "--storage", "--count", "--price", "--env"},
+	Params:      []string{"--name", "--image", "--port", "--as", "--cpu", "--memory", "--storage", "--count", "--price", "--env"},
 	Build: func(o Options) *yaml.Node {
 		name := orStr(o.Name, "web")
 
@@ -137,7 +137,7 @@ var webScaffold = Scaffold{
 var gpuScaffold = Scaffold{
 	Name:        "gpu",
 	Description: "GPU workload (ML/inference) with an nvidia model requirement.",
-	Params:      []string{"--image", "--gpu", "--gpu-model", "--port", "--as", "--cpu", "--memory", "--storage", "--count", "--price", "--env"},
+	Params:      []string{"--name", "--image", "--gpu", "--gpu-model", "--port", "--as", "--cpu", "--memory", "--storage", "--count", "--price", "--env"},
 	Build: func(o Options) *yaml.Node {
 		name := orStr(o.Name, "app")
 
@@ -243,7 +243,7 @@ var multiServiceScaffold = Scaffold{
 var ipLeaseScaffold = Scaffold{
 	Name:        "ip-lease",
 	Description: "Service with a dedicated public IP (endpoints + expose to ip).",
-	Params:      []string{"--image", "--port", "--as", "--cpu", "--memory", "--storage", "--count", "--price", "--env"},
+	Params:      []string{"--name", "--image", "--port", "--as", "--cpu", "--memory", "--storage", "--count", "--price", "--env"},
 	Build: func(o Options) *yaml.Node {
 		name := orStr(o.Name, "web")
 		const endpoint = "appip"
