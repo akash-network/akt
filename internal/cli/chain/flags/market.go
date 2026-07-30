@@ -378,18 +378,27 @@ func OrderFiltersFromArg(arg string, defaultOwner string) (mvbeta.OrderFilters, 
 // A bare state keyword (open|active|lost|closed) as the sole argument is a
 // state filter. State keywords do not combine with identity paths inside one
 // argument; pass the state as the optional second positional instead.
+// BidFiltersFromArg parses the shared [owner/]dseq[/gseq[/oseq[/provider]]]
+// grammar for bids.
 func BidFiltersFromArg(arg string, defaultOwner string, byProvider bool) (mvbeta.BidFilters, error) {
+	return bidShapedFiltersFromArg(arg, defaultOwner, byProvider, "bid filter")
+}
+
+// bidShapedFiltersFromArg is the parser behind both the bid and lease filters.
+// resource names the caller's resource: lease queries delegate here, and every
+// diagnostic used to say "bid filter" regardless of which command was run.
+func bidShapedFiltersFromArg(arg string, defaultOwner string, byProvider bool, resource string) (mvbeta.BidFilters, error) {
 	parts := strings.Split(arg, "/")
 	var f mvbeta.BidFilters
 
 	if len(parts) < 1 || parts[0] == "" {
-		return f, fmt.Errorf("bid filter: argument is required")
+		return f, fmt.Errorf("%s: argument is required", resource)
 	}
 
 	// A bare state keyword as the sole argument selects a state filter (SPEC §3.8.2).
 	if val, exists := mvbeta.Bid_State_value[parts[0]]; exists && mvbeta.Bid_State(val) != mvbeta.BidStateInvalid {
 		if len(parts) > 1 {
-			return f, fmt.Errorf("bid filter: state keyword %q cannot be combined with identity path %q; pass the state as a separate second argument instead", parts[0], arg)
+			return f, fmt.Errorf("%s: state keyword %q cannot be combined with identity path %q; pass the state as a separate second argument instead", resource, parts[0], arg)
 		}
 		f.State = parts[0]
 
@@ -409,20 +418,20 @@ func BidFiltersFromArg(arg string, defaultOwner string, byProvider bool) (mvbeta
 	} else if _, err := strconv.ParseUint(parts[0], 10, 64); err == nil {
 		// First component is a number — use default for the leading address.
 		if byProvider {
-			return f, fmt.Errorf("bid filter: provider address is required with --by provider")
+			return f, fmt.Errorf("%s: provider address is required with --by provider", resource)
 		}
 		if defaultOwner == "" {
-			return f, fmt.Errorf("bid filter: no default account set; provide owner address or configure default-account")
+			return f, fmt.Errorf("%s: no default account set; provide owner address or configure default-account", resource)
 		}
 		f.Owner = defaultOwner
 	} else {
-		return f, fmt.Errorf("bid filter: %q is not a valid address or dseq number", parts[0])
+		return f, fmt.Errorf("%s: %q is not a valid address or dseq number", resource, parts[0])
 	}
 
 	if idx < len(parts) {
 		dseq, err := strconv.ParseUint(parts[idx], 10, 64)
 		if err != nil {
-			return f, fmt.Errorf("bid filter: invalid dseq %q: %w", parts[idx], err)
+			return f, fmt.Errorf("%s: invalid dseq %q: %w", resource, parts[idx], err)
 		}
 		f.DSeq = dseq
 		idx++
@@ -431,7 +440,7 @@ func BidFiltersFromArg(arg string, defaultOwner string, byProvider bool) (mvbeta
 	if idx < len(parts) {
 		gseq, err := strconv.ParseUint(parts[idx], 10, 32)
 		if err != nil {
-			return f, fmt.Errorf("bid filter: invalid gseq %q: %w", parts[idx], err)
+			return f, fmt.Errorf("%s: invalid gseq %q: %w", resource, parts[idx], err)
 		}
 		f.GSeq = uint32(gseq)
 		idx++
@@ -440,7 +449,7 @@ func BidFiltersFromArg(arg string, defaultOwner string, byProvider bool) (mvbeta
 	if idx < len(parts) {
 		oseq, err := strconv.ParseUint(parts[idx], 10, 32)
 		if err != nil {
-			return f, fmt.Errorf("bid filter: invalid oseq %q: %w", parts[idx], err)
+			return f, fmt.Errorf("%s: invalid oseq %q: %w", resource, parts[idx], err)
 		}
 		f.OSeq = uint32(oseq)
 		idx++
@@ -449,7 +458,7 @@ func BidFiltersFromArg(arg string, defaultOwner string, byProvider bool) (mvbeta
 	// Trailing address (opposite of the leading one).
 	if idx < len(parts) {
 		if _, err := sdk.AccAddressFromBech32(parts[idx]); err != nil {
-			return f, fmt.Errorf("bid filter: invalid address %q: %w", parts[idx], err)
+			return f, fmt.Errorf("%s: invalid address %q: %w", resource, parts[idx], err)
 		}
 		if byProvider {
 			f.Owner = parts[idx]
@@ -460,7 +469,7 @@ func BidFiltersFromArg(arg string, defaultOwner string, byProvider bool) (mvbeta
 	}
 
 	if idx < len(parts) {
-		return f, fmt.Errorf("bid filter: too many parts in %q", arg)
+		return f, fmt.Errorf("%s: too many parts in %q", resource, arg)
 	}
 
 	return f, nil
@@ -485,7 +494,7 @@ func LeaseFiltersFromArg(arg string, defaultOwner string, byProvider bool) (mv1.
 		return mv1.LeaseFilters{State: parts[0]}, nil
 	}
 
-	bf, err := BidFiltersFromArg(arg, defaultOwner, byProvider)
+	bf, err := bidShapedFiltersFromArg(arg, defaultOwner, byProvider, "lease filter")
 	if err != nil {
 		return mv1.LeaseFilters{}, err
 	}
