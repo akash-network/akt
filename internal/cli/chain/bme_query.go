@@ -32,6 +32,7 @@ func GetQueryBMECmd() *cobra.Command {
 func GetBMEParamsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "params",
+		Args:              cobra.NoArgs,
 		Short:             "Query the current BME module parameters",
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -58,6 +59,7 @@ func GetBMEParamsCmd() *cobra.Command {
 func GetBMEVaultStateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "vault-state",
+		Args:              cobra.NoArgs,
 		Short:             "Query the current BME vault state",
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -84,6 +86,7 @@ func GetBMEVaultStateCmd() *cobra.Command {
 func GetBMEStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "status",
+		Args:              cobra.NoArgs,
 		Short:             "Query status of mint operations",
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, _ []string) error {

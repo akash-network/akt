@@ -34,6 +34,7 @@ func GetQueryOracleCmd() *cobra.Command {
 func GetOraclePricesCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "prices",
+		Args:              cobra.NoArgs,
 		Aliases:           []string{"p"},
 		Short:             "Query price history for denoms",
 		PersistentPreRunE: QueryPersistentPreRunE,
@@ -133,6 +134,7 @@ func GetOracleAggregatedPriceCmd() *cobra.Command {
 func GetQueryOracleParamsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "params",
+		Args:              cobra.NoArgs,
 		Short:             "Query the current oracle parameters",
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, _ []string) error {

@@ -61,6 +61,7 @@ func TxPersistentPreRunE(cmd *cobra.Command, _ []string) error {
 func TxCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "tx",
+		RunE:  ValidateCmd,
 		Short: "Transactions subcommands",
 		// Capability gating: broadcasting requires a chain RPC endpoint.
 		Annotations: map[string]string{capability.AnnotationKey: string(capability.ChainTx)},

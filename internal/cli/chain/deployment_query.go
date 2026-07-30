@@ -219,6 +219,7 @@ func GetQueryDeploymentGroupCmd() *cobra.Command {
 func GetQueryDeploymentParamsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "params",
+		Args:              cobra.NoArgs,
 		Short:             "Query the current deployment parameters",
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, _ []string) error {

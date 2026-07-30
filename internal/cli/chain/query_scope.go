@@ -16,6 +16,21 @@ func requireOwnerScope(resource string) error {
 	return fmt.Errorf("%s: no default account set; provide an owner address or configure default-account", resource)
 }
 
+// parseByPerspective reads --by, which selects whether the leading address is
+// an owner or a provider. It used to be compared against "provider" and
+// nothing else, so every other value -- including "Provider" -- fell through
+// to owner mode and answered a different question than the one asked.
+func parseByPerspective(v string) (bool, error) {
+	switch v {
+	case "owner":
+		return false, nil
+	case "provider":
+		return true, nil
+	default:
+		return false, fmt.Errorf("--by must be %q or %q, got %q", "owner", "provider", v)
+	}
+}
+
 // requireProviderScope refuses a --by provider list query with no provider.
 // SPEC §3.8.4 marks the leading address required in provider mode; nothing
 // enforced it, so the empty filter listed the whole network.

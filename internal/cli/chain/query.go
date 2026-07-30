@@ -46,6 +46,7 @@ func QueryCmd() *cobra.Command {
 		Use:     "query",
 		Aliases: []string{"q"},
 		Short:   "Querying subcommands",
+		RunE:    ValidateCmd,
 		// Capability gating: chain queries require a chain RPC endpoint.
 		Annotations: map[string]string{capability.AnnotationKey: string(capability.ChainQuery)},
 	}

@@ -11,6 +11,7 @@ import (
 func KeysCmds() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "keys",
+		RunE:  ValidateCmd,
 		Short: "Manage your application's keys",
 		Long: `Keyring management commands. These keys may be in any format supported by the
 CometBFT crypto library and can be used by light-clients, full nodes, or any other application

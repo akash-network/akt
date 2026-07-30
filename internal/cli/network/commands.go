@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
 	aktctx "pkg.akt.dev/akt/internal/context"
@@ -15,6 +16,7 @@ import (
 func Commands(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "network",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Manage network definitions",
 		Long:  "Networks define chain connectivity (chain-id, endpoints, gas-prices). They are shared resources that can be referenced by multiple contexts.",
 	}

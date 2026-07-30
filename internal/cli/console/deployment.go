@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
 	"pkg.akt.dev/akt/internal/console"
@@ -37,6 +38,7 @@ func parseConsoleUSD(arg string) (float64, error) {
 func deploymentCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "deployment",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Manage Console deployments",
 		Long:  "Create, inspect, update, fund, and close deployments through the Console managed wallet.",
 	}
@@ -357,6 +359,7 @@ func deploymentSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 func bidCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "bid",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Inspect provider bids",
 	}
 
@@ -391,6 +394,7 @@ func bidCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 func leaseCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "lease",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Create leases from accepted bids",
 	}
 

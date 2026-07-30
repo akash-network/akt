@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
@@ -22,6 +23,7 @@ import (
 func Commands(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "console",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Akash Console managed-wallet operations",
 		Long: "Interact with the Akash Console API: create and manage deployments through " +
 			"the Console managed wallet, inspect bids and leases, and browse the public " +

@@ -320,6 +320,7 @@ func addDeploymentOwnerTxFlags(cmd *cobra.Command) {
 func GetTxDeploymentGroupCmds() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "group",
+		RunE:  ValidateCmd,
 		Short: "Modify a Deployment's specific Group",
 	}
 

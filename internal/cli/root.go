@@ -35,6 +35,7 @@ import (
 	aktkeyring "pkg.akt.dev/akt/internal/keyring"
 	akttui "pkg.akt.dev/akt/internal/tui"
 
+	"pkg.akt.dev/akt/internal/output"
 	"pkg.akt.dev/akt/internal/output/pretty"
 
 	arpcclient "pkg.akt.dev/go/node/client"
@@ -285,7 +286,7 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	// not captured into Go variables.
 	root.PersistentFlags().String("home", "", "Home directory for config, contexts, and keyrings (default: $AKT_HOME or ~/.config/akt)")
 	root.PersistentFlags().String("context", "", "Active context name (overrides current-context in config)")
-	root.PersistentFlags().StringP("output", "o", "pretty", "Output format: pretty, json, yaml")
+	root.PersistentFlags().VarP(output.NewFormatFlag("pretty"), "output", "o", "Output format: pretty, json, yaml")
 	root.PersistentFlags().BoolP("interactive", "i", false, "Launch the TUI. Currently disabled while UX feedback is collected; set AKT_EXPERIMENTAL_TUI=1 to opt in")
 	root.PersistentFlags().CountP("verbose", "v", "Increase output verbosity (-v verbose, -vv debug)")
 	root.PersistentFlags().BoolP("quiet", "q", false, "Suppress all output except errors")

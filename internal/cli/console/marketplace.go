@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
 	aktctx "pkg.akt.dev/akt/internal/context"
@@ -15,6 +16,7 @@ import (
 func providerCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "provider",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Browse the Console provider catalog (no API key required)",
 	}
 
@@ -137,6 +139,7 @@ func gpuCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 func templateCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "template",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Browse deployment templates (no API key required)",
 	}
 

@@ -9,6 +9,7 @@ import (
 	"os"
 	"strings"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/crypto/hd"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/multisig"
@@ -25,6 +26,7 @@ import (
 func Commands(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "keys",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Manage keys in the current context's keyring",
 		Long:  "Add, delete, list, show, export, and import cryptographic keys used for signing transactions.",
 	}

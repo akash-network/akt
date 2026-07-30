@@ -5,6 +5,7 @@ import (
 	"strings"
 	"time"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"github.com/spf13/cobra"
 
@@ -20,6 +21,7 @@ import (
 func Commands(mgr func() *aktctx.Manager, getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "context",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Manage contexts, networks, and keys",
 		Long:  "A context composes a network, keyring, state store, and action log into a named environment.",
 	}

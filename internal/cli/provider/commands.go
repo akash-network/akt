@@ -24,6 +24,7 @@ import (
 func Commands() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "provider",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Provider gateway operations",
 		Long:  "Interact with Akash provider gateway APIs: query status, manage leases, send manifests, and more.",
 		// Capability gating: gateway discovery and wallet auth need chain access.

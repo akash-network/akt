@@ -160,6 +160,7 @@ func GetQueryAuthAccountAddressByIDCmd() *cobra.Command {
 func GetQueryAuthAccountsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "accounts",
+		Args:              cobra.NoArgs,
 		Short:             "Query all the accounts",
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -190,6 +191,7 @@ func GetQueryAuthAccountsCmd() *cobra.Command {
 func GetQueryAuthModuleAccountsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "module-accounts",
+		Args:              cobra.NoArgs,
 		Short:             "Query all module accounts",
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, _ []string) error {

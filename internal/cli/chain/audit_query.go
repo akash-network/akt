@@ -30,6 +30,7 @@ func GetQueryAuditCmd() *cobra.Command {
 func GetAuditProvidersCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "list",
+		Args:              cobra.NoArgs,
 		Short:             "Query for all providers",
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, _ []string) error {

@@ -35,6 +35,7 @@ import (
 func ServerCmds(rootCmd *cobra.Command, defaultNodeHome string, appCreator types.AppCreator, appExport types.AppExporter, addStartFlags types.ModuleInitFlags) {
 	cometCmd := &cobra.Command{
 		Use:     "comet",
+		RunE:    ValidateCmd,
 		Aliases: []string{"cometbft", "tendermint"},
 		Short:   "CometBFT subcommands",
 	}

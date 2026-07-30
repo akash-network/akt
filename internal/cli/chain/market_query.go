@@ -184,7 +184,11 @@ than printing it.`,
 
 			defaultOwner := cl.ClientContext().GetFromAddress().String()
 			byProvider, _ := cmd.Flags().GetString("by")
-			isByProvider := byProvider == "provider"
+
+			isByProvider, err := parseByPerspective(byProvider)
+			if err != nil {
+				return err
+			}
 
 			if len(args) > 0 {
 				af, err := cflags.BidFiltersFromArg(args[0], defaultOwner, isByProvider)
@@ -317,7 +321,11 @@ rather than printing it.`,
 
 			defaultOwner := cl.ClientContext().GetFromAddress().String()
 			byProvider, _ := cmd.Flags().GetString("by")
-			isByProvider := byProvider == "provider"
+
+			isByProvider, err := parseByPerspective(byProvider)
+			if err != nil {
+				return err
+			}
 
 			if len(args) > 0 {
 				af, err := cflags.LeaseFiltersFromArg(args[0], defaultOwner, isByProvider)
@@ -421,6 +429,7 @@ rather than printing it.`,
 func GetQueryMarketParamsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "params",
+		Args:              cobra.NoArgs,
 		Short:             "Query the current market parameters",
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, _ []string) error {

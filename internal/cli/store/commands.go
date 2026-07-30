@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
 	"pkg.akt.dev/akt/internal/output/pretty"
@@ -19,6 +20,7 @@ import (
 func Commands(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "store",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Manage the local deployment store",
 		Long:  "View store status, export records, and import from backups.",
 	}
@@ -50,6 +52,7 @@ func openStore(homeFn func() string, ctxNameFn func() string) (sstore.Store, err
 func statusCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
+		Args:  cobra.NoArgs,
 		Short: "Display local store information",
 		Example: `  # Show store status for the current context
   akt store status`,
@@ -118,6 +121,7 @@ func exportCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "export",
+		Args:  cobra.NoArgs,
 		Short: "Export the local store to YAML or JSON",
 		Example: `  # Export to stdout as YAML
   akt store export

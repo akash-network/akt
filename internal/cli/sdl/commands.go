@@ -7,6 +7,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -20,6 +21,7 @@ import (
 func Commands() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sdl",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Author and validate deployment SDLs",
 		Long: `Generate SDL manifests from built-in scaffolds and validate them offline.
 
