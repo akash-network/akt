@@ -1,5 +1,17 @@
 name: close
 description: Close a deployment and return remaining escrow balance
+long: |
+  Close a deployment: end its leases, stop the workload, and return whatever is
+  left in escrow to the owner.
+
+  This is irreversible. The deployment's data is destroyed and its dseq cannot be
+  reused.
+example: |
+    # Close a deployment
+    akt close 12345
+
+    # Close without the confirmation prompt
+    akt close 12345 --yes
 version: 1
 
 params:
