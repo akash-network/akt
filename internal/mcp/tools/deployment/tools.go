@@ -39,6 +39,10 @@ func HandleListDeployments(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 			}
 		}
 
+		if owner == "" {
+			return marshal.ErrResult("owner address is required: pass owner, or configure a default account for the active context"), nil
+		}
+
 		filters := dtypes.DeploymentFilters{
 			Owner: owner,
 			State: marshal.OptionalString(req, "state"),

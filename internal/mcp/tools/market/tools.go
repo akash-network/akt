@@ -41,6 +41,10 @@ func HandleListOrders(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 			}
 		}
 
+		if owner == "" {
+			return marshal.ErrResult("owner address is required: pass owner, or configure a default account for the active context"), nil
+		}
+
 		resp, err := cl.Query().Market().Orders(ctx, &mtypes.QueryOrdersRequest{
 			Filters: mtypes.OrderFilters{
 				Owner: owner,
@@ -140,6 +144,10 @@ func HandleListBids(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 			if addr := cl.ClientContext().GetFromAddress(); !addr.Empty() {
 				owner = addr.String()
 			}
+		}
+
+		if owner == "" {
+			return marshal.ErrResult("owner address is required: pass owner, or configure a default account for the active context"), nil
 		}
 
 		filters := mtypes.BidFilters{
@@ -259,6 +267,10 @@ func HandleListLeases(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 			if addr := cl.ClientContext().GetFromAddress(); !addr.Empty() {
 				owner = addr.String()
 			}
+		}
+
+		if owner == "" {
+			return marshal.ErrResult("owner address is required: pass owner, or configure a default account for the active context"), nil
 		}
 
 		filters := mv1.LeaseFilters{

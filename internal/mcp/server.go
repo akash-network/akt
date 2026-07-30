@@ -41,10 +41,16 @@ type Server struct {
 // REST mutations) are additionally registered. The user must explicitly opt
 // in by passing --enable-writes.
 func New(ctx context.Context, cctx sdkclient.Context, enableWrites bool, consoleClient *aktconsole.Client) (*Server, error) {
+	// WithRecovery turns a panicking tool handler into an error result for
+	// that one call. Without it the panic unwinds through the stdio loop and
+	// takes the process down, so a single bad call ends the session and every
+	// other tool with it -- including the Console rail, which had nothing to
+	// do with it.
 	srv := mcpserver.NewMCPServer(
 		"akash-mcp",
 		"0.1.0",
 		mcpserver.WithToolCapabilities(true),
+		mcpserver.WithRecovery(),
 	)
 
 	s := &Server{mcp: srv}
