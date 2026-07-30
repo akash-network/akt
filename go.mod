@@ -2,6 +2,16 @@ module pkg.akt.dev/akt
 
 go 1.26.1
 
+// v0.0.1 resolves to an unrelated commit. It was tagged in March under the
+// ovrclk namespace, and proxy.golang.org and sum.golang.org recorded it then;
+// both are append-only, so retagging the repository cannot change what a
+// `go get` returns. The prerelease tags were deleted from the repository but
+// are likewise still served by the proxy.
+retract (
+	v0.0.1
+	[v0.0.1-a0, v0.0.1-a5]
+)
+
 require (
 	charm.land/bubbles/v2 v2.1.0
 	charm.land/bubbletea/v2 v2.0.2
