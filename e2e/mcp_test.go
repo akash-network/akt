@@ -9,6 +9,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"os/exec"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -65,6 +66,76 @@ func mcpToolsList(t *testing.T, home string, extra ...string) []map[string]any {
 	t.Fatalf("no tools/list response\nstdout:\n%s\nstderr:\n%s", stdout.String(), stderr.String())
 
 	return nil
+}
+
+func TestMCPToolInventory(t *testing.T) {
+	// Tool registration only needs the presence of a key; tools/list does not
+	// call the Console API. This keeps the full two-rail inventory hermetic.
+	t.Setenv("AKT_CONSOLE_API_KEY", "test-key")
+
+	home := t.TempDir()
+	initHome(t, home)
+	mustRunAkt(t, home, "context", "network", "create", "net", "--chain-id", "akashnet-2", "--rpc", unreachableNode)
+	mustRunAkt(t, home, "context", "create", "ctx", "--network", "net", "--set-current")
+
+	readNames := []string{
+		"akash_account_balance",
+		"akash_block_height",
+		"akash_get_bid",
+		"akash_get_deployment",
+		"akash_get_group",
+		"akash_get_lease",
+		"akash_get_order",
+		"akash_get_provider",
+		"akash_lease_status",
+		"akash_list_audited_providers",
+		"akash_list_bids",
+		"akash_list_certificates",
+		"akash_list_deployments",
+		"akash_list_leases",
+		"akash_list_orders",
+		"akash_list_providers",
+		"akash_node_status",
+		"akash_provider_status",
+		"akash_service_status",
+		"console_get_deployment",
+		"console_get_provider",
+		"console_gpu_prices",
+		"console_list_bids",
+		"console_list_deployments",
+		"console_list_providers",
+		"console_usage_history",
+		"console_wallet_balance",
+	}
+	writes := []string{
+		"akash_close_deployment",
+		"akash_close_lease",
+		"akash_create_lease",
+		"akash_submit_manifest",
+		"console_close_deployment",
+		"console_deposit",
+	}
+
+	assertToolNames(t, mcpToolsList(t, home), readNames)
+	assertToolNames(t, mcpToolsList(t, home, "--enable-writes"), append(readNames, writes...))
+}
+
+func assertToolNames(t *testing.T, tools []map[string]any, want []string) {
+	t.Helper()
+
+	want = append([]string(nil), want...)
+	got := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		name, _ := tool["name"].(string)
+		got = append(got, name)
+	}
+	sort.Strings(got)
+	sort.Strings(want)
+
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("tool inventory mismatch\ngot (%d):\n%s\nwant (%d):\n%s",
+			len(got), strings.Join(got, "\n"), len(want), strings.Join(want, "\n"))
+	}
 }
 
 func annotation(tool map[string]any, key string) (bool, bool) {
