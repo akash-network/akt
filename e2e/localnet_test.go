@@ -358,7 +358,6 @@ func TestLocalnetQueries(t *testing.T) {
 		{"query", "deployment", "params"},
 		{"query", "market", "params"},
 		{"query", "provider", "list"},
-		{"query", "cert", "list"},
 		{"query", "audit", "list"},
 		{"query", "bme", "params"},
 		{"query", "oracle", "params"},
@@ -372,6 +371,7 @@ func TestLocalnetQueries(t *testing.T) {
 		queries = append(queries,
 			[]string{"query", "bank", "balances", addr},
 			[]string{"query", "auth", "account", addr},
+			[]string{"query", "cert", "list", addr},
 			[]string{"query", "deployment", addr},
 			[]string{"query", "market", "order", addr},
 			[]string{"query", "market", "bid", addr},
@@ -426,7 +426,7 @@ func TestLocalnetDeploymentLifecycle(t *testing.T) {
 		mustRunAkt(t, home, "tx", "cert", "publish", "client", "--from", "validator", "--fees", "5000uakt", "--yes")
 
 		if !pollUntil(45*time.Second, func() bool {
-			return strings.Contains(stripANSI(mustRunAkt(t, home, "query", "cert", "list")), "valid")
+			return strings.Contains(stripANSI(mustRunAkt(t, home, "query", "cert", "list", addr)), "valid")
 		}) {
 			t.Fatal("published certificate never became valid on chain")
 		}
