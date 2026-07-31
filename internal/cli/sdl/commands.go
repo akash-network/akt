@@ -13,6 +13,7 @@ import (
 	"github.com/spf13/pflag"
 
 	"pkg.akt.dev/akt/internal/cliutil"
+	"pkg.akt.dev/akt/internal/output"
 )
 
 // Commands returns the `akt sdl` command group. The group is transport-
@@ -100,6 +101,9 @@ self-checked against "akt sdl validate" before it is printed.`,
 					Suggestion: fmt.Sprintf("Available scaffolds: %s (see \"akt sdl scaffolds\").", strings.Join(ScaffoldNames(), ", ")),
 				}
 			}
+			if err := rejectExplicitOutput(cmd); err != nil {
+				return err
+			}
 
 			if err := rejectInapplicableFlags(cmd, sc); err != nil {
 				return err
@@ -146,6 +150,22 @@ self-checked against "akt sdl validate" before it is printed.`,
 	fl.String("gpu-model", "", "NVIDIA GPU model, e.g. a100 (gpu scaffold)")
 
 	return cmd
+}
+
+func rejectExplicitOutput(cmd *cobra.Command) error {
+	flag := cmd.Flags().Lookup("output")
+	if flag == nil || !flag.Changed {
+		return nil
+	}
+
+	format, _ := cmd.Flags().GetString("output")
+
+	return &cliutil.CLIError{
+		Code:       cliutil.ExitUsage,
+		Message:    fmt.Sprintf("--output %s is not supported by %q", format, cmd.CommandPath()),
+		Context:    "generating a deployment document",
+		Suggestion: "Remove --output; this command always writes raw SDL YAML.",
+	}
 }
 
 // validateGeneratedSDL is the final boundary between scaffold parameters and
@@ -240,6 +260,19 @@ Exits 0 when the SDL is valid (warnings allowed) and 1 when it is not.`,
 			}
 
 			res := Validate(data)
+			format := output.FormatFromCmd(cmd)
+			if format == output.FormatJSON || format == output.FormatYAML {
+				res = normalizeStructuredResult(res)
+				if err := output.Fprint(cmd.OutOrStdout(), format, res); err != nil {
+					return fmt.Errorf("write validation result: %w", err)
+				}
+
+				if res.Valid {
+					return nil
+				}
+
+				return validationFailedError(name, res)
+			}
 
 			if res.Valid {
 				out := cmd.OutOrStdout()
@@ -255,13 +288,28 @@ Exits 0 when the SDL is valid (warnings allowed) and 1 when it is not.`,
 			printIssues(errOut, "error", res.Errors)
 			printIssues(errOut, "warning", res.Warnings)
 
-			return &cliutil.CLIError{
-				Code:       cliutil.ExitGeneral,
-				Message:    fmt.Sprintf("SDL validation failed with %d error(s)", len(res.Errors)),
-				Context:    fmt.Sprintf("validating %s", name),
-				Suggestion: "Fix the errors above and re-run \"akt sdl validate\".",
-			}
+			return validationFailedError(name, res)
 		},
+	}
+}
+
+func normalizeStructuredResult(res Result) Result {
+	if res.Errors == nil {
+		res.Errors = []Issue{}
+	}
+	if res.Warnings == nil {
+		res.Warnings = []Issue{}
+	}
+
+	return res
+}
+
+func validationFailedError(name string, res Result) error {
+	return &cliutil.CLIError{
+		Code:       cliutil.ExitGeneral,
+		Message:    fmt.Sprintf("SDL validation failed with %d error(s)", len(res.Errors)),
+		Context:    fmt.Sprintf("validating %s", name),
+		Suggestion: "Fix the errors above and re-run \"akt sdl validate\".",
 	}
 }
 
