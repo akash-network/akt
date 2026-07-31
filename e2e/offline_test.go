@@ -751,3 +751,24 @@ func TestConfigFreeCommandsSkipBootstrap(t *testing.T) {
 		})
 	}
 }
+
+func TestSDLInitInvalidImageIsUsageError(t *testing.T) {
+	home := t.TempDir()
+	initHome(t, home)
+
+	stdout, stderr, exitCode := runAkt(t, home, "sdl", "init", "web", "--image", "nginx")
+	if exitCode != 2 {
+		t.Fatalf("expected exit 2, got %d\nstdout: %s\nstderr: %s", exitCode, stdout, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("expected empty stdout for invalid input, got:\n%s", stdout)
+	}
+	for _, want := range []string{"--image", `image "nginx" has no tag`} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("expected stderr to contain %q, got:\n%s", want, stderr)
+		}
+	}
+	if strings.Contains(stderr, "internal error") {
+		t.Fatalf("expected a usage error, got:\n%s", stderr)
+	}
+}

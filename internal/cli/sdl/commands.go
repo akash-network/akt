@@ -115,15 +115,8 @@ self-checked against "akt sdl validate" before it is printed.`,
 				return fmt.Errorf("marshal SDL: %w", err)
 			}
 
-			// Safety net: a scaffold must never emit an SDL that its own
-			// validator rejects.
-			if res := Validate(out); !res.Valid {
-				msgs := make([]string, len(res.Errors))
-				for i, e := range res.Errors {
-					msgs[i] = e.Message
-				}
-
-				return fmt.Errorf("internal error: generated SDL failed validation: %s", strings.Join(msgs, "; "))
+			if err := validateGeneratedSDL(cmd, sc, out); err != nil {
+				return err
 			}
 
 			_, err = cmd.OutOrStdout().Write(out)
@@ -140,7 +133,7 @@ self-checked against "akt sdl validate" before it is printed.`,
 	// explicit 0 — is a usage error, never an internal one.
 	fl := cmd.Flags()
 	fl.String("name", "", "Service name (default per scaffold)")
-	fl.String("image", "", "Container image; must be tagged, e.g. nginx:1.27")
+	fl.String("image", "", "Container image pinned by tag or sha256 digest, e.g. nginx:1.27")
 	fl.Int("port", 0, "Container port to expose, 1-65535 (default per scaffold)")
 	fl.Int("as", 0, "External port, 1-65535 (default per scaffold)")
 	fl.String("cpu", "", "CPU units, e.g. 0.5 or 500m")
@@ -155,13 +148,83 @@ self-checked against "akt sdl validate" before it is printed.`,
 	return cmd
 }
 
+// validateGeneratedSDL is the final boundary between scaffold parameters and
+// generated output. Validation failures caused by explicit parameters are
+// usage errors; a scaffold that fails without overrides is a broken built-in
+// invariant and remains an internal error.
+func validateGeneratedSDL(cmd *cobra.Command, sc *Scaffold, out []byte) error {
+	res := Validate(out)
+	if res.Valid {
+		return nil
+	}
+
+	changed := changedScaffoldFlags(cmd, sc)
+	if len(changed) == 0 {
+		return generatedSDLInvariantError(sc, res)
+	}
+
+	defaultOut, err := Marshal(sc.Build(Options{}))
+	if err != nil {
+		return fmt.Errorf("internal error: marshal default %q scaffold: %w", sc.Name, err)
+	}
+
+	if defaultRes := Validate(defaultOut); !defaultRes.Valid {
+		return generatedSDLInvariantError(sc, defaultRes)
+	}
+
+	return &cliutil.CLIError{
+		Code:       cliutil.ExitUsage,
+		Message:    fmt.Sprintf("invalid scaffold input for %s", strings.Join(changed, ", ")),
+		Cause:      fmt.Errorf("%s", formatValidationIssues(res.Errors)),
+		Context:    fmt.Sprintf("generating scaffold %q", sc.Name),
+		Suggestion: validationSuggestion(res.Errors),
+	}
+}
+
+func generatedSDLInvariantError(sc *Scaffold, res Result) error {
+	return fmt.Errorf("internal error: scaffold %q default output failed validation: %s",
+		sc.Name, formatValidationIssues(res.Errors))
+}
+
+func formatValidationIssues(issues []Issue) string {
+	msgs := make([]string, len(issues))
+	for i, issue := range issues {
+		msgs[i] = fmt.Sprintf("%s: %s", issue.Path, issue.Message)
+	}
+
+	return strings.Join(msgs, "; ")
+}
+
+func validationSuggestion(issues []Issue) string {
+	for _, issue := range issues {
+		if issue.Hint != "" {
+			return issue.Hint
+		}
+	}
+
+	return "Correct the flagged values and run the command again."
+}
+
+func changedScaffoldFlags(cmd *cobra.Command, sc *Scaffold) []string {
+	changed := make([]string, 0, len(sc.Params))
+	for _, param := range sc.Params {
+		if cmd.Flags().Changed(strings.TrimPrefix(param, "--")) {
+			changed = append(changed, param)
+		}
+	}
+
+	sort.Strings(changed)
+
+	return changed
+}
+
 func validateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "validate <file>",
 		Short: "Validate an SDL offline (use - for stdin)",
 		Long: `Parse and validate an SDL document without touching the network, using
 the same parser as "akt deploy" and the chain tx commands, then apply
-best-practice lint rules (pinned image tags, pricing denoms).
+best-practice lint rules (pinned image references, pricing denoms).
 
 Exits 0 when the SDL is valid (warnings allowed) and 1 when it is not.`,
 		Args: cobra.ExactArgs(1),

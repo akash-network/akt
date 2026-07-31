@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	"pkg.akt.dev/akt/internal/cliutil"
 )
@@ -271,6 +272,112 @@ func TestInitExplicitMinimumValuesAccepted(t *testing.T) {
 	require.Contains(t, stdout, "port: 1")
 	require.Contains(t, stdout, "as: 65535")
 	require.Contains(t, stdout, "amount: 1")
+}
+
+func TestInitInvalidExplicitStringFlagsAreUsageErrors(t *testing.T) {
+	cases := []struct {
+		name       string
+		flag       string
+		value      string
+		wantReason string
+	}{
+		{name: "name", flag: "--name", value: "Bad_Name", wantReason: `service "Bad_Name" name is invalid`},
+		{name: "image", flag: "--image", value: "nginx", wantReason: "has no tag"},
+		{name: "cpu", flag: "--cpu", value: "nope", wantReason: `parsing "nope"`},
+		{name: "memory", flag: "--memory", value: "nope", wantReason: `parsing "nope"`},
+		{name: "storage", flag: "--storage", value: "nope", wantReason: `parsing "nope"`},
+		{name: "env", flag: "--env", value: "=value", wantReason: `invalid name ""`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout, _, err := runSDL(t, "", "init", "web", tc.flag, tc.value)
+			require.Error(t, err)
+			require.Equal(t, cliutil.ExitUsage, cliutil.ExitCode(err))
+			require.Contains(t, err.Error(), tc.flag)
+			require.Contains(t, err.Error(), tc.wantReason)
+			require.NotContains(t, err.Error(), "internal error")
+			require.Empty(t, stdout, "no SDL must be emitted for invalid input")
+		})
+	}
+}
+
+func TestInitMalformedImagesAreUsageErrors(t *testing.T) {
+	cases := []struct {
+		name  string
+		image string
+	}{
+		{name: "empty tag", image: "nginx:"},
+		{name: "empty digest", image: "nginx@sha256:"},
+		{name: "short digest", image: "nginx@sha256:abc"},
+		{name: "non-hex digest", image: "nginx@sha256:" + strings.Repeat("g", 64)},
+		{name: "unsupported digest", image: "nginx@sha512:" + strings.Repeat("a", 128)},
+		{name: "double colon", image: "nginx::1"},
+		{name: "URL scheme", image: "http://nginx:1"},
+		{name: "space", image: "bad image:1"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout, _, err := runSDL(t, "", "init", "web", "--image", tc.image)
+			require.Error(t, err)
+			require.Equal(t, cliutil.ExitUsage, cliutil.ExitCode(err))
+			require.Contains(t, err.Error(), "--image")
+			require.Contains(t, err.Error(), "is not a valid container image reference")
+			require.NotContains(t, err.Error(), "internal error")
+			require.Empty(t, stdout, "no SDL must be emitted for invalid input")
+		})
+	}
+}
+
+func TestInitValidImageReferences(t *testing.T) {
+	digest := "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	cases := []string{
+		"nginx:1.27",
+		"registry.example.com:5000/team/app:1.2.3",
+		"nginx@" + digest,
+		"registry.example.com/team/app:1.2.3@" + digest,
+	}
+
+	for _, image := range cases {
+		t.Run(image, func(t *testing.T) {
+			stdout, _, err := runSDL(t, "", "init", "web", "--image", image)
+			require.NoError(t, err)
+			require.Contains(t, stdout, image)
+		})
+	}
+}
+
+func TestGeneratedSDLDefaultValidationFailureIsInternal(t *testing.T) {
+	cmd := initCmd()
+	out, err := Marshal(webScaffold.Build(Options{Image: "nginx"}))
+	require.NoError(t, err)
+
+	err = validateGeneratedSDL(cmd, &webScaffold, out)
+	require.Error(t, err)
+	require.Equal(t, cliutil.ExitGeneral, cliutil.ExitCode(err))
+	require.Contains(t, err.Error(), "internal error")
+	require.Contains(t, err.Error(), `scaffold "web" default output failed validation`)
+}
+
+func TestGeneratedSDLBrokenDefaultWithOverrideIsInternal(t *testing.T) {
+	cmd := initCmd()
+	require.NoError(t, cmd.Flags().Set("image", "also-untagged"))
+
+	broken := webScaffold
+	broken.Name = "broken"
+	broken.Build = func(Options) *yaml.Node {
+		return webScaffold.Build(Options{Image: "untagged"})
+	}
+
+	out, err := Marshal(broken.Build(Options{Image: "also-untagged"}))
+	require.NoError(t, err)
+
+	err = validateGeneratedSDL(cmd, &broken, out)
+	require.Error(t, err)
+	require.Equal(t, cliutil.ExitGeneral, cliutil.ExitCode(err))
+	require.Contains(t, err.Error(), "internal error")
+	require.Contains(t, err.Error(), `scaffold "broken" default output failed validation`)
 }
 
 func TestValidateValidFile(t *testing.T) {
