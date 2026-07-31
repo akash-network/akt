@@ -123,6 +123,85 @@ func TestDeploymentDepositUnifiedSyntax(t *testing.T) {
 	}
 }
 
+func TestDeploymentDepositStructuredAcknowledgement(t *testing.T) {
+	m := newTestManager(t)
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
+		t.Fatalf("SetConsoleAPIKey: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/deposit-deployment" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		writeJSON(t, w, `{"data":{}}`)
+	}))
+	defer srv.Close()
+
+	for _, format := range []string{"json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			out, err := execConsole(t, m, srv.URL, "deployment", "deposit", "12345", "$2.50", "-o", format)
+			if err != nil {
+				t.Fatalf("deposit -o %s: %v", format, err)
+			}
+
+			got := decodeStructuredMap(t, format, out)
+			want := map[string]any{
+				"dseq":       "12345",
+				"amount_usd": 2.5,
+				"status":     "deposited",
+			}
+			if len(got) != len(want) {
+				t.Fatalf("deposit acknowledgement = %#v, want %#v", got, want)
+			}
+			for key, wantValue := range want {
+				if got[key] != wantValue {
+					t.Errorf("deposit acknowledgement %s = %#v, want %#v", key, got[key], wantValue)
+				}
+			}
+		})
+	}
+}
+
+func TestDeploymentCloseStructuredAcknowledgement(t *testing.T) {
+	for _, tc := range []struct {
+		name          string
+		status        int
+		alreadyClosed bool
+	}{
+		{name: "closed", status: http.StatusOK},
+		{name: "already closed", status: http.StatusNotFound, alreadyClosed: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestManager(t)
+			if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
+				t.Fatalf("SetConsoleAPIKey: %v", err)
+			}
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodDelete || r.URL.Path != "/v1/deployments/42" {
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+				}
+				w.WriteHeader(tc.status)
+			}))
+			defer srv.Close()
+
+			for _, format := range []string{"json", "yaml"} {
+				t.Run(format, func(t *testing.T) {
+					out, err := execConsole(t, m, srv.URL, "deployment", "close", "42", "-o", format)
+					if err != nil {
+						t.Fatalf("close -o %s: %v", format, err)
+					}
+
+					got := decodeStructuredMap(t, format, out)
+					if got["dseq"] != "42" || got["state"] != "closed" || got["already_closed"] != tc.alreadyClosed {
+						t.Errorf("close acknowledgement = %#v, want dseq=42 state=closed already_closed=%v", got, tc.alreadyClosed)
+					}
+				})
+			}
+		})
+	}
+}
+
 // TestDeploymentListZeroFlagValues pins that legitimately-zero flag values
 // are not mis-reported as errors: --skip 0 is forwarded and --limit 0 falls
 // back to the server default page size (the API requires limit >= 1).
