@@ -260,7 +260,7 @@ $ %[2]s query txs 'message.sender=akash1...&message.action=withdraw_delegator_re
 `, eventFormat, version.AppName),
 		),
 		Args:              cobra.MaximumNArgs(1),
-		PersistentPreRunE: QueryPersistentPreRunE,
+		PersistentPreRunE: queryWithoutHeightPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)
@@ -341,7 +341,7 @@ $ %s query tx --%s=%s <sig1_base64>,<sig2_base64...>
 			version.AppName, cflags.FlagType, typeAccSeq,
 			version.AppName, cflags.FlagType, typeSig)),
 		Args:              cobra.ExactArgs(1),
-		PersistentPreRunE: QueryPersistentPreRunE,
+		PersistentPreRunE: queryWithoutHeightPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)

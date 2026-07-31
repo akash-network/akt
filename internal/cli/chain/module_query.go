@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/cosmos/cosmos-sdk/client"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/spf13/cobra"
 
@@ -20,10 +19,9 @@ func GetQueryModuleNameToAddressCmd() *cobra.Command {
 The address is computed locally from the name, so any string produces one.
 It is not checked against the chain -- run "akt query auth module-accounts"
 to see the modules that actually exist.`,
-		Args: cobra.ExactArgs(1),
+		Args:    cobra.ExactArgs(1),
+		PreRunE: localQueryPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cctx := client.GetClientContextFromCmd(cmd)
-
 			// The derivation hashes whatever it is given, so "" and "   " each
 			// produced a syntactically valid, wholly unowned address at exit 0.
 			// A name that is merely misspelled cannot be caught here without a
@@ -39,7 +37,7 @@ to see the modules that actually exist.`,
 
 			address := authtypes.NewModuleAddress(name)
 
-			return cctx.PrintString(address.String())
+			return printQueryScalar(cmd, address.String())
 		},
 	}
 
