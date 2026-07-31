@@ -122,7 +122,7 @@ func HandleListBids(cl *console.Client) mcpserver.ToolHandlerFunc {
 func ToolWalletBalance() mcp.Tool {
 	return mcp.NewTool(
 		"console_wallet_balance",
-		mcp.WithDescription("Get the balance of the Console-managed wallet: available credits, total, and any amount held in escrow by open deployments."),
+		mcp.WithDescription("Get the Console-managed wallet's available, in-deployment, and total balances in USD."),
 	)
 }
 
@@ -134,7 +134,15 @@ func HandleWalletBalance(cl *console.Client) mcpserver.ToolHandlerFunc {
 			return marshal.ErrResultf("failed to get wallet balance: %v", err), nil
 		}
 
-		return marshal.ToTextResult(resp)
+		return marshal.ToTextResult(struct {
+			AvailableUSD     float64 `json:"available_usd"`
+			InDeploymentsUSD float64 `json:"in_deployments_usd"`
+			TotalUSD         float64 `json:"total_usd"`
+		}{
+			AvailableUSD:     resp.BalanceUSD(),
+			InDeploymentsUSD: resp.DeploymentsUSD(),
+			TotalUSD:         resp.TotalUSD(),
+		})
 	}
 }
 
