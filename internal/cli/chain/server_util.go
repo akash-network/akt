@@ -184,7 +184,7 @@ for. Each module documents its respective events under 'xx_events.md'.
 			version.AppName,
 		),
 		Args:    cobra.MaximumNArgs(1),
-		PreRunE: rejectUnsupportedHeightPreRunE,
+		PreRunE: directQueryWithoutHeightPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cctx, err := GetClientQueryContext(cmd)
 			if err != nil {
@@ -237,7 +237,7 @@ $ %s query block --%s=%s <hash>
 			version.AppName, cflags.FlagType, cflags.TypeHeight,
 			version.AppName, cflags.FlagType, cflags.TypeHash)),
 		Args:    cobra.MaximumNArgs(1),
-		PreRunE: rejectPositionalAndFlagHeightPreRunE,
+		PreRunE: directQueryHeightPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cctx, err := GetClientQueryContext(cmd)
 			if err != nil {
@@ -332,7 +332,7 @@ func QueryBlockResultsCmd() *cobra.Command {
 		Short:   "Query for a committed block's results by height",
 		Long:    "Query for a specific committed block's results using the CometBFT RPC `block_results` method",
 		Args:    cobra.RangeArgs(0, 1),
-		PreRunE: rejectPositionalAndFlagHeightPreRunE,
+		PreRunE: directQueryHeightPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cctx, err := GetClientQueryContext(cmd)
 			if err != nil {

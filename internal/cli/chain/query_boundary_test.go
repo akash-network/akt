@@ -238,6 +238,76 @@ func TestVendoredIBCYAMLEmitsYAML(t *testing.T) {
 	require.False(t, strings.HasPrefix(strings.TrimSpace(out), "{"), "YAML mode emitted JSON: %s", out)
 }
 
+func TestVendoredIBCVerboseReportsSelectedEndpoint(t *testing.T) {
+	conn := newIBCQueryTestConn(
+		t,
+		&stubIBCClientQueryServer{},
+		&stubIBCConnectionQueryServer{},
+	)
+	root := adoptVendoredQueryCmd(ibccore.AppModuleBasic{}.GetQueryCmd())
+	root.PersistentFlags().CountP("verbose", "v", "verbose")
+
+	var out bytes.Buffer
+	cctx := queryTestClientContext(&out).
+		WithGRPCClient(conn).
+		WithNodeURI("https://rpc.test.invalid")
+	ctx := context.WithValue(context.Background(), ClientContextKey, &cctx)
+	root.SetContext(ctx)
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SilenceErrors = true
+	root.SilenceUsage = true
+	root.SetArgs([]string{"-v", "--node", "https://rpc.test.invalid", "client", "params"})
+
+	require.NoError(t, root.Execute())
+	require.Contains(t, out.String(), "querying https://rpc.test.invalid (chain akashnet-2)")
+	require.Equal(t, 1, strings.Count(out.String(), "querying https://rpc.test.invalid"))
+}
+
+func TestAlternateQueryPreRunsHonorVerbose(t *testing.T) {
+	t.Run("local derivation", func(t *testing.T) {
+		cmd := GetQueryModuleNameToAddressCmd()
+		cmd.Flags().CountP("verbose", "v", "verbose")
+
+		var out bytes.Buffer
+		cctx := queryTestClientContext(&out)
+		ctx := context.WithValue(context.Background(), ClientContextKey, &cctx)
+		cmd.SetContext(ctx)
+		cmd.SetOut(&out)
+		cmd.SetErr(&out)
+		cmd.SetArgs([]string{"gov", "-v"})
+
+		require.NoError(t, cmd.Execute())
+		require.Contains(t, out.String(), "querying locally (chain akashnet-2)")
+	})
+
+	for _, tc := range []struct {
+		name string
+		cmd  func() *cobra.Command
+		args []string
+	}{
+		{"blocks", QueryBlocksCmd, []string{"block.height > 1"}},
+		{"block", QueryBlockCmd, []string{"1"}},
+		{"block results", QueryBlockResultsCmd, []string{"1"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := tc.cmd()
+			cmd.Flags().CountP("verbose", "v", "verbose")
+			require.NoError(t, cmd.Flags().Set("verbose", "1"))
+			require.NoError(t, cmd.Flags().Set(cflags.FlagNode, "https://rpc.test.invalid"))
+
+			var stderr bytes.Buffer
+			cctx := queryTestClientContext(&stderr).WithNodeURI("https://rpc.test.invalid")
+			ctx := context.WithValue(context.Background(), ClientContextKey, &cctx)
+			cmd.SetContext(ctx)
+			cmd.SetErr(&stderr)
+
+			require.NoError(t, cmd.PreRunE(cmd, tc.args))
+			require.Contains(t, stderr.String(), "querying https://rpc.test.invalid (chain akashnet-2)")
+		})
+	}
+}
+
 func TestVendoredIBCPaginationAppliesHardLimit(t *testing.T) {
 	conn := newIBCQueryTestConn(
 		t,

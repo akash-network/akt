@@ -69,6 +69,7 @@ func ToolGetDeployment() mcp.Tool {
 		mcp.WithNumber("dseq",
 			mcp.Required(),
 			mcp.Description("Deployment sequence number."),
+			marshal.PositiveInteger(),
 		),
 	)
 }
@@ -115,10 +116,12 @@ func ToolGetGroup() mcp.Tool {
 		mcp.WithNumber("dseq",
 			mcp.Required(),
 			mcp.Description("Deployment sequence number."),
+			marshal.PositiveInteger(),
 		),
 		mcp.WithNumber("gseq",
 			mcp.Required(),
 			mcp.Description("Group sequence number."),
+			marshal.PositiveInteger(),
 		),
 	)
 }
@@ -168,6 +171,7 @@ func ToolCloseDeployment() mcp.Tool {
 		mcp.WithNumber("dseq",
 			mcp.Required(),
 			mcp.Description("Deployment sequence number to close."),
+			marshal.PositiveInteger(),
 		),
 	)
 }

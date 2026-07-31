@@ -72,7 +72,7 @@ Full key lifecycle: add (mnemonic, ledger, multisig, recover), delete, list, sho
 All `tx` and `query` commands from the Akash chain, clean-copied from `chain-sdk/go/cli`:
 
 - **Akash modules**: deployment, market, provider, cert, audit, escrow, oracle, bme
-- **Cosmos SDK modules**: bank, staking, distribution, gov, authz, feegrant, slashing, vesting, upgrade, crisis, evidence, mint, params
+- **Cosmos SDK modules**: bank, staking, distribution, gov, authz, feegrant, slashing, vesting, upgrade, evidence, mint, params
 - **IBC**: ibc-core, ibc-transfer
 - **WASM**: store, instantiate, execute, migrate, query
 - **Auth utilities**: sign, sign-batch, multisign, validate-signatures, broadcast, encode, decode

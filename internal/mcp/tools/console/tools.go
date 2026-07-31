@@ -27,9 +27,11 @@ func ToolListDeployments() mcp.Tool {
 		mcp.WithDescription("List the Console-managed deployments belonging to the configured API key."),
 		mcp.WithNumber("skip",
 			mcp.Description("Number of deployments to skip, for paging. Defaults to 0."),
+			marshal.NonNegativeInteger(),
 		),
 		mcp.WithNumber("limit",
 			mcp.Description(fmt.Sprintf("Maximum deployments to return. Defaults to %d, capped at %d.", defaultListLimit, maxListLimit)),
+			marshal.NonNegativeInteger(),
 		),
 	)
 }
@@ -38,13 +40,24 @@ func ToolListDeployments() mcp.Tool {
 func HandleListDeployments(cl *console.Client) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		skip := 0
-		if v, ok := marshal.OptionalUint64(req, "skip"); ok {
+		if v, ok, err := marshal.OptionalUint64(req, "skip"); err != nil {
+			return marshal.ErrResult(err.Error()), nil
+		} else if ok {
+			if v > uint64(^uint(0)>>1) {
+				return marshal.ErrResult("parameter skip is out of range for this platform"), nil
+			}
 			skip = int(v)
 		}
 
 		limit := defaultListLimit
-		if v, ok := marshal.OptionalUint64(req, "limit"); ok && v > 0 {
-			limit = int(v)
+		if v, ok, err := marshal.OptionalUint64(req, "limit"); err != nil {
+			return marshal.ErrResult(err.Error()), nil
+		} else if ok && v > 0 {
+			if v > maxListLimit {
+				limit = maxListLimit
+			} else {
+				limit = int(v)
+			}
 		}
 		// An assistant asking for everything should not be able to turn one
 		// tool call into an unbounded page request.
@@ -197,6 +210,7 @@ func ToolListProviders() mcp.Tool {
 		),
 		mcp.WithNumber("limit",
 			mcp.Description(fmt.Sprintf("Maximum providers to return. Defaults to %d, capped at %d.", defaultListLimit, maxListLimit)),
+			marshal.NonNegativeInteger(),
 		),
 	)
 }
@@ -225,7 +239,9 @@ func HandleListProviders(cl *console.Client) mcpserver.ToolHandlerFunc {
 		// over. Truncation is reported so a short list is never mistaken for
 		// the whole catalogue.
 		limit := defaultListLimit
-		if v, ok := marshal.OptionalUint64(req, "limit"); ok && v > 0 {
+		if v, ok, err := marshal.OptionalUint64(req, "limit"); err != nil {
+			return marshal.ErrResult(err.Error()), nil
+		} else if ok && v > 0 {
 			limit = int(min(v, uint64(maxListLimit)))
 		}
 
