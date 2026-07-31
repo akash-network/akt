@@ -379,6 +379,16 @@ Implementation note: `tx` and `query` commands are clean-copied from `akash-netw
 
 **Help text requirement**: Every command and subcommand must populate cobra's `Example` field with at least one usage example. The example should demonstrate the most common use case with realistic argument values. Commands with multiple modes of operation (e.g., list vs get, interactive vs scripted) should include one example per mode. This ensures that `akt <command> --help` is self-contained -- users should never need to consult external documentation for basic usage.
 
+**Input validation requirement**: A command group prints its help and exits 0
+only when it is invoked without an action. Any non-flag token that does not
+name a child command is an unknown-command error and exits non-zero, including
+for vendored Cosmos SDK and IBC groups. Flags with a documented set of values
+validate that set during argument parsing, before configuration or network
+work begins. In particular, the standard `--output` values are `pretty`,
+`json`, and `yaml`; workflow commands additionally accept `jsonl`, while
+SDK-compatible key and RPC commands that advertise `text|json` accept exactly
+those values.
+
 ### 2.0 Root Command Behavior (`akt` with no subcommand)
 
 When `akt` is invoked with no subcommand, the following flow determines what happens:
@@ -2120,6 +2130,12 @@ State keywords are only recognized as the sole/first component of the filter arg
 | `gseq`           | 0 in list context (no filter); 1 when needed for a unique get                |
 | `oseq`           | 0 in list context (no filter); 1 when needed for a unique get                |
 | Trailing address | Empty — no filter on the trailing identity component                         |
+
+Every owner-scoped list, including `query cert`, must resolve an omitted
+leading address from the active context before sending a request. If the
+context has no default account, the command refuses locally and explains that
+an owner address or `default-account` is required. An empty owner is never sent
+to the chain query service because it means network-wide scope.
 
 #### 3.8.5 Per-Command Filter Scope
 

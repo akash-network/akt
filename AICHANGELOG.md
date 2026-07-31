@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- **CLI groups and output flags could accept the wrong input at exit 0**:
+  unknown tokens under completion, IBC, and upgrade groups printed help as a
+  successful command, while leaf-local `--output` strings bypassed the root
+  enum and mapped misspellings such as `josn` to pretty output. Group
+  validation is now applied to the assembled command tree, and every output
+  flag validates its command-specific enum before configuration or network
+  work. Bare certificate lists now follow the same owner-scoping contract as
+  deployments and market resources: they use the context default account or
+  refuse locally instead of querying every certificate on the network.
+
 - **`akt q staking params`/`pool` could panic on a sparse response**: proto3 omits zero-valued fields, so an unset `LegacyDec`/`Int` unmarshals with a nil inner `big.Int` and any arithmetic on it panics — `FormatPercentDec` and `FormatDecAsAKT` did exactly that. Two independent reviewers hit it. Formatting now goes through `DecOrZero`/`IntOrZero`, so an omitted field renders as `0` instead of crashing the command. 3 regression tests.
 
 - **A failed config write reported success**: `SaveConfig` deferred `f.Close()` on the file it had just created, discarding the flush error — a full disk or I/O failure while writing `config.yaml` returned nil. The store's YAML export had the same bug (a truncated export reported success). Both now close explicitly and return the error.

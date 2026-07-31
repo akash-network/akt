@@ -341,6 +341,8 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	}
 	root.AddCommand(versionCmd(bi))
 	root.AddCommand(completionCmd())
+	enforceGroupInputValidation(root)
+	enforceOutputValidation(root)
 
 	// Capability gating must also shape help output when cobra
 	// short-circuits --help before the persistent hooks run (parsed help

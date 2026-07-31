@@ -18,6 +18,7 @@ import (
 	"pkg.akt.dev/akt/internal/cliutil"
 	"pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
+	"pkg.akt.dev/akt/internal/output"
 	"pkg.akt.dev/akt/internal/transport"
 	wf "pkg.akt.dev/akt/internal/workflow"
 	"pkg.akt.dev/akt/internal/workflow/builtin"
@@ -214,6 +215,7 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 	// Common workflow flags.
 	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompts")
 	cmd.Flags().Bool("dry-run", false, "Show execution plan without broadcasting transactions")
+	cmd.Flags().VarP(output.NewFormatFlag(cflags.OutputPretty, outputJSONL), cflags.FlagOutput, "o", "Output format (pretty|json|yaml|jsonl)")
 
 	// Standard chain tx flags (--from, --gas, --node, ...) so keyring-auth
 	// execution can discover a chain client; flags already defined above
