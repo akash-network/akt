@@ -189,6 +189,14 @@ The context is resolved once at application startup and propagated through the e
 3. Apply overrides: flags > env vars > network config > built-in defaults.
 4. Inject the resolved context into all services (client, provider gateway, sync engine, TUI).
 
+Transaction subtrees imported from Cosmos SDK or IBC modules are not exempt
+from this boundary. Before any transaction leaf constructs a message, queries
+an account, simulates, or broadcasts, akt installs the selected context's
+client context and discovered chain client on that leaf. Dependency defaults
+such as `tcp://localhost:26657` must never replace a resolved endpoint. Local
+transaction leaves use the same pre-run boundary; a leaf that needs codecs or
+clients cannot reach its handler without that initialization.
+
 #### 3.1.3 Live Reload
 
 The context is **live-reloadable**. The config file is watched for changes (via fsnotify or polling):
@@ -627,6 +635,13 @@ This replaces the MVP's manual backup-endpoint approach with transparent, automa
 ### 5.7 Transaction Result Pretty Output
 
 Transaction commands (`tx`) use the same registry-based formatter system as query commands (§5.5) to render human-friendly transaction results. When `--output pretty` is active (the default for both `tx` and `query` commands), a `TxResponse` is rendered in two distinct sections.
+
+Simulation is a transaction result, not a successful dry planning shortcut.
+If the node returns a non-zero SDK code, the command returns a transaction
+error and a non-zero process status while retaining the response for
+diagnostics. Only pure construction (`--generate-only` or `--offline`) may
+carry a non-zero-shaped fixture without converting it into an execution
+failure.
 
 **Section 1: Transaction Summary (common to all transactions)**
 

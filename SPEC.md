@@ -2087,6 +2087,21 @@ broadcast, an explicit `--chain-id` must agree with the selected context.
 context-node work. These checks run before generate-only or workflow dry-run
 output is emitted.
 
+Every executable transaction leaf, including subtrees adopted from Cosmos SDK
+and IBC modules, runs the same akt transaction preflight before its handler.
+The preflight resolves codecs, signer, chain identity, and the RPC endpoint
+from the selected context; `--node` remains the only per-invocation endpoint
+override. Account lookup, gas simulation, and broadcast must therefore reach
+that resolved endpoint and must never fall back to an SDK localhost default.
+A missing transaction client is a normal CLI error, never a panic.
+
+When `--fees` is non-empty it is authoritative: both configured and explicit
+`--gas-prices` values are cleared before the transaction factory is built.
+Without fixed fees, the effective gas price follows the normal precedence
+chain (flag > environment > context network > built-in default). A simulation
+response with a non-zero SDK code is a failed transaction and exits non-zero;
+simulation remains non-mutating and is not written to the action log.
+
 **Pretty output for transaction results**: When `--output pretty` is active (the global default), transaction results are rendered in a two-section layout: a common transaction summary (hash, signer, height, gas, fee, status) followed by a message-specific detail section. See [§10.11](#1011-transaction-result-formatting) for the full specification.
 
 **CLI-mode progress feedback**: When a TTY is attached and `--quiet` is not set, `tx` commands display progress status on stderr during multi-second operations. This applies to all `tx` commands, not just workflows.

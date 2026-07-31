@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- **Transaction execution-boundary behavior is now explicit**: every local or
+  dependency-owned transaction leaf must initialize from the selected context
+  before message construction or account lookup, fixed fees override all gas
+  price sources, and non-zero simulation codes are command failures without
+  becoming action-log entries. This documents the remediation contract before
+  implementation.
+
 - **Remediation changes violated the repository's lint rules**: network
   cloning no longer shadows Go's built-in `copy`, and Console acknowledgement
   tests assert decoded booleans without redundant literals.
