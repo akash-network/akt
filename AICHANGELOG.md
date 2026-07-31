@@ -10,6 +10,14 @@
   drafting refuses a missing TTY before terminal rendering. This documents the
   remediation behavior before implementation.
 
+- **Offline transaction utilities hung or corrupted their data stream**:
+  unlimited reward withdrawal now invokes one complete batch instead of a
+  zero-step loop and refuses an empty message set instead of succeeding with
+  no output; generated transaction bytes render as transaction objects instead
+  of base64 strings; signing and signature validation write data to stdout or
+  the requested document. Proposal drafting refuses non-TTY input before
+  starting its selector.
+
 - **Transaction execution-boundary behavior is now explicit**: every local or
   dependency-owned transaction leaf must initialize from the selected context
   before message construction or account lookup, fixed fees override all gas

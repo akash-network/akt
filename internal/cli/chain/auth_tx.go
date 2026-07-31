@@ -85,7 +85,7 @@ func makeSignBatchCmd() func(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		defer closeFunc()
-		cctx.WithOutput(cmd.OutOrStdout())
+		cctx = cctx.WithOutput(cmd.OutOrStdout())
 
 		// reads tx from args
 		scanner, err := ReadTxsFromInput(txCfg, args...)
@@ -163,7 +163,10 @@ func makeSignBatchCmd() func(cmd *cobra.Command, args []string) error {
 				return err
 			}
 
-			cmd.Printf("%s\n", json)
+			_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", json)
+			if err != nil {
+				return err
+			}
 		} else {
 			// It will generate signed tx for each tx
 			for sequence := txFactory.Sequence(); scanner.Scan(); sequence++ {
@@ -190,7 +193,9 @@ func makeSignBatchCmd() func(cmd *cobra.Command, args []string) error {
 				if err != nil {
 					return err
 				}
-				cmd.Printf("%s\n", json)
+				if _, err := fmt.Fprintf(cmd.OutOrStdout(), "%s\n", json); err != nil {
+					return err
+				}
 			}
 		}
 
@@ -453,7 +458,7 @@ func signTx(cmd *cobra.Command, cctx client.Context, txF tx.Factory, newTx sdk.T
 	}
 
 	defer closeFunc()
-	cctx.WithOutput(cmd.OutOrStdout())
+	cctx = cctx.WithOutput(cmd.OutOrStdout())
 
 	var json []byte
 	json, err = marshalSignatureJSON(txCfg, txBuilder, printSignatureOnly)
@@ -461,7 +466,7 @@ func signTx(cmd *cobra.Command, cctx client.Context, txF tx.Factory, newTx sdk.T
 		return err
 	}
 
-	cmd.Printf("%s\n", json)
+	_, err = fmt.Fprintf(cmd.OutOrStdout(), "%s\n", json)
 
 	return err
 }
@@ -513,7 +518,11 @@ func makeValidateSignaturesCmd() func(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
-		if !printAndValidateSigs(cmd, cctx, txBldr.ChainID(), stdTx, cctx.Offline) {
+		valid, err := printAndValidateSigs(cmd, cctx, txBldr.ChainID(), stdTx, cctx.Offline)
+		if err != nil {
+			return err
+		}
+		if !valid {
 			return fmt.Errorf("signatures validation failed")
 		}
 
@@ -523,35 +532,44 @@ func makeValidateSignaturesCmd() func(cmd *cobra.Command, args []string) error {
 
 // printAndValidateSigs will validate the signatures of a given transaction over its
 // expected signers. In addition, if offline has not been supplied, the signature is
-// verified over the transaction sign bytes. Returns false if the validation fails.
+// verified over the transaction sign bytes. The boolean is false when validation
+// fails; the error reports malformed input, lookup failures, or output failures.
 func printAndValidateSigs(
 	cmd *cobra.Command, cctx client.Context, chainID string, tx sdk.Tx, offline bool,
-) bool {
+) (bool, error) {
 	sigTx := tx.(authsigning.SigVerifiableTx)
 	signModeHandler := cctx.TxConfig.SignModeHandler()
 	addrCdc := cctx.TxConfig.SigningContext().AddressCodec()
 
-	cmd.Println("Signers:")
+	if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Signers:"); err != nil {
+		return false, err
+	}
 	signers, err := sigTx.GetSigners()
 	if err != nil {
-		panic(err)
+		return false, err
 	}
 
 	for i, signer := range signers {
 		signerStr, err := addrCdc.BytesToString(signer)
 		if err != nil {
-			panic(err)
+			return false, err
 		}
-		cmd.Printf("  %v: %v\n", i, signerStr)
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %v: %v\n", i, signerStr); err != nil {
+			return false, err
+		}
 	}
 
 	success := true
 	sigs, err := sigTx.GetSignaturesV2()
 	if err != nil {
-		panic(err)
+		return false, err
 	}
-	cmd.Println("")
-	cmd.Println("Signatures:")
+	if _, err := fmt.Fprintln(cmd.OutOrStdout()); err != nil {
+		return false, err
+	}
+	if _, err := fmt.Fprintln(cmd.OutOrStdout(), "Signatures:"); err != nil {
+		return false, err
+	}
 
 	if len(sigs) != len(signers) {
 		success = false
@@ -576,8 +594,7 @@ func printAndValidateSigs(
 		if !offline && success {
 			accNum, accSeq, err := cctx.AccountRetriever.GetAccountNumberSequence(cctx, sigAddr)
 			if err != nil {
-				cmd.PrintErrf("failed to get account: %s\n", sigAddr)
-				return false
+				return false, fmt.Errorf("failed to get account %s: %w", sigAddr, err)
 			}
 
 			signingData := authsigning.SignerData{
@@ -589,8 +606,7 @@ func printAndValidateSigs(
 			}
 			anyPk, err := codectypes.NewAnyWithValue(pubKey)
 			if err != nil {
-				cmd.PrintErrf("failed to pack public key: %v", err)
-				return false
+				return false, fmt.Errorf("failed to pack public key: %w", err)
 			}
 			txSignerData := txsigning.SignerData{
 				ChainID:       signingData.ChainID,
@@ -605,24 +621,26 @@ func printAndValidateSigs(
 
 			adaptableTx, ok := tx.(authsigning.V2AdaptableTx)
 			if !ok {
-				cmd.PrintErrf("expected V2AdaptableTx, got %T", tx)
-				return false
+				return false, fmt.Errorf("expected V2AdaptableTx, got %T", tx)
 			}
 			txData := adaptableTx.GetSigningTxData()
 
 			err = authsigning.VerifySignature(cmd.Context(), pubKey, txSignerData, sig.Data, signModeHandler, txData)
 			if err != nil {
-				cmd.PrintErrf("failed to verify signature: %v", err)
-				return false
+				return false, fmt.Errorf("failed to verify signature: %w", err)
 			}
 		}
 
-		cmd.Printf("  %d: %s\t\t\t[%s]%s%s\n", i, sigAddr.String(), sigSanity, multiSigHeader, multiSigMsg)
+		if _, err := fmt.Fprintf(cmd.OutOrStdout(), "  %d: %s\t\t\t[%s]%s%s\n", i, sigAddr.String(), sigSanity, multiSigHeader, multiSigMsg); err != nil {
+			return false, err
+		}
 	}
 
-	cmd.Println("")
+	if _, err := fmt.Fprintln(cmd.OutOrStdout()); err != nil {
+		return false, err
+	}
 
-	return success
+	return success, nil
 }
 
 func readTxAndInitContexts(cctx client.Context, cmd *cobra.Command, filename string) (client.Context, tx.Factory, sdk.Tx, error) {

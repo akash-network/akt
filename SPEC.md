@@ -2115,7 +2115,11 @@ confirmations but cannot invent answers to value-selection prompts.
 
 For batched multi-message transactions, a batch size of zero means unlimited:
 the complete message set is submitted to the construction/simulation/broadcast
-function exactly once. It must not be used as a loop increment.
+function exactly once. It must not be used as a loop increment. An empty
+message set is a clear no-transaction error, never a successful command with
+empty output. When an explicit positive batch size produces multiple
+transactions, JSON and YAML output contain one top-level array; pretty output
+renders each transaction in order.
 
 **Pretty output for transaction results**: When `--output pretty` is active (the global default), transaction results are rendered in a two-section layout: a common transaction summary (hash, signer, height, gas, fee, status) followed by a message-specific detail section. See [§10.11](#1011-transaction-result-formatting) for the full specification.
 

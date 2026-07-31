@@ -508,6 +508,10 @@ func GetTxGovDraftProposalCmd() *cobra.Command {
 		Short:        "Generate a draft proposal json file. The generated proposal json contains only one message (skeleton).",
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := requireDraftProposalTTY(cmd); err != nil {
+				return err
+			}
+
 			cctx, err := client.GetClientTxContext(cmd)
 			if err != nil {
 				return err
@@ -586,6 +590,14 @@ func GetTxGovDraftProposalCmd() *cobra.Command {
 	cmd.Flags().Bool(flagSkipMetadata, false, "skip metadata prompt")
 
 	return cmd
+}
+
+func requireDraftProposalTTY(cmd *cobra.Command) error {
+	input, ok := cmd.InOrStdin().(interface{ Fd() uintptr })
+	if !ok || !term.IsTerminal(int(input.Fd())) {
+		return fmt.Errorf("draft-proposal requires an interactive terminal on stdin")
+	}
+	return nil
 }
 
 // GetTxGovCancelProposalCmd implements submitting a cancel proposal transaction command.

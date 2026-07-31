@@ -199,6 +199,60 @@ func TestKeysLifecycle(t *testing.T) {
 	}
 }
 
+func TestOfflineTransactionConstructionAndSigningStreams(t *testing.T) {
+	home := setupContextHome(t)
+	mnemonicFile := filepath.Join(t.TempDir(), "mnemonic.txt")
+	if err := os.WriteFile(mnemonicFile, []byte(testMnemonic+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustRunAkt(t, home, "context", "keys", "add", "signer", "--recover", "--source", mnemonicFile)
+	mustRunAkt(t, home, "context", "edit", "prod", "--default-account", "signer")
+
+	generated, stderr, exitCode := runAkt(t, home,
+		"tx", "bank", "send", testMnemonicAddr, testMnemonicAddr, "1uakt",
+		"--offline", "--account-number", "0", "--sequence", "0",
+		"--from", "signer", "--chain-id", "akashnet-2",
+		"--generate-only", "--gas", "200000", "-o", "json", "--yes")
+	if exitCode != 0 {
+		t.Fatalf("generate-only exited %d\nstdout: %s\nstderr: %s", exitCode, generated, stderr)
+	}
+	var unsigned map[string]any
+	if err := json.Unmarshal([]byte(generated), &unsigned); err != nil {
+		t.Fatalf("generate-only did not emit a JSON object: %v\n%s", err, generated)
+	}
+	if _, ok := unsigned["body"]; !ok {
+		t.Fatalf("generate-only top-level value is not a transaction: %#v", unsigned)
+	}
+
+	unsignedFile := filepath.Join(t.TempDir(), "unsigned.json")
+	if err := os.WriteFile(unsignedFile, []byte(generated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, leaf := range []string{"sign", "sign-batch"} {
+		t.Run(leaf, func(t *testing.T) {
+			stdout, stderr, exitCode := runAkt(t, home,
+				"tx", leaf, unsignedFile,
+				"--offline", "--account-number", "0", "--sequence", "0",
+				"--from", "signer", "--chain-id", "akashnet-2",
+				"--generate-only", "--gas", "200000", "-o", "json", "--yes")
+			if exitCode != 0 {
+				t.Fatalf("%s exited %d\nstdout: %s\nstderr: %s", leaf, exitCode, stdout, stderr)
+			}
+			var signed map[string]any
+			if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &signed); err != nil {
+				t.Fatalf("%s stdout is not signed transaction JSON: %v\nstdout: %s\nstderr: %s", leaf, err, stdout, stderr)
+			}
+			signatures, ok := signed["signatures"].([]any)
+			if !ok || len(signatures) != 1 {
+				t.Fatalf("%s signature count = %#v", leaf, signed["signatures"])
+			}
+			if strings.Contains(stderr, `"body"`) {
+				t.Fatalf("%s wrote transaction data to stderr:\n%s", leaf, stderr)
+			}
+		})
+	}
+}
+
 func TestKeysParseMachineOutput(t *testing.T) {
 	home := t.TempDir()
 	initHome(t, home)
