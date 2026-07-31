@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- **Wasm predictable-address input was underspecified**: `build-address` is a
+  local derivation whose default salt encoding is hexadecimal; its three
+  explicit encoding selectors are mutually exclusive and decode to salt bytes
+  exactly once. Structured formats render the result as a string scalar.
+
 - **Offline transaction utility contracts are now explicit**: construction
   emits one real JSON object, signing data goes to stdout or its requested
   document, zero means one unlimited message batch, and interactive proposal

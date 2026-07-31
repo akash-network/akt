@@ -2145,15 +2145,22 @@ Added to all `query` commands via `AddQueryFlagsToCmd()`.
 | `--height`        | int64  | `0`             | Query at specific block height (0 = latest) |
 
 An explicit `--node` replaces the context RPC endpoint for every query that
-performs RPC work. Local derivations such as `ibc-transfer escrow-address` and
-`module-name-to-address` reject `--node`; they also reject `--height` because
-they do not read chain state. Queries that cannot select a historical snapshot
-(`blocks`, `tx`, and `txs`) likewise reject `--height`. `block` and
+performs RPC work. Local derivations such as `ibc-transfer escrow-address`,
+`module-name-to-address`, and `wasm build-address` reject `--node`; they also
+reject `--height` because they do not read chain state. Queries that cannot
+select a historical snapshot (`blocks`, `tx`, and `txs`) likewise reject
+`--height`. `block` and
 `block-results` accept height positionally or through `--height`, but reject an
 invocation that supplies both. An explicit `--chain-id` must agree with the
 selected context even for a local derivation. File-oriented queries such as
 `wasm code`, whose primary result is written to a named file, reject structured
 stdout formats they cannot represent.
+
+`wasm build-address` interprets its salt positional as hexadecimal by default.
+`--ascii`, `--hex`, and `--b64` select one mutually exclusive input encoding.
+The selected representation is decoded exactly once into salt bytes before
+address derivation. Pretty output is the raw bech32 address; JSON and YAML are
+structured string scalars.
 
 ### 3.4 Pagination Flags
 
