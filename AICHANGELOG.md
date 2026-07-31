@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- **Monitor provider loading and WebSocket discovery were underspecified**:
+  provider cache loading, on-chain reconciliation, health checks, periodic
+  resync, and cache persistence now form one startup-owned pipeline independent
+  of the visible dashboard. Pathless RPC endpoints also retry the public Akash
+  gateway's `/rpc/websocket` layout after the standard WebSocket path.
+
 - **Provider gateway commands disagreed across discovery, output, and
   streaming paths**: provider addresses now resolve their on-chain host URI,
   YAML preserves the JSON data model, and missing leases fail before log,

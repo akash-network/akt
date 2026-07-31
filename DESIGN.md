@@ -58,6 +58,19 @@ The hub presents three dashboards, navigable via Tab/Shift-Tab:
 - **Context-integrated but not context-dependent**: When a context is active, the RPC endpoint resolves automatically (consistent with the flag-minimal operation goal). A positional argument or `--rpc` flag overrides for ad-hoc monitoring of any network.
 - **Hub-based navigation**: Tab/Shift-Tab cycles between three dashboards (Network, Provider, Oracle/BME); number keys (1/2/3) switch sub-tabs within the Network dashboard. Each dashboard is also directly accessible via its CLI subcommand.
 
+Provider monitoring is a continuously running pipeline, not a view that is
+populated only after navigation. Startup loads the persisted provider cache,
+immediately reconciles it with the on-chain provider set, and starts the health
+check, chain-resync, and cache-save schedules. Switching dashboards changes only
+what is rendered; it does not start or stop the pipeline. Manual refresh
+requests an immediate reconciliation while retaining the periodic schedules.
+
+Public RPC gateways do not expose a uniform WebSocket path. The monitor first
+uses the endpoint's normal `/websocket` path. For a pathless endpoint it also
+tries `/rpc/websocket`, which is the reverse-proxy layout used by Akash's public
+RPC gateway. This fallback changes only WebSocket discovery; HTTP RPC requests
+continue to use the configured endpoint verbatim.
+
 #### Non-Goals
 
 - **Deployment, lease, or user-specific resource monitoring**: `monitor` is a network-wide observation tool, not a deployment management interface.

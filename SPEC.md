@@ -1632,6 +1632,11 @@ Each dashboard is also directly accessible via its CLI subcommand. When launched
 
 If no endpoint can be resolved, the command exits with an error.
 
+The monitor connects to `{rpc-endpoint}/websocket`. When a pathless RPC endpoint
+rejects that WebSocket handshake, it retries `{rpc-endpoint}/rpc/websocket` so
+the documented public Akash endpoint works through its reverse proxy. An
+endpoint that already contains a path is never rewritten.
+
 **Shared flags** (apply to `akt monitor` and all subcommands):
 
 | Flag              | Type   | Default         | Description                                              |
@@ -1675,6 +1680,13 @@ Launches directly into the Provider dashboard. Displays real-time provider fleet
 Data sources: on-chain provider list (ABCI query), per-provider health (gRPC port 8444 preferred, REST `/status` + `/version` fallback), active leases (REST, for priority scheduling).
 
 Cache: smart scheduling (online: 1m, recently offline: 5m, long-term offline: 6h), priority queue, max 10 concurrent checks, chain re-sync every 10m.
+
+The provider pipeline starts with the monitor itself, even when another
+dashboard is initially visible. It loads cached providers immediately,
+reconciles the full on-chain provider list at startup, dispatches due health
+checks, re-syncs the chain every 10 minutes, and saves the cache every 30
+seconds. `r` performs an immediate reconciliation without replacing those
+periodic schedules.
 
 #### `akt monitor oracle [rpc-endpoint]` / `akt monitor bme [rpc-endpoint]`
 
