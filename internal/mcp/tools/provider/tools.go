@@ -3,11 +3,10 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
-
-	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	manifest "pkg.akt.dev/go/manifest/v2beta3"
 	v1beta3 "pkg.akt.dev/go/node/client/v1beta3"
@@ -16,6 +15,7 @@ import (
 	rest "pkg.akt.dev/go/provider/client"
 
 	"pkg.akt.dev/akt/internal/mcp/marshal"
+	aktprovider "pkg.akt.dev/akt/internal/provider"
 )
 
 // --- On-chain provider query tools ---
@@ -91,7 +91,7 @@ func HandleProviderStatus(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 			return marshal.ErrResultf("%v", err), nil
 		}
 
-		rcl, err := rest.NewClient(ctx, sdk.AccAddress{}, rest.WithProviderURL(providerURL))
+		rcl, err := gatewayClient(ctx, cl, providerURL)
 		if err != nil {
 			return marshal.ErrResultf("failed to create provider client: %v", err), nil
 		}
@@ -151,7 +151,7 @@ func HandleLeaseStatus(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 			return marshal.ErrResultf("%v", err), nil
 		}
 
-		rcl, err := rest.NewClient(ctx, cl.ClientContext().GetFromAddress(), rest.WithProviderURL(providerURL))
+		rcl, err := gatewayClient(ctx, cl, providerURL)
 		if err != nil {
 			return marshal.ErrResultf("failed to create provider client: %v", err), nil
 		}
@@ -226,7 +226,7 @@ func HandleServiceStatus(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 			return marshal.ErrResultf("%v", err), nil
 		}
 
-		rcl, err := rest.NewClient(ctx, cl.ClientContext().GetFromAddress(), rest.WithProviderURL(providerURL))
+		rcl, err := gatewayClient(ctx, cl, providerURL)
 		if err != nil {
 			return marshal.ErrResultf("failed to create provider client: %v", err), nil
 		}
@@ -290,7 +290,7 @@ func HandleSubmitManifest(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 			return marshal.ErrResultf("invalid manifest JSON: %v", err), nil
 		}
 
-		rcl, err := rest.NewClient(ctx, cl.ClientContext().GetFromAddress(), rest.WithProviderURL(providerURL))
+		rcl, err := gatewayClient(ctx, cl, providerURL)
 		if err != nil {
 			return marshal.ErrResultf("failed to create provider client: %v", err), nil
 		}
@@ -301,4 +301,17 @@ func HandleSubmitManifest(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 
 		return marshal.ToTextResult(map[string]string{"status": "manifest submitted successfully"})
 	}
+}
+
+func gatewayClient(ctx context.Context, cl v1beta3.LightClient, providerURL string) (rest.Client, error) {
+	cctx := cl.ClientContext()
+	addr := cctx.GetFromAddress()
+	if addr.Empty() {
+		return nil, fmt.Errorf("provider gateway authentication requires a configured default account")
+	}
+	if cctx.Keyring == nil {
+		return nil, fmt.Errorf("provider gateway authentication requires a keyring")
+	}
+
+	return aktprovider.NewGatewayClient(ctx, cctx, addr, providerURL, "jwt", cctx.Keyring)
 }
