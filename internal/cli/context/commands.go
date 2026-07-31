@@ -512,8 +512,17 @@ func logCmd(mgr func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
+			// The human hint is only correct for the table renderer. Emitting
+			// it under -o json handed a JSON consumer a line of prose at exit
+			// 0, so a script that worked on a non-empty log crashed on an
+			// empty one.
 			if len(entries) == 0 {
+				if output.FormatFromCmd(cmd) != output.FormatTable {
+					return output.Print(output.FormatFromCmd(cmd), []struct{}{})
+				}
+
 				fmt.Println("No action log entries.")
+
 				return nil
 			}
 

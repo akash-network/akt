@@ -333,7 +333,7 @@ func OrderFiltersFromArg(arg string, defaultOwner string) (mvbeta.OrderFilters, 
 	}
 
 	if idx < len(parts) {
-		dseq, err := strconv.ParseUint(parts[idx], 10, 64)
+		dseq, err := parseSeq(parts[idx], 64)
 		if err != nil {
 			return f, fmt.Errorf("order filter: invalid dseq %q: %w", parts[idx], err)
 		}
@@ -342,7 +342,7 @@ func OrderFiltersFromArg(arg string, defaultOwner string) (mvbeta.OrderFilters, 
 	}
 
 	if idx < len(parts) {
-		gseq, err := strconv.ParseUint(parts[idx], 10, 32)
+		gseq, err := parseSeq(parts[idx], 32)
 		if err != nil {
 			return f, fmt.Errorf("order filter: invalid gseq %q: %w", parts[idx], err)
 		}
@@ -351,7 +351,7 @@ func OrderFiltersFromArg(arg string, defaultOwner string) (mvbeta.OrderFilters, 
 	}
 
 	if idx < len(parts) {
-		oseq, err := strconv.ParseUint(parts[idx], 10, 32)
+		oseq, err := parseSeq(parts[idx], 32)
 		if err != nil {
 			return f, fmt.Errorf("order filter: invalid oseq %q: %w", parts[idx], err)
 		}
@@ -429,7 +429,7 @@ func bidShapedFiltersFromArg(arg string, defaultOwner string, byProvider bool, r
 	}
 
 	if idx < len(parts) {
-		dseq, err := strconv.ParseUint(parts[idx], 10, 64)
+		dseq, err := parseSeq(parts[idx], 64)
 		if err != nil {
 			return f, fmt.Errorf("%s: invalid dseq %q: %w", resource, parts[idx], err)
 		}
@@ -438,7 +438,7 @@ func bidShapedFiltersFromArg(arg string, defaultOwner string, byProvider bool, r
 	}
 
 	if idx < len(parts) {
-		gseq, err := strconv.ParseUint(parts[idx], 10, 32)
+		gseq, err := parseSeq(parts[idx], 32)
 		if err != nil {
 			return f, fmt.Errorf("%s: invalid gseq %q: %w", resource, parts[idx], err)
 		}
@@ -447,7 +447,7 @@ func bidShapedFiltersFromArg(arg string, defaultOwner string, byProvider bool, r
 	}
 
 	if idx < len(parts) {
-		oseq, err := strconv.ParseUint(parts[idx], 10, 32)
+		oseq, err := parseSeq(parts[idx], 32)
 		if err != nil {
 			return f, fmt.Errorf("%s: invalid oseq %q: %w", resource, parts[idx], err)
 		}

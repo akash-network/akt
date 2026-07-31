@@ -291,8 +291,15 @@ func listCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 				return err
 			}
 
+			// See the action-log listing: the hint is for humans, and a
+			// structured caller needs an empty collection instead.
 			if len(records) == 0 {
+				if output.FormatFromCmd(cmd) != output.FormatTable {
+					return output.Print(output.FormatFromCmd(cmd), []struct{}{})
+				}
+
 				fmt.Println("No keys found. Add one with: akt context keys add <name>")
+
 				return nil
 			}
 

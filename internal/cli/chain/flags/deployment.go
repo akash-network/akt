@@ -259,7 +259,7 @@ func DepFiltersFromArg(arg string, defaultOwner string) (dv1beta.DeploymentFilte
 		f.Owner = parts[0]
 
 		if len(parts) >= 2 {
-			dseq, err := strconv.ParseUint(parts[1], 10, 64)
+			dseq, err := parseSeq(parts[1], 64)
 			if err != nil {
 				return f, fmt.Errorf("deployment filter: invalid dseq %q: %w", parts[1], err)
 			}
@@ -328,7 +328,7 @@ func GroupIDFromArg(arg string, defaultOwner string) (dv1.GroupID, bool, error) 
 		id.Owner = defaultOwner
 	}
 
-	dseq, err := strconv.ParseUint(parts[idx], 10, 64)
+	dseq, err := parseSeq(parts[idx], 64)
 	if err != nil {
 		return id, false, fmt.Errorf("group ID: invalid dseq %q: %w", parts[idx], err)
 	}
@@ -337,7 +337,7 @@ func GroupIDFromArg(arg string, defaultOwner string) (dv1.GroupID, bool, error) 
 
 	fullySpecified := false
 	if idx < len(parts) {
-		gseq, err := strconv.ParseUint(parts[idx], 10, 32)
+		gseq, err := parseSeq(parts[idx], 32)
 		if err != nil {
 			return id, false, fmt.Errorf("group ID: invalid gseq %q: %w", parts[idx], err)
 		}

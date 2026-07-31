@@ -287,7 +287,11 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	root.PersistentFlags().String("home", "", "Home directory for config, contexts, and keyrings (default: $AKT_HOME or ~/.config/akt)")
 	root.PersistentFlags().String("context", "", "Active context name (overrides current-context in config)")
 	root.PersistentFlags().VarP(output.NewFormatFlag("pretty"), "output", "o", "Output format: pretty, json, yaml")
-	root.PersistentFlags().BoolP("interactive", "i", false, "Launch the TUI. Currently disabled while UX feedback is collected; set AKT_EXPERIMENTAL_TUI=1 to opt in")
+	// Local, not persistent: launching the TUI is only meaningful at the root.
+	// As a persistent flag it was advertised on all ~400 subcommands and
+	// silently discarded by every one of them -- `akt -i` refused with an
+	// explanation while `akt version -i` accepted it and did nothing.
+	root.Flags().BoolP("interactive", "i", false, "Launch the TUI. Currently disabled while UX feedback is collected; set AKT_EXPERIMENTAL_TUI=1 to opt in")
 	root.PersistentFlags().CountP("verbose", "v", "Increase output verbosity (-v verbose, -vv debug)")
 	root.PersistentFlags().BoolP("quiet", "q", false, "Suppress all output except errors")
 
