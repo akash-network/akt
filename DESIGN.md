@@ -737,7 +737,7 @@ Send
 - Keyring management: shared keyrings, keys visible to all referencing contexts
 - Action log: append-only JSONL log per context, reading/filtering
 - Chain client with multi-endpoint failover
-- Core tx commands: bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, slashing, vesting, upgrade, crisis, IBC
+- Core tx commands: bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, slashing, vesting, upgrade, IBC
 - Core query commands: all matching modules
 - Key management commands
 - Output formatting with pretty output: registry-based per-type formatters for all query results, lipgloss color-coded states. `--output json` and `--output yaml` for machine-readable output
@@ -748,6 +748,13 @@ Send
 - Version command with build-time injection
 - Shell completion (bash, zsh, fish)
 - Basic e2e test suite
+
+The transaction surface follows executable Akash app capabilities, not every
+group exported by upstream SDK dependencies. Modules whose messages are not
+registered by the Akash app are omitted, as are future-facing command groups
+with no action children. This keeps help, completion, and surface coverage from
+presenting a successful no-op or a transaction the selected Akash network can
+never handle.
 
 ### Phase 2: Store + Workflow Commands
 

@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- **Unsupported and empty transaction groups looked executable**: the Akash
+  app has no crisis message handler, the evidence transaction group has no
+  concrete submission type, and upstream IBC channel-v2 has no packet actions.
+  These groups are now omitted instead of appearing as a doomed transaction or
+  successful help-only leaf.
+
 - **Transaction execution-boundary behavior is now explicit**: every local or
   dependency-owned transaction leaf must initialize from the selected context
   before message construction or account lookup, fixed fees override all gas

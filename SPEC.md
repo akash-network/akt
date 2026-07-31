@@ -529,8 +529,6 @@ akt
 │   ├── upgrade
 │   │   ├── software-upgrade <name>
 │   │   └── cancel-software-upgrade
-│   ├── crisis
-│   │   └── invariant-broken <module> <invariant>
 │   ├── wasm
 │   │   ├── store <wasm-file>
 │   │   ├── instantiate <code-id> <init-args>
@@ -694,6 +692,14 @@ akt
 ├── version [--long]                     # Version information (--long: full build info)
 └── completion                           # Shell completion scripts
 ```
+
+Only executable transaction actions appear in this tree. The Akash app does
+not register the Cosmos SDK `MsgVerifyInvariant` handler, so `tx crisis` is not
+mounted. Evidence submission remains query-only until at least one concrete
+evidence transaction type exists. IBC channel-v2 queries are available, but its
+empty upstream transaction group is omitted until upstream supplies a packet
+action. Unknown invocations of these omitted paths follow the normal usage-error
+contract; they never print group help at exit 0 or reach gas simulation.
 
 ### 2.2 Context Commands
 
@@ -5105,7 +5111,7 @@ Cobra provides this feature via `Command.SuggestionsMinimumDistance` and `Comman
 | 1.6  | Keyring integration   | Shared multi-keyring support, keys visible to all contexts using the keyring                                                                                                                | Keys can be created, listed, and used for signing; adding key to shared keyring visible in all contexts |
 | 1.7  | Action log            | Append-only JSONL action log per context, log reading/filtering                                                                                                                             | All mutating actions (tx, workflow, provider, context, console) logged per §5.6 — read-only queries are not recorded by default; `akt context log` shows entries newest-first; log rotation works |
 | 1.8  | Chain client          | Full and light client with multi-endpoint failover                                                                                                                                          | Successful tx broadcast and query with automatic failover when primary endpoint is down                 |
-| 1.9  | Transaction commands  | All `tx` module commands (bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, slashing, vesting, upgrade, crisis, IBC) | Each command matches the behavioral output of the current `akash` binary                                |
+| 1.9  | Transaction commands  | All executable `tx` module commands (bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, slashing, vesting, upgrade, IBC); dependency stubs and messages not registered by the Akash app are omitted | Each advertised command constructs a supported action; empty or unsupported groups are absent |
 | 1.10 | Query commands        | All `query` module commands                                                                                                                                                                 | Each command matches the behavioral output of the current `akash` binary                                |
 | 1.10a | Resource filter parsing | `internal/filter/` package implementing the `/`-separated positional filter argument (§3.8) for Akash query commands: deployment, market (order/bid/lease), cert, audit, escrow. Smart type detection (bech32 vs uint), `--by provider` mode, get-vs-list heuristic. | `akt query deployment 12345`, `akt query market lease akash1.../12345/1/1/akash1prov...`, and all §3.8.6 examples work correctly |
 | 1.11 | Key commands          | All `keys` subcommands                                                                                                                                                                      | Full key lifecycle works (create, export, import, delete, show, list)                                   |
