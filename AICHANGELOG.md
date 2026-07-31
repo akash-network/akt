@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- **Offline transaction utility contracts are now explicit**: construction
+  emits one real JSON object, signing data goes to stdout or its requested
+  document, zero means one unlimited message batch, and interactive proposal
+  drafting refuses a missing TTY before terminal rendering. This documents the
+  remediation behavior before implementation.
+
 - **Transaction execution-boundary behavior is now explicit**: every local or
   dependency-owned transaction leaf must initialize from the selected context
   before message construction or account lookup, fixed fees override all gas

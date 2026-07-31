@@ -2102,6 +2102,21 @@ chain (flag > environment > context network > built-in default). A simulation
 response with a non-zero SDK code is a failed transaction and exits non-zero;
 simulation remains non-mutating and is not written to the action log.
 
+`--generate-only -o json` emits a transaction object at the top level on every
+transaction leaf; implementations must not JSON-encode an existing transaction
+byte payload as a base64 string. Signing commands write the signed transaction
+or signature-only payload to stdout unless `--output-document` is supplied.
+Prompts, progress, and validation diagnostics remain on stderr.
+
+Commands whose purpose is an interactive editor or selector must check for a
+TTY before starting terminal rendering. In a non-interactive invocation they
+fail promptly with a message naming the TTY requirement; `--yes` skips
+confirmations but cannot invent answers to value-selection prompts.
+
+For batched multi-message transactions, a batch size of zero means unlimited:
+the complete message set is submitted to the construction/simulation/broadcast
+function exactly once. It must not be used as a loop increment.
+
 **Pretty output for transaction results**: When `--output pretty` is active (the global default), transaction results are rendered in a two-section layout: a common transaction summary (hash, signer, height, gas, fee, status) followed by a message-specific detail section. See [§10.11](#1011-transaction-result-formatting) for the full specification.
 
 **CLI-mode progress feedback**: When a TTY is attached and `--quiet` is not set, `tx` commands display progress status on stderr during multi-second operations. This applies to all `tx` commands, not just workflows.

@@ -643,6 +643,13 @@ diagnostics. Only pure construction (`--generate-only` or `--offline`) may
 carry a non-zero-shaped fixture without converting it into an execution
 failure.
 
+Construction and signing utilities preserve a single data pipeline. Unsigned
+and signed transaction payloads are written to stdout (or the explicit
+`--output-document`) and never to the diagnostic stream. A transaction JSON
+payload already returned as bytes is treated as encoded JSON, not serialized
+again as a byte slice. This keeps locally implemented and SDK-owned
+`--generate-only` leaves interchangeable in scripts.
+
 **Section 1: Transaction Summary (common to all transactions)**
 
 Every transaction result renders the same header block with chain-level metadata: hash, signer, block height, gas consumption, fee paid, and success/failure status. This gives the user immediate confirmation that their transaction landed and what it cost, regardless of what the transaction did.
