@@ -325,6 +325,65 @@ func TestUpdateContext(t *testing.T) {
 	}
 }
 
+func TestUpdateContextRejectsInvalidReferencesWithoutMutation(t *testing.T) {
+	m := newTestManager(t)
+	_ = m.CreateNetworkFromTemplate("mainnet", "mainnet")
+	_ = m.CreateContext(aktctx.Context{
+		Name:    "prod",
+		Network: aktctx.Network{Name: "mainnet"},
+		Keyring: aktctx.Keyring{Name: "default"},
+	})
+
+	err := m.UpdateContext("prod", func(ctx *aktctx.Context) error {
+		ctx.Network = aktctx.Network{Name: "does-not-exist"}
+		return nil
+	})
+	if err == nil {
+		t.Fatal("invalid network update succeeded")
+	}
+	if got := m.GetContext("prod").Network.Name; got != "mainnet" {
+		t.Errorf("rejected update left network %q, want mainnet", got)
+	}
+}
+
+func TestUpdateContextAndNetworkForksInOneWrite(t *testing.T) {
+	m := newTestManager(t)
+	_ = m.CreateNetworkFromTemplate("mainnet", "mainnet")
+	_ = m.CreateContext(aktctx.Context{
+		Name:    "prod",
+		Network: aktctx.Network{Name: "mainnet"},
+		Keyring: aktctx.Keyring{Name: "default"},
+	})
+
+	err := m.UpdateContextAndNetwork(
+		"prod",
+		"mainnet-prod",
+		func(ctx *aktctx.Context) error {
+			ctx.DefaultAccount = "alice"
+			return nil
+		},
+		func(network *aktctx.Network) error {
+			network.Endpoints.RPC = []string{"https://private.example:443"}
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("UpdateContextAndNetwork: %v", err)
+	}
+
+	ctx := m.GetContext("prod")
+	if ctx.Network.Name != "mainnet-prod" || ctx.DefaultAccount != "alice" {
+		t.Errorf("context after fork = %+v", ctx)
+	}
+	fork := m.GetNetwork("mainnet-prod")
+	if fork == nil || len(fork.Endpoints.RPC) != 1 || fork.Endpoints.RPC[0] != "https://private.example:443" {
+		t.Errorf("fork = %+v", fork)
+	}
+	if parent := m.GetNetwork("mainnet"); parent == nil || parent.Endpoints.RPC[0] == "https://private.example:443" {
+		t.Errorf("parent was modified: %+v", parent)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // Resolve tests
 // ---------------------------------------------------------------------------

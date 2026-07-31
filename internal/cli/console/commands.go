@@ -91,7 +91,7 @@ func loginCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
   # Pass the key directly
   akt console login sk-console-...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			rc, err := mgrFn().Resolve("")
+			rc, err := resolveContextFromCmd(cmd, mgrFn())
 			if err != nil {
 				return fmt.Errorf("login requires an active context to store the key: %w", err)
 			}
@@ -126,8 +126,14 @@ func loginCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Logged in as %s (context %q)\n", user.Username, rc.Name)
-			return nil
+			return printConsoleResult(cmd,
+				fmt.Sprintf("Logged in as %s (context %q)", user.Username, rc.Name),
+				struct {
+					Username      string `json:"username"      yaml:"username"`
+					Context       string `json:"context"       yaml:"context"`
+					Authenticated bool   `json:"authenticated" yaml:"authenticated"`
+				}{Username: user.Username, Context: rc.Name, Authenticated: true},
+			)
 		},
 	}
 }
@@ -139,7 +145,7 @@ func logoutCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		Args:    cobra.NoArgs,
 		Example: `  akt console logout`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			rc, err := mgrFn().Resolve("")
+			rc, err := resolveContextFromCmd(cmd, mgrFn())
 			if err != nil {
 				return err
 			}
@@ -148,8 +154,13 @@ func logoutCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Removed Console API key for context %q\n", rc.Name)
-			return nil
+			return printConsoleResult(cmd,
+				fmt.Sprintf("Removed Console API key for context %q", rc.Name),
+				struct {
+					Context       string `json:"context"       yaml:"context"`
+					Authenticated bool   `json:"authenticated" yaml:"authenticated"`
+				}{Context: rc.Name, Authenticated: false},
+			)
 		},
 	}
 }
@@ -218,12 +229,7 @@ func clientFromCmd(cmd *cobra.Command, mgrFn func() *aktctx.Manager, requireKey 
 		// Honor the global --context override: credentials are read from and
 		// written to the context the user named, and Console operations bill
 		// that context's managed wallet.
-		override := ""
-		if f := cmd.Flags().Lookup("context"); f != nil {
-			override = f.Value.String()
-		}
-
-		rc, _ = m.Resolve(m.ActiveContext(override)) // missing context is OK for public endpoints
+		rc, _ = resolveContextFromCmd(cmd, m) // missing context is OK for public endpoints
 	}
 
 	key, _ := cmd.Flags().GetString("console-api-key")
@@ -252,6 +258,10 @@ func clientFromCmd(cmd *cobra.Command, mgrFn func() *aktctx.Manager, requireKey 
 	cl := console.New(baseURL, key).WithActionLog(cliutil.ActionLogFromContext(cmd.Context()))
 
 	return cl, rc, nil
+}
+
+func resolveContextFromCmd(cmd *cobra.Command, m *aktctx.Manager) (*aktctx.Context, error) {
+	return m.Resolve(cliutil.SelectedContextName(cmd, m))
 }
 
 // printJSON renders v in the format --output asks for and writes it to the

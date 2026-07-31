@@ -56,6 +56,7 @@ func execConsole(t *testing.T, m *aktctx.Manager, srvURL string, args ...string)
 
 	cmd := Commands(func() *aktctx.Manager { return m })
 	cmd.PersistentFlags().VarP(output.NewFormatFlag("pretty"), "output", "o", "Output format: pretty, json, yaml")
+	cmd.PersistentFlags().String("context", "", "Active context name")
 
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
@@ -173,6 +174,114 @@ func TestLoginRejectsInvalidKey(t *testing.T) {
 
 	if _, statErr := os.Stat(aktctx.ConsoleAPIKeyPath(m.Root(), "prod")); !os.IsNotExist(statErr) {
 		t.Error("a rejected key must not be stored")
+	}
+}
+
+func TestLoginAndLogoutHonorContextOverride(t *testing.T) {
+	m := newTestManager(t)
+	if err := m.CreateContext(aktctx.Context{
+		Name:    "staging",
+		Network: aktctx.Network{Name: "mainnet"},
+	}); err != nil {
+		t.Fatalf("CreateContext: %v", err)
+	}
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "prod-key"); err != nil {
+		t.Fatalf("set prod key: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("x-api-key"); got != "staging-key" {
+			t.Errorf("x-api-key = %q, want staging-key", got)
+		}
+		writeJSON(t, w, userBody)
+	}))
+	defer srv.Close()
+
+	out, err := execConsole(t, m, srv.URL,
+		"--context", "staging", "login", "staging-key", "--output", "json")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	ack := decodeStructuredMap(t, "json", out)
+	if ack["context"] != "staging" || ack["authenticated"] != true || ack["username"] != "max" {
+		t.Errorf("login acknowledgement = %#v", ack)
+	}
+	if strings.Contains(out, "staging-key") {
+		t.Fatal("login acknowledgement leaked the API key")
+	}
+	if got, _ := aktctx.StoredConsoleAPIKey(m.Root(), "staging"); got != "staging-key" {
+		t.Errorf("staging key = %q", got)
+	}
+	if got, _ := aktctx.StoredConsoleAPIKey(m.Root(), "prod"); got != "prod-key" {
+		t.Errorf("prod key changed to %q", got)
+	}
+
+	out, err = execConsole(t, m, "",
+		"--context", "staging", "logout", "--output", "yaml")
+	if err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	ack = decodeStructuredMap(t, "yaml", out)
+	if ack["context"] != "staging" || ack["authenticated"] != false {
+		t.Errorf("logout acknowledgement = %#v", ack)
+	}
+	if got, _ := aktctx.StoredConsoleAPIKey(m.Root(), "staging"); got != "" {
+		t.Errorf("staging key after logout = %q", got)
+	}
+	if got, _ := aktctx.StoredConsoleAPIKey(m.Root(), "prod"); got != "prod-key" {
+		t.Errorf("prod key changed to %q", got)
+	}
+}
+
+func TestLoginAndLogoutHonorAKTContext(t *testing.T) {
+	m := newTestManager(t)
+	if err := m.CreateContext(aktctx.Context{
+		Name:    "staging",
+		Network: aktctx.Network{Name: "mainnet"},
+	}); err != nil {
+		t.Fatalf("CreateContext: %v", err)
+	}
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "prod-key"); err != nil {
+		t.Fatalf("set prod key: %v", err)
+	}
+	t.Setenv("AKT_CONTEXT", "staging")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("x-api-key"); got != "staging-key" {
+			t.Errorf("x-api-key = %q, want staging-key", got)
+		}
+		writeJSON(t, w, userBody)
+	}))
+	defer srv.Close()
+
+	out, err := execConsole(t, m, srv.URL, "login", "staging-key", "--output", "json")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	ack := decodeStructuredMap(t, "json", out)
+	if ack["context"] != "staging" {
+		t.Errorf("login acknowledgement = %#v", ack)
+	}
+	if got, _ := aktctx.StoredConsoleAPIKey(m.Root(), "staging"); got != "staging-key" {
+		t.Errorf("staging key = %q", got)
+	}
+	if got, _ := aktctx.StoredConsoleAPIKey(m.Root(), "prod"); got != "prod-key" {
+		t.Errorf("prod key changed to %q", got)
+	}
+
+	out, err = execConsole(t, m, "", "logout", "--output", "yaml")
+	if err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	ack = decodeStructuredMap(t, "yaml", out)
+	if ack["context"] != "staging" {
+		t.Errorf("logout acknowledgement = %#v", ack)
+	}
+	if got, _ := aktctx.StoredConsoleAPIKey(m.Root(), "staging"); got != "" {
+		t.Errorf("staging key after logout = %q", got)
+	}
+	if got, _ := aktctx.StoredConsoleAPIKey(m.Root(), "prod"); got != "prod-key" {
+		t.Errorf("prod key changed to %q", got)
 	}
 }
 

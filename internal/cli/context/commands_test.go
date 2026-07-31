@@ -2,14 +2,17 @@ package context
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	"pkg.akt.dev/akt/internal/actionlog"
 	aktctx "pkg.akt.dev/akt/internal/context"
@@ -304,9 +307,126 @@ func TestShowResolvesTheActiveContext(t *testing.T) {
 
 	runOK(t, createCmd(mgrFn), "prod", "--network", "mainnet", "--set-current")
 
-	out := captureStdout(t, func() { runOK(t, currentCmd(mgrFn)) })
+	cmd := currentCmd(mgrFn)
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&bytes.Buffer{})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("context show: %v", err)
+	}
+	out := stdout.String()
 	if !strings.Contains(out, "prod") || !strings.Contains(out, "mainnet") {
 		t.Errorf("show output should name the context and its network, got %q", out)
+	}
+}
+
+func TestShowHonorsContextOverrideAndIncludesResolvedPaths(t *testing.T) {
+	m := newTestManager(t)
+	mgrFn := func() *aktctx.Manager { return m }
+	t.Setenv("AKT_CONTEXT", "prod")
+
+	if err := m.CreateNetworkFromTemplate("sandbox", "sandbox"); err != nil {
+		t.Fatalf("CreateNetworkFromTemplate: %v", err)
+	}
+	runOK(t, createCmd(mgrFn), "prod", "--network", "mainnet", "--set-current")
+	runOK(t, createCmd(mgrFn), "staging", "--network", "sandbox")
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "staging", "never-print-this-key"); err != nil {
+		t.Fatalf("SetConsoleAPIKey: %v", err)
+	}
+
+	cmd := currentCmd(mgrFn)
+	cmd.Flags().String("context", "", "test context override")
+	cmd.Flags().String("output", "pretty", "test output format")
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--context", "staging", "--output", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("context show: %v", err)
+	}
+
+	var got struct {
+		Name          string         `json:"name"`
+		Network       aktctx.Network `json:"network"`
+		StorePath     string         `json:"store_path"`
+		ActionLogPath string         `json:"action_log_path"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode context JSON %q: %v", out.String(), err)
+	}
+	if got.Name != "staging" {
+		t.Errorf("name = %q, want staging", got.Name)
+	}
+	if got.Network.Name != "sandbox" || got.Network.ChainID == "" {
+		t.Errorf("network = %+v, want resolved sandbox network", got.Network)
+	}
+	if got.StorePath != aktctx.StoreDir(m.Root(), "staging") {
+		t.Errorf("store_path = %q", got.StorePath)
+	}
+	if got.ActionLogPath != aktctx.ActionLogPath(m.Root(), "staging") {
+		t.Errorf("action_log_path = %q", got.ActionLogPath)
+	}
+	if strings.Contains(out.String(), "never-print-this-key") {
+		t.Fatal("structured context output leaked the Console API key")
+	}
+	if current := m.CurrentContext(); current != "prod" {
+		t.Errorf("show changed current context to %q", current)
+	}
+
+	yamlCmd := currentCmd(mgrFn)
+	yamlCmd.Flags().String("context", "", "test context override")
+	yamlCmd.Flags().String("output", "pretty", "test output format")
+	var yamlOut bytes.Buffer
+	yamlCmd.SetOut(&yamlOut)
+	yamlCmd.SetErr(&bytes.Buffer{})
+	yamlCmd.SetArgs([]string{"--context", "staging", "--output", "yaml"})
+	if err := yamlCmd.Execute(); err != nil {
+		t.Fatalf("context show YAML: %v", err)
+	}
+	var yamlGot struct {
+		Name          string         `yaml:"name"`
+		Network       aktctx.Network `yaml:"network"`
+		StorePath     string         `yaml:"store_path"`
+		ActionLogPath string         `yaml:"action_log_path"`
+	}
+	if err := yaml.Unmarshal(yamlOut.Bytes(), &yamlGot); err != nil {
+		t.Fatalf("decode context YAML %q: %v", yamlOut.String(), err)
+	}
+	if yamlGot.Name != got.Name || yamlGot.Network.ChainID != got.Network.ChainID || yamlGot.StorePath != got.StorePath || yamlGot.ActionLogPath != got.ActionLogPath {
+		t.Errorf("YAML details = %+v, want semantic parity with %+v", yamlGot, got)
+	}
+}
+
+func TestShowHonorsAKTContext(t *testing.T) {
+	m := newTestManager(t)
+	mgrFn := func() *aktctx.Manager { return m }
+
+	if err := m.CreateNetworkFromTemplate("sandbox", "sandbox"); err != nil {
+		t.Fatalf("CreateNetworkFromTemplate: %v", err)
+	}
+	runOK(t, createCmd(mgrFn), "prod", "--network", "mainnet", "--set-current")
+	runOK(t, createCmd(mgrFn), "staging", "--network", "sandbox")
+	t.Setenv("AKT_CONTEXT", "staging")
+
+	cmd := currentCmd(mgrFn)
+	cmd.Flags().String("context", "", "test context override")
+	cmd.Flags().String("output", "pretty", "test output format")
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs([]string{"--output", "json"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("context show: %v", err)
+	}
+
+	var got struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decode context JSON %q: %v", out.String(), err)
+	}
+	if got.Name != "staging" {
+		t.Errorf("name = %q, want staging from AKT_CONTEXT", got.Name)
 	}
 }
 
@@ -356,6 +476,138 @@ func TestLogRendersEntriesAndFilters(t *testing.T) {
 	out = captureStdout(t, func() { runOK(t, logCmd(mgrFn), "--type", "workflow") })
 	if !strings.Contains(out, "No action log entries") {
 		t.Errorf("an empty filter result should say so, got %q", out)
+	}
+}
+
+func TestLogHonorsContextOverride(t *testing.T) {
+	m := newTestManager(t)
+	mgrFn := func() *aktctx.Manager { return m }
+
+	runOK(t, createCmd(mgrFn), "prod", "--network", "mainnet", "--set-current")
+	runOK(t, createCmd(mgrFn), "staging", "--network", "mainnet")
+
+	logger, err := actionlog.Open(aktctx.ActionLogPath(m.Root(), "staging"))
+	if err != nil {
+		t.Fatalf("open staging log: %v", err)
+	}
+	if err := logger.Log(actionlog.Entry{Type: actionlog.TypeTx, Action: "staging-only-action", Status: "success"}); err != nil {
+		t.Fatalf("write staging log: %v", err)
+	}
+	_ = logger.Close()
+
+	cmd := logCmd(mgrFn)
+	cmd.Flags().String("context", "", "test context override")
+	out := captureStdout(t, func() { runOK(t, cmd, "--context", "staging") })
+	if !strings.Contains(out, "staging-only-action") {
+		t.Errorf("override log output = %q", out)
+	}
+	if current := m.CurrentContext(); current != "prod" {
+		t.Errorf("log changed current context to %q", current)
+	}
+}
+
+func TestLogHonorsAKTContext(t *testing.T) {
+	m := newTestManager(t)
+	mgrFn := func() *aktctx.Manager { return m }
+
+	runOK(t, createCmd(mgrFn), "prod", "--network", "mainnet", "--set-current")
+	runOK(t, createCmd(mgrFn), "staging", "--network", "mainnet")
+
+	logger, err := actionlog.Open(aktctx.ActionLogPath(m.Root(), "staging"))
+	if err != nil {
+		t.Fatalf("open staging log: %v", err)
+	}
+	if err := logger.Log(actionlog.Entry{Type: actionlog.TypeTx, Action: "staging-env-action", Status: "success"}); err != nil {
+		t.Fatalf("write staging log: %v", err)
+	}
+	_ = logger.Close()
+	t.Setenv("AKT_CONTEXT", "staging")
+
+	cmd := logCmd(mgrFn)
+	cmd.Flags().String("context", "", "test context override")
+	out := captureStdout(t, func() { runOK(t, cmd) })
+	if !strings.Contains(out, "staging-env-action") {
+		t.Errorf("AKT_CONTEXT log output = %q", out)
+	}
+}
+
+func TestLogRejectsUnknownType(t *testing.T) {
+	m := newTestManager(t)
+	mgrFn := func() *aktctx.Manager { return m }
+	runOK(t, createCmd(mgrFn), "prod", "--network", "mainnet", "--set-current")
+
+	err := runErr(t, logCmd(mgrFn), "--type", "transaction-ish")
+	if !strings.Contains(err.Error(), "invalid --type") {
+		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestEditForksAndEditsTheSelectedNetwork(t *testing.T) {
+	m := newTestManager(t)
+	mgrFn := func() *aktctx.Manager { return m }
+
+	runOK(t, createCmd(mgrFn), "prod", "--network", "mainnet")
+	runOK(t, createCmd(mgrFn), "monitoring", "--network", "mainnet")
+	originalRPC := append([]string(nil), m.GetNetwork("mainnet").Endpoints.RPC...)
+
+	runOK(t, editCmd(mgrFn), "prod",
+		"--fork-network",
+		"--rpc", "https://private.example:443",
+		"--gas-prices", "0.1uakt",
+	)
+
+	prod := m.GetContext("prod")
+	if prod.Network.Name != "mainnet-prod" {
+		t.Fatalf("prod network = %q, want mainnet-prod", prod.Network.Name)
+	}
+	if got := m.GetContext("monitoring").Network.Name; got != "mainnet" {
+		t.Errorf("monitoring network = %q, want mainnet", got)
+	}
+	fork := m.GetNetwork("mainnet-prod")
+	if fork == nil {
+		t.Fatal("forked network was not created")
+	}
+	if len(fork.Endpoints.RPC) != 1 || fork.Endpoints.RPC[0] != "https://private.example:443" {
+		t.Errorf("fork RPC = %v", fork.Endpoints.RPC)
+	}
+	if fork.GasPrices != "0.1uakt" {
+		t.Errorf("fork gas prices = %q", fork.GasPrices)
+	}
+	if got := m.GetNetwork("mainnet").Endpoints.RPC; strings.Join(got, "\n") != strings.Join(originalRPC, "\n") {
+		t.Errorf("parent RPC changed from %v to %v", originalRPC, got)
+	}
+
+	if _, err := os.Stat(filepath.Join(m.Root(), "config.yaml")); err != nil {
+		t.Fatalf("fork was not persisted: %v", err)
+	}
+}
+
+func TestEditForkNetworkRequiresANetworkField(t *testing.T) {
+	m := newTestManager(t)
+	mgrFn := func() *aktctx.Manager { return m }
+	runOK(t, createCmd(mgrFn), "prod", "--network", "mainnet")
+
+	err := runErr(t, editCmd(mgrFn), "prod", "--fork-network")
+	if !strings.Contains(err.Error(), "requires at least one network field") {
+		t.Errorf("unexpected error: %v", err)
+	}
+	if m.GetNetwork("mainnet-prod") != nil {
+		t.Fatal("rejected fork left a network behind")
+	}
+}
+
+func TestNetworkIsSharedAfterContextSwitch(t *testing.T) {
+	m := newTestManager(t)
+	mgrFn := func() *aktctx.Manager { return m }
+
+	if err := m.CreateNetworkFromTemplate("sandbox", "sandbox"); err != nil {
+		t.Fatalf("CreateNetworkFromTemplate: %v", err)
+	}
+	runOK(t, createCmd(mgrFn), "prod", "--network", "mainnet")
+	runOK(t, createCmd(mgrFn), "staging", "--network", "sandbox")
+
+	if !networkSharedAfterContextUpdate(m, "sandbox", "prod") {
+		t.Fatal("sandbox must be treated as shared when prod switches onto staging's network")
 	}
 }
 

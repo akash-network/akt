@@ -76,10 +76,7 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			return nil, fmt.Errorf("keyring manager not initialized")
 		}
 
-		ctxName := v.GetString("context")
-		if ctxName == "" && mgr != nil {
-			ctxName = mgr.CurrentContext()
-		}
+		ctxName := activeContextName(mgr, v.GetString("context"))
 
 		if ctxName == "" {
 			return krMgr.Get("default")
@@ -229,9 +226,9 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 				}
 			}
 
-			// 5. Open the action log for the current context (if any).
-			if current := mgr.CurrentContext(); current != "" {
-				logPath := aktctx.ActionLogPath(cfgRoot, current)
+			// 5. Open the action log for the selected context (if any).
+			if selected := activeContextName(mgr, v.GetString("context")); selected != "" {
+				logPath := aktctx.ActionLogPath(cfgRoot, selected)
 				logger, logErr := actionlog.Open(logPath)
 				if logErr == nil {
 					ctx := cliutil.WithActionLog(cmd.Context(), logger)
@@ -326,11 +323,8 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	// that `akt --context staging ...` stores credentials under and bills
 	// the context the user named.
 	ctxNameFn := func() string {
-		if name := v.GetString("context"); name != "" {
-			return name
-		}
 		if mgr != nil {
-			return mgr.CurrentContext()
+			return activeContextName(mgr, v.GetString("context"))
 		}
 		return ""
 	}

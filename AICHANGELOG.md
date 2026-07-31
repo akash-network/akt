@@ -4,6 +4,25 @@
 
 ### Fixed
 
+- **Context-owned commands could split one invocation across two contexts**:
+  `context show`, `context log`, and Console login/logout fell back to
+  `current-context` after the root had accepted `--context`. They now share
+  the selected-context rule for both the flag and `AKT_CONTEXT`; root keyring
+  and action-log setup use that same target. Console auth emits redacted
+  structured acknowledgements, and structured context details include
+  resolved network, keyring, capabilities, store, and action-log paths.
+
+- **`context edit --fork-network` was an accepted no-op**: context edit now
+  exposes the documented network fields, validates that a fork has an edit to
+  apply, and performs context plus parent/fork changes in one copy-on-write
+  config save. A private `<network>-<context>` fork leaves every sibling
+  context on the original network; rejected edits no longer mutate manager
+  state before returning an error.
+
+- **`context log --type` accepted values it could never match**: the filter is
+  now validated against the six documented action types before opening a log,
+  and an explicit context is resolved before its path is accessed.
+
 - **Remaining invocation-boundary behavior was underspecified**: DESIGN and
   SPEC now define one selected context for context details, logs, and Console
   credential mutations; flag/environment account precedence; transaction

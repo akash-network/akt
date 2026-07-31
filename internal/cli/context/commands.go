@@ -1,17 +1,22 @@
 package context
 
 import (
+	"bufio"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"pkg.akt.dev/akt/internal/actionlog"
+	"pkg.akt.dev/akt/internal/capability"
 	clikeys "pkg.akt.dev/akt/internal/cli/keys"
 	clinetwork "pkg.akt.dev/akt/internal/cli/network"
+	"pkg.akt.dev/akt/internal/cliutil"
 	aktctx "pkg.akt.dev/akt/internal/context"
 	"pkg.akt.dev/akt/internal/output"
 	"pkg.akt.dev/akt/internal/output/pretty"
@@ -245,20 +250,77 @@ func currentCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			m := mgr()
 
-			rc, err := m.Resolve("")
+			rc, err := m.Resolve(activeContextFromCmd(cmd, m))
 			if err != nil {
 				return err
 			}
 
 			if f := output.FormatFromCmd(cmd); f != output.FormatTable {
-				return output.Print(f, rc)
+				return output.Fprint(cmd.OutOrStdout(), f, newContextDetails(rc))
 			}
 
-			fmt.Print(pretty.RenderContextShow(*rc))
+			_, err = fmt.Fprint(cmd.OutOrStdout(), pretty.RenderContextShow(*rc))
 
-			return nil
+			return err
 		},
 	}
+}
+
+type contextCapabilities struct {
+	ChainQuery bool `json:"chain_query" yaml:"chain_query"`
+	ChainTx    bool `json:"chain_tx"    yaml:"chain_tx"`
+	Provider   bool `json:"provider"    yaml:"provider"`
+	Console    bool `json:"console"     yaml:"console"`
+}
+
+type contextDetails struct {
+	Name                    string                  `json:"name"                       yaml:"name"`
+	Network                 aktctx.Network          `json:"network"                    yaml:"network"`
+	Keyring                 aktctx.Keyring          `json:"keyring"                    yaml:"keyring"`
+	AuthMethod              string                  `json:"auth_method"                yaml:"auth_method"`
+	ConsoleAPIURL           string                  `json:"console_api_url"            yaml:"console_api_url"`
+	ConsoleAPIKeyConfigured bool                    `json:"console_api_key_configured" yaml:"console_api_key_configured"`
+	DefaultAccount          string                  `json:"default_account,omitempty"  yaml:"default_account,omitempty"`
+	Gas                     string                  `json:"gas"                        yaml:"gas"`
+	Fees                    string                  `json:"fees,omitempty"             yaml:"fees,omitempty"`
+	GasPrices               string                  `json:"gas_prices"                 yaml:"gas_prices"`
+	GasAdjustment           string                  `json:"gas_adjustment"             yaml:"gas_adjustment"`
+	ProviderDefaults        aktctx.ProviderDefaults `json:"provider_defaults"          yaml:"provider_defaults"`
+	ProviderAuth            string                  `json:"provider_auth"              yaml:"provider_auth"`
+	StorePath               string                  `json:"store_path"                 yaml:"store_path"`
+	ActionLogPath           string                  `json:"action_log_path"            yaml:"action_log_path"`
+	Capabilities            contextCapabilities     `json:"capabilities"               yaml:"capabilities"`
+}
+
+func newContextDetails(rc *aktctx.Context) contextDetails {
+	set := capability.Resolve(rc)
+	return contextDetails{
+		Name:                    rc.Name,
+		Network:                 rc.Network,
+		Keyring:                 rc.Keyring,
+		AuthMethod:              rc.AuthMethod,
+		ConsoleAPIURL:           rc.ConsoleAPIURL,
+		ConsoleAPIKeyConfigured: rc.ConsoleAPIKey != "",
+		DefaultAccount:          rc.DefaultAccount,
+		Gas:                     rc.Gas,
+		Fees:                    rc.Fees,
+		GasPrices:               rc.GasPrices,
+		GasAdjustment:           rc.GasAdjustment,
+		ProviderDefaults:        rc.ProviderDefaults,
+		ProviderAuth:            rc.AuthType,
+		StorePath:               aktctx.StoreDir(rc.Root, rc.Name),
+		ActionLogPath:           aktctx.ActionLogPath(rc.Root, rc.Name),
+		Capabilities: contextCapabilities{
+			ChainQuery: set.ChainQuery,
+			ChainTx:    set.ChainTx,
+			Provider:   set.Provider,
+			Console:    set.Console,
+		},
+	}
+}
+
+func activeContextFromCmd(cmd *cobra.Command, m *aktctx.Manager) string {
+	return cliutil.SelectedContextName(cmd, m)
 }
 
 func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
@@ -280,10 +342,50 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			if forkNetwork && cmd.Flags().Changed("network") {
 				return fmt.Errorf("cannot use --fork-network with --network; use akt context network create to fork manually")
 			}
+			networkFields := []string{"rpc", "api", "grpc", "gas-prices", "gas-adjustment"}
+			hasNetworkChanges := false
+			for _, field := range networkFields {
+				if cmd.Flags().Changed(field) {
+					hasNetworkChanges = true
+					break
+				}
+			}
+			if forkNetwork && !hasNetworkChanges {
+				return fmt.Errorf("--fork-network requires at least one network field: --rpc, --api, --grpc, --gas-prices, or --gas-adjustment")
+			}
+			yes, _ := cmd.Flags().GetBool("yes")
+			if yes && !hasNetworkChanges {
+				return fmt.Errorf("--yes is only used when editing shared network fields")
+			}
+
+			current := m.GetContext(name)
+			if current == nil {
+				return fmt.Errorf("context %q not found", name)
+			}
+			targetNetwork := current.Network.Name
+			if cmd.Flags().Changed("network") {
+				targetNetwork, _ = cmd.Flags().GetString("network")
+			}
+			if hasNetworkChanges && targetNetwork == "" {
+				return fmt.Errorf("context %q has no network to edit", name)
+			}
+
+			if hasNetworkChanges && !forkNetwork && !yes && networkSharedAfterContextUpdate(m, targetNetwork, name) && stdinIsTerminal(cmd) {
+				selectedFork, err := promptNetworkEditMode(cmd, targetNetwork, name)
+				if err != nil {
+					return err
+				}
+				forkNetwork = selectedFork
+			}
+
+			forkName := ""
+			if forkNetwork {
+				forkName = targetNetwork + "-" + name
+			}
 
 			changed := map[string]string{}
 
-			if err := m.UpdateContext(name, func(c *aktctx.Context) error {
+			applyContext := func(c *aktctx.Context) error {
 				if cmd.Flags().Changed("network") {
 					network, _ := cmd.Flags().GetString("network")
 					changed["network"] = network
@@ -326,8 +428,41 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 				}
 
 				return nil
-			}); err != nil {
+			}
+
+			var applyNetwork func(*aktctx.Network) error
+			if hasNetworkChanges {
+				applyNetwork = func(network *aktctx.Network) error {
+					if cmd.Flags().Changed("rpc") {
+						network.Endpoints.RPC, _ = cmd.Flags().GetStringSlice("rpc")
+						changed["rpc"] = strings.Join(network.Endpoints.RPC, ",")
+					}
+					if cmd.Flags().Changed("api") {
+						network.Endpoints.API, _ = cmd.Flags().GetStringSlice("api")
+						changed["api"] = strings.Join(network.Endpoints.API, ",")
+					}
+					if cmd.Flags().Changed("grpc") {
+						network.Endpoints.GRPC, _ = cmd.Flags().GetStringSlice("grpc")
+						changed["grpc"] = strings.Join(network.Endpoints.GRPC, ",")
+					}
+					if cmd.Flags().Changed("gas-prices") {
+						network.GasPrices, _ = cmd.Flags().GetString("gas-prices")
+						changed["gas-prices"] = network.GasPrices
+					}
+					if cmd.Flags().Changed("gas-adjustment") {
+						network.GasAdjustment, _ = cmd.Flags().GetString("gas-adjustment")
+						changed["gas-adjustment"] = network.GasAdjustment
+					}
+					return nil
+				}
+			}
+
+			if err := m.UpdateContextAndNetwork(name, forkName, applyContext, applyNetwork); err != nil {
 				return err
+			}
+			if forkName != "" {
+				changed["network"] = forkName
+				changed["fork-network"] = targetNetwork
 			}
 
 			// The credential is stored outside config.yaml (SPEC §7.1);
@@ -360,6 +495,13 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd.Flags().String("console-api-url", "", "Change Console API base URL (empty = default)")
 	cmd.Flags().String("console-api-key", "", "Set the per-context Console API key (empty string removes it)")
 	cmd.Flags().Bool("fork-network", false, "Fork the context's network before editing")
+	cmd.Flags().StringSlice("rpc", nil, "Replace the selected network's RPC endpoints")
+	cmd.Flags().StringSlice("api", nil, "Replace the selected network's REST endpoints")
+	cmd.Flags().StringSlice("grpc", nil, "Replace the selected network's gRPC endpoints")
+	cmd.Flags().String("gas-prices", "", "Change the selected network's gas prices")
+	cmd.Flags().String("gas-adjustment", "", "Change the selected network's gas adjustment")
+	cmd.Flags().BoolP("yes", "y", false, "Edit a shared parent network without prompting")
+	cmd.MarkFlagsMutuallyExclusive("fork-network", "yes")
 
 	_ = cmd.RegisterFlagCompletionFunc("network", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
 		m := mgr()
@@ -375,6 +517,38 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	})
 
 	return cmd
+}
+
+func networkSharedAfterContextUpdate(m *aktctx.Manager, network, contextName string) bool {
+	for _, context := range m.ListContexts() {
+		if context.Name != contextName && context.Network.Name == network {
+			return true
+		}
+	}
+	return false
+}
+
+func stdinIsTerminal(cmd *cobra.Command) bool {
+	file, ok := cmd.InOrStdin().(*os.File)
+	return ok && term.IsTerminal(int(file.Fd()))
+}
+
+func promptNetworkEditMode(cmd *cobra.Command, network, contextName string) (bool, error) {
+	forkName := network + "-" + contextName
+	fmt.Fprintf(cmd.ErrOrStderr(), "Network %q is shared.\n  1. Edit parent — change applies to every context using %q\n  2. Fork — create %q for context %q only\nSelect [1-2]: ", network, network, forkName, contextName)
+
+	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+	if err != nil && strings.TrimSpace(line) == "" {
+		return false, fmt.Errorf("read network edit selection: %w", err)
+	}
+	switch strings.TrimSpace(line) {
+	case "", "1":
+		return false, nil
+	case "2":
+		return true, nil
+	default:
+		return false, fmt.Errorf("invalid selection %q: enter 1 to edit the parent or 2 to fork", strings.TrimSpace(line))
+	}
 }
 
 func deleteCmd(mgr func() *aktctx.Manager) *cobra.Command {
@@ -469,10 +643,15 @@ func logCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			m := mgr()
 
-			current := m.CurrentContext()
+			current := activeContextFromCmd(cmd, m)
 			if current == "" {
 				return fmt.Errorf("no current context set")
 			}
+			resolved, err := m.Resolve(current)
+			if err != nil {
+				return err
+			}
+			current = resolved.Name
 
 			logPath := aktctx.ActionLogPath(m.Root(), current)
 			logger, err := actionlog.Open(logPath)
@@ -484,6 +663,9 @@ func logCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			limit, _ := cmd.Flags().GetInt("limit")
 			actionType, _ := cmd.Flags().GetString("type")
 			since, _ := cmd.Flags().GetString("since")
+			if !validActionType(actionType) {
+				return fmt.Errorf("invalid --type %q: must be tx, workflow, provider, context, console, or error", actionType)
+			}
 
 			filter := actionlog.Filter{
 				Limit: limit,
@@ -558,6 +740,15 @@ func logCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd.Flags().String("since", "", "Show entries since duration (1h) or date (2006-01-02)")
 
 	return cmd
+}
+
+func validActionType(value string) bool {
+	switch actionlog.ActionType(value) {
+	case "", actionlog.TypeTx, actionlog.TypeWorkflow, actionlog.TypeProvider, actionlog.TypeContext, actionlog.TypeConsole, actionlog.TypeError:
+		return true
+	default:
+		return false
+	}
 }
 
 func truncate(s string, maxLen int) string {
