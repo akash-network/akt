@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- **SDL output selection and redirected store status were cosmetic flags**:
+  `sdl init` silently emitted YAML after an explicit JSON/YAML selection,
+  `sdl validate` ignored structured output entirely, and `store status` leaked
+  ANSI styling into redirects and `NO_COLOR` output. Raw SDL generation now
+  refuses explicit format selection, validation has stable JSON/YAML results,
+  and the store pretty writer strips styling outside an interactive terminal.
+
 - **Alternate query pre-runs skipped verbose diagnostics**: dependency-owned
   IBC commands, direct CometBFT block queries, and local derivations now honor
   `-v` consistently. Network queries report the selected endpoint and chain on
