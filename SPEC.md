@@ -1765,6 +1765,13 @@ By default, only read-only query tools are registered. This prevents AI agents f
 
 **Default account handling:** Tools that accept an `owner` parameter (e.g., `akash_list_deployments`, `akash_list_leases`) default to the context's `default-account` when the parameter is omitted. If no `default-account` is configured (e.g., a monitoring-only context), the `owner` parameter is **required** — the tool returns an error explaining that the owner must be specified explicitly when no default account is available.
 
+**Numeric argument contract:** Sequence identifiers (`dseq`, `gseq`, and
+`oseq`) are positive whole numbers. Pagination values (`skip` and `limit`) are
+non-negative whole numbers; zero retains the documented default behavior.
+Their tool schemas declare these bounds and integer steps. The server rejects
+negative, fractional, non-finite, and out-of-range values before a handler can
+coerce them to a different identifier or silently substitute a default.
+
 **Examples:**
 
 ```bash

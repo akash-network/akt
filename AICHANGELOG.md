@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- **MCP numeric arguments lacked a precise boundary contract**: sequence
+  identifiers are positive whole numbers and pagination values are
+  non-negative whole numbers. Tool schemas expose those constraints, and the
+  server refuses fractional, negative, non-finite, and out-of-range values
+  instead of coercing them or silently applying defaults.
+
 - **Remediation changes violated the repository's lint rules**: network
   cloning no longer shadows Go's built-in `copy`, and Console acknowledgement
   tests assert decoded booleans without redundant literals.
