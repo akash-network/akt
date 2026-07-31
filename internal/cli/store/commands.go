@@ -4,12 +4,15 @@ package store
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"pkg.akt.dev/akt/internal/output"
 
@@ -87,7 +90,7 @@ func statusCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 			}
 
 			if f := output.FormatFromCmd(cmd); f != output.FormatTable {
-				return output.Print(f, struct {
+				return output.Fprint(cmd.OutOrStdout(), f, struct {
 					Context       string `json:"context"       yaml:"context"`
 					StorePath     string `json:"storePath"     yaml:"storePath"`
 					DatabaseBytes int64  `json:"databaseBytes" yaml:"databaseBytes"`
@@ -95,7 +98,7 @@ func statusCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 				}{ctxName, p, dbSize, s.SchemaVersion()})
 			}
 
-			out := cmd.OutOrStdout()
+			out := prettyOutputWriter(cmd.OutOrStdout())
 
 			fmt.Fprintln(out, pretty.Section("Store"))
 			pretty.KV(out, "Context", ctxName)
@@ -125,6 +128,28 @@ func statusCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 			return nil
 		},
 	}
+}
+
+type ansiStrippingWriter struct {
+	io.Writer
+}
+
+func (w ansiStrippingWriter) Write(p []byte) (int, error) {
+	if _, err := io.WriteString(w.Writer, ansi.Strip(string(p))); err != nil {
+		return 0, err
+	}
+
+	return len(p), nil
+}
+
+func prettyOutputWriter(w io.Writer) io.Writer {
+	_, noColor := os.LookupEnv("NO_COLOR")
+	file, isFile := w.(*os.File)
+	if noColor || !isFile || !term.IsTerminal(int(file.Fd())) {
+		return ansiStrippingWriter{Writer: w}
+	}
+
+	return w
 }
 
 func exportCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {

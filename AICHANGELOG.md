@@ -28,6 +28,11 @@
   of base64 strings; signing and signature validation write data to stdout or
   the requested document. Proposal drafting refuses non-TTY input before
   starting its selector.
+- **Unsupported and empty transaction groups looked executable**: the Akash
+  app has no crisis message handler, the evidence transaction group has no
+  concrete submission type, and upstream IBC channel-v2 has no packet actions.
+  These groups are now omitted instead of appearing as a doomed transaction or
+  successful help-only leaf.
 
 - **Transaction execution-boundary behavior is now explicit**: every local or
   dependency-owned transaction leaf must initialize from the selected context
@@ -44,6 +49,12 @@
   clear gas prices before the factory is built. Dry-run also normalizes SDK
   gas-auto into simulation-only mode so an address signer never triggers a
   key lookup, while help remains configuration- and network-free.
+
+- **MCP numeric arguments lacked a precise boundary contract**: sequence
+  identifiers are positive whole numbers and pagination values are
+  non-negative whole numbers. Tool schemas expose those constraints, and the
+  server refuses fractional, negative, non-finite, and out-of-range values
+  instead of coercing them or silently applying defaults.
 
 - **Remediation changes violated the repository's lint rules**: network
   cloning no longer shadows Go's built-in `copy`, and Console acknowledgement
@@ -116,6 +127,18 @@
   named `textual` and leaf help omitted the fourth implemented mode. The
   boundary contract now follows the actual signer set that validation will
   enforce.
+
+- **SDL output selection and redirected store status were cosmetic flags**:
+  `sdl init` silently emitted YAML after an explicit JSON/YAML selection,
+  `sdl validate` ignored structured output entirely, and `store status` leaked
+  ANSI styling into redirects and `NO_COLOR` output. Raw SDL generation now
+  refuses explicit format selection, validation has stable JSON/YAML results,
+  and the store pretty writer strips styling outside an interactive terminal.
+
+- **Alternate query pre-runs skipped verbose diagnostics**: dependency-owned
+  IBC commands, direct CometBFT block queries, and local derivations now honor
+  `-v` consistently. Network queries report the selected endpoint and chain on
+  stderr; local queries identify their local execution and selected chain.
 
 - **Vendored and local query leaves could bypass core CLI guarantees**:
   explicit node and height overrides were ignored by several leaves, two IBC

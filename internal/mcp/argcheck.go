@@ -3,6 +3,7 @@ package mcp
 import (
 	"context"
 	"fmt"
+	"math"
 	"slices"
 	"strings"
 
@@ -53,9 +54,52 @@ func checkArgs(schema mcp.ToolInputSchema, args map[string]any) error {
 		if want, _ := spec["type"].(string); want != "" && !jsonTypeMatches(want, raw) {
 			return fmt.Errorf("parameter %s must be a %s", name, want)
 		}
+		if err := checkNumber(name, spec, raw); err != nil {
+			return err
+		}
 
 		if err := checkEnum(name, spec, raw); err != nil {
 			return err
+		}
+	}
+
+	return nil
+}
+
+func checkNumber(name string, spec map[string]any, raw any) error {
+	want, _ := spec["type"].(string)
+	if want != "number" && want != "integer" {
+		return nil
+	}
+
+	value, ok := raw.(float64)
+	if !ok {
+		return nil
+	}
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return fmt.Errorf("parameter %s must be a finite number", name)
+	}
+	if want == "integer" && value != math.Trunc(value) {
+		return fmt.Errorf("parameter %s must be a whole number", name)
+	}
+
+	if minimum, ok := spec["minimum"].(float64); ok && value < minimum {
+		return fmt.Errorf("parameter %s must be greater than or equal to %g", name, minimum)
+	}
+	if maximum, ok := spec["maximum"].(float64); ok && value > maximum {
+		return fmt.Errorf("parameter %s must be less than or equal to %g", name, maximum)
+	}
+	if multiple, ok := spec["multipleOf"].(float64); ok && multiple > 0 {
+		if multiple == 1 {
+			if value != math.Trunc(value) {
+				return fmt.Errorf("parameter %s must be a whole number", name)
+			}
+			return nil
+		}
+		quotient := value / multiple
+		tolerance := 1e-9 * math.Max(1, math.Abs(quotient))
+		if math.Abs(quotient-math.Round(quotient)) > tolerance {
+			return fmt.Errorf("parameter %s must be a multiple of %g", name, multiple)
 		}
 	}
 
@@ -99,8 +143,8 @@ func jsonTypeMatches(want string, v any) bool {
 
 		return ok
 	case "number", "integer":
-		// JSON has one numeric type; negatives are caught by each handler's
-		// own range check, not here.
+		// JSON has one decoded numeric type. Range and integral constraints
+		// are checked separately against the schema.
 		_, ok := v.(float64)
 
 		return ok
