@@ -389,6 +389,15 @@ work begins. In particular, the standard `--output` values are `pretty`,
 SDK-compatible key and RPC commands that advertise `text|json` accept exactly
 those values.
 
+Every accepted flag must affect the operation it describes. If a leaf cannot
+apply an inherited transport, snapshot, pagination, or output flag, it rejects
+that flag before configuration or network work rather than accepting and
+ignoring it. When a positional value and a flag both target the same field,
+supplying both is a usage error unless that command explicitly documents a
+different precedence rule.
+Each selectable command path is unique; dependency-owned trees are deduplicated
+when they are adopted into the assembled command tree.
+
 ### 2.0 Root Command Behavior (`akt` with no subcommand)
 
 When `akt` is invoked with no subcommand, the following flow determines what happens:
@@ -1807,7 +1816,22 @@ Managed (Console-API) contexts reach provider gateways directly, without a walle
 | `akt console shell <dseq> <service> [-- command...]` |                                           | Interactive shell in a lease container, default `/bin/sh`; exec is the same operation with an explicit command (JWT scope `shell`). TTY auto-detected. |
 | `akt console screen <sdl-file>`                    |                                             | Client-side bid screening: derive resources from the SDL and list the providers able to run it (public endpoint, no key needed). |
 
-Per the positional-primary convention (§3.8), every console command takes its primary value(s) positionally; the equivalent flags remain as overrides and a positional value wins when both are given. (2026-07: the flag twins marked *disabled pending feedback* above are commented out in code for the positional-only UX trial — the positional form is the only way while the trial runs; the original flag definitions are preserved in `FEEDBACK(2026-07)` comments for restoration.) Output is indented JSON; USD values are rendered as `$X.XX`. State-changing calls are recorded in the context's action log as `type=console` entries (§5.6). No command ever prints a Console API key, except the one-time secret from `apikey create`.
+Per the positional-primary convention (§3.8), every console command takes its primary value(s) positionally; the equivalent flags remain as overrides and a positional value wins when both are given. (2026-07: the flag twins marked *disabled pending feedback* above are commented out in code for the positional-only UX trial — the positional form is the only way while the trial runs; the original flag definitions are preserved in `FEEDBACK(2026-07)` comments for restoration.) Default structured reads are indented JSON, while human acknowledgements and streams use the command-specific pretty forms described below; USD values render as `$X.XX` in human output. State-changing calls are recorded in the context's action log as `type=console` entries (§5.6). No command ever prints a Console API key, except the one-time secret from `apikey create`.
+
+**Console output contract:** the API's JSON field names and value types are the
+canonical structured representation. `--output json` emits that representation;
+`--output yaml` is a semantic translation of the same JSON tree, preserving raw
+embedded objects, strings, and integer precision. Default human output remains
+command-specific. Streaming gateway commands emit one compact JSON object per
+record in JSON mode and one YAML document per record in YAML mode; pretty mode
+retains the human log/event lines. This applies equally to bounded and
+`--follow` streams.
+
+Mutation acknowledgements are structured in JSON/YAML mode. Deployment close
+emits `{dseq, state, already_closed}` and deposit emits
+`{dseq, amount_usd, status}`. Template SDL is byte-for-byte deployable YAML in
+default/pretty mode; JSON/YAML mode wraps the exact source text as `{sdl: ...}`
+so comments and ordering are not lost.
 
 ---
 
@@ -1853,12 +1877,12 @@ List the built-in SDL scaffolds (alias: `akt sdl templates`, matching the refere
 
 #### `akt sdl init <scaffold>`
 
-Generate SDL YAML on stdout, pipeable into `akt sdl validate -` or redirected to a file for `akt deploy`. The output is self-checked against the validator before printing. Flags are generation parameters with per-scaffold defaults — not positional-argument twins — so the zero-flag invocation always produces a deployable SDL. An int flag left unset keeps its per-scaffold default; an explicitly set value is range-checked up front, so out-of-range input (including an explicit `0`) is a usage error (exit 2), never an internal generation error. Pricing defaults to a 10000 uact/block ceiling (100000 for `gpu`) so bids arrive.
+Generate SDL YAML on stdout, pipeable into `akt sdl validate -` or redirected to a file for `akt deploy`. The output is self-checked against the validator before printing. Flags are generation parameters with per-scaffold defaults — not positional-argument twins — so the zero-flag invocation always produces a deployable SDL. Every explicitly set generation parameter is checked with the same parser and lint rules as `akt sdl validate` before stdout is written. A value that would make the generated SDL invalid exits 2, names the changed flag(s) and validation reason, and emits no SDL. The post-generation self-check reports an internal invariant failure only when a built-in scaffold with its defaults is invalid. Pricing defaults to a 10000 uact/block ceiling (100000 for `gpu`) so bids arrive.
 
 | Flag          | Type        | Description                                              |
 | ------------- | ----------- | --------------------------------------------------------- |
 | `--name`      | string      | Service name (default per scaffold: `web` / `app`)        |
-| `--image`     | string      | Container image; must be tagged, e.g. `nginx:1.27`        |
+| `--image`     | string      | Container image pinned to a non-latest tag or valid SHA-256 digest, e.g. `nginx:1.27` or `nginx@sha256:<64-hex>` |
 | `--port`      | int         | Container port, 1-65535 (default 80; 8080 for `gpu`)      |
 | `--as`        | int         | External port, 1-65535 (default 80)                       |
 | `--cpu`       | string      | CPU units, e.g. `0.5` or `500m`                           |
@@ -2017,6 +2041,17 @@ Added to all `query` commands via `AddQueryFlagsToCmd()`.
 | `--grpc-insecure` | bool   | `false`         | Use insecure gRPC connection                |
 | `--height`        | int64  | `0`             | Query at specific block height (0 = latest) |
 
+An explicit `--node` replaces the context RPC endpoint for every query that
+performs RPC work. Local derivations such as `ibc-transfer escrow-address` and
+`module-name-to-address` reject `--node`; they also reject `--height` because
+they do not read chain state. Queries that cannot select a historical snapshot
+(`blocks`, `tx`, and `txs`) likewise reject `--height`. `block` and
+`block-results` accept height positionally or through `--height`, but reject an
+invocation that supplies both. An explicit `--chain-id` must agree with the
+selected context even for a local derivation. File-oriented queries such as
+`wasm code`, whose primary result is written to a named file, reject structured
+stdout formats they cannot represent.
+
 ### 3.4 Pagination Flags
 
 Added to list-type query commands via `AddPaginationFlagsToCmd()`.
@@ -2029,6 +2064,10 @@ Added to list-type query commands via `AddPaginationFlagsToCmd()`.
 | `--page-key`    | string | `""`    | Pagination key for next page    |
 | `--count-total` | bool   | `false` | Include total count in response |
 | `--reverse`     | bool   | `false` | Reverse result order            |
+
+The requested limit is a hard upper bound on returned records. Client adapters
+must trim any upstream pagination lookahead item while preserving the response
+pagination metadata needed to request the next page.
 
 ### 3.5 Akash Resource ID Flags
 
