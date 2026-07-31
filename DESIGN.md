@@ -238,6 +238,15 @@ A `console-api` context has no wallet, yet the operations users reach for most a
 
 **Why this shape**: Akash Console fronts provider gateways with a server-side `provider-proxy` websocket relay. `akt` is a native client that can reach the gateway directly, so it deliberately does **not** reimplement that relay. Step 4 hands off to the same provider client and the same streaming code paths that back `akt provider lease-status`, `lease-logs`, `lease-events`, and `lease-shell` — one implementation of log streaming, event streaming, and PTY handling, exercised by both rails. The Console-minted JWT simply substitutes for the wallet-signed JWT a keyring context would present, so `akt console status|logs|events|shell` and their `akt provider` counterparts cannot drift apart.
 
+The shared gateway boundary also normalizes protocol details that providers do
+not implement uniformly. It resolves a provider address to the on-chain host
+URI unless the user supplies an explicit URL override, verifies a lease before
+opening its log or event stream, applies bounded log filters locally, and
+treats an EOF as normal completion only for one-shot streams. Shell stdin EOF
+is held until the remote result arrives so a successful command cannot print
+its output and then fail locally. Gateway HTTP errors retain the provider's
+response detail so rejected operations remain actionable on both rails.
+
 This is the only point at which a `console-api` context talks to a provider gateway. Deployment lifecycle operations still route through the Console API, which submits manifests internally during lease creation (SPEC §7.4).
 
 ### 3.2 Dual-Mode Architecture

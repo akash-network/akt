@@ -1441,12 +1441,17 @@ $ akt close --dseq 12345 --yes -o jsonl
 
 #### `akt provider status [provider-addr]`
 
-Query provider status. If `provider-addr` is omitted, uses the provider from the active lease context.
+Query provider status. Supply the provider address positionally or with
+`--provider`. The gateway URL is resolved from that provider's on-chain
+`host_uri`; `--provider-url` is an explicit override for diagnostics and
+private gateways. A provider with no on-chain host URI is refused before a
+gateway request is attempted.
 
-| Flag          | Type   | Default         | Description              |
-| ------------- | ------ | --------------- | ------------------------ |
-| `--provider`  | string | `""`            | Provider address         |
-| `--auth-type` | string | context default | Auth type: `jwt`, `mtls` |
+| Flag             | Type   | Default         | Description                                      |
+| ---------------- | ------ | --------------- | ------------------------------------------------ |
+| `--provider`     | string | `""`            | Provider address; alternative to positional form |
+| `--provider-url` | string | on-chain record | Explicit provider gateway URL override           |
+| `--auth-type`    | string | context default | Auth type: `jwt`, `mtls`                         |
 
 #### `akt provider lease-status [dseq]`
 
@@ -1477,6 +1482,11 @@ Stream container logs from a lease. The positional `dseq` supplies the deploymen
 | `--tail`      | int64  | `-1`            | Lines from end (-1 = all) |
 | `--auth-type` | string | context default | Auth type                 |
 
+`--tail` is exact for a bounded read. Values below `-1` are invalid, and
+`--tail` with `--follow` is refused because an endless stream has no final
+tail. Service and tail filtering are enforced by `akt` after receipt because
+older provider gateways may ignore those query parameters.
+
 #### `akt provider lease-events [dseq]`
 
 Stream Kubernetes events from a lease. The positional `dseq` behaves as in `lease-logs` (`--dseq` — **disabled pending feedback**, positional only, 2026-07).
@@ -1500,6 +1510,10 @@ Open an interactive shell into a running container.
 | `--auth-type` | string | context default | Auth type           |
 
 Remaining arguments after `--` are passed as the shell command. Default: `/bin/sh`.
+EOF on attached stdin is not a command failure: `akt` waits for the provider's
+remote exit result and returns that result. This prevents a successful
+non-interactive command from printing its output and then exiting non-zero
+solely because local stdin was already closed.
 
 ```bash
 akt provider lease-shell --dseq 12345 --provider akash1prov... --service web -- /bin/bash
@@ -1536,6 +1550,17 @@ Migrate hostnames from one deployment to another on the same provider.
 #### `akt provider migrate-endpoints`
 
 Same pattern as `migrate-hostnames` but for IP endpoints.
+
+**Provider gateway output and stream contract:** provider status, lease
+status, and manifest reads emit JSON by default; `--output json` and
+`--output yaml` preserve the same field names and scalar types. Log and event
+streams emit human lines by default, one compact object per line in JSON mode,
+and one YAML document per record in YAML mode. Before opening a log or event
+stream, `akt` checks lease status so a missing lease is a non-zero gateway
+error instead of a successful empty stream. An EOF closes a bounded one-shot
+stream successfully after its records are written; the same EOF is an error
+under `--follow`. Non-success gateway responses include both the HTTP status
+and the provider's trimmed response body when one is available.
 
 ### 2.5 Store Commands
 
