@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- **Key detail and address parsing commands ignored machine output**:
+  `context keys show` and `context keys parse` now render canonical JSON and
+  YAML values through the selected command writer. Address-only output stays
+  raw in pretty mode and becomes a quoted scalar in machine formats.
+
 - **Workflow dry-runs planned invalid invocations**: generated workflow
   commands now enforce required and typed parameters before printing a plan,
   including readable and valid SDL files, unified deposit syntax, positive

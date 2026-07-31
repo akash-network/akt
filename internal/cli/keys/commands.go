@@ -17,10 +17,36 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/bech32"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	aktkeyring "pkg.akt.dev/akt/internal/keyring"
 	"pkg.akt.dev/akt/internal/output"
 )
+
+type keyDetails struct {
+	Name    string `json:"name"    yaml:"name"`
+	Type    string `json:"type"    yaml:"type"`
+	Address string `json:"address" yaml:"address"`
+	PubKey  string `json:"pubkey"  yaml:"pubkey"`
+}
+
+type addressParseResult struct {
+	Format    string            `json:"format"          yaml:"format"`
+	HRP       string            `json:"hrp,omitempty"   yaml:"hrp,omitempty"`
+	Hex       string            `json:"hex"             yaml:"hex"`
+	Addresses map[string]string `json:"addresses"       yaml:"addresses"`
+}
+
+type quotedMachineScalar string
+
+func (value quotedMachineScalar) MarshalYAML() (any, error) {
+	return &yaml.Node{
+		Kind:  yaml.ScalarNode,
+		Tag:   "!!str",
+		Value: string(value),
+		Style: yaml.DoubleQuotedStyle,
+	}, nil
+}
 
 // Commands returns the "keys" command tree.
 func Commands(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
@@ -378,8 +404,16 @@ func showCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 
 			addressOnly, _ := cmd.Flags().GetBool("address")
 			if addressOnly {
-				fmt.Println(addr.String())
-				return nil
+				if output.FormatFromCmd(cmd) == output.FormatTable {
+					fmt.Fprintln(cmd.OutOrStdout(), addr.String())
+					return nil
+				}
+
+				return output.Fprint(
+					cmd.OutOrStdout(),
+					output.FormatFromCmd(cmd),
+					quotedMachineScalar(addr.String()),
+				)
 			}
 
 			pk, err := rec.GetPubKey()
@@ -387,10 +421,20 @@ func showCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 				return fmt.Errorf("get pubkey: %w", err)
 			}
 
-			fmt.Printf("Name:      %s\n", rec.Name)
-			fmt.Printf("Type:      %s\n", rec.GetType().String())
-			fmt.Printf("Address:   %s\n", addr.String())
-			fmt.Printf("PubKey:    %s\n", hex.EncodeToString(pk.Bytes()))
+			details := keyDetails{
+				Name:    rec.Name,
+				Type:    rec.GetType().String(),
+				Address: addr.String(),
+				PubKey:  hex.EncodeToString(pk.Bytes()),
+			}
+			if output.FormatFromCmd(cmd) != output.FormatTable {
+				return output.Fprint(cmd.OutOrStdout(), output.FormatFromCmd(cmd), details)
+			}
+
+			fmt.Fprintf(cmd.OutOrStdout(), "Name:      %s\n", details.Name)
+			fmt.Fprintf(cmd.OutOrStdout(), "Type:      %s\n", details.Type)
+			fmt.Fprintf(cmd.OutOrStdout(), "Address:   %s\n", details.Address)
+			fmt.Fprintf(cmd.OutOrStdout(), "PubKey:    %s\n", details.PubKey)
 
 			return nil
 		},
@@ -527,45 +571,61 @@ func parseCmd() *cobra.Command {
   # Parse a hex address
   akt context keys parse 0ABC1DEF...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			input := args[0]
-
-			// Try bech32 first.
-			hrp, bz, err := bech32.DecodeAndConvert(input)
-			if err == nil {
-				fmt.Printf("Format:  bech32\n")
-				fmt.Printf("HRP:     %s\n", hrp)
-				fmt.Printf("Hex:     %s\n", strings.ToUpper(hex.EncodeToString(bz)))
-
-				// Also show with common HRPs.
-				for _, prefix := range []string{"akash", "cosmos", "osmo"} {
-					encoded, err := bech32.ConvertAndEncode(prefix, bz)
-					if err == nil {
-						fmt.Printf("%-8s %s\n", prefix+":", encoded)
-					}
-				}
-
-				return nil
-			}
-
-			// Try hex.
-			bz, err = hex.DecodeString(strings.TrimPrefix(input, "0x"))
+			result, err := parseAddress(args[0])
 			if err != nil {
-				return fmt.Errorf("cannot parse %q as bech32 or hex", input)
+				return err
+			}
+			if output.FormatFromCmd(cmd) != output.FormatTable {
+				return output.Fprint(cmd.OutOrStdout(), output.FormatFromCmd(cmd), result)
 			}
 
-			fmt.Printf("Format:  hex\n")
-			fmt.Printf("Hex:     %s\n", strings.ToUpper(hex.EncodeToString(bz)))
-
+			fmt.Fprintf(cmd.OutOrStdout(), "Format:  %s\n", result.Format)
+			if result.HRP != "" {
+				fmt.Fprintf(cmd.OutOrStdout(), "HRP:     %s\n", result.HRP)
+			}
+			fmt.Fprintf(cmd.OutOrStdout(), "Hex:     %s\n", result.Hex)
 			for _, prefix := range []string{"akash", "cosmos", "osmo"} {
-				encoded, err := bech32.ConvertAndEncode(prefix, bz)
-				if err == nil {
-					fmt.Printf("%-8s %s\n", prefix+":", encoded)
-				}
+				fmt.Fprintf(cmd.OutOrStdout(), "%-8s %s\n", prefix+":", result.Addresses[prefix])
 			}
 
 			return nil
 		},
 	}
+}
+
+func parseAddress(input string) (addressParseResult, error) {
+	if hrp, data, err := bech32.DecodeAndConvert(input); err == nil {
+		return addressParseResultFromBytes("bech32", hrp, data)
+	}
+
+	hexInput := strings.TrimPrefix(strings.TrimPrefix(input, "0x"), "0X")
+	if hexInput == "" {
+		return addressParseResult{}, fmt.Errorf("cannot parse %q as bech32 or hex", input)
+	}
+	data, err := hex.DecodeString(hexInput)
+	if err != nil || len(data) == 0 {
+		return addressParseResult{}, fmt.Errorf("cannot parse %q as bech32 or hex", input)
+	}
+
+	return addressParseResultFromBytes("hex", "", data)
+}
+
+func addressParseResultFromBytes(format, hrp string, data []byte) (addressParseResult, error) {
+	result := addressParseResult{
+		Format:    format,
+		HRP:       hrp,
+		Hex:       strings.ToUpper(hex.EncodeToString(data)),
+		Addresses: make(map[string]string, 3),
+	}
+	for _, prefix := range []string{"akash", "cosmos", "osmo"} {
+		encoded, err := bech32.ConvertAndEncode(prefix, data)
+		if err != nil {
+			return addressParseResult{}, fmt.Errorf("encode %s address: %w", prefix, err)
+		}
+		result.Addresses[prefix] = encoded
+	}
+
+	return result, nil
 }
 
 // fetchKey looks up a key by name or bech32 address.

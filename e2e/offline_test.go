@@ -6,6 +6,7 @@ package e2e
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -13,6 +14,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Deterministic BIP39 mnemonic used for recovery tests. The derived address
@@ -117,6 +120,37 @@ func TestKeysLifecycle(t *testing.T) {
 		}
 	}
 
+	// Machine formats carry canonical key fields, while address-only remains
+	// a scalar so scripts do not need a different object shape.
+	jsonShow := mustRunAkt(t, home, "context", "keys", "show", "alice", "-o", "json")
+	var keyJSON map[string]string
+	if err := json.Unmarshal([]byte(jsonShow), &keyJSON); err != nil {
+		t.Fatalf("parse keys show JSON %q: %v", jsonShow, err)
+	}
+	if len(keyJSON) != 4 || keyJSON["name"] != "alice" || keyJSON["address"] != addr {
+		t.Fatalf("keys show JSON = %#v", keyJSON)
+	}
+
+	yamlShow := mustRunAkt(t, home, "context", "keys", "show", "alice", "-o", "yaml")
+	var keyYAML map[string]string
+	if err := yaml.Unmarshal([]byte(yamlShow), &keyYAML); err != nil {
+		t.Fatalf("parse keys show YAML %q: %v", yamlShow, err)
+	}
+	if len(keyYAML) != 4 || keyYAML["name"] != "alice" || keyYAML["address"] != addr {
+		t.Fatalf("keys show YAML = %#v", keyYAML)
+	}
+
+	jsonAddress := mustRunAkt(t, home, "context", "keys", "show", "alice", "-a", "-o", "json")
+	var addressJSON string
+	if err := json.Unmarshal([]byte(jsonAddress), &addressJSON); err != nil || addressJSON != addr {
+		t.Fatalf("keys address JSON = %q (%v), want %q", addressJSON, err, addr)
+	}
+	yamlAddress := mustRunAkt(t, home, "context", "keys", "show", "alice", "-a", "-o", "yaml")
+	var addressYAML string
+	if err := yaml.Unmarshal([]byte(yamlAddress), &addressYAML); err != nil || addressYAML != addr {
+		t.Fatalf("keys address YAML = %q (%v), want %q", addressYAML, err, addr)
+	}
+
 	// show by address: lookup works with the bech32 address too.
 	stdout = stripANSI(mustRunAkt(t, home, "context", "keys", "show", addr))
 	if !strings.Contains(stdout, "alice") {
@@ -162,6 +196,37 @@ func TestKeysLifecycle(t *testing.T) {
 	stdout = stripANSI(mustRunAkt(t, home, "context", "keys", "list"))
 	if strings.Contains(stdout, "bob") {
 		t.Fatalf("expected keys list to NOT contain 'bob' after delete, got:\n%s", stdout)
+	}
+}
+
+func TestKeysParseMachineOutput(t *testing.T) {
+	home := t.TempDir()
+	initHome(t, home)
+
+	stdout := mustRunAkt(t, home, "context", "keys", "parse", testMnemonicAddr, "-o", "json")
+	var parsedJSON struct {
+		Format    string            `json:"format"`
+		HRP       string            `json:"hrp"`
+		Hex       string            `json:"hex"`
+		Addresses map[string]string `json:"addresses"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &parsedJSON); err != nil {
+		t.Fatalf("parse address JSON %q: %v", stdout, err)
+	}
+	if parsedJSON.Format != "bech32" || parsedJSON.HRP != "akash" || parsedJSON.Addresses["akash"] != testMnemonicAddr {
+		t.Fatalf("parse address JSON = %+v", parsedJSON)
+	}
+
+	stdout = mustRunAkt(t, home, "context", "keys", "parse", "0x"+parsedJSON.Hex, "-o", "yaml")
+	var parsedYAML map[string]any
+	if err := yaml.Unmarshal([]byte(stdout), &parsedYAML); err != nil {
+		t.Fatalf("parse address YAML %q: %v", stdout, err)
+	}
+	if parsedYAML["format"] != "hex" || parsedYAML["hex"] != parsedJSON.Hex {
+		t.Fatalf("parse address YAML = %#v", parsedYAML)
+	}
+	if _, exists := parsedYAML["hrp"]; exists {
+		t.Fatalf("hex parse unexpectedly includes hrp: %#v", parsedYAML)
 	}
 }
 
