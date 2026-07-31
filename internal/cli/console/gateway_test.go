@@ -1,14 +1,21 @@
 package console
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
+
+	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
+	rest "pkg.akt.dev/go/provider/client"
 
 	aktctx "pkg.akt.dev/akt/internal/context"
 )
@@ -391,6 +398,136 @@ func TestStreamCloseErr(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestPrintStreamRecordFormats(t *testing.T) {
+	records := []providerLogMsg{
+		{Name: "web-abc-123", Message: "first line"},
+		{Name: "worker-def-456", Message: "second line"},
+	}
+
+	t.Run("pretty", func(t *testing.T) {
+		cmd, buf := streamOutputCommand(t, "pretty")
+		for _, record := range records {
+			if err := printStreamRecord(cmd, record, fmt.Sprintf("[%s] %s", record.Name, record.Message)); err != nil {
+				t.Fatalf("print stream record: %v", err)
+			}
+		}
+		if got, want := buf.String(), "[web-abc-123] first line\n[worker-def-456] second line\n"; got != want {
+			t.Errorf("pretty stream = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("jsonl", func(t *testing.T) {
+		cmd, buf := streamOutputCommand(t, "json")
+		for _, record := range records {
+			if err := printStreamRecord(cmd, record, "unused"); err != nil {
+				t.Fatalf("print stream record: %v", err)
+			}
+		}
+
+		lines := strings.Split(strings.TrimSuffix(buf.String(), "\n"), "\n")
+		if len(lines) != len(records) {
+			t.Fatalf("JSON stream has %d lines, want %d: %q", len(lines), len(records), buf.String())
+		}
+		for i, line := range lines {
+			var got providerLogMsg
+			if err := json.Unmarshal([]byte(line), &got); err != nil {
+				t.Fatalf("decode JSONL record %d %q: %v", i, line, err)
+			}
+			if got != records[i] {
+				t.Errorf("JSONL record %d = %#v, want %#v", i, got, records[i])
+			}
+		}
+	})
+
+	t.Run("yaml documents", func(t *testing.T) {
+		cmd, buf := streamOutputCommand(t, "yaml")
+		for _, record := range records {
+			if err := printStreamRecord(cmd, record, "unused"); err != nil {
+				t.Fatalf("print stream record: %v", err)
+			}
+		}
+
+		if got := strings.Count(buf.String(), "---\n"); got != len(records) {
+			t.Fatalf("YAML stream has %d document markers, want %d: %q", got, len(records), buf.String())
+		}
+		decoder := yaml.NewDecoder(strings.NewReader(buf.String()))
+		for i, want := range records {
+			var got providerLogMsg
+			if err := decoder.Decode(&got); err != nil {
+				t.Fatalf("decode YAML record %d: %v", i, err)
+			}
+			if got != want {
+				t.Errorf("YAML record %d = %#v, want %#v", i, got, want)
+			}
+		}
+	})
+}
+
+func TestRetainTailLogRecords(t *testing.T) {
+	var records []providerLogMsg
+	for _, record := range []providerLogMsg{
+		{Name: "web-a", Message: "first"},
+		{Name: "web-b", Message: "second"},
+		{Name: "web-c", Message: "third"},
+	} {
+		records = retainTailLog(records, record, 2)
+	}
+
+	want := []providerLogMsg{
+		{Name: "web-b", Message: "second"},
+		{Name: "web-c", Message: "third"},
+	}
+	if !reflect.DeepEqual(records, want) {
+		t.Errorf("retained tail = %#v, want %#v", records, want)
+	}
+}
+
+func TestPrintLeaseEventStructured(t *testing.T) {
+	event := rest.LeaseEvent{
+		Type:   "Normal",
+		Reason: "Started",
+		Note:   "container started",
+		Object: rest.LeaseEventObject{Kind: "Pod", Namespace: "lease", Name: "web-abc-123"},
+	}
+
+	cmd, buf := streamOutputCommand(t, "pretty")
+	if err := printLeaseEvent(cmd, event); err != nil {
+		t.Fatalf("print pretty lease event: %v", err)
+	}
+	if got, want := buf.String(), "Normal [Pod/web-abc-123] Started: container started\n"; got != want {
+		t.Errorf("pretty event = %q, want %q", got, want)
+	}
+
+	for _, format := range []string{"json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			cmd, buf := streamOutputCommand(t, format)
+			if err := printLeaseEvent(cmd, event); err != nil {
+				t.Fatalf("print lease event: %v", err)
+			}
+
+			got := decodeStructuredMap(t, format, buf.String())
+			if got["type"] != "Normal" || got["reason"] != "Started" || got["note"] != "container started" {
+				t.Errorf("event output = %#v, want the provider event fields", got)
+			}
+			object, ok := got["object"].(map[string]any)
+			if !ok || object["kind"] != "Pod" || object["name"] != "web-abc-123" {
+				t.Errorf("event object = %#v, want Pod/web-abc-123", got["object"])
+			}
+		})
+	}
+}
+
+func streamOutputCommand(t *testing.T, format string) (*cobra.Command, *bytes.Buffer) {
+	t.Helper()
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("output", format, "")
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+
+	return cmd, &buf
 }
 
 func TestMatchesService(t *testing.T) {

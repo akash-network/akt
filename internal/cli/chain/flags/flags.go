@@ -12,6 +12,8 @@ import (
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	cmcli "github.com/cometbft/cometbft/libs/cli"
+
+	"pkg.akt.dev/akt/internal/output"
 )
 
 const (
@@ -349,14 +351,14 @@ func AddQueryFlagsToCmd(cmd *cobra.Command) {
 	cmd.Flags().String(FlagGRPC, "", "the gRPC endpoint to use for this chain")
 	cmd.Flags().Bool(FlagGRPCInsecure, false, "allow gRPC over insecure channels, if not TLS the server must use TLS")
 	cmd.Flags().Int64(FlagHeight, 0, "Use a specific height to query state at (this can error if the node is pruning state)")
-	cmd.Flags().StringP(FlagOutput, "o", OutputPretty, "Output format (pretty|json|yaml)")
+	cmd.Flags().VarP(output.NewFormatFlag(OutputPretty), FlagOutput, "o", "Output format (pretty|json|yaml)")
 }
 
 // AddTxFlagsToCmd adds common flags to a module tx command.
 func AddTxFlagsToCmd(cmd *cobra.Command) {
 	f := cmd.Flags()
 
-	f.StringP(FlagOutput, "o", OutputPretty, "Output format (pretty|json|yaml)")
+	f.VarP(output.NewFormatFlag(OutputPretty), FlagOutput, "o", "Output format (pretty|json|yaml)")
 	f.String(FlagFrom, "", "Name or address of private key with which to sign")
 	f.Uint64P(FlagAccountNumber, "a", 0, "The account number of the signing account (offline mode only)")
 	f.Uint64P(FlagSequence, "s", 0, "The sequence number of the signing account (offline mode only)")

@@ -234,18 +234,23 @@ func deploymentCloseCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			}
 
 			err = cl.CloseDeployment(cmd.Context(), args[0])
+			alreadyClosed := false
+			pretty := fmt.Sprintf("Deployment %s closed.", args[0])
 			switch {
 			case err == nil:
-				fmt.Fprintf(cmd.OutOrStdout(), "Deployment %s closed.\n", args[0])
-				return nil
-
 			case errors.Is(err, console.ErrAlreadyClosed):
-				fmt.Fprintf(cmd.OutOrStdout(), "Deployment %s already closed.\n", args[0])
-				return nil
+				alreadyClosed = true
+				pretty = fmt.Sprintf("Deployment %s already closed.", args[0])
 
 			default:
 				return fmt.Errorf("close deployment %s: %w", args[0], err)
 			}
+
+			return printConsoleResult(cmd, pretty, struct {
+				DSeq          string `json:"dseq"`
+				State         string `json:"state"`
+				AlreadyClosed bool   `json:"already_closed"`
+			}{args[0], "closed", alreadyClosed})
 		},
 	}
 }
@@ -283,8 +288,14 @@ func deploymentDepositCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return fmt.Errorf("deposit to deployment %s: %w", args[0], err)
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Deposited %s to deployment %s.\n", formatUSD(amount), args[0])
-			return nil
+			return printConsoleResult(cmd,
+				fmt.Sprintf("Deposited %s to deployment %s.", formatUSD(amount), args[0]),
+				struct {
+					DSeq      string  `json:"dseq"`
+					AmountUSD float64 `json:"amount_usd"`
+					Status    string  `json:"status"`
+				}{args[0], amount, "deposited"},
+			)
 		},
 	}
 

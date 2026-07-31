@@ -179,7 +179,7 @@ func GetQueryWasmCodeCmd() *cobra.Command {
 		Long:              "Downloads wasm bytecode for given code id",
 		Aliases:           []string{"source-code", "source"},
 		Args:              cobra.ExactArgs(2),
-		PersistentPreRunE: QueryPersistentPreRunE,
+		PersistentPreRunE: fileOutputQueryPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)

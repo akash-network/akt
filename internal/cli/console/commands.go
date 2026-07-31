@@ -267,7 +267,7 @@ func printJSON(cmd *cobra.Command, v interface{}) error {
 		format = output.FormatJSON
 	}
 
-	if err := output.Fprint(cmd.OutOrStdout(), format, v); err != nil {
+	if err := output.FprintJSONSemantics(cmd.OutOrStdout(), format, v); err != nil {
 		return fmt.Errorf("marshal output: %w", err)
 	}
 
@@ -277,12 +277,18 @@ func printJSON(cmd *cobra.Command, v interface{}) error {
 // printRawJSON re-indents a raw JSON document and writes it to the command's
 // output.
 func printRawJSON(cmd *cobra.Command, raw json.RawMessage) error {
-	var v interface{}
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return fmt.Errorf("decode output: %w", err)
+	return printJSON(cmd, raw)
+}
+
+// printConsoleResult keeps the concise human acknowledgement used by default
+// while giving JSON and YAML callers a stable object to parse.
+func printConsoleResult(cmd *cobra.Command, pretty string, structured any) error {
+	if output.FormatFromCmd(cmd) == output.FormatTable {
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), pretty)
+		return err
 	}
 
-	return printJSON(cmd, v)
+	return printJSON(cmd, structured)
 }
 
 // formatUSD renders a USD amount as $X.XX.

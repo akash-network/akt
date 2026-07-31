@@ -24,6 +24,7 @@ import (
 
 	"pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
+	"pkg.akt.dev/akt/internal/output"
 )
 
 // JWT lifetimes for Console-minted provider gateway tokens, in seconds.
@@ -166,7 +167,8 @@ func logsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		Short: "Stream container logs from the lease's provider",
 		Long: "Stream container logs for a Console-managed deployment directly from the provider " +
 			"gateway. The provider is resolved from the deployment's active lease and access is " +
-			"authorized by a short-lived Console-minted JWT — no wallet or local key is involved.",
+			"authorized by a short-lived Console-minted JWT. JSON output is one compact object " +
+			"per line; YAML output is one document per record.",
 		Args: cobra.RangeArgs(1, 2),
 		Example: `  # All services
   akt console logs 12345
@@ -223,30 +225,29 @@ func logsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			// streams as before, since "last N lines of an endless stream"
 			// has no meaning and buffering it would hang.
 			buffered := !follow && tail > 0
-			var tailBuf []string
+			var tailBuf []providerLogMsg
 
-			emit := func(msg providerLogMsg) {
+			emit := func(msg providerLogMsg) error {
 				if !matchesService(msg.Name, service) {
-					return
+					return nil
 				}
 
-				line := fmt.Sprintf("[%s] %s", msg.Name, msg.Message)
 				if buffered {
-					tailBuf = append(tailBuf, line)
-					if int64(len(tailBuf)) > tail {
-						tailBuf = tailBuf[len(tailBuf)-int(tail):]
-					}
-
-					return
+					tailBuf = retainTailLog(tailBuf, msg, tail)
+					return nil
 				}
 
-				fmt.Fprintln(cmd.OutOrStdout(), line)
+				return printStreamRecord(cmd, msg, fmt.Sprintf("[%s] %s", msg.Name, msg.Message))
 			}
 
-			flush := func() {
-				for _, line := range tailBuf {
-					fmt.Fprintln(cmd.OutOrStdout(), line)
+			flush := func() error {
+				for _, msg := range tailBuf {
+					if err := printStreamRecord(cmd, msg, fmt.Sprintf("[%s] %s", msg.Name, msg.Message)); err != nil {
+						return err
+					}
 				}
+
+				return nil
 			}
 
 			for {
@@ -255,21 +256,20 @@ func logsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 					return ctx.Err()
 				case msg, ok := <-logs.Stream:
 					if !ok {
-						flush()
-						return nil
+						return flush()
 					}
-					emit(providerLogMsg{Name: msg.Name, Message: msg.Message})
+					if err := emit(providerLogMsg{Name: msg.Name, Message: msg.Message}); err != nil {
+						return err
+					}
 				case reason, ok := <-logs.OnClose:
 					if !ok {
-						flush()
-						return nil
+						return flush()
 					}
 					if err := streamCloseErr("log", reason, follow); err != nil {
 						return err
 					}
-					flush()
 
-					return nil
+					return flush()
 				}
 			}
 		},
@@ -290,7 +290,8 @@ func eventsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		Use:   "events <dseq>",
 		Short: "Stream Kubernetes events from the lease's provider",
 		Long: "Stream Kubernetes events for a Console-managed deployment directly from the provider " +
-			"gateway, authorized by a short-lived Console-minted JWT (no wallet involved).",
+			"gateway, authorized by a short-lived Console-minted JWT. JSON output is one compact " +
+			"object per line; YAML output is one document per record.",
 		Args: cobra.ExactArgs(1),
 		Example: `  # Recent events
   akt console events 12345
@@ -330,8 +331,9 @@ func eventsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 					if !ok {
 						return nil
 					}
-					fmt.Fprintf(cmd.OutOrStdout(), "%s [%s/%s] %s: %s\n",
-						evt.Type, evt.Object.Kind, evt.Object.Name, evt.Reason, evt.Note)
+					if err := printLeaseEvent(cmd, evt); err != nil {
+						return err
+					}
 				case reason, ok := <-events.OnClose:
 					if !ok {
 						return nil
@@ -638,8 +640,42 @@ func screeningAttrs(attrs attrv1.Attributes) []console.Attribute {
 // providerLogMsg is the shape the log stream yields, narrowed to the fields
 // the CLI prints so the filtering helpers can be tested without a provider.
 type providerLogMsg struct {
-	Name    string
-	Message string
+	Name    string `json:"name"`
+	Message string `json:"message"`
+}
+
+func retainTailLog(records []providerLogMsg, record providerLogMsg, limit int64) []providerLogMsg {
+	records = append(records, record)
+	if int64(len(records)) > limit {
+		records = records[len(records)-int(limit):]
+	}
+
+	return records
+}
+
+func printStreamRecord(cmd *cobra.Command, structured any, pretty string) error {
+	switch output.FormatFromCmd(cmd) {
+	case output.FormatJSON:
+		if err := json.NewEncoder(cmd.OutOrStdout()).Encode(structured); err != nil {
+			return fmt.Errorf("marshal stream output: %w", err)
+		}
+		return nil
+	case output.FormatYAML:
+		if err := output.FprintJSONSemantics(cmd.OutOrStdout(), output.FormatYAML, structured); err != nil {
+			return fmt.Errorf("marshal stream output: %w", err)
+		}
+		return nil
+	default:
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), pretty)
+		return err
+	}
+}
+
+func printLeaseEvent(cmd *cobra.Command, event rest.LeaseEvent) error {
+	pretty := fmt.Sprintf("%s [%s/%s] %s: %s",
+		event.Type, event.Object.Kind, event.Object.Name, event.Reason, event.Note)
+
+	return printStreamRecord(cmd, event, pretty)
 }
 
 // matchesService reports whether a log line from pod `name` belongs to

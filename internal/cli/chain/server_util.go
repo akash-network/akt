@@ -183,7 +183,8 @@ for. Each module documents its respective events under 'xx_events.md'.
 			"$ %[1]s query blocks \"message.sender='cosmos1...' AND block.height > 7\" --page 1 --limit 30 --order_by asc",
 			version.AppName,
 		),
-		Args: cobra.MaximumNArgs(1),
+		Args:    cobra.MaximumNArgs(1),
+		PreRunE: rejectUnsupportedHeightPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cctx, err := GetClientQueryContext(cmd)
 			if err != nil {
@@ -235,7 +236,8 @@ $ %s query block --%s=%s <hash>
 `,
 			version.AppName, cflags.FlagType, cflags.TypeHeight,
 			version.AppName, cflags.FlagType, cflags.TypeHash)),
-		Args: cobra.MaximumNArgs(1),
+		Args:    cobra.MaximumNArgs(1),
+		PreRunE: rejectPositionalAndFlagHeightPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cctx, err := GetClientQueryContext(cmd)
 			if err != nil {
@@ -326,10 +328,11 @@ $ %s query block --%s=%s <hash>
 // QueryBlockResultsCmd implements the default command for a BlockResults query.
 func QueryBlockResultsCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "block-results [height]",
-		Short: "Query for a committed block's results by height",
-		Long:  "Query for a specific committed block's results using the CometBFT RPC `block_results` method",
-		Args:  cobra.RangeArgs(0, 1),
+		Use:     "block-results [height]",
+		Short:   "Query for a committed block's results by height",
+		Long:    "Query for a specific committed block's results using the CometBFT RPC `block_results` method",
+		Args:    cobra.RangeArgs(0, 1),
+		PreRunE: rejectPositionalAndFlagHeightPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cctx, err := GetClientQueryContext(cmd)
 			if err != nil {

@@ -4,6 +4,41 @@
 
 ### Fixed
 
+- **Vendored and local query leaves could bypass core CLI guarantees**:
+  explicit node and height overrides were ignored by several leaves, two IBC
+  parameter queries panicked on transport errors, IBC YAML emitted JSON, two
+  paginated calls returned a lookahead item, local scalar results were invalid
+  JSON, and one IBC path was registered twice. The query boundary now defines
+  endpoint/snapshot refusal rules, safe vendored error handling, normalized
+  structured output, hard pagination limits, and unique selectable paths.
+
+- **Console structured output reflected Go transport internals**: YAML changed
+  JSON field names and turned raw strings/objects into integer arrays, while
+  logs, deployment close/deposit, and template SDL ignored the selected format.
+  Console JSON is now the canonical data model for YAML conversion, gateway
+  streams have record-oriented JSONL/YAML output, mutations have explicit
+  acknowledgement schemas, and template SDL preserves its exact source in a
+  structured wrapper.
+
+- **Invalid SDL scaffold values were reported as internal failures**: every
+  explicit generation parameter now follows the same parser and lint contract
+  as `sdl validate`, exits as a usage error without partial stdout, and names
+  the responsible flag. Image references use standards-based parsing so empty
+  tags and malformed digests are rejected; internal errors are reserved for
+  invalid built-in defaults.
+
+- **CLI groups and output flags could accept the wrong input at exit 0**:
+  unknown tokens under completion, IBC, and upgrade groups printed help as a
+  successful command, while leaf-local `--output` strings bypassed the root
+  enum and mapped misspellings such as `josn` to pretty output. Group
+  validation is now applied to the assembled command tree, and every output
+  flag validates its command-specific enum before configuration or network
+  work. Bare certificate lists now follow the same owner-scoping contract as
+  deployments and market resources: they use the context default account or
+  refuse locally instead of querying every certificate on the network. The
+  localnet query and deployment lifecycle coverage now supplies its validator
+  address explicitly so CI exercises that scoped contract.
+
 - **`akt q staking params`/`pool` could panic on a sparse response**: proto3 omits zero-valued fields, so an unset `LegacyDec`/`Int` unmarshals with a nil inner `big.Int` and any arithmetic on it panics — `FormatPercentDec` and `FormatDecAsAKT` did exactly that. Two independent reviewers hit it. Formatting now goes through `DecOrZero`/`IntOrZero`, so an omitted field renders as `0` instead of crashing the command. 3 regression tests.
 
 - **A failed config write reported success**: `SaveConfig` deferred `f.Close()` on the file it had just created, discarding the flush error — a full disk or I/O failure while writing `config.yaml` returned nil. The store's YAML export had the same bug (a truncated export reported success). Both now close explicitly and return the error.

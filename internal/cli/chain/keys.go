@@ -4,6 +4,7 @@ import (
 	"github.com/spf13/cobra"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"pkg.akt.dev/akt/internal/output"
 )
 
 // KeysCmds registers a sub-tree of commands to interact with
@@ -52,7 +53,7 @@ The pass backend requires GnuPG: https://gnupg.org/
 		MigrateCommand(),
 	)
 
-	cmd.PersistentFlags().String(cflags.FlagOutput, "text", "Output format (text|json)")
+	cmd.PersistentFlags().Var(output.NewEnumFlag("text", "text", "json"), cflags.FlagOutput, "Output format (text|json)")
 	cflags.AddKeyringFlags(cmd.PersistentFlags())
 
 	cmd.PersistentFlags().Bool(cflags.FlagOffline, true, "")

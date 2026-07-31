@@ -48,6 +48,7 @@ akt query cert list revoked`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)
+			defaultOwner := cl.ClientContext().GetFromAddress().String()
 
 			pageReq, err := ReadPageRequest(cmd.Flags())
 			if err != nil {
@@ -80,6 +81,13 @@ akt query cert list revoked`,
 				}
 
 				params.Filter.State = args[1]
+			}
+
+			if params.Filter.Owner == "" {
+				if defaultOwner == "" {
+					return requireOwnerScope("certificate filter")
+				}
+				params.Filter.Owner = defaultOwner
 			}
 
 			// FEEDBACK(2026-07): the --owner flag read is disabled for the
