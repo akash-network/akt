@@ -8,10 +8,10 @@ long: |
   changing only the image or environment usually does not.
 example: |
     # Apply a revised SDL
-    akt update 12345 deploy.yaml
+    akt update deploy.yaml 12345
 
     # Show what would change without broadcasting
-    akt update 12345 deploy.yaml --dry-run
+    akt update deploy.yaml 12345 --dry-run
 version: 1
 
 params:

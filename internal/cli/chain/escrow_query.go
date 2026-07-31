@@ -158,9 +158,9 @@ $ %[1]s query %[2]s accounts open deployment/akash1...
 func GetQueryEscrowPaymentsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "payments <state> <xid>",
-		Short: "Query for escrow account(s)",
+		Short: "Query escrow payments",
 		Long: strings.TrimSpace(
-			fmt.Sprintf(`Query escrow accounts.
+			fmt.Sprintf(`Query escrow payments.
 Arguments are optional. XID cannot be provided without state
 <state> - allowed values are open|closed|overdrawn
 <xid> - format must follow template - [scope]</xid...>
@@ -170,16 +170,20 @@ Arguments are optional. XID cannot be provided without state
         - deployment/akash1...
         - deployment/akash1.../dseq
 Examples (pagination limits apply to all examples below):
-1. Return all accounts
-$ %[1]s query %[2]s accounts
-2. Return accounts in open state
-$ %[1]s query %[2]s accounts open
-3. Return accounts in open state for deployment scope
-$ %[1]s query %[2]s accounts open deployment
-3. Return accounts in open state for deployment scope
-$ %[1]s query %[2]s accounts open deployment/akash1...
+1. Return all payments
+$ %[1]s query %[2]s payments
+2. Return payments in open state
+$ %[1]s query %[2]s payments open
+3. Return payments in open state for deployment scope
+$ %[1]s query %[2]s payments open deployment
+4. Return payments in open state for one deployment
+$ %[1]s query %[2]s payments open deployment/akash1.../12345
 `,
 				version.AppName, module.ModuleName)),
+		Example: `  akt query escrow payments
+  akt query escrow payments open
+  akt query escrow payments open deployment
+  akt query escrow payments open deployment/akash1.../12345`,
 		Args:              cobra.RangeArgs(0, 2),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {

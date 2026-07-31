@@ -12,6 +12,7 @@ import (
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
 	sdkserver "github.com/cosmos/cosmos-sdk/server"
+	sdkversion "github.com/cosmos/cosmos-sdk/version"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -50,6 +51,12 @@ type BuildInfo struct {
 // NewRootCmd creates the root cobra command for akt.
 func NewRootCmd(bi BuildInfo) *cobra.Command {
 	cobra.EnableTraverseRunHooks = true
+
+	// Copied SDK commands interpolate this value while their command trees are
+	// built. Release ldflags set it, but library users and unit tests do not.
+	if sdkversion.AppName == "" || sdkversion.AppName == "<appd>" {
+		sdkversion.AppName = "akt"
+	}
 
 	v := viper.New()
 	v.SetEnvPrefix("AKT")
@@ -358,6 +365,8 @@ the deployment is created.`,
 	}
 	root.AddCommand(versionCmd(bi))
 	root.AddCommand(completionCmd())
+	root.InitDefaultHelpCmd()
+	prepareCommandHelp(root)
 
 	// Capability gating must also shape help output when cobra
 	// short-circuits --help before the persistent hooks run (parsed help

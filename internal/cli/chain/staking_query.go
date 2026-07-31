@@ -572,7 +572,7 @@ func GetQueryStakingRedelegationsCmd() *cobra.Command {
 			fmt.Sprintf(`Query all redelegation records for an individual delegator.
 
 Example:
-$ %s query staking redelegation %s1gghjut3ccd8ay0zduzj64hwre2fxs9ld75ru9p
+$ %s query staking redelegations %s1gghjut3ccd8ay0zduzj64hwre2fxs9ld75ru9p
 `,
 				version.AppName, bech32PrefixAccAddr,
 			),

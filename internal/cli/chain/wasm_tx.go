@@ -88,7 +88,7 @@ func GetTxWasmInstantiateContractCmd() *cobra.Command {
 		Long: fmt.Sprintf(`Creates a new instance of an uploaded wasm code with the given 'constructor' message.
 Each contract instance has a unique address assigned.
 Example:
-$ %s tx wasm instantiate 1 '{"foo":"bar"}' --admin="$(%s keys show mykey -a)" \
+$ %s tx wasm instantiate 1 '{"foo":"bar"}' --admin="$(%s context keys show mykey -a)" \
   --from mykey --amount="100ustake" --label "local0.1.0"
 `, version.AppName, version.AppName),
 		Aliases:           []string{"start", "init", "inst", "i"},

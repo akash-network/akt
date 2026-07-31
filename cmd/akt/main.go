@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"os"
 
-	sdkversion "github.com/cosmos/cosmos-sdk/version"
-
 	"pkg.akt.dev/akt/internal/cli"
 )
 
@@ -19,15 +17,6 @@ var (
 )
 
 func main() {
-	// The clean-copied chain commands build their examples from the SDK's
-	// AppName, which the release ldflags set. A plain `go build` or
-	// `go install` does not, leaving "<appd> query ..." in the examples of
-	// roughly 95 commands. Default it here so the help is correct however the
-	// binary was produced; ldflags still win when they are supplied.
-	if sdkversion.AppName == "" || sdkversion.AppName == "<appd>" {
-		sdkversion.AppName = "akt"
-	}
-
 	root := cli.NewRootCmd(cli.BuildInfo{
 		Version: version,
 		Commit:  commit,
