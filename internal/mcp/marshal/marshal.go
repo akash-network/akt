@@ -3,6 +3,7 @@ package marshal
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -75,6 +76,25 @@ func OptionalFloat(req mcp.CallToolRequest, key string) (float64, bool) {
 	return f, ok
 }
 
+// PositiveInteger declares a numeric MCP argument as an integer greater than
+// zero while retaining compatibility with clients that represent JSON numbers
+// as float64.
+func PositiveInteger() mcp.PropertyOption {
+	return func(schema map[string]any) {
+		schema["minimum"] = float64(1)
+		schema["multipleOf"] = float64(1)
+	}
+}
+
+// NonNegativeInteger declares a numeric MCP argument as an integer that may be
+// zero, as required by pagination offsets and default-preserving limits.
+func NonNegativeInteger() mcp.PropertyOption {
+	return func(schema map[string]any) {
+		schema["minimum"] = float64(0)
+		schema["multipleOf"] = float64(1)
+	}
+}
+
 // RequireUint64 extracts a required uint64 parameter (passed as float64 in JSON).
 func RequireUint64(req mcp.CallToolRequest, key string) (uint64, error) {
 	v, ok := req.GetArguments()[key]
@@ -85,20 +105,21 @@ func RequireUint64(req mcp.CallToolRequest, key string) (uint64, error) {
 	if !ok {
 		return 0, fmt.Errorf("parameter %s must be a number", key)
 	}
-	return uint64(f), nil
+	return positiveUint(key, f, 64)
 }
 
 // OptionalUint64 extracts an optional uint64 parameter.
-func OptionalUint64(req mcp.CallToolRequest, key string) (uint64, bool) {
+func OptionalUint64(req mcp.CallToolRequest, key string) (uint64, bool, error) {
 	v, ok := req.GetArguments()[key]
 	if !ok {
-		return 0, false
+		return 0, false, nil
 	}
 	f, ok := v.(float64)
 	if !ok {
-		return 0, false
+		return 0, false, fmt.Errorf("parameter %s must be a number", key)
 	}
-	return uint64(f), true
+	value, err := nonNegativeUint(key, f, 64)
+	return value, true, err
 }
 
 // RequireUint32 extracts a required uint32 parameter.
@@ -111,18 +132,43 @@ func RequireUint32(req mcp.CallToolRequest, key string) (uint32, error) {
 	if !ok {
 		return 0, fmt.Errorf("parameter %s must be a number", key)
 	}
-	return uint32(f), nil
+	value, err := positiveUint(key, f, 32)
+	return uint32(value), err
 }
 
 // OptionalUint32 extracts an optional uint32 parameter.
-func OptionalUint32(req mcp.CallToolRequest, key string) (uint32, bool) {
+func OptionalUint32(req mcp.CallToolRequest, key string) (uint32, bool, error) {
 	v, ok := req.GetArguments()[key]
 	if !ok {
-		return 0, false
+		return 0, false, nil
 	}
 	f, ok := v.(float64)
 	if !ok {
-		return 0, false
+		return 0, false, fmt.Errorf("parameter %s must be a number", key)
 	}
-	return uint32(f), true
+	value, err := nonNegativeUint(key, f, 32)
+	return uint32(value), true, err
+}
+
+func positiveUint(key string, value float64, bits int) (uint64, error) {
+	if value <= 0 {
+		return 0, fmt.Errorf("parameter %s must be greater than zero", key)
+	}
+	return nonNegativeUint(key, value, bits)
+}
+
+func nonNegativeUint(key string, value float64, bits int) (uint64, error) {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return 0, fmt.Errorf("parameter %s must be a finite number", key)
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("parameter %s must be greater than or equal to zero", key)
+	}
+	if value != math.Trunc(value) {
+		return 0, fmt.Errorf("parameter %s must be a whole number", key)
+	}
+	if value >= math.Exp2(float64(bits)) {
+		return 0, fmt.Errorf("parameter %s is out of range for uint%d", key, bits)
+	}
+	return uint64(value), nil
 }
