@@ -4,11 +4,11 @@ version: 1
 
 params:
   sdl-file:
-    type: file
+    type: sdl
     required: true
     description: Path to SDL deployment file
   deposit:
-    type: string
+    type: deposit
     default: "auto"
     description: "Initial deposit: 5usd or $5 (USD, console-api contexts), 5000000uakt (coin, keyring contexts), auto = chain minimum (keyring)"
   bid-timeout:
@@ -16,9 +16,9 @@ params:
     default: "5m"
     description: Maximum time to wait for bids
   bid-select:
-    type: string
+    type: bid-selection
     default: "interactive"
-    description: "Bid selection: interactive, cheapest, provider=<addr>"
+    description: "Bid selection: interactive, cheapest, provider=<full-address>"
 
 steps:
   - name: create-deployment

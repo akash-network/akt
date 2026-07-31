@@ -38,11 +38,14 @@ const (
 type ParamType string
 
 const (
-	ParamString   ParamType = "string"
-	ParamInt      ParamType = "int"
-	ParamBool     ParamType = "bool"
-	ParamDuration ParamType = "duration"
-	ParamFile     ParamType = "file"
+	ParamString       ParamType = "string"
+	ParamInt          ParamType = "int"
+	ParamBool         ParamType = "bool"
+	ParamDuration     ParamType = "duration"
+	ParamFile         ParamType = "file"
+	ParamSDL          ParamType = "sdl"
+	ParamDeposit      ParamType = "deposit"
+	ParamBidSelection ParamType = "bid-selection"
 )
 
 // ParamDef defines a workflow input parameter.

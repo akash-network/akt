@@ -23,7 +23,22 @@ func (e *PromptExecutor) Execute(ctx context.Context, step workflow.StepDef, sta
 	// Resolve the selection mode.
 	mode, err := workflow.ResolveTemplate(step.Mode, state)
 	if err != nil {
-		mode = "interactive"
+		return &workflow.StepResult{
+			Name:     step.Name,
+			Type:     step.Type,
+			Status:   "failed",
+			Error:    fmt.Sprintf("resolve bid selection: %s", err),
+			Duration: time.Since(start),
+		}, fmt.Errorf("resolve bid selection: %w", err)
+	}
+	if err := workflow.ValidateBidSelection(mode); err != nil {
+		return &workflow.StepResult{
+			Name:     step.Name,
+			Type:     step.Type,
+			Status:   "failed",
+			Error:    err.Error(),
+			Duration: time.Since(start),
+		}, err
 	}
 
 	// Resolve the data reference to get the items to select from.
@@ -60,8 +75,6 @@ func (e *PromptExecutor) Execute(ctx context.Context, step workflow.StepDef, sta
 	case strings.HasPrefix(mode, "provider="):
 		addr := strings.TrimPrefix(mode, "provider=")
 		selected = selectByProvider(items, addr)
-	default:
-		selected, err = interactiveSelect(items, step.Display.Columns)
 	}
 
 	if err != nil {

@@ -4,7 +4,7 @@ version: 1
 
 params:
   sdl-file:
-    type: file
+    type: sdl
     required: true
     description: Path to updated SDL deployment file
   dseq:

@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- **Workflow dry-runs planned invalid invocations**: generated workflow
+  commands now enforce required and typed parameters before printing a plan,
+  including readable and valid SDL files, unified deposit syntax, positive
+  sequence IDs and durations, and complete bid selectors. Wait and prompt
+  steps reject invalid resolved values instead of silently substituting
+  defaults.
+
 - **Transaction identity and signer overrides were resolved too late**:
   online transaction construction now rejects a chain ID that disagrees with
   the selected context before flags can overwrite that identity; explicit

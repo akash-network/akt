@@ -264,3 +264,33 @@ func TestRootRejectsOnlineChainMismatchBeforeLeafHooks(t *testing.T) {
 		t.Fatal("explicit offline mismatch did not reach the leaf RunE")
 	}
 }
+
+func TestWorkflowDryRunRejectsOnlineChainMismatchBeforePlan(t *testing.T) {
+	m := rootTestManager(t)
+	if err := m.CreateContext(aktctx.Context{
+		Name:    "prod",
+		Network: aktctx.Network{Name: "mainnet"},
+	}); err != nil {
+		t.Fatalf("CreateContext: %v", err)
+	}
+	if err := m.UseContext("prod"); err != nil {
+		t.Fatalf("UseContext: %v", err)
+	}
+
+	root := NewRootCmd(BuildInfo{Version: "test"})
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{
+		"--home", m.Root(),
+		"close", "1", "--dry-run",
+		"--chain-id", "wrong-chain",
+	})
+	err := Execute(root)
+	if err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("workflow chain mismatch error = %v", err)
+	}
+	if strings.Contains(out.String(), "Workflow: close") {
+		t.Fatalf("chain mismatch printed a workflow plan:\n%s", out.String())
+	}
+}

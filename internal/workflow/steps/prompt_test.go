@@ -3,6 +3,7 @@ package steps
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"testing"
 
 	"pkg.akt.dev/akt/internal/workflow"
@@ -12,8 +13,8 @@ import (
 // response shape: a top-level "bids" array of {"bid": {...}} wrappers.
 const bidsQueryJSON = `{
 	"bids": [
-		{"bid": {"id": {"owner": "akash1x", "dseq": "4242", "gseq": 1, "oseq": 1, "provider": "akash1exp"}, "state": "open", "price": {"denom": "uakt", "amount": "25"}}},
-		{"bid": {"id": {"owner": "akash1x", "dseq": "4242", "gseq": 1, "oseq": 2, "provider": "akash1cheap"}, "state": "open", "price": {"denom": "uakt", "amount": "10"}}}
+		{"bid": {"id": {"owner": "akash1x", "dseq": "4242", "gseq": 1, "oseq": 1, "provider": "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx"}, "state": "open", "price": {"denom": "uakt", "amount": "25"}}},
+		{"bid": {"id": {"owner": "akash1x", "dseq": "4242", "gseq": 1, "oseq": 2, "provider": "akash1uwqjtgjhjctjc45ugy7ev5prprhehc7w5xcfwl"}, "state": "open", "price": {"denom": "uakt", "amount": "10"}}}
 	],
 	"pagination": {"total": 2}
 }`
@@ -66,7 +67,7 @@ func TestPromptCheapestSelectsLowestPriceAndExposesIdentity(t *testing.T) {
 	// The create-lease step templates from builtin/deploy.yaml must resolve
 	// to the cheapest bid's discrete id fields.
 	for tmpl, want := range map[string]string{
-		`{{ (index .Steps "select-bid").provider }}`: "akash1cheap",
+		`{{ (index .Steps "select-bid").provider }}`: "akash1uwqjtgjhjctjc45ugy7ev5prprhehc7w5xcfwl",
 		`{{ (index .Steps "select-bid").gseq }}`:     "1",
 		`{{ (index .Steps "select-bid").oseq }}`:     "2",
 		`{{ (index .Steps "select-bid").dseq }}`:     "4242",
@@ -95,7 +96,7 @@ func TestPromptProviderModeMatchesNestedShape(t *testing.T) {
 	step := workflow.StepDef{
 		Name: "select-bid",
 		Type: workflow.StepPrompt,
-		Mode: "provider=akash1exp",
+		Mode: "provider=akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx",
 		Data: `{{ toJson (index .Steps "wait-for-bids").bids }}`,
 	}
 
@@ -103,8 +104,26 @@ func TestPromptProviderModeMatchesNestedShape(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if res.Output["provider"] != "akash1exp" {
-		t.Errorf("provider output = %v, want akash1exp", res.Output["provider"])
+	if res.Output["provider"] != "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx" {
+		t.Errorf("provider output = %v, want full provider address", res.Output["provider"])
+	}
+}
+
+func TestPromptRejectsInvalidBidSelectionMode(t *testing.T) {
+	state := bidsState(t)
+
+	for _, mode := range []string{"random", "provider=short", "provider="} {
+		step := workflow.StepDef{
+			Name: "select-bid",
+			Type: workflow.StepPrompt,
+			Mode: mode,
+			Data: `{{ toJson (index .Steps "wait-for-bids").bids }}`,
+		}
+
+		_, err := (&PromptExecutor{}).Execute(context.Background(), step, state)
+		if err == nil || !strings.Contains(err.Error(), "bid selection") {
+			t.Errorf("mode %q error = %v, want bid-selection validation", mode, err)
+		}
 	}
 }
 

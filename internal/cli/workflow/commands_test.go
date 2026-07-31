@@ -428,10 +428,7 @@ func TestExecuteConsoleDeployEndToEnd(t *testing.T) {
 		t.Fatalf("UpdateContext: %v", err)
 	}
 
-	sdlPath := filepath.Join(t.TempDir(), "app.yaml")
-	if err := os.WriteFile(sdlPath, []byte("services:\n  web:\n    image: nginx\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	sdlPath := writeValidWorkflowSDL(t)
 
 	cmds := CommandsWithManager(
 		func() string { return home },
@@ -577,5 +574,186 @@ func TestExecuteWithoutManager(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no configuration loaded") {
 		t.Errorf("error %q does not mention missing configuration", err.Error())
+	}
+}
+
+func TestBuiltinWorkflowParamTypesMatchPreflightContracts(t *testing.T) {
+	deploy := loadBuiltin(t, "deploy")
+	for name, want := range map[string]string{
+		"sdl-file":   "sdl",
+		"deposit":    "deposit",
+		"bid-select": "bid-selection",
+	} {
+		if got := string(deploy.Params[name].Type); got != want {
+			t.Errorf("deploy param %q type = %q, want %q", name, got, want)
+		}
+	}
+
+	update := loadBuiltin(t, "update")
+	if got := string(update.Params["sdl-file"].Type); got != "sdl" {
+		t.Errorf("update param %q type = %q, want %q", "sdl-file", got, "sdl")
+	}
+}
+
+func writeValidWorkflowSDL(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "deploy.yaml")
+	data := `---
+version: "2.0"
+services:
+  web:
+    image: nginx:1.27
+    expose:
+      - port: 80
+        to:
+          - global: true
+profiles:
+  compute:
+    web:
+      resources:
+        cpu:
+          units: "100m"
+        memory:
+          size: "128Mi"
+        storage:
+          size: "1Gi"
+  placement:
+    westcoast:
+      pricing:
+        web:
+          denom: uakt
+          amount: 50
+deployment:
+  web:
+    westcoast:
+      profile: web
+      count: 1
+`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	return path
+}
+
+func TestWorkflowDryRunValidatesInputsBeforePrintingPlan(t *testing.T) {
+	homeFn, ctxNameFn := staticFns(t.TempDir())
+	validSDL := writeValidWorkflowSDL(t)
+	invalidSDL := filepath.Join(t.TempDir(), "invalid.yaml")
+	if err := os.WriteFile(invalidSDL, []byte("services: [not-an-sdl"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		command string
+		args    []string
+		wantErr string
+	}{
+		{name: "missing required dseq", command: "close", args: []string{"--dry-run"}, wantErr: "dseq"},
+		{name: "zero dseq", command: "close", args: []string{"--dry-run", "0"}, wantErr: "greater than zero"},
+		{name: "negative dseq", command: "close", args: []string{"--dry-run", "--dseq=-1"}, wantErr: "greater than zero"},
+		{name: "conflicting dseq forms", command: "close", args: []string{"--dry-run", "1", "--dseq", "2"}, wantErr: "both positionally"},
+		{name: "missing SDL file", command: "deploy", args: []string{"--dry-run", filepath.Join(t.TempDir(), "missing.yaml")}, wantErr: "sdl-file"},
+		{name: "invalid SDL", command: "deploy", args: []string{"--dry-run", invalidSDL}, wantErr: "invalid SDL"},
+		{name: "invalid deposit", command: "deploy", args: []string{"--dry-run", validSDL, "--deposit", "five-ish"}, wantErr: "invalid deposit"},
+		{name: "zero duration", command: "deploy", args: []string{"--dry-run", validSDL, "--bid-timeout", "0s"}, wantErr: "greater than zero"},
+		{name: "invalid duration", command: "deploy", args: []string{"--dry-run", validSDL, "--bid-timeout", "eventually"}, wantErr: "invalid duration"},
+		{name: "invalid bid mode", command: "deploy", args: []string{"--dry-run", validSDL, "--bid-select", "random"}, wantErr: "bid selection"},
+		{name: "invalid provider address", command: "deploy", args: []string{"--dry-run", validSDL, "--bid-select", "provider=short"}, wantErr: "provider address"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := findCommand(Commands(homeFn, ctxNameFn), tc.command)
+			if cmd == nil {
+				t.Fatalf("workflow command %q not found", tc.command)
+			}
+
+			out, err := executeCommand(t, cmd, tc.args...)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want text %q\noutput:\n%s", err, tc.wantErr, out)
+			}
+			if strings.Contains(out, "Workflow:") || strings.Contains(out, "Dry run") {
+				t.Fatalf("invalid input printed a plan:\n%s", out)
+			}
+		})
+	}
+}
+
+func TestWorkflowDryRunAcceptsTypedInputs(t *testing.T) {
+	homeFn, ctxNameFn := staticFns(t.TempDir())
+	cmd := findCommand(Commands(homeFn, ctxNameFn), "deploy")
+	if cmd == nil {
+		t.Fatal("deploy command not found")
+	}
+
+	out, err := executeCommand(
+		t,
+		cmd,
+		"--dry-run",
+		writeValidWorkflowSDL(t),
+		"--deposit", "$5",
+		"--bid-timeout", "30s",
+		"--bid-select", "provider=akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx",
+	)
+	if err != nil {
+		t.Fatalf("valid dry run: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "Workflow: deploy") || !strings.Contains(out, "Dry run") {
+		t.Fatalf("valid dry run did not print its plan:\n%s", out)
+	}
+}
+
+func TestUserWorkflowParamsUseTheSameTypedValidation(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.txt")
+	tests := []struct {
+		name   string
+		def    *wf.WorkflowDef
+		params map[string]any
+		want   string
+	}{
+		{
+			name: "required string",
+			def: &wf.WorkflowDef{Params: map[string]wf.ParamDef{
+				"label": {Type: wf.ParamString, Required: true},
+			}},
+			params: map[string]any{"label": ""},
+			want:   "required",
+		},
+		{
+			name: "readable file",
+			def: &wf.WorkflowDef{Params: map[string]wf.ParamDef{
+				"input": {Type: wf.ParamFile},
+			}},
+			params: map[string]any{"input": missing},
+			want:   "read file",
+		},
+		{
+			name: "declared type",
+			def: &wf.WorkflowDef{Params: map[string]wf.ParamDef{
+				"enabled": {Type: wf.ParamBool},
+			}},
+			params: map[string]any{"enabled": "yes"},
+			want:   "boolean",
+		},
+		{
+			name: "unsupported type",
+			def: &wf.WorkflowDef{Params: map[string]wf.ParamDef{
+				"mystery": {Type: wf.ParamType("guess")},
+			}},
+			params: map[string]any{"mystery": "value"},
+			want:   "unsupported type",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateWorkflowParams(tc.def, tc.params)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want text %q", err, tc.want)
+			}
+		})
 	}
 }

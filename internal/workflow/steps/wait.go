@@ -23,25 +23,25 @@ func (e *WaitExecutor) Type() workflow.StepType { return workflow.StepWait }
 func (e *WaitExecutor) Execute(ctx context.Context, step workflow.StepDef, state *workflow.RunState) (*workflow.StepResult, error) {
 	start := time.Now()
 
-	if e.chain == nil {
-		return &workflow.StepResult{
-			Name:     step.Name,
-			Type:     step.Type,
-			Status:   "failed",
-			Error:    "chain client not available",
-			Duration: time.Since(start),
-		}, fmt.Errorf("chain client not available")
-	}
-
 	// Resolve timeout from template.
 	timeout := defaultWaitTimeout
 	if step.Timeout != "" {
 		resolved, err := workflow.ResolveTemplate(step.Timeout, state)
-		if err == nil {
-			if d, err := time.ParseDuration(resolved); err == nil {
-				timeout = d
-			}
+		if err != nil {
+			return failedWaitResult(step, start, fmt.Errorf("resolve wait timeout: %w", err))
 		}
+		duration, err := time.ParseDuration(resolved)
+		if err != nil {
+			return failedWaitResult(step, start, fmt.Errorf("invalid wait timeout %q: %w", resolved, err))
+		}
+		if duration <= 0 {
+			return failedWaitResult(step, start, fmt.Errorf("wait timeout must be greater than zero"))
+		}
+		timeout = duration
+	}
+
+	if e.chain == nil {
+		return failedWaitResult(step, start, fmt.Errorf("chain client not available"))
 	}
 
 	params, err := workflow.ResolveParams(step.Params, state)
@@ -99,4 +99,14 @@ func (e *WaitExecutor) Execute(ctx context.Context, step workflow.StepDef, state
 			// Poll again.
 		}
 	}
+}
+
+func failedWaitResult(step workflow.StepDef, start time.Time, err error) (*workflow.StepResult, error) {
+	return &workflow.StepResult{
+		Name:     step.Name,
+		Type:     step.Type,
+		Status:   "failed",
+		Error:    err.Error(),
+		Duration: time.Since(start),
+	}, err
 }

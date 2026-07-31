@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -62,17 +63,24 @@ func CommandsWithManager(homeFn func() string, ctxNameFn func() string, mgrFn fu
 func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() string, mgrFn func() *aktctx.Manager) *cobra.Command {
 	// Determine positional arg usage from params.
 	use := def.Name
-	var fileParam string
-	for pname, p := range def.Params {
-		if p.Type == wf.ParamFile && p.Required {
+	paramNames := sortedParamNames(def.Params)
+	var positionalParams []string
+	for _, pname := range paramNames {
+		p := def.Params[pname]
+		if (p.Type == wf.ParamFile || p.Type == wf.ParamSDL) && p.Required {
 			use += " <" + pname + ">"
-			fileParam = pname
+			positionalParams = append(positionalParams, pname)
 		}
+	}
+	positional := make(map[string]struct{}, len(positionalParams))
+	for _, pname := range positionalParams {
+		positional[pname] = struct{}{}
 	}
 
 	// If the workflow has an optional int param (like dseq), allow it as positional.
 	var dseqParam string
-	for pname, p := range def.Params {
+	for _, pname := range paramNames {
+		p := def.Params[pname]
 		if p.Type == wf.ParamInt && pname == "dseq" {
 			use += " [dseq]"
 			dseqParam = pname
@@ -129,35 +137,47 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 
 			params := make(map[string]any)
 
-			// Resolve file param from positional arg.
+			// Resolve required file and SDL params from positional args.
 			argIdx := 0
-			if fileParam != "" && argIdx < len(args) {
-				params[fileParam] = args[argIdx]
-				argIdx++
+			for _, pname := range positionalParams {
+				if argIdx < len(args) {
+					params[pname] = args[argIdx]
+					argIdx++
+				}
 			}
 
 			// Resolve dseq from positional or flag.
 			if dseqParam != "" {
 				dseq, _ := cmd.Flags().GetInt(dseqParam)
+				dseqSet := cmd.Flags().Changed(dseqParam)
 				if argIdx < len(args) {
+					if dseqSet {
+						return fmt.Errorf(
+							"%s supplied both positionally and with --%s; use one form",
+							dseqParam,
+							dseqParam,
+						)
+					}
 					parsed, parseErr := strconv.Atoi(args[argIdx])
 					if parseErr != nil {
 						return fmt.Errorf("invalid dseq %q: %w", args[argIdx], parseErr)
 					}
 					dseq = parsed
+					dseqSet = true
 				}
-				if dseq != 0 {
+				if dseqSet {
 					params[dseqParam] = dseq
 				}
 			}
 
 			// Resolve remaining flag-based params.
-			for pname, pdef := range rtDef.Params {
-				if pname == fileParam || pname == dseqParam {
+			for _, pname := range sortedParamNames(rtDef.Params) {
+				pdef := rtDef.Params[pname]
+				if _, ok := positional[pname]; ok || pname == dseqParam {
 					continue // already handled
 				}
 				switch pdef.Type {
-				case wf.ParamString:
+				case wf.ParamString, wf.ParamFile, wf.ParamSDL, wf.ParamDeposit, wf.ParamBidSelection:
 					v, _ := cmd.Flags().GetString(pname)
 					params[pname] = v
 				case wf.ParamInt:
@@ -170,6 +190,10 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 					v, _ := cmd.Flags().GetString(pname)
 					params[pname] = v
 				}
+			}
+
+			if err := validateWorkflowParams(rtDef, params); err != nil {
+				return err
 			}
 
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
@@ -192,12 +216,13 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 	}
 
 	// Auto-generate flags from workflow params.
-	for pname, pdef := range def.Params {
-		if pdef.Type == wf.ParamFile {
+	for _, pname := range paramNames {
+		pdef := def.Params[pname]
+		if _, ok := positional[pname]; ok {
 			continue // positional, not a flag
 		}
 		switch pdef.Type {
-		case wf.ParamString:
+		case wf.ParamString, wf.ParamFile, wf.ParamSDL, wf.ParamDeposit, wf.ParamBidSelection:
 			cmd.Flags().String(pname, pdef.Default, pdef.Description)
 		case wf.ParamInt:
 			def := 0
@@ -223,18 +248,24 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 	addMissingTxFlags(cmd)
 
 	// Set args validation based on what we expect.
-	minArgs := 0
-	maxArgs := 0
-	if fileParam != "" {
-		minArgs++
-		maxArgs++
-	}
+	minArgs := len(positionalParams)
+	maxArgs := len(positionalParams)
 	if dseqParam != "" {
 		maxArgs++ // optional positional
 	}
 	cmd.Args = cobra.RangeArgs(minArgs, maxArgs)
 
 	return cmd
+}
+
+func sortedParamNames(params map[string]wf.ParamDef) []string {
+	names := make([]string, 0, len(params))
+	for name := range params {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	return names
 }
 
 // executeWorkflow resolves credentials for the active context, picks the
