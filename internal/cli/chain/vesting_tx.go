@@ -47,7 +47,8 @@ account can either be a delayed or continuous vesting account, which is determin
 by the '--delayed' flag. All vesting accounts created will have their start time
 set by the committed block's time. The end_time must be provided as a UNIX epoch
 timestamp.`,
-		Args: cobra.ExactArgs(3),
+		Args:              cobra.ExactArgs(3),
+		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
@@ -102,7 +103,8 @@ func GetTxVestingCreatePermanentLockedAccountCmd() *cobra.Command {
 		Long: `Create a new account funded with an allocation of permanently locked tokens. These
 tokens may be used for staking but are non-transferable. Staking rewards will acrue as liquid and transferable
 tokens.`,
-		Args: cobra.ExactArgs(2),
+		Args:              cobra.ExactArgs(2),
+		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
@@ -173,7 +175,8 @@ func GetTxVestingCreatePeriodicAccountCmd() *cobra.Command {
 ]
 	}
 		`,
-		Args: cobra.ExactArgs(2),
+		Args:              cobra.ExactArgs(2),
+		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 

@@ -34,6 +34,33 @@ func TestClientOptionsDefaultGasSimulates(t *testing.T) {
 	if !applied.Gas.Simulate {
 		t.Errorf("default --gas=auto must produce a simulating gas setting, got %+v", applied.Gas)
 	}
+	if applied.GasPrices != "0.025uakt" {
+		t.Errorf("default gas prices = %q, want 0.025uakt", applied.GasPrices)
+	}
+}
+
+func TestClientOptionsFixedFeesOverrideGasPrices(t *testing.T) {
+	cmd := &cobra.Command{}
+	AddTxFlagsToCmd(cmd)
+
+	if err := cmd.Flags().Set(FlagFees, "123uakt"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Flags().Set(FlagGasPrices, "9uakt"); err != nil {
+		t.Fatal(err)
+	}
+
+	opts, err := ClientOptionsFromFlags(cmd.Flags())
+	if err != nil {
+		t.Fatalf("ClientOptionsFromFlags: %v", err)
+	}
+	applied := applyClientOptions(t, opts)
+	if applied.Fees != "123uakt" {
+		t.Errorf("fees = %q, want 123uakt", applied.Fees)
+	}
+	if applied.GasPrices != "" {
+		t.Errorf("fixed fees must clear gas prices, got %q", applied.GasPrices)
+	}
 }
 
 func TestClientOptionsExplicitGas(t *testing.T) {

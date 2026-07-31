@@ -14,7 +14,13 @@ import (
 	aclient "pkg.akt.dev/go/node/client/discovery"
 )
 
-func TxPersistentPreRunE(cmd *cobra.Command, _ []string) error {
+func TxPersistentPreRunE(cmd *cobra.Command, args []string) error {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return nil
+		}
+	}
+
 	ctx := cmd.Context()
 
 	if cmd.Flags().Changed(cflags.FlagNode) {
@@ -25,6 +31,12 @@ func TxPersistentPreRunE(cmd *cobra.Command, _ []string) error {
 
 	cctx, err := GetClientTxContext(cmd)
 	if err != nil {
+		return err
+	}
+	// Persist the fully resolved context for SDK-owned handlers that call the
+	// Cosmos client package directly. Without this, their second flag read sees
+	// a nil RPC client and recreates it from the SDK localhost default.
+	if err := SetCmdClientContext(cmd, cctx); err != nil {
 		return err
 	}
 
@@ -84,8 +96,8 @@ func TxCmd() *cobra.Command {
 		GetDecodeCommand(),
 		GetTxVestingCmd(),
 		cflags.LineBreak,
-		ibccore.AppModuleBasic{}.GetTxCmd(),
-		ibctransfer.AppModuleBasic{}.GetTxCmd(),
+		adoptVendoredTxCmd(ibccore.AppModuleBasic{}.GetTxCmd()),
+		adoptVendoredTxCmd(ibctransfer.AppModuleBasic{}.GetTxCmd()),
 		cflags.LineBreak,
 		GetTxAuditCmd(),
 		GetTxCertCmd(),
@@ -99,7 +111,7 @@ func TxCmd() *cobra.Command {
 		),
 		GetTxSlashingCmd(),
 		GetTxStakingCmd(),
-		GetTxUpgradeCmd(),
+		adoptVendoredTxCmd(GetTxUpgradeCmd()),
 		GetTxWasmCmd(),
 		GetTxOracleCmd(),
 		GetTxBMECmd(),

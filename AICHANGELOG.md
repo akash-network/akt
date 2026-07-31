@@ -11,6 +11,15 @@
   becoming action-log entries. This documents the remediation contract before
   implementation.
 
+- **Transaction leaves bypassed context setup and fee/failure semantics**:
+  five local leaves no longer panic before construction; adopted IBC and
+  upgrade handlers plus signature validation retain the selected RPC client;
+  failed simulations return an error without logging a mutation. Transaction
+  defaults now honor flag, environment, and context precedence, and fixed fees
+  clear gas prices before the factory is built. Dry-run also normalizes SDK
+  gas-auto into simulation-only mode so an address signer never triggers a
+  key lookup, while help remains configuration- and network-free.
+
 - **Remediation changes violated the repository's lint rules**: network
   cloning no longer shadows Go's built-in `copy`, and Console acknowledgement
   tests assert decoded booleans without redundant literals.

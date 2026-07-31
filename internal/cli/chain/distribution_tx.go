@@ -303,9 +303,10 @@ $ %s tx distribution fund-community-pool 100uatom --from mykey
 // a MsgDepositValidatorRewardsPool transaction.
 func GetTxDistributionDepositValidatorRewardsPoolCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "fund-validator-rewards-pool [val_addr] [amount]",
-		Args:  cobra.ExactArgs(2),
-		Short: "Fund the validator rewards pool with the specified amount",
+		Use:               "fund-validator-rewards-pool [val_addr] [amount]",
+		Args:              cobra.ExactArgs(2),
+		Short:             "Fund the validator rewards pool with the specified amount",
+		PersistentPreRunE: TxPersistentPreRunE,
 		Example: fmt.Sprintf(
 			"%s tx distribution fund-validator-rewards-pool cosmosvaloper1x20lytyf6zkcrv5edpkfkn8sz578qg5sqfyqnp 100uatom --from mykey",
 			version.AppName,

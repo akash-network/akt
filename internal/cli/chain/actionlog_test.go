@@ -198,6 +198,32 @@ func TestBroadcastNonZeroCodeGenerateOnlyNoError(t *testing.T) {
 	}
 }
 
+func TestBroadcastNonZeroCodeSimulationReturnsErrorWithoutLog(t *testing.T) {
+	l := newTestActionLogger(t)
+	tx := &loggingTxClient{
+		tx: &fakeTxClient{resp: &sdk.TxResponse{
+			Code:      32,
+			Codespace: "sdk",
+			RawLog:    "account sequence mismatch",
+		}},
+		log:  l,
+		cctx: sdkclient.Context{Simulate: true},
+	}
+
+	msg := &dv1beta.MsgCloseDeployment{ID: dv1.DeploymentID{DSeq: 1}}
+	if _, err := tx.BroadcastMsgs(context.Background(), []sdk.Msg{msg}); err == nil {
+		t.Fatal("non-zero simulation code must surface as an error")
+	}
+
+	entries, err := l.Read(actionlog.Filter{})
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("simulation must not be logged, got %d entries", len(entries))
+	}
+}
+
 func TestWithActionLogWrapsWithoutLogger(t *testing.T) {
 	// The wrapper must apply even without a logger so failed broadcasts
 	// exit non-zero regardless of action log availability.

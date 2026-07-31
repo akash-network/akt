@@ -209,6 +209,13 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			if !resolved && requiresContext(cmd) && !isHelpInvocation(cmd, os.Args[1:]) {
 				return noContextError(mgr)
 			}
+			if resolved {
+				rc, resolveErr := mgr.Resolve(activeContextName(mgr, v.GetString("context")))
+				if resolveErr != nil {
+					return resolveErr
+				}
+				applyTransactionDefaults(cmd, rc)
+			}
 			if resolved && cmd.Flags().Lookup(cflags.FlagOffline) != nil {
 				if err := chaincli.ValidateTxInvocation(cmd); err != nil {
 					return err
@@ -392,6 +399,66 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	})
 
 	return root
+}
+
+// applyTransactionDefaults resolves transaction economics without marking
+// inherited defaults as explicit flags. Fixed fees and gas prices are two ways
+// to determine one fee, so a higher-precedence value on either side suppresses
+// a lower-precedence value on the other.
+func applyTransactionDefaults(cmd *cobra.Command, rc *aktctx.Context) {
+	flags := cmd.Flags()
+	if flags.Lookup(cflags.FlagGas) == nil {
+		return
+	}
+
+	setDefault := func(name, envName, contextValue string) {
+		flag := flags.Lookup(name)
+		if flag == nil || flag.Changed {
+			return
+		}
+		value, exists := os.LookupEnv(envName)
+		if !exists {
+			value = contextValue
+		}
+		if value != "" {
+			_ = flag.Value.Set(value)
+		}
+	}
+
+	setDefault(cflags.FlagGas, "AKT_GAS", rc.Gas)
+	setDefault(cflags.FlagGasAdjustment, "AKT_GAS_ADJUSTMENT", rc.GasAdjustment)
+	if dryRun, _ := flags.GetBool(cflags.FlagDryRun); dryRun {
+		// The SDK distinguishes gas auto (simulate then execute) from
+		// --dry-run (simulate only). Leaving both enabled makes its simulation
+		// builder demand a signing key even when the user supplied an address.
+		// The gas value is immaterial to dry-run and is replaced by the estimate.
+		_ = flags.Lookup(cflags.FlagGas).Value.Set("0")
+	}
+
+	feesFlag := flags.Lookup(cflags.FlagFees)
+	pricesFlag := flags.Lookup(cflags.FlagGasPrices)
+	if feesFlag == nil || pricesFlag == nil || feesFlag.Changed || pricesFlag.Changed {
+		return
+	}
+
+	envFees, hasEnvFees := os.LookupEnv("AKT_FEES")
+	envPrices, hasEnvPrices := os.LookupEnv("AKT_GAS_PRICES")
+	switch {
+	case hasEnvFees && envFees != "":
+		_ = feesFlag.Value.Set(envFees)
+		_ = pricesFlag.Value.Set("")
+	case hasEnvPrices:
+		_ = feesFlag.Value.Set("")
+		_ = pricesFlag.Value.Set(envPrices)
+	case hasEnvFees:
+		_ = feesFlag.Value.Set("")
+		_ = pricesFlag.Value.Set(rc.GasPrices)
+	case rc.Fees != "":
+		_ = feesFlag.Value.Set(rc.Fees)
+		_ = pricesFlag.Value.Set("")
+	case rc.GasPrices != "":
+		_ = pricesFlag.Value.Set(rc.GasPrices)
+	}
 }
 
 // Execute seeds the SDK client and server context keys on the command context

@@ -481,8 +481,9 @@ func marshalSignatureJSON(txConfig client.TxConfig, txBldr client.TxBuilder, sig
 
 func GetValidateSignaturesCommand() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "validate-signatures [file]",
-		Short: "validate transactions signatures",
+		Use:               "validate-signatures [file]",
+		Short:             "validate transactions signatures",
+		PersistentPreRunE: TxPersistentPreRunE,
 		Long: `Print the addresses that must sign the transaction, those who have already
 signed it, and make sure that signatures are in the correct order.
 
