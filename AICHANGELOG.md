@@ -12,6 +12,12 @@
   make the outstanding full-surface reproductions executable before their code
   changes are applied.
 
+- **The transaction sign-mode table named an unsupported mode**: the client
+  implements `direct`, `amino-json`, `direct-aux`, and `eip-191`, while SPEC
+  named `textual` and leaf help omitted the fourth implemented mode. The
+  boundary contract now follows the actual signer set that validation will
+  enforce.
+
 - **Vendored and local query leaves could bypass core CLI guarantees**:
   explicit node and height overrides were ignored by several leaves, two IBC
   parameter queries panicked on transport errors, IBC YAML emitted JSON, two

@@ -2063,7 +2063,7 @@ Added to all `tx` commands via `AddTxFlagsToCmd()`.
 | `--gas-adjustment`   |       | string   | context default or `"1.5"`  | Gas estimation multiplier                                     |
 | `--fees`             |       | string   | `""`                        | Fixed fees (overrides gas-prices)                             |
 | `--broadcast-mode`   | `-b`  | string   | `"sync"`                    | `sync`, `async`, or `block`                                   |
-| `--sign-mode`        |       | string   | `""`                        | Signing mode: `direct`, `amino-json`, `direct-aux`, `textual` |
+| `--sign-mode`        |       | string   | `""`                        | Signing mode: `direct`, `amino-json`, `direct-aux`, `eip-191` |
 | `--keyring-backend`  |       | string   | context default             | Keyring backend override                                      |
 | `--keyring-dir`      |       | string   | context default             | Keyring directory override                                    |
 | `--note`             |       | string   | `""`                        | Transaction memo/note                                         |
