@@ -29,6 +29,10 @@ import (
 // Server wraps the MCP server with Akash tools.
 type Server struct {
 	mcp *mcpserver.MCPServer
+
+	// schemas records each registered tool's declared input schema, so the
+	// argument-validating middleware can check a call against it.
+	schemas map[string]mcp.ToolInputSchema
 }
 
 // New creates a new MCP server from an akt-resolved SDK client context.
@@ -46,14 +50,17 @@ func New(ctx context.Context, cctx sdkclient.Context, enableWrites bool, console
 	// takes the process down, so a single bad call ends the session and every
 	// other tool with it -- including the Console rail, which had nothing to
 	// do with it.
+	s := &Server{schemas: map[string]mcp.ToolInputSchema{}}
+
 	srv := mcpserver.NewMCPServer(
 		"akash-mcp",
 		"0.1.0",
 		mcpserver.WithToolCapabilities(true),
 		mcpserver.WithRecovery(),
+		mcpserver.WithToolHandlerMiddleware(s.validateArguments),
 	)
 
-	s := &Server{mcp: srv}
+	s.mcp = srv
 
 	// A chain client is not a prerequisite when the Console rail is
 	// available: a managed context reaches deployments, wallet, providers and
@@ -201,6 +208,7 @@ func (s *Server) registerWriteTools(cl client.Client) {
 // the two cannot drift apart.
 func (s *Server) addQueryTool(tool mcp.Tool, handler mcpserver.ToolHandlerFunc) {
 	tool.Annotations = queryToolAnnotations()
+	s.schemas[tool.Name] = tool.InputSchema
 	s.mcp.AddTool(tool, handler)
 }
 
@@ -223,6 +231,7 @@ func queryToolAnnotations() mcp.ToolAnnotation {
 // client should confirm them with the user rather than auto-approve.
 func (s *Server) addWriteTool(tool mcp.Tool, handler mcpserver.ToolHandlerFunc) {
 	tool.Annotations = writeToolAnnotations()
+	s.schemas[tool.Name] = tool.InputSchema
 	s.mcp.AddTool(tool, handler)
 }
 

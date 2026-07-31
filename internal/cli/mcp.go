@@ -27,11 +27,19 @@ tools (on-chain transactions and provider mutations) require explicit
 opt-in via --enable-writes to prevent AI agents from sending unapproved
 transactions.
 
-Read-only tools include: node status, account balances, deployments,
-orders, bids, leases, providers, audited attributes, and certificates.
+Read-only tools cover both rails. On the chain: node status, account
+balances, deployments, groups, orders, bids, leases, providers, audited
+attributes, certificates, and provider/lease/service status. On the Console
+API: deployments, bids, wallet balance, usage history, providers, and GPU
+pricing.
 
-Write tools (with --enable-writes): close deployment, create lease,
-close lease, and submit manifest.`,
+Write tools, unlocked only by --enable-writes:
+  akash_close_deployment    close a deployment on chain
+  akash_create_lease        accept a bid and create a lease
+  akash_close_lease         close a lease on chain
+  akash_submit_manifest     send a manifest to a provider
+  console_close_deployment  close a Console-managed deployment
+  console_deposit           add funds to a deployment, spending real credits`,
 		Args: cobra.NoArgs,
 		Example: `  # Read-only mode (safe for AI agents)
   akt mcp

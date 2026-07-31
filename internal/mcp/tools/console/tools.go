@@ -6,6 +6,7 @@ package console
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -114,6 +115,16 @@ func HandleListBids(cl *console.Client) mcpserver.ToolHandlerFunc {
 			return marshal.ErrResultf("failed to fetch bids for %s: %v", dseq, err), nil
 		}
 
+		// An empty list is only worth waiting on if the deployment exists.
+		// Returning [] for a dseq that does not exist, next to a description
+		// saying bids take a few seconds to arrive, tells an assistant to poll
+		// forever.
+		if len(bids) == 0 {
+			if _, err := cl.GetDeployment(ctx, dseq); err != nil {
+				return marshal.ErrResultf("no bids for %s: %v", dseq, err), nil
+			}
+		}
+
 		return marshal.ToTextResult(bids)
 	}
 }
@@ -175,7 +186,17 @@ func ToolListProviders() mcp.Tool {
 		"console_list_providers",
 		mcp.WithDescription("List providers known to Console, with their capacity and pricing."),
 		mcp.WithString("scope",
-			mcp.Description("Optional listing scope, e.g. 'active'. Omit for the default set."),
+			// The only values the API accepts. The schema used to suggest
+			// 'active', which it rejects with a 400 on every call, so an
+			// assistant following the documentation failed on its first try.
+			mcp.Enum("all", "trial"),
+			mcp.Description("Optional listing scope. Omit for the default set."),
+		),
+		mcp.WithString("addresses",
+			mcp.Description("Optional comma-separated provider bech32 addresses to restrict the listing to."),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description(fmt.Sprintf("Maximum providers to return. Defaults to %d, capped at %d.", defaultListLimit, maxListLimit)),
 		),
 	)
 }
@@ -183,9 +204,39 @@ func ToolListProviders() mcp.Tool {
 // HandleListProviders returns the handler for console_list_providers.
 func HandleListProviders(cl *console.Client) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		resp, err := cl.ListProviders(ctx, marshal.OptionalString(req, "scope"), nil)
+		var addresses []string
+		if raw := marshal.OptionalString(req, "addresses"); raw != "" {
+			for _, a := range strings.Split(raw, ",") {
+				if a = strings.TrimSpace(a); a != "" {
+					addresses = append(addresses, a)
+				}
+			}
+		}
+
+		resp, err := cl.ListProviders(ctx, marshal.OptionalString(req, "scope"), addresses)
 		if err != nil {
 			return marshal.ErrResultf("failed to list providers: %v", err), nil
+		}
+
+		// The endpoint has no server-side paging, and the full catalogue is
+		// ~1800 providers -- half a megabyte, enough to evict the conversation
+		// that asked for it. console_list_deployments already caps itself for
+		// this reason; the same reasoning applies here and was not carried
+		// over. Truncation is reported so a short list is never mistaken for
+		// the whole catalogue.
+		limit := defaultListLimit
+		if v, ok := marshal.OptionalUint64(req, "limit"); ok && v > 0 {
+			limit = int(min(v, uint64(maxListLimit)))
+		}
+
+		if len(resp) > limit {
+			return marshal.ToTextResult(map[string]any{
+				"providers": resp[:limit],
+				"truncated": true,
+				"returned":  limit,
+				"total":     len(resp),
+				"note":      "raise `limit` or filter with `addresses` to see more",
+			})
 		}
 
 		return marshal.ToTextResult(resp)
