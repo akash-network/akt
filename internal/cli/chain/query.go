@@ -10,6 +10,7 @@ import (
 
 	"pkg.akt.dev/akt/internal/capability"
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"pkg.akt.dev/akt/internal/cliutil"
 	aclient "pkg.akt.dev/go/node/client/discovery"
 )
 
@@ -37,6 +38,11 @@ func QueryPersistentPreRunE(cmd *cobra.Command, _ []string) error {
 
 		cmd.SetContext(ctx)
 	}
+
+	// -v answers "which endpoint did this actually talk to", the first thing
+	// worth knowing when a query returns something unexpected. Until now the
+	// flag was accepted on every command and produced nothing anywhere.
+	cliutil.Verbosef(cmd, "querying %s (chain %s)", cctx.NodeURI, cctx.ChainID)
 
 	return nil
 }

@@ -1,6 +1,12 @@
 package cli
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/spf13/pflag"
+
+	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+)
 
 // requireOwnerScope refuses an owner-mode list query that has no owner to
 // filter on. SPEC §3.8 defines a bare listing as "all matching resources for
@@ -36,4 +42,22 @@ func parseByPerspective(v string) (bool, error) {
 // enforced it, so the empty filter listed the whole network.
 func requireProviderScope(resource string) error {
 	return fmt.Errorf("%s: --by provider requires a provider address; provide one as the first argument", resource)
+}
+
+// rejectUnsupportedPaging refuses the pagination flags the escrow endpoints
+// silently ignore.
+//
+// AddPaginationFlagsToCmd advertises the full set, but escrow honours only
+// --limit and --page-key: --offset, --page and --reverse were accepted and
+// dropped, so paging through escrow accounts returned page one every time and
+// a caller summing the pages counted the same balances repeatedly. Refuse them
+// rather than answer with the wrong page.
+func rejectUnsupportedPaging(flags *pflag.FlagSet, resource string) error {
+	for _, name := range []string{cflags.FlagOffset, cflags.FlagPage, cflags.FlagReverse} {
+		if flags.Changed(name) {
+			return fmt.Errorf("%s: --%s is not supported by this endpoint; page with --limit and --page-key", resource, name)
+		}
+	}
+
+	return nil
 }

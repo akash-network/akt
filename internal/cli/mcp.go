@@ -71,7 +71,13 @@ Write tools, unlocked only by --enable-writes:
 				mode = "read-write"
 			}
 
-			_, _ = fmt.Fprintf(os.Stderr, "akt mcp: starting stdio server (node=%s, chain=%s, mode=%s)\n", cctx.NodeURI, cctx.ChainID, mode)
+			// A startup banner, so --quiet silences it. Written directly
+			// rather than through cliutil.Status: stdout is the JSON-RPC pipe
+			// here and never a TTY, and the banner is the one line that says
+			// which rail the server came up on.
+			if quiet, _ := cmd.Flags().GetBool("quiet"); !quiet {
+				_, _ = fmt.Fprintf(os.Stderr, "akt mcp: starting stdio server (node=%s, chain=%s, mode=%s)\n", cctx.NodeURI, cctx.ChainID, mode)
+			}
 
 			return srv.ServeStdio(ctx)
 		},

@@ -113,6 +113,10 @@ $ %[1]s query %[2]s accounts open deployment/akash1...
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)
 
+			if err := rejectUnsupportedPaging(cmd.Flags(), "escrow"); err != nil {
+				return err
+			}
+
 			pageReq, err := ReadPageRequest(cmd.Flags())
 			if err != nil {
 				return err
@@ -186,6 +190,10 @@ $ %[1]s query %[2]s accounts open deployment/akash1...
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)
+
+			if err := rejectUnsupportedPaging(cmd.Flags(), "escrow"); err != nil {
+				return err
+			}
 
 			pageReq, err := ReadPageRequest(cmd.Flags())
 			if err != nil {

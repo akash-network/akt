@@ -29,6 +29,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/version"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"pkg.akt.dev/akt/internal/cliutil"
 )
 
 // ServerCmds add server commands
@@ -273,7 +274,7 @@ $ %s query block --%s=%s <hash>
 						return fmt.Errorf("failed to get chain height: %w", err)
 					}
 
-					fmt.Fprintf(cmd.ErrOrStderr(), "no height given; using latest block %d\n", height)
+					cliutil.Statusf(cmd, "no height given; using latest block %d", height)
 				default:
 					height, err = strconv.ParseInt(heightStr, 10, 64)
 					if err != nil {
@@ -358,7 +359,7 @@ func QueryBlockResultsCmd() *cobra.Command {
 					return fmt.Errorf("failed to get chain height: %w", err)
 				}
 
-				fmt.Fprintf(cmd.ErrOrStderr(), "no height given; using latest block %d\n", height)
+				cliutil.Statusf(cmd, "no height given; using latest block %d", height)
 			}
 
 			blockRes, err := node.BlockResults(context.Background(), &height)
