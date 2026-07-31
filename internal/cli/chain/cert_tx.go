@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/server"
@@ -59,7 +58,10 @@ func GetTxCertCmd() *cobra.Command {
 }
 
 func doCertGenerateCmd(cmd *cobra.Command, domains []string) error {
-	allowOverwrite := viper.GetBool(cflags.FlagOverwrite)
+	options, err := certGenerateOptionsFromCmd(cmd)
+	if err != nil {
+		return err
+	}
 
 	cctx, err := sdkclient.GetClientTxContext(cmd)
 	if err != nil {
@@ -76,23 +78,46 @@ func doCertGenerateCmd(cmd *cobra.Command, domains []string) error {
 	if err != nil {
 		return err
 	}
-	if !allowOverwrite && exists {
+	if !options.allowOverwrite && exists {
 		return errCannotOverwriteCertificate
 	}
 
-	var startTime time.Time
-	startTimeStr := viper.GetString(flagStart)
-	if len(startTimeStr) == 0 {
-		startTime = time.Now().Truncate(time.Second)
-	} else {
+	return kpm.Generate(options.startTime, options.startTime.Add(options.validDuration), domains)
+}
+
+type certGenerateOptions struct {
+	startTime      time.Time
+	validDuration  time.Duration
+	allowOverwrite bool
+}
+
+func certGenerateOptionsFromCmd(cmd *cobra.Command) (certGenerateOptions, error) {
+	startTimeStr, err := cmd.Flags().GetString(flagStart)
+	if err != nil {
+		return certGenerateOptions{}, err
+	}
+	startTime := time.Now().Truncate(time.Second)
+	if startTimeStr != "" {
 		startTime, err = time.Parse(time.RFC3339, startTimeStr)
 		if err != nil {
-			return err
+			return certGenerateOptions{}, fmt.Errorf("invalid --%s: %w", flagStart, err)
 		}
 	}
-	validDuration := viper.GetDuration(flagValidTime)
 
-	return kpm.Generate(startTime, startTime.Add(validDuration), domains)
+	validDuration, err := cmd.Flags().GetDuration(flagValidTime)
+	if err != nil {
+		return certGenerateOptions{}, err
+	}
+	allowOverwrite, err := cmd.Flags().GetBool(cflags.FlagOverwrite)
+	if err != nil {
+		return certGenerateOptions{}, err
+	}
+
+	return certGenerateOptions{
+		startTime:      startTime,
+		validDuration:  validDuration,
+		allowOverwrite: allowOverwrite,
+	}, nil
 }
 
 func doPublishCmd(cmd *cobra.Command, _ []string) error {
@@ -100,7 +125,7 @@ func doPublishCmd(cmd *cobra.Command, _ []string) error {
 	cl := MustClientFromContext(ctx)
 	cctx := cl.ClientContext()
 
-	toGenesis := viper.GetBool(flagToGenesis)
+	toGenesis := certToGenesisFromCmd(cmd)
 
 	fromAddress := cctx.GetFromAddress()
 
@@ -163,7 +188,7 @@ func doRevokeCmd(cmd *cobra.Command, _ []string) error {
 	cl := MustClientFromContext(ctx)
 	cctx := cl.ClientContext()
 
-	serial := viper.GetString(flagSerial)
+	serial := certSerialFromCmd(cmd)
 
 	fromAddress := cctx.GetFromAddress()
 
@@ -239,24 +264,12 @@ func GetTxCertGenerateCmd() *cobra.Command {
 	return cmd
 }
 
-func addTxCertGenerateFlags(cmd *cobra.Command) error {
+func addTxCertGenerateFlags(cmd *cobra.Command) {
 	cmd.Flags().String(flagStart, "", "certificate is not valid before this date. default current timestamp. RFC3339")
-	if err := viper.BindPFlag(flagStart, cmd.Flags().Lookup(flagStart)); err != nil {
-		return err
-	}
-
 	cmd.Flags().Duration(flagValidTime, time.Hour*24*365, "certificate is not valid after this date. RFC3339")
-	if err := viper.BindPFlag(flagValidTime, cmd.Flags().Lookup(flagValidTime)); err != nil {
-		return err
-	}
 	cmd.Flags().Bool(cflags.FlagOverwrite, false, "overwrite existing certificate if present")
-	if err := viper.BindPFlag(cflags.FlagOverwrite, cmd.Flags().Lookup(cflags.FlagOverwrite)); err != nil {
-		return err
-	}
 
 	cflags.AddTxFlagsToCmd(cmd) // TODO - add just the keyring flags? not all the TX ones
-
-	return nil
 }
 
 func certGeneratePersistentPreRunE(cmd *cobra.Command, args []string) error {
@@ -269,7 +282,7 @@ func certGeneratePersistentPreRunE(cmd *cobra.Command, args []string) error {
 }
 
 func certPublishPersistentPreRunE(cmd *cobra.Command, args []string) error {
-	toGenesis := viper.GetBool(flagToGenesis)
+	toGenesis := certToGenesisFromCmd(cmd)
 
 	if toGenesis {
 		err := cmd.Flags().Set(cflags.FlagOffline, "true")
@@ -280,6 +293,12 @@ func certPublishPersistentPreRunE(cmd *cobra.Command, args []string) error {
 
 	return TxPersistentPreRunE(cmd, args)
 }
+
+func certToGenesisFromCmd(cmd *cobra.Command) bool {
+	toGenesis, _ := cmd.Flags().GetBool(flagToGenesis)
+	return toGenesis
+}
+
 func GetTxCertGenerateClientCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                        "client",
@@ -290,10 +309,7 @@ func GetTxCertGenerateClientCmd() *cobra.Command {
 		SilenceUsage:               true,
 		Args:                       cobra.ExactArgs(0),
 	}
-	err := addTxCertGenerateFlags(cmd)
-	if err != nil {
-		panic(err)
-	}
+	addTxCertGenerateFlags(cmd)
 
 	return cmd
 }
@@ -308,10 +324,7 @@ func GetTxCertGenerateServerCmd() *cobra.Command {
 		SilenceUsage:               true,
 		Args:                       cobra.MinimumNArgs(1),
 	}
-	err := addTxCertGenerateFlags(cmd)
-	if err != nil {
-		panic(err)
-	}
+	addTxCertGenerateFlags(cmd)
 
 	return cmd
 }
@@ -341,10 +354,7 @@ func GetTxCertPublishClientCmd() *cobra.Command {
 		SilenceUsage:               true,
 		Args:                       cobra.ExactArgs(0),
 	}
-	err := addTxCertPublishFlags(cmd)
-	if err != nil {
-		panic(err)
-	}
+	addTxCertPublishFlags(cmd)
 
 	return cmd
 }
@@ -359,23 +369,15 @@ func GetTxCertPublishServerCmd() *cobra.Command {
 		SilenceUsage:               true,
 		Args:                       cobra.ExactArgs(0),
 	}
-	err := addTxCertPublishFlags(cmd)
-	if err != nil {
-		panic(err)
-	}
+	addTxCertPublishFlags(cmd)
 
 	return cmd
 }
 
-func addTxCertPublishFlags(cmd *cobra.Command) error {
+func addTxCertPublishFlags(cmd *cobra.Command) {
 	cmd.Flags().Bool(flagToGenesis, false, "add to genesis")
-	if err := viper.BindPFlag(flagToGenesis, cmd.Flags().Lookup(flagToGenesis)); err != nil {
-		return err
-	}
 
 	cflags.AddTxFlagsToCmd(cmd)
-
-	return nil
 }
 
 func addCertToGenesis(cmd *cobra.Command, cert types.GenesisCertificate) error {
@@ -449,11 +451,7 @@ func GetTxCertsRevokeClientCmd() *cobra.Command {
 		Args:                       cobra.ExactArgs(0),
 	}
 
-	err := addRevokeCmdFlags(cmd)
-
-	if err != nil {
-		panic(err)
-	}
+	addRevokeCmdFlags(cmd)
 
 	return cmd
 }
@@ -468,20 +466,17 @@ func GetTxCertRevokeServerCmd() *cobra.Command {
 		SilenceUsage:               true,
 		Args:                       cobra.ExactArgs(0),
 	}
-	err := addRevokeCmdFlags(cmd)
-	if err != nil {
-		panic(err)
-	}
+	addRevokeCmdFlags(cmd)
 
 	return cmd
 }
 
-func addRevokeCmdFlags(cmd *cobra.Command) error {
+func addRevokeCmdFlags(cmd *cobra.Command) {
 	cmd.Flags().String(flagSerial, "", "revoke certificate by serial number")
-	if err := viper.BindPFlag(flagSerial, cmd.Flags().Lookup(flagSerial)); err != nil {
-		return err
-	}
-
 	cflags.AddTxFlagsToCmd(cmd)
-	return nil
+}
+
+func certSerialFromCmd(cmd *cobra.Command) string {
+	serial, _ := cmd.Flags().GetString(flagSerial)
+	return serial
 }

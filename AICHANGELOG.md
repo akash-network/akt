@@ -4,6 +4,24 @@
 
 ### Fixed
 
+- **Transaction identity and signer overrides were resolved too late**:
+  online transaction construction now rejects a chain ID that disagrees with
+  the selected context before flags can overwrite that identity; explicit
+  offline construction remains portable. `--from` and `AKT_FROM` are applied
+  before the SDK client context is built, with flag, environment, then context
+  default precedence.
+
+- **Transaction mode typos crossed the CLI boundary**: all assembled
+  `--sign-mode` and `--broadcast-mode` flags now enforce their advertised
+  enums, including dependency-owned commands, and help names `eip-191` and
+  `block` everywhere those flags appear.
+
+- **Certificate and batch-multisign flags leaked across sibling commands**:
+  certificate generation, publication, and revocation now read every option
+  from the executing leaf. Batch multisign likewise reads
+  `--no-auto-increment` locally instead of an unbound package-global Viper
+  key.
+
 - **Transaction mode defaults and accepted values disagreed across help and
   execution**: the transaction contract now names `direct` as the sign-mode
   default and defines both sign and broadcast modes as closed enums, including

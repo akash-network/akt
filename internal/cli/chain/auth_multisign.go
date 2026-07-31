@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"google.golang.org/protobuf/types/known/anypb"
 
 	errorsmod "cosmossdk.io/errors"
@@ -307,6 +306,7 @@ func makeBatchMultisignCmd() func(cmd *cobra.Command, args []string) error {
 		defer closeFunc()
 		cctx.WithOutput(cmd.OutOrStdout())
 
+		noAutoIncrement := batchNoAutoIncrement(cmd)
 		for i := 0; scanner.Scan(); i++ {
 			txBldr, err := txCfg.WrapTxBuilder(scanner.Tx())
 			if err != nil {
@@ -376,7 +376,7 @@ func makeBatchMultisignCmd() func(cmd *cobra.Command, args []string) error {
 				return err
 			}
 
-			if viper.GetBool(cflags.FlagNoAutoIncrement) {
+			if noAutoIncrement {
 				continue
 			}
 			sequence := txFactory.Sequence() + 1
@@ -385,6 +385,11 @@ func makeBatchMultisignCmd() func(cmd *cobra.Command, args []string) error {
 
 		return scanner.UnmarshalErr()
 	}
+}
+
+func batchNoAutoIncrement(cmd *cobra.Command) bool {
+	value, _ := cmd.Flags().GetBool(cflags.FlagNoAutoIncrement)
+	return value
 }
 
 func unmarshalSignatureJSON(cctx client.Context, filename string) (sigs []signingtypes.SignatureV2, err error) {

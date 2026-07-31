@@ -266,6 +266,10 @@ func ReadPersistentCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) 
 // - client.Context field pre-populated & flag not set: uses pre-populated value
 // - client.Context field pre-populated & flag set: uses set flag value
 func ReadTxCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) (sdkclient.Context, error) {
+	if err := validateTxInvocation(cctx, flagSet); err != nil {
+		return cctx, err
+	}
+
 	cctx, err := ReadPersistentCommandFlags(cctx, flagSet)
 	if err != nil {
 		return cctx, err
@@ -327,8 +331,12 @@ func ReadTxCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) (sdkclie
 		}
 	}
 
-	if cctx.From == "" || flagSet.Changed(cflags.FlagFrom) {
-		from, _ := flagSet.GetString(cflags.FlagFrom)
+	fromUnresolved := cctx.From != "" && cctx.FromName == "" && len(cctx.FromAddress) == 0
+	if cctx.From == "" || fromUnresolved || flagSet.Changed(cflags.FlagFrom) {
+		from := cctx.From
+		if flagSet.Changed(cflags.FlagFrom) || from == "" {
+			from, _ = flagSet.GetString(cflags.FlagFrom)
+		}
 		fromAddr, fromName, keyType, err := sdkclient.GetFromFields(cctx, cctx.Keyring, from)
 		if err != nil {
 			return cctx, err
@@ -364,4 +372,39 @@ func ReadTxCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) (sdkclie
 	}
 
 	return cctx, nil
+}
+
+// validateTxInvocation checks transaction identity before common flag parsing
+// can overwrite the selected context's chain ID. Online construction,
+// simulation, and broadcast stay on the context's chain; an explicitly
+// offline invocation may construct a payload for another chain.
+func validateTxInvocation(cctx sdkclient.Context, flagSet *pflag.FlagSet) error {
+	chainFlag := flagSet.Lookup(cflags.FlagChainID)
+	if chainFlag == nil || !chainFlag.Changed {
+		return nil
+	}
+
+	chainID, _ := flagSet.GetString(cflags.FlagChainID)
+	if strings.TrimSpace(chainID) == "" {
+		return fmt.Errorf("--%s cannot be empty", cflags.FlagChainID)
+	}
+
+	offline := false
+	if offlineFlag := flagSet.Lookup(cflags.FlagOffline); offlineFlag != nil && offlineFlag.Changed {
+		offline, _ = flagSet.GetBool(cflags.FlagOffline)
+	}
+	if !offline && cctx.ChainID != "" && chainID != cctx.ChainID {
+		return fmt.Errorf(
+			"--chain-id %q does not match the active context's chain %q; switch context with --context, or use --offline to construct for another chain",
+			chainID, cctx.ChainID)
+	}
+
+	return nil
+}
+
+// ValidateTxInvocation checks the assembled command against the selected SDK
+// client context. The root calls it before leaf hooks so dependency-owned tx
+// commands and workflow dry-runs receive the same identity guard.
+func ValidateTxInvocation(cmd *cobra.Command) error {
+	return validateTxInvocation(GetClientContextFromCmd(cmd), cmd.Flags())
 }

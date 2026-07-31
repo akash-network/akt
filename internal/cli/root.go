@@ -20,6 +20,7 @@ import (
 	"pkg.akt.dev/akt/internal/bootstrap"
 	"pkg.akt.dev/akt/internal/capability"
 	chaincli "pkg.akt.dev/akt/internal/cli/chain"
+	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 
 	cliconsole "pkg.akt.dev/akt/internal/cli/console"
 	clicontext "pkg.akt.dev/akt/internal/cli/context"
@@ -134,6 +135,9 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			_ = v.BindPFlag("interactive", cmd.Flags().Lookup("interactive"))
 			_ = v.BindPFlag("verbose", cmd.Flags().Lookup("verbose"))
 			_ = v.BindPFlag("quiet", cmd.Flags().Lookup("quiet"))
+			if fromFlag := cmd.Flags().Lookup(cflags.FlagFrom); fromFlag != nil {
+				_ = v.BindPFlag(cflags.FlagFrom, fromFlag)
+			}
 
 			// Verbosity validation: -q and -v are mutually exclusive.
 			if v.GetBool("quiet") && v.GetInt("verbose") > 0 {
@@ -185,7 +189,14 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 
 			// 3. If an akt context is active, enrich the SDK client.Context
 			//    with context-specific values (chain-id, RPC, keyring, etc.).
-			resolved, err := aktclient.MustResolveAndInit(cmd, mgr, krMgr, encCfg, v.GetString("context"))
+			resolved, err := aktclient.MustResolveAndInit(
+				cmd,
+				mgr,
+				krMgr,
+				encCfg,
+				v.GetString("context"),
+				v.GetString(cflags.FlagFrom),
+			)
 			if err != nil {
 				return err
 			}
@@ -197,6 +208,11 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			//    run, and help must never require a context.
 			if !resolved && requiresContext(cmd) && !isHelpInvocation(cmd, os.Args[1:]) {
 				return noContextError(mgr)
+			}
+			if resolved && cmd.Flags().Lookup(cflags.FlagOffline) != nil {
+				if err := chaincli.ValidateTxInvocation(cmd); err != nil {
+					return err
+				}
 			}
 
 			// 4b. Capability gating: derive the feature set from the active
@@ -341,6 +357,7 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	root.AddCommand(completionCmd())
 	enforceGroupInputValidation(root)
 	enforceOutputValidation(root)
+	enforceTransactionModeValidation(root)
 
 	// Capability gating must also shape help output when cobra
 	// short-circuits --help before the persistent hooks run (parsed help

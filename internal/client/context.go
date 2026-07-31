@@ -11,6 +11,7 @@ import (
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/spf13/cobra"
 
@@ -28,6 +29,7 @@ func BuildClientContext(
 	rc *aktctx.Context,
 	kr sdkkeyring.Keyring,
 	enc sdkutil.EncodingConfig,
+	fromOverride string,
 ) sdkclient.Context {
 	cctx := sdkclient.Context{}.
 		WithCodec(enc.Codec).
@@ -41,7 +43,7 @@ func BuildClientContext(
 		WithChainID(rc.Network.ChainID).
 		WithKeyringDir(aktctx.KeyringDir(rc.Root, rc.Keyring))
 
-	// Set default account if configured.
+	// Resolve the invocation signer before downstream tx/query hooks run.
 	//
 	// WithFrom records the name only; FromName and FromAddress stay empty
 	// until something resolves the name against the keyring. Tx commands do
@@ -53,14 +55,25 @@ func BuildClientContext(
 	// A name that is not in the keyring is left as the bare From value rather
 	// than failing: the context is built for every command, including the
 	// keys and context commands someone would use to fix it.
-	if rc.DefaultAccount != "" {
-		cctx = cctx.WithFrom(rc.DefaultAccount)
+	from := fromOverride
+	if from == "" {
+		from = rc.DefaultAccount
+	}
+	if from != "" {
+		cctx = cctx.WithFrom(from)
 
+		resolvedName := false
 		if kr != nil {
-			if rec, err := kr.Key(rc.DefaultAccount); err == nil {
+			if rec, err := kr.Key(from); err == nil {
 				if addr, err := rec.GetAddress(); err == nil {
-					cctx = cctx.WithFromName(rc.DefaultAccount).WithFromAddress(addr)
+					cctx = cctx.WithFromName(from).WithFromAddress(addr)
+					resolvedName = true
 				}
+			}
+		}
+		if !resolvedName {
+			if addr, err := sdk.AccAddressFromBech32(from); err == nil {
+				cctx = cctx.WithFromAddress(addr)
 			}
 		}
 	}
@@ -90,8 +103,9 @@ func InitClientContext(
 	rc *aktctx.Context,
 	kr sdkkeyring.Keyring,
 	enc sdkutil.EncodingConfig,
+	fromOverride string,
 ) error {
-	cctx := BuildClientContext(rc, kr, enc)
+	cctx := BuildClientContext(rc, kr, enc, fromOverride)
 
 	// Store address codecs in the context for chain-sdk commands.
 	ctx := cmd.Context()
@@ -123,6 +137,7 @@ func MustResolveAndInit(
 	krMgr *aktkeyring.Manager,
 	enc sdkutil.EncodingConfig,
 	contextOverride string,
+	fromOverride string,
 ) (bool, error) {
 	ctxName := contextOverride
 	if ctxName == "" {
@@ -154,5 +169,5 @@ func MustResolveAndInit(
 		return false, err
 	}
 
-	return true, InitClientContext(cmd, rc, kr, enc)
+	return true, InitClientContext(cmd, rc, kr, enc, fromOverride)
 }

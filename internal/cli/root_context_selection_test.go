@@ -4,11 +4,16 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
+	"github.com/spf13/cobra"
 
 	"pkg.akt.dev/akt/internal/actionlog"
+	chaincli "pkg.akt.dev/akt/internal/cli/chain"
+	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	aktcodec "pkg.akt.dev/akt/internal/codec"
 	aktctx "pkg.akt.dev/akt/internal/context"
 	aktkeyring "pkg.akt.dev/akt/internal/keyring"
@@ -135,5 +140,127 @@ func TestRootActionLogUsesSelectedContext(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Type != actionlog.TypeConsole || entries[0].Action != "close-deployment" {
 		t.Fatalf("staging entries = %+v, want one Console close-deployment entry", entries)
+	}
+}
+
+func TestRootResolvesFromFlagThenEnvironmentThenContext(t *testing.T) {
+	m := rootTestManager(t)
+	enc := aktcodec.MakeEncodingConfig()
+	keyrings := aktkeyring.NewManager(m.Root(), m.Config().Keyrings, enc.Codec)
+	kr, err := keyrings.Get("default")
+	if err != nil {
+		t.Fatalf("open keyring: %v", err)
+	}
+
+	addresses := make(map[string]string)
+	for _, name := range []string{"context-signer", "env-signer", "flag-signer"} {
+		record, _, err := kr.NewMnemonic(
+			name,
+			sdkkeyring.English,
+			"m/44'/118'/0'/0/0",
+			"",
+			aktkeyring.DefaultAlgo(),
+		)
+		if err != nil {
+			t.Fatalf("NewMnemonic(%s): %v", name, err)
+		}
+		address, err := record.GetAddress()
+		if err != nil {
+			t.Fatalf("GetAddress(%s): %v", name, err)
+		}
+		addresses[name] = address.String()
+	}
+
+	if err := m.CreateContext(aktctx.Context{
+		Name:           "prod",
+		Network:        aktctx.Network{Name: "mainnet"},
+		DefaultAccount: "context-signer",
+	}); err != nil {
+		t.Fatalf("CreateContext: %v", err)
+	}
+	if err := m.UseContext("prod"); err != nil {
+		t.Fatalf("UseContext: %v", err)
+	}
+	t.Setenv("AKT_FROM", "env-signer")
+
+	run := func(args ...string) sdkclient.Context {
+		t.Helper()
+		root := NewRootCmd(BuildInfo{Version: "test"})
+		var got sdkclient.Context
+		inspect := &cobra.Command{
+			Use:  "inspect-from",
+			Args: cobra.NoArgs,
+			RunE: func(cmd *cobra.Command, _ []string) error {
+				got = chaincli.GetClientContextFromCmd(cmd)
+				return nil
+			},
+		}
+		inspect.Flags().String(cflags.FlagFrom, "", "test signer")
+		root.AddCommand(inspect)
+		root.SetOut(&bytes.Buffer{})
+		root.SetErr(&bytes.Buffer{})
+		root.SetArgs(append([]string{"--home", m.Root(), "inspect-from"}, args...))
+		if err := Execute(root); err != nil {
+			t.Fatalf("execute inspect-from %v: %v", args, err)
+		}
+		return got
+	}
+
+	fromEnv := run()
+	if fromEnv.FromName != "env-signer" || fromEnv.FromAddress.String() != addresses["env-signer"] {
+		t.Errorf("AKT_FROM resolved name=%q address=%q", fromEnv.FromName, fromEnv.FromAddress)
+	}
+
+	fromFlag := run("--from", "flag-signer")
+	if fromFlag.FromName != "flag-signer" || fromFlag.FromAddress.String() != addresses["flag-signer"] {
+		t.Errorf("--from resolved name=%q address=%q", fromFlag.FromName, fromFlag.FromAddress)
+	}
+}
+
+func TestRootRejectsOnlineChainMismatchBeforeLeafHooks(t *testing.T) {
+	m := rootTestManager(t)
+	if err := m.CreateContext(aktctx.Context{
+		Name:    "prod",
+		Network: aktctx.Network{Name: "mainnet"},
+	}); err != nil {
+		t.Fatalf("CreateContext: %v", err)
+	}
+	if err := m.UseContext("prod"); err != nil {
+		t.Fatalf("UseContext: %v", err)
+	}
+
+	run := func(args ...string) (bool, error) {
+		root := NewRootCmd(BuildInfo{Version: "test"})
+		ran := false
+		inspect := &cobra.Command{
+			Use:  "inspect-tx-boundary",
+			Args: cobra.NoArgs,
+			RunE: func(*cobra.Command, []string) error {
+				ran = true
+				return nil
+			},
+		}
+		cflags.AddTxFlagsToCmd(inspect)
+		root.AddCommand(inspect)
+		root.SetOut(&bytes.Buffer{})
+		root.SetErr(&bytes.Buffer{})
+		root.SetArgs(append([]string{"--home", m.Root(), "inspect-tx-boundary"}, args...))
+		return ran, Execute(root)
+	}
+
+	ran, err := run("--chain-id", "wrong-chain")
+	if err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatalf("online mismatch error = %v", err)
+	}
+	if ran {
+		t.Fatal("online mismatch reached the leaf RunE")
+	}
+
+	ran, err = run("--chain-id", "other-chain", "--offline")
+	if err != nil {
+		t.Fatalf("offline mismatch: %v", err)
+	}
+	if !ran {
+		t.Fatal("explicit offline mismatch did not reach the leaf RunE")
 	}
 }

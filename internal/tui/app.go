@@ -963,7 +963,7 @@ func buildLightClient(cfg *Config) {
 		return
 	}
 
-	cctx := aktclient.BuildClientContext(cfg.ResolvedCtx, nil, aktcodec.MakeEncodingConfig())
+	cctx := aktclient.BuildClientContext(cfg.ResolvedCtx, nil, aktcodec.MakeEncodingConfig(), "")
 
 	rpcClient, err := aclient.NewClient(context.Background(), cfg.RPCEndpoint)
 	if err != nil {
