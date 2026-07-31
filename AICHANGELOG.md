@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- **`query wasm build-address` decoded salt twice**: the command now
+  normalizes the selected hex, ASCII, or base64 representation to one canonical
+  hex value before the derivation decodes it. A `00` salt works, every encoding
+  selector derives the same address for the same bytes, the pure computation
+  uses the local query boundary, and JSON/YAML return string scalars.
+
 - **Wasm predictable-address input was underspecified**: `build-address` is a
   local derivation whose default salt encoding is hexadecimal; its three
   explicit encoding selectors are mutually exclusive and decode to salt bytes

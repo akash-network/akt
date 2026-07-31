@@ -54,7 +54,7 @@ func GetQueryWasmBuildAddressCmd() *cobra.Command {
 		Short:             "build contract address",
 		Aliases:           []string{"address"},
 		Args:              cobra.RangeArgs(3, 4),
-		PersistentPreRunE: QueryPersistentPreRunE,
+		PersistentPreRunE: localQueryPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			var initArgs []byte
 			if len(args) == 4 {
@@ -70,15 +70,14 @@ func GetQueryWasmBuildAddressCmd() *cobra.Command {
 				&types.QueryBuildAddressRequest{
 					CodeHash:       args[0],
 					CreatorAddress: args[1],
-					Salt:           string(salt),
+					Salt:           hex.EncodeToString(salt),
 					InitArgs:       initArgs,
 				},
 			)
 			if err != nil {
 				return err
 			}
-			fmt.Println(res.Address)
-			return nil
+			return printQueryScalar(cmd, res.Address)
 		},
 		SilenceUsage: true,
 	}
