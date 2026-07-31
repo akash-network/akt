@@ -11,6 +11,8 @@ import (
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
+	"pkg.akt.dev/akt/internal/output"
+
 	"pkg.akt.dev/akt/internal/output/pretty"
 	sstore "pkg.akt.dev/akt/internal/store"
 	"pkg.akt.dev/akt/internal/store/bbolt"
@@ -84,6 +86,15 @@ func statusCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 				dbSize = fi.Size()
 			}
 
+			if f := output.FormatFromCmd(cmd); f != output.FormatTable {
+				return output.Print(f, struct {
+					Context       string `json:"context"       yaml:"context"`
+					StorePath     string `json:"storePath"     yaml:"storePath"`
+					DatabaseBytes int64  `json:"databaseBytes" yaml:"databaseBytes"`
+					SchemaVersion uint64 `json:"schemaVersion" yaml:"schemaVersion"`
+				}{ctxName, p, dbSize, s.SchemaVersion()})
+			}
+
 			out := cmd.OutOrStdout()
 
 			fmt.Fprintln(out, pretty.Section("Store"))
@@ -151,7 +162,7 @@ func exportCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 				w = os.Stdout
 			}
 
-			return s.Export(cmd.Context(), w, format)
+			return s.Export(cmd.Context(), w, format, ctxNameFn())
 		},
 	}
 

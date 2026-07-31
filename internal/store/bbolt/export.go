@@ -26,7 +26,7 @@ type ExportEnvelope struct {
 }
 
 // export serializes the store contents to the given writer in the specified format.
-func (s *BoltStore) export(ctx context.Context, w io.Writer, format store.ExportFormat) error {
+func (s *BoltStore) export(ctx context.Context, w io.Writer, format store.ExportFormat, contextName string) error {
 	deployments, err := s.ListDeployments(ctx, store.DeploymentFilter{})
 	if err != nil {
 		return fmt.Errorf("list deployments: %w", err)
@@ -48,7 +48,11 @@ func (s *BoltStore) export(ctx context.Context, w io.Writer, format store.Export
 	}
 
 	env := ExportEnvelope{
-		Version:       1,
+		Version: 1,
+		// Serialised all along but never set, so every export claimed to come
+		// from context "" and an import could not verify it was being restored
+		// into the right place.
+		Context:       contextName,
 		SchemaVersion: s.SchemaVersion(),
 		ExportedAt:    time.Now().UTC().Format(time.RFC3339),
 		SyncState:     syncState,

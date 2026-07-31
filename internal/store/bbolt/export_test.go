@@ -71,7 +71,7 @@ func TestExportYAML(t *testing.T) {
 	seedStore(t, s)
 
 	var buf bytes.Buffer
-	err := s.Export(context.Background(), &buf, store.FormatYAML)
+	err := s.Export(context.Background(), &buf, store.FormatYAML, "testctx")
 	require.NoError(t, err)
 
 	out := buf.String()
@@ -91,7 +91,7 @@ func TestExportJSON(t *testing.T) {
 	seedStore(t, s)
 
 	var buf bytes.Buffer
-	err := s.Export(context.Background(), &buf, store.FormatJSON)
+	err := s.Export(context.Background(), &buf, store.FormatJSON, "testctx")
 	require.NoError(t, err)
 
 	out := buf.Bytes()
@@ -123,7 +123,7 @@ func TestImportMerge(t *testing.T) {
 
 	// Export store A.
 	var buf bytes.Buffer
-	require.NoError(t, storeA.Export(ctx, &buf, store.FormatJSON))
+	require.NoError(t, storeA.Export(ctx, &buf, store.FormatJSON, "testctx"))
 
 	// Store B: has deployment dseq=2.
 	storeB := openTestStore(t)
@@ -194,7 +194,7 @@ func TestRoundTripYAML(t *testing.T) {
 	seedStore(t, s1)
 
 	var export1 bytes.Buffer
-	require.NoError(t, s1.Export(ctx, &export1, store.FormatYAML))
+	require.NoError(t, s1.Export(ctx, &export1, store.FormatYAML, "testctx"))
 
 	// Import into store 2.
 	s2 := openTestStore(t)
@@ -202,7 +202,7 @@ func TestRoundTripYAML(t *testing.T) {
 
 	// Export from store 2.
 	var export2 bytes.Buffer
-	require.NoError(t, s2.Export(ctx, &export2, store.FormatYAML))
+	require.NoError(t, s2.Export(ctx, &export2, store.FormatYAML, "testctx"))
 
 	// Parse both exports and compare data (ignoring exported_at timestamp).
 	var env1, env2 ExportEnvelope
@@ -225,7 +225,7 @@ func TestRoundTripJSON(t *testing.T) {
 	seedStore(t, s1)
 
 	var export1 bytes.Buffer
-	require.NoError(t, s1.Export(ctx, &export1, store.FormatJSON))
+	require.NoError(t, s1.Export(ctx, &export1, store.FormatJSON, "testctx"))
 
 	// Import into store 2.
 	s2 := openTestStore(t)
@@ -233,7 +233,7 @@ func TestRoundTripJSON(t *testing.T) {
 
 	// Export from store 2.
 	var export2 bytes.Buffer
-	require.NoError(t, s2.Export(ctx, &export2, store.FormatJSON))
+	require.NoError(t, s2.Export(ctx, &export2, store.FormatJSON, "testctx"))
 
 	// Parse both and compare data (ignoring exported_at).
 	var env1, env2 ExportEnvelope
@@ -256,7 +256,7 @@ func TestImportEmptyStore(t *testing.T) {
 	seedStore(t, src)
 
 	var buf bytes.Buffer
-	require.NoError(t, src.Export(ctx, &buf, store.FormatJSON))
+	require.NoError(t, src.Export(ctx, &buf, store.FormatJSON, "testctx"))
 
 	// Import into a fresh empty store.
 	dst := openTestStore(t)

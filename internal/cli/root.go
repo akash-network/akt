@@ -835,8 +835,35 @@ func versionCmd(bi BuildInfo) *cobra.Command {
   akt version --long`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
+			long, _ := cmd.Flags().GetBool("long")
 
-			if long, _ := cmd.Flags().GetBool("long"); long {
+			if f := output.FormatFromCmd(cmd); f != output.FormatTable {
+				payload := struct {
+					Version   string `json:"version"            yaml:"version"`
+					Commit    string `json:"commit"             yaml:"commit"`
+					Built     string `json:"built"              yaml:"built"`
+					Go        string `json:"go,omitempty"       yaml:"go,omitempty"`
+					Platform  string `json:"platform,omitempty" yaml:"platform,omitempty"`
+					BuildTags string `json:"buildTags,omitempty" yaml:"buildTags,omitempty"`
+				}{Version: bi.Version, Commit: bi.Commit, Built: bi.Date}
+
+				if long {
+					payload.Go = runtime.Version()
+					payload.Platform = runtime.GOOS + "/" + runtime.GOARCH
+
+					if dbi, ok := debug.ReadBuildInfo(); ok {
+						for _, setting := range dbi.Settings {
+							if setting.Key == "-tags" && setting.Value != "" {
+								payload.BuildTags = setting.Value
+							}
+						}
+					}
+				}
+
+				return output.Print(f, payload)
+			}
+
+			if long {
 				info := []struct{ k, v string }{
 					{"version", bi.Version},
 					{"commit", bi.Commit},

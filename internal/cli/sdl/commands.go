@@ -10,7 +10,9 @@ import (
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
+
 	"github.com/spf13/pflag"
+	"pkg.akt.dev/akt/internal/output"
 
 	"pkg.akt.dev/akt/internal/cliutil"
 )
@@ -50,6 +52,21 @@ func scaffoldsCmd() *cobra.Command {
 		Args:    cobra.NoArgs,
 		Example: `  akt sdl scaffolds`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if f := output.FormatFromCmd(cmd); f != output.FormatTable {
+				type row struct {
+					Name        string   `json:"name"        yaml:"name"`
+					Description string   `json:"description" yaml:"description"`
+					Flags       []string `json:"flags"       yaml:"flags"`
+				}
+
+				rows := make([]row, 0, len(Scaffolds()))
+				for _, sc := range Scaffolds() {
+					rows = append(rows, row{sc.Name, sc.Description, sc.Params})
+				}
+
+				return output.Print(f, rows)
+			}
+
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 0, 2, ' ', 0)
 
 			fmt.Fprintln(w, "NAME\tDESCRIPTION\tFLAGS")

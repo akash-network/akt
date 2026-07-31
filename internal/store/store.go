@@ -44,7 +44,10 @@ type Store interface {
 	Migrate(ctx context.Context) error
 
 	// Import/Export
-	Export(ctx context.Context, w io.Writer, format ExportFormat) error
+	// Export writes the store's contents. contextName is recorded in the
+	// envelope so an import can tell which context the data came from; the
+	// store itself only knows its path.
+	Export(ctx context.Context, w io.Writer, format ExportFormat, contextName string) error
 	Import(ctx context.Context, r io.Reader, format ExportFormat, merge bool) error
 
 	// Stats returns aggregate statistics about the store contents.

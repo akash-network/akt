@@ -250,7 +250,12 @@ func currentCmd(mgr func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
+			if f := output.FormatFromCmd(cmd); f != output.FormatTable {
+				return output.Print(f, rc)
+			}
+
 			fmt.Print(pretty.RenderContextShow(*rc))
+
 			return nil
 		},
 	}

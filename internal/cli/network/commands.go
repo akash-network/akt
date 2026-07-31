@@ -232,7 +232,15 @@ func showCmd(mgr func() *aktctx.Manager) *cobra.Command {
 				return fmt.Errorf("network %q not found", args[0])
 			}
 
+			if f := output.FormatFromCmd(cmd); f != output.FormatTable {
+				return output.Print(f, struct {
+					Network any      `json:"network" yaml:"network"`
+					UsedBy  []string `json:"usedBy"  yaml:"usedBy"`
+				}{net, m.NetworkUsers(net.Name)})
+			}
+
 			fmt.Print(pretty.RenderNetworkShow(*net, m.NetworkUsers(net.Name)))
+
 			return nil
 		},
 	}

@@ -324,8 +324,8 @@ func (s *BoltStore) Migrate(_ context.Context) error {
 // --- Import/Export ---
 
 // Export serializes the store contents to the given writer.
-func (s *BoltStore) Export(ctx context.Context, w io.Writer, format store.ExportFormat) error {
-	return s.export(ctx, w, format)
+func (s *BoltStore) Export(ctx context.Context, w io.Writer, format store.ExportFormat, contextName string) error {
+	return s.export(ctx, w, format, contextName)
 }
 
 // Import deserializes store contents from the given reader.
