@@ -2063,7 +2063,7 @@ Added to all `tx` commands via `AddTxFlagsToCmd()`.
 | `--gas-adjustment`   |       | string   | context default or `"1.5"`  | Gas estimation multiplier                                     |
 | `--fees`             |       | string   | `""`                        | Fixed fees (overrides gas-prices)                             |
 | `--broadcast-mode`   | `-b`  | string   | `"sync"`                    | `sync`, `async`, or `block`                                   |
-| `--sign-mode`        |       | string   | `""`                        | Signing mode: `direct`, `amino-json`, `direct-aux`, `eip-191` |
+| `--sign-mode`        |       | string   | `"direct"`                  | Signing mode: `direct`, `amino-json`, `direct-aux`, `eip-191` |
 | `--keyring-backend`  |       | string   | context default             | Keyring backend override                                      |
 | `--keyring-dir`      |       | string   | context default             | Keyring directory override                                    |
 | `--note`             |       | string   | `""`                        | Transaction memo/note                                         |
@@ -2080,11 +2080,12 @@ Added to all `tx` commands via `AddTxFlagsToCmd()`.
 | `--ledger`           |       | bool     | `false`                     | Use Ledger hardware wallet                                    |
 | `--unordered`        |       | bool     | `false`                     | Unordered transaction                                         |
 
-An empty sign mode selects `direct`; any other value must be one of the four
-advertised modes. For online construction, simulation, and broadcast, an
-explicit `--chain-id` must agree with the selected context. `--offline` may use
-a different explicit chain ID because it performs no context-node work. These
-checks run before generate-only or workflow dry-run output is emitted.
+`--sign-mode` and `--broadcast-mode` are closed enums: values outside their
+advertised sets are usage errors. For online construction, simulation, and
+broadcast, an explicit `--chain-id` must agree with the selected context.
+`--offline` may use a different explicit chain ID because it performs no
+context-node work. These checks run before generate-only or workflow dry-run
+output is emitted.
 
 **Pretty output for transaction results**: When `--output pretty` is active (the global default), transaction results are rendered in a two-section layout: a common transaction summary (hash, signer, height, gas, fee, status) followed by a message-specific detail section. See [§10.11](#1011-transaction-result-formatting) for the full specification.
 

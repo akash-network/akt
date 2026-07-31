@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- **Transaction mode defaults and accepted values disagreed across help and
+  execution**: the transaction contract now names `direct` as the sign-mode
+  default and defines both sign and broadcast modes as closed enums, including
+  the supported `eip-191` and `block` values.
+
 - **Context-owned commands could split one invocation across two contexts**:
   `context show`, `context log`, and Console login/logout fell back to
   `current-context` after the root had accepted `--context`. They now share
