@@ -84,7 +84,12 @@ func vendoredQueryPreRunE(cmd *cobra.Command, _ []string) error {
 	}
 	cctx = normalizeVendoredQueryOutput(cmd, cctx)
 
-	return sdkclient.SetCmdClientContext(cmd, cctx)
+	if err := sdkclient.SetCmdClientContext(cmd, cctx); err != nil {
+		return err
+	}
+
+	verboseQueryEndpoint(cmd, cctx)
+	return nil
 }
 
 // normalizeVendoredQueryOutput translates akt's public YAML spelling to the
