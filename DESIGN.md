@@ -498,6 +498,10 @@ The `chain-sdk` CLI package (`pkg.akt.dev/go/cli`) will be deprecated and eventu
 > current. See the status note at the end of this section.
 
 - **Cobra** handles command parsing, flag management, help generation, and shell completion for CLI mode. It is the standard in the Go and Cosmos SDK ecosystem.
+- **Boundary validation** is applied uniformly to the assembled Cobra tree:
+  pure command groups reject unknown positional tokens instead of treating
+  them as a successful help request, and enum-valued flags reject values not
+  advertised by that command before any configuration or transport work.
 - **Bubbletea v2** (Elm Architecture: Model-Update-View) handles the interactive TUI. Its functional design isolates state management and rendering.
 - **Lipgloss v2** provides CSS-like styling for terminal output in both modes -- table formatting in CLI, full layout composition in TUI.
 - **Bubbles v2** provides battle-tested components: table, viewport, text input, spinner, help, key bindings, list, progress bar, paginator.
@@ -555,6 +559,9 @@ Query commands use a registry-based formatter system (`internal/output/pretty/`)
 | `yaml` | Machine-readable YAML (no colors) |
 
 **Dispatch flow:** Every query command calls `pretty.PrintQueryResult(cmd, cctx, msg)`. This function reads `--output`: if `json` or `yaml`, it delegates to `clientCtx.PrintProto()` with the appropriate Cosmos SDK output format; if `pretty` (the default), it looks up a registered `PrettyFormatter` for the message's protobuf type. If a formatter exists, it renders pretty output; otherwise, it falls back to JSON output. This means new protobuf types automatically get JSON output until a formatter is registered -- no regressions.
+
+The output flag is an enum at the parsing boundary. A misspelling such as
+`-o josn` is a usage error; it must never fall through to pretty output.
 
 **Formatting conventions:**
 - **List results**: Tabwriter-aligned tables with lipgloss-styled headers. State columns are color-coded (green=active/open, yellow=warning states, red=closed/lost, gray=invalid). Key identifiers (DSEQ, moniker) are bolded.
