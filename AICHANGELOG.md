@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- **Remaining invocation-boundary behavior was underspecified**: DESIGN and
+  SPEC now define one selected context for context details, logs, and Console
+  credential mutations; flag/environment account precedence; transaction
+  chain and sign-mode validation; real network forking; structured key output;
+  and typed workflow preflight that runs before dry-run plans. These contracts
+  make the outstanding full-surface reproductions executable before their code
+  changes are applied.
+
 - **Vendored and local query leaves could bypass core CLI guarantees**:
   explicit node and height overrides were ignored by several leaves, two IBC
   parameter queries panicked on transport errors, IBC YAML emitted JSON, two

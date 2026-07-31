@@ -398,6 +398,20 @@ different precedence rule.
 Each selectable command path is unique; dependency-owned trees are deduplicated
 when they are adopted into the assembled command tree.
 
+The global `--context` flag selects every context-owned resource touched by an
+invocation. This includes `context show`, `context log`, Console API key login
+and logout, keyring selection, stores, and action logs; no leaf may fall back to
+`current-context` after the root selected an override. Account resolution uses
+the same precedence chain: `--from` > `AKT_FROM` > the selected context's
+`default-account`.
+
+`--dry-run` suppresses state changes and client discovery, not input
+validation. Workflow commands validate required parameters and their declared
+types before printing a plan. Built-in deployment workflows additionally parse
+the SDL and validate deposit syntax, positive sequence identifiers, bid
+timeouts, bid selectors, output mode, and transaction chain identity. Invalid
+input produces a non-zero usage error and no plan.
+
 ### 2.0 Root Command Behavior (`akt` with no subcommand)
 
 When `akt` is invoked with no subcommand, the following flow determines what happens:
@@ -739,6 +753,10 @@ $ akt context list
 #### `akt context show`
 
 Print the current context name and full details (resolved network, keyring, store path, action log path, and all effective settings).
+An explicit global `--context <name>` selects the context to show. Structured
+output includes the fully resolved network and keyring, effective gas/provider
+settings, capability booleans, `store_path`, and `action_log_path`; it never
+includes the Console API key.
 
 ```bash
 $ akt context show
@@ -776,6 +794,12 @@ Edit context-level settings. For network-level changes (endpoints, gas-prices), 
 | `--console-api-url` | string | `""`    | Change Console API base URL (empty = default) |
 | `--console-api-key` | string | `""`    | Set the per-context Console API key (empty string removes it; §7.1) |
 | `--fork-network`    | bool   | `false` | Force fork when editing network fields |
+| `--rpc`             | []string | unchanged | Replace the selected network's RPC endpoints |
+| `--api`             | []string | unchanged | Replace the selected network's REST endpoints |
+| `--grpc`            | []string | unchanged | Replace the selected network's gRPC endpoints |
+| `--gas-prices`      | string | unchanged | Change the selected network's gas prices |
+| `--gas-adjustment`  | string | unchanged | Change the selected network's gas adjustment |
+| `--yes`             | bool   | `false` | Edit a shared parent network without prompting |
 
 ```bash
 # Change default account
@@ -787,6 +811,14 @@ akt context edit staging --network sandbox
 # Edit the network's RPC (prompts: edit parent or fork?)
 akt context edit prod --rpc https://my-private-rpc:443
 ```
+
+`--fork-network` is valid only with at least one network-level field and cannot
+be combined with `--network`. It atomically creates
+`<source-network>-<context>`, applies the requested network edits to that copy,
+and switches only the named context to it. If the generated name already
+exists, the command refuses rather than overwriting it. Without
+`--fork-network`, editing a network used by multiple contexts prompts in a TTY;
+`--yes` or a non-TTY invocation chooses the documented edit-parent default.
 
 #### `akt context delete <name>`
 
@@ -903,6 +935,17 @@ akt context keys show test1 --address
 akt context keys show test1 -a
 ```
 
+With `--output json|yaml`, the full form emits an object with `name`, `type`,
+`address`, and `pubkey`. The `--address` form emits a quoted scalar in machine
+formats and the unchanged raw address in pretty output.
+
+#### `akt context keys parse <hex-or-bech32>`
+
+Parse an address and render its canonical uppercase hex form plus full bech32
+forms for the `akash`, `cosmos`, and `osmo` prefixes. JSON/YAML output contains
+`format`, optional `hrp`, `hex`, and an `addresses` object; pretty output keeps
+the aligned human-readable form.
+
 ### 2.3 Workflow Engine
 
 Workflow commands (`akt deploy`, `akt update`, `akt close`) are driven by a **declarative workflow engine**. Instead of hardcoded command logic, each workflow is a YAML definition that the engine interprets step by step. Users can override built-in workflows or create custom ones.
@@ -929,11 +972,11 @@ version: 1
 
 params:
   sdl-file:
-    type: file
+    type: sdl
     required: true
     description: Path to SDL deployment file
   deposit:
-    type: string
+    type: deposit
     default: "auto"
     description: "Initial deposit: 5usd or $5 (USD, console-api contexts), 5000000uakt (coin, keyring contexts), auto = chain minimum (keyring)"
   bid-timeout:
@@ -941,7 +984,7 @@ params:
     default: "5m"
     description: Maximum time to wait for bids
   bid-select:
-    type: string
+    type: bid-selection
     default: "interactive"
     description: "Bid selection: interactive, cheapest, provider=<addr>"
 
@@ -998,6 +1041,22 @@ steps:
       Deployment active!
         DSEQ: {{ (index .Steps "create-deployment").dseq }}
 ```
+
+Workflow parameter types are boundary contracts, not display hints:
+
+| Type | Validation before plan or execution |
+|------|-------------------------------------|
+| `string` | Value is passed through; `required` rejects an empty value |
+| `int` | Base-10 integer; a required sequence value must be greater than zero |
+| `bool` | Cobra boolean parsing |
+| `duration` | Positive Go duration such as `30s` or `5m` |
+| `file` | Required path exists and is readable |
+| `sdl` | File is readable and parses as a valid SDL document |
+| `deposit` | Unified deposit grammar from §7.4 |
+| `bid-selection` | `interactive`, `cheapest`, or `provider=<full-address>` |
+
+Validation runs before dry-run prints its plan. User-defined workflows receive
+the same validation from their declared parameter types.
 
 #### 2.3.3 Step Types
 
@@ -1089,11 +1148,14 @@ When a workflow aborts due to a step failure, the user may be left with partial 
 
 | Type       | Description                       | Flag type      |
 |------------|-----------------------------------|----------------|
-| `string`   | Plain string                      | `--name value` |
-| `int`      | Integer                           | `--name 5`     |
-| `bool`     | Boolean                           | `--name`       |
-| `duration` | Go duration string                | `--name 5m`    |
-| `file`     | File path (positional if first)   | positional arg |
+| `string`        | Plain string                         | `--name value` |
+| `int`           | Integer                              | `--name 5`     |
+| `bool`          | Boolean                              | `--name`       |
+| `duration`      | Positive Go duration                 | `--name 5m`    |
+| `file`          | Readable file path (positional first)| positional arg |
+| `sdl`           | Parsed SDL file (positional first)   | positional arg |
+| `deposit`       | Unified §7.4 deposit                 | `--deposit 5usd` |
+| `bid-selection` | Interactive/cheapest/provider mode   | `--bid-select cheapest` |
 
 #### 2.3.8 Execution Modes
 
@@ -1166,7 +1228,7 @@ version: 1
 
 params:
   sdl-file:
-    type: file
+    type: sdl
     required: true
     description: Path to updated SDL deployment file
   dseq:
@@ -2017,6 +2079,12 @@ Added to all `tx` commands via `AddTxFlagsToCmd()`.
 | `--yes`              | `-y`  | bool     | `false`                     | Skip confirmation prompts                                     |
 | `--ledger`           |       | bool     | `false`                     | Use Ledger hardware wallet                                    |
 | `--unordered`        |       | bool     | `false`                     | Unordered transaction                                         |
+
+An empty sign mode selects `direct`; any other value must be one of the four
+advertised modes. For online construction, simulation, and broadcast, an
+explicit `--chain-id` must agree with the selected context. `--offline` may use
+a different explicit chain ID because it performs no context-node work. These
+checks run before generate-only or workflow dry-run output is emitted.
 
 **Pretty output for transaction results**: When `--output pretty` is active (the global default), transaction results are rendered in a two-section layout: a common transaction summary (hash, signer, height, gas, fee, status) followed by a message-specific detail section. See [§10.11](#1011-transaction-result-formatting) for the full specification.
 
@@ -2888,6 +2956,10 @@ All Console API requests require the `x-api-key` header. The API key is resolved
 - Because the credential lives in the context's data directory, `akt context rename` moves it and `akt context delete` removes it (unless `--keep-data`).
 - The credential is written via `akt context create --console-api-key ...` or `akt context edit --console-api-key ...`; passing an empty string via `akt context edit --console-api-key ""` removes it.
 - Different contexts hold independent keys; Console calls always use the active context's key (subject to the flag/env overrides above).
+- `akt --context <name> console login` and `console logout` write or remove the
+  named context's credential even when `current-context` names another context.
+  JSON/YAML acknowledgements contain only the username (for login), context
+  name, and authentication state; they never contain the key.
 
 API keys are created at [console.akash.network](https://console.akash.network) > Settings > API Keys.
 

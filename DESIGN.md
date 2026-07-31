@@ -509,6 +509,23 @@ The `chain-sdk` CLI package (`pkg.akt.dev/go/cli`) will be deprecated and eventu
   parameters: explicit values are checked with the generated artifact's
   authoritative parser and linter before output. An internal invariant error
   is reserved for a built-in scaffold whose defaults fail that validation.
+- **Invocation resolution has one target**: `--context` selects every
+  context-owned read and write in the invocation, including context details,
+  action logs, Console credential storage, and Console credential removal.
+  The same resolution pass applies `--from`/`AKT_FROM` before the SDK client
+  context is built, so a downstream command cannot silently fall back to the
+  context's stored default account.
+- **Preflight validates before it plans**: workflow dry-runs reuse the same
+  required, typed, and semantic parameter validators as execution. They may
+  skip client discovery and every state-changing step, but they cannot skip
+  SDL, deposit, duration, sequence, selector, transaction chain, or enum
+  validation. A printed plan therefore describes an invocation that could
+  enter execution, not merely one that Cobra could parse.
+- **Transaction identity is checked at the boundary**: online construction,
+  simulation, and broadcast require an explicit chain ID to agree with the
+  selected context and accept only advertised sign modes. Explicit offline
+  construction may name another chain because it performs no context-node
+  work; invalid sign modes remain errors in both paths.
 - **Bubbletea v2** (Elm Architecture: Model-Update-View) handles the interactive TUI. Its functional design isolates state management and rendering.
 - **Lipgloss v2** provides CSS-like styling for terminal output in both modes -- table formatting in CLI, full layout composition in TUI.
 - **Bubbles v2** provides battle-tested components: table, viewport, text input, spinner, help, key bindings, list, progress bar, paginator.
