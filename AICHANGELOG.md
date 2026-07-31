@@ -12,7 +12,9 @@
   flag validates its command-specific enum before configuration or network
   work. Bare certificate lists now follow the same owner-scoping contract as
   deployments and market resources: they use the context default account or
-  refuse locally instead of querying every certificate on the network.
+  refuse locally instead of querying every certificate on the network. The
+  localnet query and deployment lifecycle coverage now supplies its validator
+  address explicitly so CI exercises that scoped contract.
 
 - **`akt q staking params`/`pool` could panic on a sparse response**: proto3 omits zero-valued fields, so an unset `LegacyDec`/`Int` unmarshals with a nil inner `big.Int` and any arithmetic on it panics — `FormatPercentDec` and `FormatDecAsAKT` did exactly that. Two independent reviewers hit it. Formatting now goes through `DecOrZero`/`IntOrZero`, so an omitted field renders as `0` instead of crashing the command. 3 regression tests.
 
