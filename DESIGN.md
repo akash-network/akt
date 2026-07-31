@@ -219,6 +219,14 @@ Each context has an `auth-method` that determines how transactions are signed an
 
 A context uses **one** auth method. Users who need both can create separate contexts (e.g., `prod` with keyring auth and `console` with console-api auth), potentially sharing the same network definition.
 
+The MCP adapter follows the same boundary. Chain-backed provider gateway tools
+must construct clients through `internal/provider.NewGatewayClient`, using the
+resolved account and keyring to attach a wallet-signed JWT. An MCP handler may
+select a provider URL, but it may not create an unauthenticated provider REST
+client of its own. Console MCP tools likewise translate Console wire values
+into the semantic units promised by their schemas before returning them to a
+client.
+
 #### 3.1.5 Console Provider Gateway Access
 
 A `console-api` context has no wallet, yet the operations users reach for most after a deployment goes live — container logs, cluster events, live lease status, an interactive shell — are served by the **provider's** gateway, not by the Console API. `akt` reaches those gateways directly from a managed context, with no wallet and no local signing key involved (`internal/cli/console/gateway.go`):

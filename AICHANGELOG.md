@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- **MCP provider tools reached authenticated gateway endpoints anonymously**: provider status, lease status, service status, and manifest submission now use the shared provider gateway client, which attaches the resolved wallet's JWT. The MCP inventory documentation now matches the capability-driven 27 read / 33 total maximum.
+
+- **`console_wallet_balance` returned µACT while describing Console credits**: the MCP result now exposes `available_usd`, `in_deployments_usd`, and `total_usd`, derived from the Console balance helpers, so a `$17.94` balance cannot be mistaken for `17,940,000` dollars.
+
 - **`akt q staking params`/`pool` could panic on a sparse response**: proto3 omits zero-valued fields, so an unset `LegacyDec`/`Int` unmarshals with a nil inner `big.Int` and any arithmetic on it panics — `FormatPercentDec` and `FormatDecAsAKT` did exactly that. Two independent reviewers hit it. Formatting now goes through `DecOrZero`/`IntOrZero`, so an omitted field renders as `0` instead of crashing the command. 3 regression tests.
 
 - **A failed config write reported success**: `SaveConfig` deferred `f.Close()` on the file it had just created, discarding the flush error — a full disk or I/O failure while writing `config.yaml` returned nil. The store's YAML export had the same bug (a truncated export reported success). Both now close explicitly and return the error.
