@@ -2,14 +2,17 @@ package provider
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"strings"
 	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	"pkg.akt.dev/akt/internal/capability"
+	rest "pkg.akt.dev/go/provider/client"
 )
 
 // newProviderCmd builds a throwaway command carrying the persistent flags the
@@ -80,16 +83,57 @@ func TestResolveProviderRejectsInvalidBech32(t *testing.T) {
 	}
 }
 
-// TestResolveProviderRequiresURL pins the current limitation: on-chain HostURI
-// lookup is not implemented, so --provider-url is mandatory. If that lookup is
-// ever wired in, this test is the reminder to revisit the contract.
-func TestResolveProviderRequiresURL(t *testing.T) {
+func TestResolveProviderQueriesHostURI(t *testing.T) {
 	cmd := newProviderCmd(t, "--provider", testProviderAddr)
 
-	if _, _, err := resolveProvider(cmd, nil); err == nil {
-		t.Fatal("a missing --provider-url must be rejected")
-	} else if !strings.Contains(err.Error(), "--provider-url") {
-		t.Errorf("error should name --provider-url, got %q", err)
+	called := false
+	addr, url, err := resolveProviderWithLookup(cmd, nil, func(_ context.Context, owner string) (string, error) {
+		called = true
+		if owner != testProviderAddr {
+			t.Errorf("lookup owner = %q, want %q", owner, testProviderAddr)
+		}
+		return "https://on-chain.example.com:8443", nil
+	})
+	if err != nil {
+		t.Fatalf("resolveProviderWithLookup: %v", err)
+	}
+	if !called {
+		t.Fatal("provider address did not trigger an on-chain host URI lookup")
+	}
+	if addr.String() != testProviderAddr || url != "https://on-chain.example.com:8443" {
+		t.Errorf("resolveProviderWithLookup = (%s, %q)", addr, url)
+	}
+}
+
+func TestResolveProviderURLOverrideSkipsLookup(t *testing.T) {
+	cmd := newProviderCmd(t,
+		"--provider", testProviderAddr,
+		"--provider-url", "https://override.example.com:8443",
+	)
+
+	_, url, err := resolveProviderWithLookup(cmd, nil, func(context.Context, string) (string, error) {
+		t.Fatal("explicit --provider-url must skip on-chain lookup")
+		return "", nil
+	})
+	if err != nil {
+		t.Fatalf("resolveProviderWithLookup: %v", err)
+	}
+	if url != "https://override.example.com:8443" {
+		t.Errorf("url = %q, want explicit override", url)
+	}
+}
+
+func TestResolveProviderRejectsEmptyOnChainHostURI(t *testing.T) {
+	cmd := newProviderCmd(t, "--provider", testProviderAddr)
+
+	_, _, err := resolveProviderWithLookup(cmd, nil, func(context.Context, string) (string, error) {
+		return "", nil
+	})
+	if err == nil {
+		t.Fatal("an empty on-chain host URI must be rejected")
+	}
+	if !strings.Contains(err.Error(), "has no host URI on chain") {
+		t.Errorf("error should identify the empty provider record, got %q", err)
 	}
 }
 
@@ -245,6 +289,112 @@ func TestPrintJSON(t *testing.T) {
 	}
 }
 
+func TestPrintJSONHonorsYAML(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.Flags().String("output", "yaml", "")
+	cmd.SetOut(&buf)
+
+	value := struct {
+		HostURI string `json:"host_uri"`
+		Leases  int    `json:"leases"`
+	}{HostURI: "https://provider.example.com:8443", Leases: 2}
+
+	if err := printJSON(cmd, value); err != nil {
+		t.Fatalf("printJSON: %v", err)
+	}
+	if strings.HasPrefix(strings.TrimSpace(buf.String()), "{") {
+		t.Fatalf("YAML output is still JSON: %q", buf.String())
+	}
+
+	var got map[string]any
+	if err := yaml.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("decode YAML: %v", err)
+	}
+	if got["host_uri"] != value.HostURI || got["leases"] != value.Leases {
+		t.Errorf("YAML output = %#v, want JSON field names and scalar types", got)
+	}
+}
+
+func TestLeaseShellDefaultsToBinSh(t *testing.T) {
+	cmd := leaseShellCmd()
+	if err := cmd.Args(cmd, nil); err != nil {
+		t.Fatalf("lease-shell without a command must be accepted: %v", err)
+	}
+
+	got := leaseShellCommand(nil)
+	if len(got) != 1 || got[0] != "/bin/sh" {
+		t.Fatalf("default shell command = %#v, want [/bin/sh]", got)
+	}
+	if !strings.Contains(cmd.Long, "/bin/sh") || !strings.Contains(cmd.Example, "--service web\n") {
+		t.Fatalf("lease-shell help does not explain the commandless default: long=%q example=%q", cmd.Long, cmd.Example)
+	}
+}
+
+func TestLeaseLogsRejectsInvalidTailBeforeGateway(t *testing.T) {
+	for _, args := range [][]string{
+		{"lease-logs", "1", "--tail=-2"},
+		{"lease-logs", "1", "--tail=5", "--follow"},
+	} {
+		root := Commands()
+		root.SetOut(&bytes.Buffer{})
+		root.SetErr(&bytes.Buffer{})
+		root.SetArgs(args)
+
+		err := root.Execute()
+		if err == nil || !strings.Contains(err.Error(), "--tail") {
+			t.Fatalf("%v error = %v, want local --tail refusal", args, err)
+		}
+		if strings.Contains(err.Error(), "provider address") {
+			t.Fatalf("%v reached provider resolution before validating --tail: %v", args, err)
+		}
+	}
+}
+
+func TestConsumeLeaseLogsHonorsServiceTailAndOneShotEOF(t *testing.T) {
+	stream := make(chan rest.ServiceLogMessage, 3)
+	stream <- rest.ServiceLogMessage{Name: "web-a", Message: "first"}
+	stream <- rest.ServiceLogMessage{Name: "worker-a", Message: "ignore"}
+	stream <- rest.ServiceLogMessage{Name: "web-b", Message: "last"}
+	close(stream)
+
+	onClose := make(chan string, 1)
+	onClose <- "unexpected EOF"
+	close(onClose)
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	err := consumeLeaseLogs(context.Background(), cmd, &rest.ServiceLogs{
+		Stream: stream, OnClose: onClose,
+	}, "web", false, 1)
+	if err != nil {
+		t.Fatalf("consumeLeaseLogs: %v", err)
+	}
+	if got, want := buf.String(), "[web-b] last\n"; got != want {
+		t.Fatalf("logs = %q, want %q", got, want)
+	}
+}
+
+func TestConsumeLeaseEventsTreatsFollowEOFAsFailure(t *testing.T) {
+	stream := make(chan rest.LeaseEvent)
+	close(stream)
+	onClose := make(chan string, 1)
+	onClose <- "unexpected EOF"
+	close(onClose)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+
+	err := consumeLeaseEvents(context.Background(), cmd, &rest.LeaseKubeEvents{
+		Stream: stream, OnClose: onClose,
+	}, true)
+	if err == nil || !strings.Contains(err.Error(), "event stream closed") {
+		t.Fatalf("follow EOF error = %v, want interrupted event stream", err)
+	}
+}
+
 // TestCommandsGatedOnProviderCapability pins the capability annotation. The
 // gating layer reads it to dim/hide the group when the context has no RPC
 // endpoint; losing the annotation silently re-exposes commands that cannot
@@ -328,22 +478,6 @@ func TestStatusRejectsMissingProvider(t *testing.T) {
 	if err := root.Execute(); err == nil {
 		t.Fatal("status without a provider must fail")
 	} else if !strings.Contains(err.Error(), "provider address is required") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-// TestStatusRejectsMissingProviderURL proves the second guard fires too, so a
-// user who supplies only an address gets the actionable message instead of a
-// dial error against an empty URL.
-func TestStatusRejectsMissingProviderURL(t *testing.T) {
-	root := Commands()
-	root.SetOut(&bytes.Buffer{})
-	root.SetErr(&bytes.Buffer{})
-	root.SetArgs([]string{"status", testProviderAddr})
-
-	if err := root.Execute(); err == nil {
-		t.Fatal("status without --provider-url must fail")
-	} else if !strings.Contains(err.Error(), "--provider-url is required") {
 		t.Errorf("unexpected error: %v", err)
 	}
 }

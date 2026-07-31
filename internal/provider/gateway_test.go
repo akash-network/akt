@@ -1,0 +1,256 @@
+package provider
+
+import (
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+
+	"k8s.io/client-go/tools/remotecommand"
+
+	mtypes "pkg.akt.dev/go/node/market/v1"
+	rest "pkg.akt.dev/go/provider/client"
+)
+
+func TestStreamCloseError(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		reason  string
+		follow  bool
+		wantErr bool
+	}{
+		{"clean one-shot", "", false, false},
+		{"clean follow", "", true, false},
+		{"one-shot EOF", "unexpected EOF", false, false},
+		{"follow EOF", "unexpected EOF", true, true},
+		{"one-shot reset", "connection reset by peer", false, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := StreamCloseError("log", tc.reason, tc.follow)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("StreamCloseError(%q, %v) = %v, wantErr %v", tc.reason, tc.follow, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestConsumeStreamDrainsRecordsAndCloseReason(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		follow  bool
+		wantErr bool
+	}{
+		{"one-shot EOF", false, false},
+		{"follow EOF", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			stream := make(chan string, 2)
+			stream <- "one"
+			stream <- "two"
+			close(stream)
+			onClose := make(chan string, 1)
+			onClose <- "unexpected EOF"
+			close(onClose)
+
+			var records []string
+			err := ConsumeStream(context.Background(), "log", stream, onClose, tc.follow,
+				func(record string) error {
+					records = append(records, record)
+					return nil
+				})
+			if strings.Join(records, ",") != "one,two" {
+				t.Fatalf("records = %#v, want both records", records)
+			}
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ConsumeStream error = %v, wantErr %v", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestValidateLogTail(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		follow  bool
+		tail    int64
+		wantErr bool
+	}{
+		{"all lines", false, -1, false},
+		{"bounded", false, 5, false},
+		{"zero", false, 0, false},
+		{"below sentinel", false, -2, true},
+		{"tail while following", true, 5, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := ValidateLogTail(tc.follow, tc.tail)
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ValidateLogTail(%v, %d) error = %v, wantErr %v", tc.follow, tc.tail, err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestRetainTail(t *testing.T) {
+	var got []string
+	for _, value := range []string{"one", "two", "three"} {
+		got = RetainTail(got, value, 2)
+	}
+	if strings.Join(got, ",") != "two,three" {
+		t.Fatalf("RetainTail = %#v, want [two three]", got)
+	}
+	if got := RetainTail([]string{"one"}, "two", 0); len(got) != 0 {
+		t.Fatalf("RetainTail limit zero = %#v, want no records", got)
+	}
+}
+
+func TestMatchesService(t *testing.T) {
+	if !MatchesService("web-5cfc6c7b4b-4cl7z", "web") {
+		t.Fatal("service must match its Kubernetes pod name")
+	}
+	if MatchesService("webhook-abc-123", "web") {
+		t.Fatal("service prefix without a name boundary must not match")
+	}
+}
+
+func TestHoldEOFUntilContextDone(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	raw := &signaledEOFReader{called: make(chan struct{})}
+	reader := HoldEOF(ctx, raw)
+
+	type result struct {
+		n   int
+		err error
+	}
+	done := make(chan result, 1)
+	go func() {
+		n, err := reader.Read(make([]byte, 1))
+		done <- result{n: n, err: err}
+	}()
+	<-raw.called
+
+	select {
+	case got := <-done:
+		t.Fatalf("EOF returned before the remote context completed: %#v", got)
+	default:
+	}
+
+	cancel()
+	select {
+	case got := <-done:
+		if got.n != 0 || got.err != nil {
+			t.Fatalf("read after cancellation = (%d, %v), want (0, nil)", got.n, got.err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("held EOF did not release after context cancellation")
+	}
+}
+
+type signaledEOFReader struct {
+	called chan struct{}
+}
+
+func (reader *signaledEOFReader) Read([]byte) (int, error) {
+	close(reader.called)
+	return 0, io.EOF
+}
+
+func TestGatewayErrorIncludesProviderResponse(t *testing.T) {
+	err := GatewayError("migrate hostnames", rest.ClientResponseError{
+		Status:  http.StatusBadRequest,
+		Message: `{"message":"hostname is already in use"}`,
+	})
+	if err == nil {
+		t.Fatal("GatewayError unexpectedly returned nil")
+	}
+	for _, want := range []string{"migrate hostnames", "400", "hostname is already in use"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("GatewayError = %q, want %q", err, want)
+		}
+	}
+}
+
+type leaseStatusStub struct {
+	err   error
+	calls int
+}
+
+func (stub *leaseStatusStub) LeaseStatus(context.Context, mtypes.LeaseID) (rest.LeaseStatus, error) {
+	stub.calls++
+	return rest.LeaseStatus{}, stub.err
+}
+
+func TestCheckLeaseSurfacesMissingLease(t *testing.T) {
+	stub := &leaseStatusStub{err: rest.ClientResponseError{
+		Status:  404,
+		Message: `{"message":"lease not found"}`,
+	}}
+	err := CheckLease(context.Background(), stub, mtypes.LeaseID{DSeq: 1})
+	if stub.calls != 1 {
+		t.Fatalf("LeaseStatus called %d times, want 1", stub.calls)
+	}
+	if err == nil || !strings.Contains(err.Error(), "lease not found") {
+		t.Fatalf("CheckLease error = %v, want provider response detail", err)
+	}
+}
+
+type leaseShellStub struct {
+	leaseStatusStub
+	shellCalls int
+}
+
+func (stub *leaseShellStub) LeaseShell(
+	context.Context,
+	mtypes.LeaseID,
+	string,
+	uint,
+	[]string,
+	io.Reader,
+	io.Writer,
+	io.Writer,
+	bool,
+	<-chan remotecommand.TerminalSize,
+) error {
+	stub.shellCalls++
+	return nil
+}
+
+func TestRunLeaseShellRefusesMissingLeaseBeforeRemoteExecution(t *testing.T) {
+	stub := &leaseShellStub{leaseStatusStub: leaseStatusStub{err: rest.ClientResponseError{
+		Status:  404,
+		Message: `{"message":"lease not found"}`,
+	}}}
+
+	err := RunLeaseShell(
+		context.Background(),
+		stub,
+		mtypes.LeaseID{DSeq: 1},
+		"web",
+		0,
+		[]string{"/bin/sh"},
+		nil,
+		io.Discard,
+		io.Discard,
+		false,
+		nil,
+	)
+	if err == nil || !strings.Contains(err.Error(), "lease not found") {
+		t.Fatalf("RunLeaseShell error = %v, want missing lease detail", err)
+	}
+	if stub.shellCalls != 0 {
+		t.Fatalf("LeaseShell called %d times after failed preflight", stub.shellCalls)
+	}
+}
+
+func TestGatewayErrorPreservesOrdinaryErrors(t *testing.T) {
+	sentinel := errors.New("dial failed")
+	err := GatewayError("query status", sentinel)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("GatewayError lost wrapped error: %v", err)
+	}
+	if !strings.Contains(err.Error(), "query status") {
+		t.Fatalf("GatewayError = %q, want action context", err)
+	}
+}

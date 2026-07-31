@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- **Provider gateway commands disagreed across discovery, output, and
+  streaming paths**: provider addresses now resolve their on-chain host URI,
+  YAML preserves the JSON data model, and missing leases fail before log,
+  event, or shell streams are opened. Bounded logs enforce service and exact
+  tail filters, one-shot EOF completes cleanly, follow EOF remains an error,
+  shell defaults to `/bin/sh`, and closed local stdin no longer overrides a
+  successful remote result. Gateway failures retain response bodies when the
+  provider supplies one, and both keyring and Console rails use the same
+  boundary helpers.
+
 - **Provider gateway behavior was underspecified across authentication rails**:
   provider addresses now resolve through their on-chain host URI unless an
   explicit URL overrides it; gateway streams verify the lease, apply log

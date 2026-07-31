@@ -18,6 +18,8 @@ import (
 	rest "pkg.akt.dev/go/provider/client"
 
 	aktctx "pkg.akt.dev/akt/internal/context"
+	"pkg.akt.dev/akt/internal/output"
+	aktprovider "pkg.akt.dev/akt/internal/provider"
 )
 
 // testProviderAddr is a checksummed akash bech32 address (the sdkutil import
@@ -162,10 +164,9 @@ func TestStatusWatchPollsUntilError(t *testing.T) {
 
 // TestLogsResolvesGatewayAndScopes covers the resolution path for `logs`: the
 // Console lookups happen and a logs-scoped JWT is minted with a TTL matching
-// the follow mode. The websocket streaming loop itself is shared library code
-// and needs a TLS gateway, so it is not exercised here; the mocked hostUri is
-// plain http, which the library rejects at dial time with a scheme error —
-// proof the command got as far as opening the stream.
+// the follow mode. The mocked hostUri does not resolve, so the lease-status
+// preflight fails after resolution and proves the command refuses to open a
+// websocket until the provider recognizes the lease.
 func TestLogsResolvesGatewayAndScopes(t *testing.T) {
 	m := newTestManager(t)
 	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
@@ -178,17 +179,17 @@ func TestLogsResolvesGatewayAndScopes(t *testing.T) {
 
 	// One-shot: short token.
 	_, err := execConsole(t, m, consoleSrv.URL, "logs", "777", "web")
-	if err == nil || !strings.Contains(err.Error(), "invalid uri scheme") {
-		t.Fatalf("logs against an http hostUri should fail at the websocket dial, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "query lease status") {
+		t.Fatalf("logs should fail at the lease-status preflight, got %v", err)
 	}
-	if jwt.TTL != 300 || len(jwt.Scope) != 1 || jwt.Scope[0] != "logs" {
-		t.Errorf("one-shot logs jwt = ttl %d scope %v, want ttl 300 scope [logs]", jwt.TTL, jwt.Scope)
+	if jwt.TTL != 300 || strings.Join(jwt.Scope, ",") != "logs,status" {
+		t.Errorf("one-shot logs jwt = ttl %d scope %v, want ttl 300 scope [logs status]", jwt.TTL, jwt.Scope)
 	}
 
 	// Follow: long-lived token.
 	_, err = execConsole(t, m, consoleSrv.URL, "logs", "777", "web", "--follow")
-	if err == nil || !strings.Contains(err.Error(), "invalid uri scheme") {
-		t.Fatalf("logs --follow against an http hostUri should fail at the websocket dial, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "query lease status") {
+		t.Fatalf("logs --follow should fail at the lease-status preflight, got %v", err)
 	}
 	if jwt.TTL != 3600 {
 		t.Errorf("follow logs jwt ttl = %d, want 3600", jwt.TTL)
@@ -389,7 +390,7 @@ func TestStreamCloseErr(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := streamCloseErr("log", tc.reason, tc.follow)
+			err := aktprovider.StreamCloseError("log", tc.reason, tc.follow)
 			if tc.wantErr && err == nil {
 				t.Fatalf("reason %q follow=%v: expected an error, got nil", tc.reason, tc.follow)
 			}
@@ -409,7 +410,7 @@ func TestPrintStreamRecordFormats(t *testing.T) {
 	t.Run("pretty", func(t *testing.T) {
 		cmd, buf := streamOutputCommand(t, "pretty")
 		for _, record := range records {
-			if err := printStreamRecord(cmd, record, fmt.Sprintf("[%s] %s", record.Name, record.Message)); err != nil {
+			if err := output.PrintStreamRecord(cmd, record, fmt.Sprintf("[%s] %s", record.Name, record.Message)); err != nil {
 				t.Fatalf("print stream record: %v", err)
 			}
 		}
@@ -421,7 +422,7 @@ func TestPrintStreamRecordFormats(t *testing.T) {
 	t.Run("jsonl", func(t *testing.T) {
 		cmd, buf := streamOutputCommand(t, "json")
 		for _, record := range records {
-			if err := printStreamRecord(cmd, record, "unused"); err != nil {
+			if err := output.PrintStreamRecord(cmd, record, "unused"); err != nil {
 				t.Fatalf("print stream record: %v", err)
 			}
 		}
@@ -444,7 +445,7 @@ func TestPrintStreamRecordFormats(t *testing.T) {
 	t.Run("yaml documents", func(t *testing.T) {
 		cmd, buf := streamOutputCommand(t, "yaml")
 		for _, record := range records {
-			if err := printStreamRecord(cmd, record, "unused"); err != nil {
+			if err := output.PrintStreamRecord(cmd, record, "unused"); err != nil {
 				t.Fatalf("print stream record: %v", err)
 			}
 		}
@@ -472,7 +473,7 @@ func TestRetainTailLogRecords(t *testing.T) {
 		{Name: "web-b", Message: "second"},
 		{Name: "web-c", Message: "third"},
 	} {
-		records = retainTailLog(records, record, 2)
+		records = aktprovider.RetainTail(records, record, 2)
 	}
 
 	want := []providerLogMsg{
@@ -552,8 +553,8 @@ func TestMatchesService(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := matchesService(tc.pod, tc.service); got != tc.want {
-				t.Fatalf("matchesService(%q, %q) = %v, want %v", tc.pod, tc.service, got, tc.want)
+			if got := aktprovider.MatchesService(tc.pod, tc.service); got != tc.want {
+				t.Fatalf("MatchesService(%q, %q) = %v, want %v", tc.pod, tc.service, got, tc.want)
 			}
 		})
 	}
