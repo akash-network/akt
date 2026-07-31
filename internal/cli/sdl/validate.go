@@ -9,18 +9,18 @@ import (
 
 // Issue is a single validation or lint finding.
 type Issue struct {
-	Path    string
-	Message string
-	Hint    string
+	Path    string `json:"path" yaml:"path"`
+	Message string `json:"message" yaml:"message"`
+	Hint    string `json:"hint,omitempty" yaml:"hint,omitempty"`
 }
 
 // Result is the outcome of validating one SDL document.
 type Result struct {
-	Valid    bool
-	Services int
-	Groups   int
-	Errors   []Issue
-	Warnings []Issue
+	Valid    bool    `json:"valid" yaml:"valid"`
+	Services int     `json:"services" yaml:"services"`
+	Groups   int     `json:"groups" yaml:"groups"`
+	Errors   []Issue `json:"errors" yaml:"errors"`
+	Warnings []Issue `json:"warnings" yaml:"warnings"`
 }
 
 // Validate parses an SDL document with pkg.akt.dev/go/sdl — the same parser

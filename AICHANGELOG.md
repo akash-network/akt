@@ -81,6 +81,17 @@
   named `textual` and leaf help omitted the fourth implemented mode. The
   boundary contract now follows the actual signer set that validation will
   enforce.
+- **SDL output selection and redirected store status were cosmetic flags**:
+  `sdl init` silently emitted YAML after an explicit JSON/YAML selection,
+  `sdl validate` ignored structured output entirely, and `store status` leaked
+  ANSI styling into redirects and `NO_COLOR` output. Raw SDL generation now
+  refuses explicit format selection, validation has stable JSON/YAML results,
+  and the store pretty writer strips styling outside an interactive terminal.
+
+- **Alternate query pre-runs skipped verbose diagnostics**: dependency-owned
+  IBC commands, direct CometBFT block queries, and local derivations now honor
+  `-v` consistently. Network queries report the selected endpoint and chain on
+  stderr; local queries identify their local execution and selected chain.
 
 - **Vendored and local query leaves could bypass core CLI guarantees**:
   explicit node and height overrides were ignored by several leaves, two IBC

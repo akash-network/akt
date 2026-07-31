@@ -1948,6 +1948,11 @@ List the built-in SDL scaffolds (alias: `akt sdl templates`, matching the refere
 
 Generate SDL YAML on stdout, pipeable into `akt sdl validate -` or redirected to a file for `akt deploy`. The output is self-checked against the validator before printing. Flags are generation parameters with per-scaffold defaults — not positional-argument twins — so the zero-flag invocation always produces a deployable SDL. Every explicitly set generation parameter is checked with the same parser and lint rules as `akt sdl validate` before stdout is written. A value that would make the generated SDL invalid exits 2, names the changed flag(s) and validation reason, and emits no SDL. The post-generation self-check reports an internal invariant failure only when a built-in scaffold with its defaults is invalid. Pricing defaults to a 10000 uact/block ceiling (100000 for `gpu`) so bids arrive.
 
+This command is a raw-document generator: stdout is always the deployable YAML
+document. An explicitly supplied `--output`/`-o` is rejected as a usage error,
+including `-o yaml`, rather than being ignored or wrapping the document. The
+default output setting in configuration does not alter the generated document.
+
 | Flag          | Type        | Description                                              |
 | ------------- | ----------- | --------------------------------------------------------- |
 | `--name`      | string      | Service name (default per scaffold: `web` / `app`)        |
@@ -1971,6 +1976,20 @@ Validate an SDL offline (`-` reads stdin). Parsing and schema/relational validat
 - **Pricing denom**: `uact` passes; `uakt` produces a **warning**, not an error — a deliberate deviation from the reference, which hard-rejects `uakt` because it only serves the managed Console API. akt serves both rails: `uakt` is valid on-chain, but console-api (managed) contexts price in `uact`. Any other denom is an error, matching the reference.
 
 Exit `0` when valid, printing a summary (`valid: N service(s), M group(s), K warning(s)`) plus any warnings; exit `1` when invalid, listing every parse/lint error.
+
+With `--output json` or `--output yaml`, the command writes one structured result
+to stdout with the following stable shape, then preserves the same exit-status
+contract. `errors` and `warnings` are arrays (empty rather than null); each issue
+contains `path`, `message`, and an optional `hint`. Human-readable issue lines
+are not mixed into structured stdout.
+
+```yaml
+valid: true
+services: 1
+groups: 1
+errors: []
+warnings: []
+```
 
 ```bash
 # Generate, self-check, and validate
@@ -2127,6 +2146,12 @@ invocation that supplies both. An explicit `--chain-id` must agree with the
 selected context even for a local derivation. File-oriented queries such as
 `wasm code`, whose primary result is written to a named file, reject structured
 stdout formats they cannot represent.
+
+At verbosity level one or higher, every query pre-run writes its selected RPC
+endpoint and chain ID to stderr before network work begins. Dependency-owned
+query trees and direct CometBFT query leaves follow the same diagnostic path.
+Purely local derivations identify themselves as local and report the selected
+chain ID instead of claiming that they contacted an endpoint.
 
 ### 3.4 Pagination Flags
 
@@ -3965,7 +3990,10 @@ Query commands use a **registry-based pretty output system** (`internal/output/p
 | `json`            | Machine-readable JSON (compact, no colors, no formatting) |
 | `yaml`            | Machine-readable YAML (no colors, no formatting) |
 
-When `--output pretty` (the default), output is styled using **lipgloss**. Colors are disabled automatically when stdout is not a TTY or when the `NO_COLOR` environment variable is set.
+When `--output pretty` (the default), output is styled using **lipgloss**. At the
+final write boundary, all ANSI styling (color, bold, underline, and related
+sequences) is removed when stdout is not a TTY or when the `NO_COLOR`
+environment variable is present, even when its value is empty.
 
 ### 10.1.1 Stream Separation (stdout vs stderr)
 
