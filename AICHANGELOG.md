@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- **Alternate query pre-runs skipped verbose diagnostics**: dependency-owned
+  IBC commands, direct CometBFT block queries, and local derivations now honor
+  `-v` consistently. Network queries report the selected endpoint and chain on
+  stderr; local queries identify their local execution and selected chain.
+
 - **Vendored and local query leaves could bypass core CLI guarantees**:
   explicit node and height overrides were ignored by several leaves, two IBC
   parameter queries panicked on transport errors, IBC YAML emitted JSON, two

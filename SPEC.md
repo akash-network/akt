@@ -2052,6 +2052,12 @@ selected context even for a local derivation. File-oriented queries such as
 `wasm code`, whose primary result is written to a named file, reject structured
 stdout formats they cannot represent.
 
+At verbosity level one or higher, every query pre-run writes its selected RPC
+endpoint and chain ID to stderr before network work begins. Dependency-owned
+query trees and direct CometBFT query leaves follow the same diagnostic path.
+Purely local derivations identify themselves as local and report the selected
+chain ID instead of claiming that they contacted an endpoint.
+
 ### 3.4 Pagination Flags
 
 Added to list-type query commands via `AddPaginationFlagsToCmd()`.
