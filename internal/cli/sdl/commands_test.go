@@ -2,6 +2,7 @@ package sdl
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"pkg.akt.dev/akt/internal/cliutil"
+	clioutput "pkg.akt.dev/akt/internal/output"
 )
 
 // runSDL executes the sdl command group with the given args, capturing
@@ -21,6 +23,7 @@ func runSDL(t *testing.T, stdin string, args ...string) (stdout, stderr string, 
 	cmd := Commands()
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
+	cmd.PersistentFlags().VarP(clioutput.NewFormatFlag("pretty"), "output", "o", "Output format: pretty, json, yaml")
 
 	var out, errBuf bytes.Buffer
 	cmd.SetOut(&out)
@@ -221,6 +224,18 @@ func TestInitUnknownScaffold(t *testing.T) {
 	require.Equal(t, cliutil.ExitUsage, cliutil.ExitCode(err))
 }
 
+func TestInitRefusesExplicitOutputFormat(t *testing.T) {
+	for _, format := range []string{"pretty", "json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			stdout, _, err := runSDL(t, "", "init", "web", "--output", format)
+			require.Error(t, err)
+			require.Equal(t, cliutil.ExitUsage, cliutil.ExitCode(err))
+			require.Contains(t, err.Error(), "always writes raw SDL YAML")
+			require.Empty(t, stdout)
+		})
+	}
+}
+
 func TestInitEnvRequiresKeyValue(t *testing.T) {
 	_, _, err := runSDL(t, "", "init", "web", "--env", "MISSING_EQUALS")
 	require.Error(t, err)
@@ -386,6 +401,51 @@ func TestValidateValidFile(t *testing.T) {
 	stdout, _, err := runSDL(t, "", "validate", path)
 	require.NoError(t, err)
 	require.Contains(t, stdout, "valid: 1 service(s), 1 group(s), 0 warning(s)")
+}
+
+func TestValidateStructuredOutput(t *testing.T) {
+	path := writeFixture(t, validSDL)
+
+	for _, format := range []string{"json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			stdout, stderr, err := runSDL(t, "", "validate", path, "--output", format)
+			require.NoError(t, err)
+			require.Empty(t, stderr)
+
+			var got Result
+			if format == "json" {
+				require.NoError(t, json.Unmarshal([]byte(stdout), &got))
+				require.Contains(t, stdout, `"valid": true`)
+				require.Contains(t, stdout, `"errors": []`)
+			} else {
+				require.NoError(t, yaml.Unmarshal([]byte(stdout), &got))
+				require.Contains(t, stdout, "valid: true")
+				require.Contains(t, stdout, "errors: []")
+			}
+
+			require.True(t, got.Valid)
+			require.Equal(t, 1, got.Services)
+			require.Equal(t, 1, got.Groups)
+			require.NotNil(t, got.Errors)
+			require.NotNil(t, got.Warnings)
+		})
+	}
+}
+
+func TestValidateInvalidStructuredOutput(t *testing.T) {
+	path := writeFixture(t, strings.Replace(validSDL, "image: nginx:1.27", "image: nginx", 1))
+
+	stdout, stderr, err := runSDL(t, "", "validate", path, "--output", "json")
+	require.Error(t, err)
+	require.Equal(t, cliutil.ExitGeneral, cliutil.ExitCode(err))
+	require.Empty(t, stderr, "human issue lines must not corrupt structured output")
+
+	var got Result
+	require.NoError(t, json.Unmarshal([]byte(stdout), &got))
+	require.False(t, got.Valid)
+	require.Len(t, got.Errors, 1)
+	require.Contains(t, got.Errors[0].Message, "has no tag")
+	require.NotNil(t, got.Warnings)
 }
 
 func TestValidateUnpinnedImage(t *testing.T) {

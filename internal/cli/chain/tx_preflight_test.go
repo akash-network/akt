@@ -56,3 +56,19 @@ func TestVendoredTransactionGroupHelpDoesNotInitializeClient(t *testing.T) {
 		t.Fatalf("help output missing usage:\n%s", stdout.String())
 	}
 }
+
+func TestVendoredTransactionUnknownGroupDoesNotInitializeClient(t *testing.T) {
+	root := TxCmd()
+	var stdout, stderr bytes.Buffer
+	root.SetOut(&stdout)
+	root.SetErr(&stderr)
+	root.SetArgs([]string{"ibc", "channelv2", "--generate-only"})
+
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), `unknown command "channelv2" for "ibc"`) {
+		t.Fatalf("tx ibc channelv2 error = %v; want unknown command before preflight", err)
+	}
+	if strings.Contains(err.Error(), "sign mode") {
+		t.Fatalf("empty group reached transaction preflight: %v", err)
+	}
+}

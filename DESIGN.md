@@ -628,6 +628,19 @@ representations, and integer precision remain identical across formats.
 The output flag is an enum at the parsing boundary. A misspelling such as
 `-o josn` is a usage error; it must never fall through to pretty output.
 
+Commands whose stdout is itself a source document, rather than a rendering of
+command state, keep that document byte-stable and reject an explicitly selected
+`--output` format. For example, `akt sdl init` always emits deployable SDL YAML;
+it does not wrap that YAML or silently reinterpret `-o json`. Validation
+commands are different: their JSON and YAML modes serialize a stable validation
+result containing validity, document counts, errors, and warnings.
+
+Pretty output is styled only at an interactive terminal. Writers strip all ANSI
+styling (including bold and underline, not only color) when stdout is redirected
+or `NO_COLOR` is present. This decision is made at the final write boundary so
+shared renderers remain byte-identical between the CLI and monitor while files,
+pipes, and test buffers remain plain text.
+
 **Formatting conventions:**
 - **List results**: Tabwriter-aligned tables with lipgloss-styled headers. State columns are color-coded (green=active/open, yellow=warning states, red=closed/lost, gray=invalid). Key identifiers (DSEQ, moniker) are bolded.
 - **Single-item results**: Grouped key-value pairs with lipgloss-styled section headers (e.g., "Deployment", "Groups", "Escrow"). Values are colorized where appropriate.
@@ -752,7 +765,7 @@ Send
 - Keyring management: shared keyrings, keys visible to all referencing contexts
 - Action log: append-only JSONL log per context, reading/filtering
 - Chain client with multi-endpoint failover
-- Core tx commands: bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, slashing, vesting, upgrade, crisis, IBC
+- Core tx commands: bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, slashing, vesting, upgrade, IBC
 - Core query commands: all matching modules
 - Key management commands
 - Output formatting with pretty output: registry-based per-type formatters for all query results, lipgloss color-coded states. `--output json` and `--output yaml` for machine-readable output
@@ -763,6 +776,13 @@ Send
 - Version command with build-time injection
 - Shell completion (bash, zsh, fish)
 - Basic e2e test suite
+
+The transaction surface follows executable Akash app capabilities, not every
+group exported by upstream SDK dependencies. Modules whose messages are not
+registered by the Akash app are omitted, as are future-facing command groups
+with no action children. This keeps help, completion, and surface coverage from
+presenting a successful no-op or a transaction the selected Akash network can
+never handle.
 
 ### Phase 2: Store + Workflow Commands
 
