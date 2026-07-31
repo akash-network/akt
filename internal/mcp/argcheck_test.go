@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"math"
 	"testing"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -53,6 +54,56 @@ func TestCheckArgsAcceptsCorrectTypes(t *testing.T) {
 	args := map[string]any{"limit": float64(5), "dseq": "12345", "force": true}
 	if err := checkArgs(s, args); err != nil {
 		t.Fatalf("valid arguments rejected: %v", err)
+	}
+}
+
+func TestCheckArgsEnforcesNumericConstraints(t *testing.T) {
+	s := schema(map[string]any{
+		"limit": map[string]any{
+			"type":       "number",
+			"minimum":    float64(0),
+			"maximum":    float64(200),
+			"multipleOf": float64(1),
+		},
+	})
+
+	cases := []struct {
+		name    string
+		value   float64
+		wantErr string
+	}{
+		{"negative", -1, "parameter limit must be greater than or equal to 0"},
+		{"fractional", 1.5, "parameter limit must be a whole number"},
+		{"above maximum", 201, "parameter limit must be less than or equal to 200"},
+		{"not a number", math.NaN(), "parameter limit must be a finite number"},
+		{"infinite", math.Inf(1), "parameter limit must be a finite number"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkArgs(s, map[string]any{"limit": tc.value})
+			if err == nil {
+				t.Fatalf("value %v was accepted", tc.value)
+			}
+			if err.Error() != tc.wantErr {
+				t.Fatalf("error = %q, want %q", err, tc.wantErr)
+			}
+		})
+	}
+
+	for _, value := range []float64{0, 1, 200} {
+		if err := checkArgs(s, map[string]any{"limit": value}); err != nil {
+			t.Errorf("valid value %v rejected: %v", value, err)
+		}
+	}
+
+	integerOnly := schema(map[string]any{
+		"dseq": map[string]any{"type": "number", "multipleOf": float64(1)},
+	})
+	if err := checkArgs(integerOnly, map[string]any{"dseq": 1_000_000_000_000.5}); err == nil {
+		t.Fatal("large fractional identifier was accepted")
+	} else if err.Error() != "parameter dseq must be a whole number" {
+		t.Fatalf("large fractional error = %q", err)
 	}
 }
 

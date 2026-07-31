@@ -1,13 +1,18 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
 	"pkg.akt.dev/akt/internal/cli/chain/flags"
+	"pkg.akt.dev/akt/internal/cliutil"
 	"pkg.akt.dev/akt/internal/output"
 )
+
+type queryVerboseContextKey struct{}
 
 func rejectChangedQueryFlag(cmd *cobra.Command, flagName, reason string) error {
 	if cmd.Flags().Lookup(flagName) == nil || !cmd.Flags().Changed(flagName) {
@@ -29,7 +34,12 @@ func localQueryPreRunE(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	return rejectChangedQueryFlag(cmd, flags.FlagHeight, "the result is computed locally and does not read chain state")
+	if err := rejectChangedQueryFlag(cmd, flags.FlagHeight, "the result is computed locally and does not read chain state"); err != nil {
+		return err
+	}
+
+	verboseLocalQuery(cmd, cctx.ChainID)
+	return nil
 }
 
 func rejectUnsupportedHeightPreRunE(cmd *cobra.Command, _ []string) error {
@@ -50,6 +60,55 @@ func rejectPositionalAndFlagHeightPreRunE(cmd *cobra.Command, args []string) err
 	}
 
 	return nil
+}
+
+func directQueryWithoutHeightPreRunE(cmd *cobra.Command, args []string) error {
+	if err := rejectUnsupportedHeightPreRunE(cmd, args); err != nil {
+		return err
+	}
+
+	return verboseDirectQueryPreRunE(cmd)
+}
+
+func directQueryHeightPreRunE(cmd *cobra.Command, args []string) error {
+	if err := rejectPositionalAndFlagHeightPreRunE(cmd, args); err != nil {
+		return err
+	}
+
+	return verboseDirectQueryPreRunE(cmd)
+}
+
+func verboseDirectQueryPreRunE(cmd *cobra.Command) error {
+	cctx, err := GetClientQueryContext(cmd)
+	if err != nil {
+		return err
+	}
+
+	verboseQueryEndpoint(cmd, cctx)
+	return nil
+}
+
+func verboseQueryEndpoint(cmd *cobra.Command, cctx sdkclient.Context) {
+	if !markQueryVerbose(cmd) {
+		return
+	}
+	cliutil.Verbosef(cmd, "querying %s (chain %s)", cctx.NodeURI, cctx.ChainID)
+}
+
+func verboseLocalQuery(cmd *cobra.Command, chainID string) {
+	if !markQueryVerbose(cmd) {
+		return
+	}
+	cliutil.Verbosef(cmd, "querying locally (chain %s)", chainID)
+}
+
+func markQueryVerbose(cmd *cobra.Command) bool {
+	if !cliutil.IsVerbose(cmd) || cmd.Context().Value(queryVerboseContextKey{}) != nil {
+		return false
+	}
+
+	cmd.SetContext(context.WithValue(cmd.Context(), queryVerboseContextKey{}, true))
+	return true
 }
 
 func fileOutputQueryPreRunE(cmd *cobra.Command, args []string) error {
