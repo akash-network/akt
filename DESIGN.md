@@ -375,6 +375,20 @@ graph LR
 | `NewConsole(consoleClient, chainQueries, root, ctxName)` | `KindConsole` | Mapping each message type to a Console API REST endpoint (SPEC §7.5). Query steps go straight to the chain when a chain client is available; without one, `market.bids` falls back to the Console bids endpoint. `root`/`ctxName` locate the per-context manifest cache that carries the manifest from deployment create to lease create. |
 | `NewProvider(clientCtx, authType)` | chain rail only | Provider gateway calls (JWT or mTLS). The console rail has **no** provider client: the Console API submits the manifest internally during lease creation, so provider steps are dropped from the run with a note on stderr rather than failing it. |
 
+On the chain rail, an update's provider step queries every page of active
+leases for the deployment, de-duplicates and sorts their provider addresses,
+then submits the updated manifest to every provider. A failure from one
+provider does not prevent attempts to the others, but the workflow remains
+failed until every active provider accepts the manifest. Retrying the update is
+therefore safe. The Console rail continues to omit this provider step because
+its deployment update endpoint owns manifest delivery.
+
+Workflow failures never close deployments automatically. When deploy reaches
+paid on-chain state before failing, the command surfaces the DSEQ, provider (if
+known), and exact retry and explicit-close commands in both human and JSONL
+output. This keeps irreversible cleanup under the user's control while making
+the continuing escrow liability unmistakable.
+
 **Why a translation layer and not per-rail commands**: the alternative — a `deploy` that knows about keyrings and a separate Console `deploy` — means every new action is designed twice, and the two surfaces drift on flag names, defaults, argument order, and error text. Here, adding an action is a workflow definition plus (at most) a message mapping in the console adapter. Neither rail's command handler changes, and no rail-specific redesign is required.
 
 **One argument surface**: the CLI's argument surface is *generated* from the workflow definition (`internal/cli/workflow`). Positional arguments come from the definition's required file param and its optional `dseq` param, and every non-file param also gets a flag carrying the definition's type, default, and description. Because the definition is shared, `akt deploy`, `akt update`, and `akt close` take **identical arguments on both rails** — the rail is a property of the active context (`auth-method`), not of the command line. A user switching from a keyring context to a console-api one types the same command.

@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- **Workflow failures hid paid partial state and chain updates stopped at the
+  transaction**: failed deploys now report their DSEQ, provider, continuing
+  escrow risk, and exact retry and explicit-close commands without performing
+  destructive cleanup automatically. Chain-backed updates deliver the revised
+  manifest to every active lease provider, attempt all providers before
+  failing, and remain safely retryable; Console-backed updates continue to use
+  the Console API's manifest handling.
+
 - **Monitor provider loading and WebSocket discovery were underspecified**:
   provider cache loading, on-chain reconciliation, health checks, periodic
   resync, and cache persistence now form one startup-owned pipeline independent

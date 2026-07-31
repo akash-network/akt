@@ -1134,16 +1134,16 @@ Steps can also define `retry` with `max` attempts and `delay` between retries.
 
 When a workflow aborts due to a step failure, the user may be left with partial on-chain state (e.g., a deployment was created but no lease was established, consuming escrow). The workflow engine handles this as follows:
 
-1. **Abort message includes partial state summary**: When a workflow aborts, the error output lists all successfully completed steps and their results (e.g., "Deployment created with DSEQ 12345"). This gives the user the information needed to clean up manually.
+1. **Abort message includes partial state summary**: When a deploy workflow aborts after `create-deployment` succeeds, both the human output and the returned command error identify the DSEQ and provider, when known. They also warn that escrow may continue to be consumed while the deployment or lease remains open. This gives the user the information needed to recover even when stdout was redirected or suppressed.
 
 2. **Recovery suggestions**: The abort message includes actionable suggestions based on which step failed:
    - Failed after `create-deployment`: Suggest `akt close <dseq>` to close the orphaned deployment and reclaim the escrow deposit.
-   - Failed after `create-lease` but before `send-manifest`: Suggest `akt provider send-manifest <sdl-file> --dseq <dseq>` to retry manifest submission.
-   - Failed during `send-manifest`: Suggest retrying with `akt provider send-manifest` directly.
+   - Failed after `create-lease` but before `send-manifest`: Suggest `akt provider send-manifest <sdl-file> --dseq <dseq> --provider <provider>` to retry manifest submission.
+   - Failed during `send-manifest`: Suggest the same complete retry command, including the SDL path, DSEQ, and provider.
 
-3. **JSONL mode**: In JSONL mode, the error line includes a `"recovery"` field with the suggested command:
+3. **JSONL mode**: In JSONL mode, the failed step includes `"dseq"`, `"provider"`, `"recovery"`, and `"cleanup"` fields when known. The recovery and cleanup values are complete copy-pasteable commands:
    ```jsonl
-   {"workflow":"deploy","id":"wf_abc123","step":"send-manifest","result":"error","errors":["provider gateway timeout"],"txs":[],"recovery":"akt provider send-manifest deploy.yaml --dseq 12345"}
+   {"workflow":"deploy","id":"wf_abc123","step":"send-manifest","result":"error","errors":["provider gateway timeout"],"txs":[],"dseq":12345,"provider":"akash1provider...","recovery":"akt provider send-manifest deploy.yaml --dseq 12345 --provider akash1provider...","cleanup":"akt close 12345"}
    ```
 
 4. **No automatic rollback**: The workflow engine does not automatically roll back completed steps. On-chain transactions are irreversible. The user must explicitly close deployments or leases they no longer want.
@@ -1251,6 +1251,17 @@ steps:
       dseq: "{{ .Params.dseq }}"
     on-error: abort
 
+  - name: send-manifest
+    type: provider
+    action: send-manifest-to-active-leases
+    params:
+      dseq: "{{ .Params.dseq }}"
+      sdl: "{{ index .Params \"sdl-file\" }}"
+    retry:
+      max: 3
+      delay: "5s"
+    on-error: abort
+
   - name: display-result
     type: output
     template: |
@@ -1258,7 +1269,13 @@ steps:
         DSEQ: {{ .Params.dseq }}
 ```
 
-Manifest re-send to providers with active leases (a `foreach` over `market.leases` running `provider`/`send-manifest` sub-steps) is planned for when the engine gains the `foreach` step type; until then, keyring users re-send manifests with `akt provider send-manifest` after an update, and console-api contexts get manifest handling from the Console API automatically.
+On the chain rail, `send-manifest-to-active-leases` queries every page of active
+leases for the owner and DSEQ, de-duplicates and sorts provider addresses, and
+attempts manifest submission to all of them. A provider failure does not stop
+delivery attempts to the remaining providers, but the step fails unless every
+provider accepts the update. No active leases is a successful no-op. The
+operation is safe to retry. Console API contexts omit the provider step because
+`PUT /v1/deployments/{dseq}` handles manifest delivery internally.
 
 **Close workflow definition:**
 
