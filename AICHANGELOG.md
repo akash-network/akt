@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- **Remediation changes violated the repository's lint rules**: network
+  cloning no longer shadows Go's built-in `copy`, and Console acknowledgement
+  tests assert decoded booleans without redundant literals.
+
 - **Key detail and address parsing commands ignored machine output**:
   `context keys show` and `context keys parse` now render canonical JSON and
   YAML values through the selected command writer. Address-only output stays

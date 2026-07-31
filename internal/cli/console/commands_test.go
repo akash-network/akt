@@ -203,7 +203,8 @@ func TestLoginAndLogoutHonorContextOverride(t *testing.T) {
 		t.Fatalf("login: %v", err)
 	}
 	ack := decodeStructuredMap(t, "json", out)
-	if ack["context"] != "staging" || ack["authenticated"] != true || ack["username"] != "max" {
+	authenticated, ok := ack["authenticated"].(bool)
+	if ack["context"] != "staging" || !ok || !authenticated || ack["username"] != "max" {
 		t.Errorf("login acknowledgement = %#v", ack)
 	}
 	if strings.Contains(out, "staging-key") {
@@ -222,7 +223,8 @@ func TestLoginAndLogoutHonorContextOverride(t *testing.T) {
 		t.Fatalf("logout: %v", err)
 	}
 	ack = decodeStructuredMap(t, "yaml", out)
-	if ack["context"] != "staging" || ack["authenticated"] != false {
+	authenticated, ok = ack["authenticated"].(bool)
+	if ack["context"] != "staging" || !ok || authenticated {
 		t.Errorf("logout acknowledgement = %#v", ack)
 	}
 	if got, _ := aktctx.StoredConsoleAPIKey(m.Root(), "staging"); got != "" {

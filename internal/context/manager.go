@@ -381,19 +381,19 @@ func (m *Manager) UpdateContextAndNetwork(
 			return fmt.Errorf("network %q not found", ctx.Network.Name)
 		}
 
-		copy := cloneNetwork(m.cfg.Networks[networkIndex])
+		networkCopy := cloneNetwork(m.cfg.Networks[networkIndex])
 		if forkName != "" {
 			if m.getNetwork(forkName) != nil {
 				return fmt.Errorf("network %q already exists", forkName)
 			}
-			copy.Name = forkName
+			networkCopy.Name = forkName
 			ctx.Network = Network{Name: forkName}
 		}
 
-		if err := applyNetwork(&copy); err != nil {
+		if err := applyNetwork(&networkCopy); err != nil {
 			return err
 		}
-		updatedNetwork = &copy
+		updatedNetwork = &networkCopy
 	} else if forkName != "" {
 		return fmt.Errorf("cannot fork a network without network changes")
 	}
