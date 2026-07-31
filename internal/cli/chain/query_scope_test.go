@@ -14,6 +14,7 @@ import (
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
+	certv1 "pkg.akt.dev/go/node/cert/v1"
 	cv1beta3 "pkg.akt.dev/go/node/client/v1beta3"
 	dvbeta "pkg.akt.dev/go/node/deployment/v1beta4"
 	mvbeta "pkg.akt.dev/go/node/market/v1beta5"
@@ -45,6 +46,27 @@ type capturingMarketQuery struct {
 
 	listCalls int
 }
+
+type capturingCertQuery struct {
+	certv1.QueryClient
+
+	last      *certv1.QueryCertificatesRequest
+	listCalls int
+}
+
+func (s *capturingCertQuery) Certificates(_ context.Context, req *certv1.QueryCertificatesRequest, _ ...grpc.CallOption) (*certv1.QueryCertificatesResponse, error) {
+	s.listCalls++
+	s.last = req
+
+	return &certv1.QueryCertificatesResponse{}, nil
+}
+
+type certQueryClient struct {
+	*stubQueryClient
+	cert certv1.QueryClient
+}
+
+func (s *certQueryClient) Certs() certv1.QueryClient { return s.cert }
 
 func (s *capturingMarketQuery) Orders(_ context.Context, req *mvbeta.QueryOrdersRequest, _ ...grpc.CallOption) (*mvbeta.QueryOrdersResponse, error) {
 	s.listCalls++
@@ -200,6 +222,27 @@ func TestQueryListWithDefaultOwnerScopes(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, stateTestOwner, mkt.leases.Filters.Owner)
 	})
+
+	t.Run("certificate", func(t *testing.T) {
+		cert := &capturingCertQuery{}
+		query := &certQueryClient{stubQueryClient: &stubQueryClient{}, cert: cert}
+
+		_, err := execQueryCmdFrom(t, GetQueryCertCertificatesCmd(), query, stateTestOwner)
+		require.NoError(t, err)
+		require.Equal(t, 1, cert.listCalls)
+		require.Equal(t, stateTestOwner, cert.last.Filter.Owner)
+	})
+}
+
+func TestCertificateListWithoutOwnerIsRefused(t *testing.T) {
+	cert := &capturingCertQuery{}
+	query := &certQueryClient{stubQueryClient: &stubQueryClient{}, cert: cert}
+
+	out, err := execQueryCmdFrom(t, GetQueryCertCertificatesCmd(), query, "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no default account set")
+	require.Zero(t, cert.listCalls, "no unscoped certificate query may be sent")
+	require.Empty(t, out)
 }
 
 // TestQueryListByProviderWithProviderScopes: provider mode still works when the
