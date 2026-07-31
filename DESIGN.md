@@ -241,7 +241,7 @@ A `console-api` context has no wallet, yet the operations users reach for most a
 The shared gateway boundary also normalizes protocol details that providers do
 not implement uniformly. It resolves a provider address to the on-chain host
 URI unless the user supplies an explicit URL override, verifies a lease before
-opening its log or event stream, applies bounded log filters locally, and
+opening its log, event, or shell stream, applies bounded log filters locally, and
 treats an EOF as normal completion only for one-shot streams. Shell stdin EOF
 is held until the remote result arrives so a successful command cannot print
 its output and then fail locally. Gateway HTTP errors retain the provider's

@@ -6,7 +6,7 @@
 
 - **Provider gateway behavior was underspecified across authentication rails**:
   provider addresses now resolve through their on-chain host URI unless an
-  explicit URL overrides it; bounded streams verify the lease, apply log
+  explicit URL overrides it; gateway streams verify the lease, apply log
   filters locally, and distinguish normal completion from interrupted follow
   mode. Structured output, shell stdin completion, and detailed gateway error
   contracts are defined once for both chain-backed and Console-backed calls.

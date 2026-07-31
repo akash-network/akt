@@ -1555,8 +1555,8 @@ Same pattern as `migrate-hostnames` but for IP endpoints.
 status, and manifest reads emit JSON by default; `--output json` and
 `--output yaml` preserve the same field names and scalar types. Log and event
 streams emit human lines by default, one compact object per line in JSON mode,
-and one YAML document per record in YAML mode. Before opening a log or event
-stream, `akt` checks lease status so a missing lease is a non-zero gateway
+and one YAML document per record in YAML mode. Before opening a log, event, or
+shell stream, `akt` checks lease status so a missing lease is a non-zero gateway
 error instead of a successful empty stream. An EOF closes a bounded one-shot
 stream successfully after its records are written; the same EOF is an error
 under `--follow`. Non-success gateway responses include both the HTTP status
