@@ -30,6 +30,7 @@ type TxResult struct {
 // Implemented by the provider client package (Phase 2).
 type ProviderClient interface {
 	SendManifest(ctx context.Context, provider string, dseq uint64, sdl []byte) error
+	SendManifestToActiveLeases(ctx context.Context, dseq uint64, sdl []byte) ([]string, error)
 	LeaseStatus(ctx context.Context, provider string, dseq uint64) (json.RawMessage, error)
 }
 

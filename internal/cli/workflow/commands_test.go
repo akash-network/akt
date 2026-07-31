@@ -595,6 +595,74 @@ func TestBuiltinWorkflowParamTypesMatchPreflightContracts(t *testing.T) {
 	}
 }
 
+func TestBuiltinUpdateSendsManifestBeforeReportingSuccess(t *testing.T) {
+	update := loadBuiltin(t, "update")
+	if len(update.Steps) != 3 {
+		t.Fatalf("update steps = %+v, want update, manifest delivery, display", update.Steps)
+	}
+
+	manifest := update.Steps[1]
+	if manifest.Name != "send-manifest" || manifest.Type != wf.StepProvider || manifest.Action != "send-manifest-to-active-leases" {
+		t.Fatalf("update manifest step = %+v", manifest)
+	}
+	if manifest.Retry == nil || manifest.Retry.Max != 3 || manifest.Retry.Delay != "5s" {
+		t.Errorf("update manifest retry = %+v, want 3 attempts at 5s", manifest.Retry)
+	}
+	if update.Steps[2].Type != wf.StepOutput {
+		t.Errorf("success output must follow manifest delivery: %+v", update.Steps)
+	}
+}
+
+func TestExecuteConsoleUpdateUsesConsoleManifestHandling(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(aktctx.EnvConsoleAPIKey, "secret-key")
+
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPut || r.URL.Path != "/v1/deployments/4242" {
+			t.Errorf("unexpected console request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"owner":"o","dseq":"4242"},"state":"active"},"leases":[]}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	m := newTestManager(t, home, "console", aktctx.AuthMethodConsoleAPI)
+	if err := m.UpdateContext("console", func(c *aktctx.Context) error {
+		c.ConsoleAPIURL = srv.URL
+		return nil
+	}); err != nil {
+		t.Fatalf("UpdateContext: %v", err)
+	}
+
+	cmd := findCommand(CommandsWithManager(
+		func() string { return home },
+		func() string { return "console" },
+		func() *aktctx.Manager { return m },
+	), "update")
+	if cmd == nil {
+		t.Fatal("CommandsWithManager() did not surface update")
+	}
+
+	out, err := executeCommand(t, cmd, writeValidWorkflowSDL(t), "4242")
+	if err != nil {
+		t.Fatalf("update execute: %v\noutput:\n%s", err, out)
+	}
+	if requests != 1 {
+		t.Errorf("Console requests = %d, want one update request", requests)
+	}
+	for _, want := range []string{
+		"skipping step \"send-manifest\" (manifest submission handled by Console)",
+		"update-deployment", "display-result", "completed successfully",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output does not contain %q:\n%s", want, out)
+		}
+	}
+}
+
 func writeValidWorkflowSDL(t *testing.T) string {
 	t.Helper()
 

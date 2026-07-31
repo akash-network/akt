@@ -21,6 +21,17 @@ steps:
       dseq: "{{ .Params.dseq }}"
     on-error: abort
 
+  - name: send-manifest
+    type: provider
+    action: send-manifest-to-active-leases
+    params:
+      dseq: "{{ .Params.dseq }}"
+      sdl: "{{ index .Params \"sdl-file\" }}"
+    retry:
+      max: 3
+      delay: "5s"
+    on-error: abort
+
   - name: display-result
     type: output
     template: |

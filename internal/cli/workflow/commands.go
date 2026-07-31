@@ -9,6 +9,7 @@ import (
 	"io"
 	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -362,15 +363,16 @@ func executeWorkflow(
 	engine := wf.NewEngine(registry, logger)
 
 	state, runErr := engine.Run(cmd.Context(), rtDef, account, params)
+	recovery := deployRecoveryAdvice(state, runErr)
 
 	if jsonl {
-		emitJSONL(out, state)
+		emitJSONL(out, state, recovery)
 	} else {
-		printResults(out, state, runErr)
+		printResults(out, state, runErr, recovery)
 	}
 
 	if runErr != nil {
-		return fmt.Errorf("workflow %q failed: %w", rtDef.Name, runErr)
+		return workflowFailureError(rtDef.Name, runErr, recovery)
 	}
 
 	return nil
@@ -454,7 +456,7 @@ func printPlan(out io.Writer, rtDef *wf.WorkflowDef, params map[string]any) {
 
 // printResults renders per-step outcomes and the overall workflow status in
 // simple aligned text.
-func printResults(out io.Writer, state *wf.RunState, runErr error) {
+func printResults(out io.Writer, state *wf.RunState, runErr error, recovery *workflowRecovery) {
 	fmt.Fprintln(out, "\nResults:")
 
 	for _, name := range state.StepOrder {
@@ -475,7 +477,110 @@ func printResults(out io.Writer, state *wf.RunState, runErr error) {
 
 	if runErr == nil {
 		fmt.Fprintf(out, "\nWorkflow %q completed successfully.\n", state.Workflow)
+	} else if recovery != nil {
+		fmt.Fprintln(out, "\nPartial deployment state:")
+		fmt.Fprintf(out, "  DSEQ: %d\n", recovery.DSeq)
+		if recovery.Provider != "" {
+			fmt.Fprintf(out, "  Provider: %s\n", recovery.Provider)
+		}
+		fmt.Fprintln(out, "  WARNING: This deployment remains open; escrow may continue to be consumed.")
+		if recovery.Recovery != "" {
+			fmt.Fprintf(out, "  Recovery: %s\n", recovery.Recovery)
+		}
+		fmt.Fprintf(out, "  Explicit cleanup: %s\n", recovery.Cleanup)
 	}
+}
+
+type workflowRecovery struct {
+	DSeq     uint64
+	Provider string
+	Recovery string
+	Cleanup  string
+}
+
+func deployRecoveryAdvice(state *wf.RunState, runErr error) *workflowRecovery {
+	if state == nil || runErr == nil || state.Workflow != "deploy" {
+		return nil
+	}
+
+	created := state.Steps["create-deployment"]
+	if created == nil || created.Status != "success" {
+		return nil
+	}
+
+	dseq, err := workflowOutputUint64(created.Output, "dseq")
+	if err != nil || dseq == 0 {
+		return nil
+	}
+
+	provider := workflowOutputString(state.Steps["create-lease"], "provider")
+	if provider == "" {
+		provider = workflowOutputString(state.Steps["select-bid"], "provider")
+	}
+
+	recovery := &workflowRecovery{
+		DSeq:     dseq,
+		Provider: provider,
+		Cleanup:  fmt.Sprintf("akt close %d", dseq),
+	}
+	if provider != "" {
+		if sdlPath, ok := state.Params["sdl-file"].(string); ok && strings.TrimSpace(sdlPath) != "" {
+			recovery.Recovery = fmt.Sprintf(
+				"akt provider send-manifest %s --dseq %d --provider %s",
+				shellQuote(sdlPath), dseq, provider,
+			)
+		}
+	}
+
+	return recovery
+}
+
+func workflowOutputUint64(output map[string]any, key string) (uint64, error) {
+	if output == nil || output[key] == nil {
+		return 0, fmt.Errorf("workflow output %q is missing", key)
+	}
+
+	value := strings.TrimSpace(fmt.Sprint(output[key]))
+	parsed, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("workflow output %q is not an unsigned integer: %w", key, err)
+	}
+
+	return parsed, nil
+}
+
+func workflowOutputString(result *wf.StepResult, key string) string {
+	if result == nil || result.Output == nil || result.Output[key] == nil {
+		return ""
+	}
+
+	return strings.TrimSpace(fmt.Sprint(result.Output[key]))
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func workflowFailureError(workflow string, runErr error, recovery *workflowRecovery) error {
+	if recovery == nil {
+		return fmt.Errorf("workflow %q failed: %w", workflow, runErr)
+	}
+
+	provider := ""
+	if recovery.Provider != "" {
+		provider = fmt.Sprintf(" with provider %s", recovery.Provider)
+	}
+	retry := ""
+	if recovery.Recovery != "" {
+		retry = fmt.Sprintf("\nretry manifest delivery: %s", recovery.Recovery)
+	}
+
+	return fmt.Errorf(
+		"workflow %q failed: %w\n"+
+			"deployment DSEQ %d%s remains open; escrow may continue to be consumed.%s\n"+
+			"explicit cleanup: %s",
+		workflow, runErr, recovery.DSeq, provider, retry, recovery.Cleanup,
+	)
 }
 
 // jsonlTx is the tx object of a JSONL step line (SPEC §2.3.8).
@@ -494,10 +599,14 @@ type jsonlLine struct {
 	Result   string    `json:"result"`
 	Errors   []string  `json:"errors"`
 	Txs      []jsonlTx `json:"txs"`
+	DSeq     uint64    `json:"dseq,omitempty"`
+	Provider string    `json:"provider,omitempty"`
+	Recovery string    `json:"recovery,omitempty"`
+	Cleanup  string    `json:"cleanup,omitempty"`
 }
 
 // emitJSONL writes one JSONL line per completed step (SPEC §2.3.8).
-func emitJSONL(out io.Writer, state *wf.RunState) {
+func emitJSONL(out io.Writer, state *wf.RunState, recovery *workflowRecovery) {
 	enc := json.NewEncoder(out)
 
 	for _, name := range state.StepOrder {
@@ -525,6 +634,12 @@ func emitJSONL(out io.Writer, state *wf.RunState) {
 
 		if sr.Error != "" {
 			line.Errors = append(line.Errors, sr.Error)
+		}
+		if line.Result == "error" && recovery != nil {
+			line.DSeq = recovery.DSeq
+			line.Provider = recovery.Provider
+			line.Recovery = recovery.Recovery
+			line.Cleanup = recovery.Cleanup
 		}
 
 		if sr.TxHash != "" {
