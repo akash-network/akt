@@ -454,6 +454,10 @@ func (m Model) Init() tea.Cmd {
 		m.fetchBMEState,
 		m.renderTick(),
 		m.governanceSyncTick(),
+		tea.Sequence(m.loadFromCache, m.syncChain),
+		m.providerCheckTick(),
+		m.chainSyncTick(),
+		m.cacheSaveTick(),
 	}
 
 	if m.subscriber != nil {
@@ -1106,14 +1110,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.waitForSnapshot()
 
 	case providerCheckTickMsg:
-		// Provider monitoring ticks are currently disabled; they will be
-		// activated when the Provider dashboard implementation starts
-		// the chain sync and provider check tick chains in Init().
-		return m, nil
+		cmds := m.dispatchProviderChecks()
+		cmds = append(cmds, m.providerCheckTick())
+		return m, tea.Batch(cmds...)
 	case chainSyncTickMsg:
-		return m, nil
+		return m, tea.Batch(m.syncChain, m.chainSyncTick())
 	case cacheSaveTickMsg:
-		return m, nil
+		m.saveCache()
+		return m, m.cacheSaveTick()
 	case stateMsg:
 		return m.handleStateMsg(msg)
 	case monikersMsg:
@@ -1259,6 +1263,9 @@ func (m *Model) handleKeyMsg(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.saveCache()
 		return m, tea.Quit
 	case "r":
+		if m.hubTab == HubProvider {
+			return m, m.syncChain
+		}
 		if m.activeTab == TabGovernance {
 			return m, m.fetchGovernanceParams
 		}

@@ -409,7 +409,7 @@ akt q deployment 12345
 akt monitor
 
 # Connect to a specific RPC endpoint
-akt monitor https://rpc.akashnet.net:443
+akt monitor https://rpc.akt.dev:443/rpc
 
 # Launch directly into a specific dashboard
 akt monitor network
@@ -418,7 +418,7 @@ akt monitor oracle
 akt monitor bme
 
 # Or via flag
-akt monitor --rpc https://rpc.akashnet.net:443
+akt monitor --rpc https://rpc.akt.dev:443/rpc
 
 # Skip TLS verification
 akt monitor --insecure

@@ -1626,16 +1626,16 @@ Each dashboard is also directly accessible via its CLI subcommand. When launched
 
 **Endpoint resolution** (first match wins, shared by all subcommands):
 
-1. Positional argument: `akt monitor https://rpc.akashnet.net:443`
-2. `--rpc` flag: `akt monitor --rpc https://rpc.akashnet.net:443`
+1. Positional argument: `akt monitor https://rpc.akt.dev:443/rpc`
+2. `--rpc` flag: `akt monitor --rpc https://rpc.akt.dev:443/rpc`
 3. Active context RPC endpoint (from `context → network → endpoints.rpc[0]`)
 
 If no endpoint can be resolved, the command exits with an error.
 
-The monitor connects to `{rpc-endpoint}/websocket`. When a pathless RPC endpoint
-rejects that WebSocket handshake, it retries `{rpc-endpoint}/rpc/websocket` so
-the documented public Akash endpoint works through its reverse proxy. An
-endpoint that already contains a path is never rewritten.
+The monitor connects to `{rpc-endpoint}/websocket`. Help examples use
+`https://rpc.akt.dev:443/rpc`, whose CometBFT WebSocket service is part of the
+documented endpoint. An HTTP-only RPC gateway may still serve ordinary query
+commands, but it is not a valid monitor example.
 
 **Shared flags** (apply to `akt monitor` and all subcommands):
 

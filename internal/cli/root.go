@@ -734,7 +734,7 @@ context. A positional argument overrides the --rpc flag.`,
   akt monitor
 
   # Connect to a specific RPC endpoint
-  akt monitor https://rpc.akashnet.net:443
+  akt monitor https://rpc.akt.dev:443/rpc
 
   # Launch directly into the Provider dashboard
   akt monitor provider`,
@@ -764,7 +764,7 @@ voting progress, and governance parameters. Sub-tabs:
   2  Validators  Scrollable validator list with signing history
   3  Governance  Module-by-module parameter browser`,
 		Args:    cobra.MaximumNArgs(1),
-		Example: `  akt monitor network https://rpc.akashnet.net:443`,
+		Example: `  akt monitor network https://rpc.akt.dev:443/rpc`,
 		RunE:    monitorRunE(v, "network"),
 	}
 

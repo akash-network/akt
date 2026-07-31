@@ -65,11 +65,10 @@ check, chain-resync, and cache-save schedules. Switching dashboards changes only
 what is rendered; it does not start or stop the pipeline. Manual refresh
 requests an immediate reconciliation while retaining the periodic schedules.
 
-Public RPC gateways do not expose a uniform WebSocket path. The monitor first
-uses the endpoint's normal `/websocket` path. For a pathless endpoint it also
-tries `/rpc/websocket`, which is the reverse-proxy layout used by Akash's public
-RPC gateway. This fallback changes only WebSocket discovery; HTTP RPC requests
-continue to use the configured endpoint verbatim.
+Monitor examples use an RPC endpoint that is verified to expose CometBFT's
+WebSocket service. HTTP-only public gateways are still valid for ordinary chain
+queries, but they must not be advertised for a command whose primary data path
+is a WebSocket subscription.
 
 #### Non-Goals
 
