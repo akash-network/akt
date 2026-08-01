@@ -246,6 +246,11 @@ treats an EOF as normal completion only for one-shot streams. Shell stdin EOF
 is held until the remote result arrives so a successful command cannot print
 its output and then fail locally. Gateway HTTP errors retain the provider's
 response detail so rejected operations remain actionable on both rails.
+Shell output crosses one shared formatting boundary on both rails: pretty mode
+streams an interactive PTY unchanged, while JSON and YAML require an explicit
+remote command, disable the PTY, capture stdout and stderr separately, and emit
+one structured result. This keeps arbitrary remote bytes from masquerading as
+the requested machine-readable format.
 
 This is the only point at which a `console-api` context talks to a provider gateway. Deployment lifecycle operations still route through the Console API, which submits manifests internally during lease creation (SPEC §7.4).
 

@@ -1929,6 +1929,13 @@ record in JSON mode and one YAML document per record in YAML mode; pretty mode
 retains the human log/event lines. This applies equally to bounded and
 `--follow` streams.
 
+Shell is the one command-shaped stream. In pretty mode it remains an
+interactive byte stream. With `--output json` or `--output yaml`, shell requires
+an explicit command after `--`, runs it without a PTY, and emits exactly one
+object with string fields `stdout` and `stderr`. A structured interactive shell
+is refused before opening the provider connection. The same contract applies
+to `console shell` and `provider lease-shell`.
+
 Mutation acknowledgements are structured in JSON/YAML mode. Deployment close
 emits `{dseq, state, already_closed}` and deposit emits
 `{dseq, amount_usd, status}`. Template SDL is byte-for-byte deployable YAML in

@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- **Lease shell ignored structured output and emitted arbitrary remote bytes**:
+  Console and keyring-backed shell commands now share one formatting boundary.
+  Pretty mode remains interactive; JSON and YAML require an explicit command,
+  disable PTY allocation, and return separate `stdout` and `stderr` fields.
+
 - **Provider gateway commands disagreed across discovery, output, and
   streaming paths**: provider addresses now resolve their on-chain host URI,
   YAML preserves the JSON data model, and missing leases fail before log,
