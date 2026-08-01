@@ -597,7 +597,13 @@ transport type, so JSON field names, raw embedded objects, byte/string
 representations, and integer precision remain identical across formats.
 
 The output flag is an enum at the parsing boundary. A misspelling such as
-`-o josn` is a usage error; it must never fall through to pretty output.
+`-o josn` is a usage error; it must never fall through to pretty output. The
+same boundary owns the flag's help text so adopted commands cannot advertise a
+stale dependency enum after akt changes the accepted values.
+
+Machine-readable collection fields have a format-independent semantic shape.
+Empty collections are arrays in both JSON and YAML, including persisted store
+exports; they never change to `null` because one encoder observed a nil slice.
 
 Commands whose stdout is itself a source document, rather than a rendering of
 command state, keep that document byte-stable and reject an explicitly selected

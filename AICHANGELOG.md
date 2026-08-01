@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- **Four output contracts remained inconsistent after the input sweep**:
+  `store import --quiet` still wrote success text, 43 adopted query help pages
+  advertised an obsolete output enum, empty JSON store exports used `null`
+  where YAML used `[]`, and root help claimed quiet mode suppressed result
+  data. Informational import messages now honor quiet mode, adopted enum help
+  is derived from the enforced values, store lists return stable empty arrays,
+  and global help accurately describes informational-output suppression.
+
 - **MCP numeric arguments lacked a precise boundary contract**: sequence
   identifiers are positive whole numbers and pagination values are
   non-negative whole numbers. Tool schemas expose those constraints, and the

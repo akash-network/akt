@@ -387,7 +387,9 @@ validate that set during argument parsing, before configuration or network
 work begins. In particular, the standard `--output` values are `pretty`,
 `json`, and `yaml`; workflow commands additionally accept `jsonl`, while
 SDK-compatible key and RPC commands that advertise `text|json` accept exactly
-those values.
+those values. The accepted enum and the values rendered in `--help` are one
+contract: when an adopted flag is normalized, its help text is normalized in
+the same boundary pass.
 
 Every accepted flag must affect the operation it describes. If a leaf cannot
 apply an inherited transport, snapshot, pagination, or output flag, it rejects
@@ -4018,6 +4020,11 @@ akt query deployment 12345 -o json | jq '.deployment.state'
 ```
 
 When `--quiet` is set, stderr informational output (progress, status lines) is suppressed; only errors are emitted to stderr. When `--verbose` is set, additional operational detail is emitted to stderr.
+
+Structured collection fields are always arrays. An empty collection is encoded
+as `[]` in both JSON and YAML, never as `null`; changing output formats must not
+change the semantic data model. This applies to store exports as well as live
+query and Console results.
 
 ### 10.2 Dispatch Architecture
 
