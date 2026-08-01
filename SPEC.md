@@ -935,6 +935,16 @@ Show full network details.
 
 ### 2.2.2 Keys Commands
 
+#### `akt context keys add <name>`
+
+Create, recover, or register a key. Pretty output retains the human backup
+warning and mnemonic for a newly generated local key. JSON and YAML emit one
+object with `name`, `address`, and `type`; multisig results also include
+`threshold` and `pubkeys`, and a newly generated local key includes `mnemonic`
+unless `--no-backup` was selected. Recovered keys never repeat their input
+mnemonic. The selected output format applies equally to local, Ledger, and
+multisig keys.
+
 #### `akt context keys show <name|address>`
 
 Show key details. By default prints name, type, address, and public key. Use `--address` (short `-a`) to print only the bech32 address for scripting.
@@ -1560,10 +1570,14 @@ Open an interactive shell into a running container.
 | `--from`      | string | context default | Owner account       |
 | `--service`   | string | required        | Service name        |
 | `--tty`       | bool   | `true`          | Allocate a TTY      |
-| `--stdin`     | bool   | `true`          | Attach stdin        |
+| `--stdin`     | bool   | `false`         | Force stdin attachment for an explicit terminal command |
 | `--auth-type` | string | context default | Auth type           |
 
 Remaining arguments after `--` are passed as the shell command. Default: `/bin/sh`.
+Interactive shells and explicit commands receiving piped input attach stdin
+automatically. An explicit command launched from a terminal leaves stdin
+detached so its remote exit can complete; `--stdin` opts back into attachment,
+and `--stdin=false` explicitly detaches piped input.
 EOF on attached stdin is not a command failure: `akt` waits for the provider's
 remote exit result and returns that result. This prevents a successful
 non-interactive command from printing its output and then exiting non-zero
@@ -2059,7 +2073,7 @@ the shared gateway boundary verifies the lease before opening a stream.
 | `akt console logs <dseq> [service]`                | `--follow`, `--tail N`, `--service` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Stream container logs from the lease's provider (JWT scopes `logs,status`).                    |
 | `akt console events <dseq>`                        | `--follow`                                  | Stream Kubernetes events from the lease's provider (JWT scopes `events,status`).                     |
 | `akt console status <dseq>`                        | `--watch`, `--interval` (5s)                | Live lease status from the provider gateway (JWT scope `status`); with `--watch`, snapshots are re-printed each interval until interrupted. `deployment get` remains the Console-API view. |
-| `akt console shell <dseq> <service> [-- command...]` |                                           | Interactive shell in a lease container, default `/bin/sh`; exec is the same operation with an explicit command (JWT scopes `shell,status`). TTY auto-detected. |
+| `akt console shell <dseq> <service> [-- command...]` | `--stdin`                                 | Interactive shell in a lease container, default `/bin/sh`; exec is the same operation with an explicit command (JWT scopes `shell,status`). TTY auto-detected; terminal stdin is detached from explicit commands unless `--stdin` is supplied. |
 | `akt console screen <sdl-file>`                    |                                             | Client-side bid screening: derive resources from the SDL and list the providers able to run it (public endpoint, no key needed). |
 
 Per the positional-primary convention (§3.8), every console command takes its primary value(s) positionally; the equivalent flags remain as overrides and a positional value wins when both are given. (2026-07: the flag twins marked *disabled pending feedback* above are commented out in code for the positional-only UX trial — the positional form is the only way while the trial runs; the original flag definitions are preserved in `FEEDBACK(2026-07)` comments for restoration.) Default structured reads are indented JSON, while human acknowledgements and streams use the command-specific pretty forms described below; USD values render as `$X.XX` in human output. State-changing calls are recorded in the context's action log as `type=console` entries (§5.6). No command ever prints a Console API key, except the one-time secret from `apikey create`.
@@ -2078,7 +2092,11 @@ interactive byte stream. With `--output json` or `--output yaml`, shell requires
 an explicit command after `--`, runs it without a PTY, and emits exactly one
 object with string fields `stdout` and `stderr`. A structured interactive shell
 is refused before opening the provider connection. The same contract applies
-to `console shell` and `provider lease-shell`. If both the remote command and
+to `console shell` and `provider lease-shell`. Interactive shells and commands
+with piped input attach stdin automatically. Explicit commands launched from a
+terminal leave it detached unless `--stdin` is supplied, so the provider can
+deliver the remote exit result without waiting indefinitely for terminal
+input. If both the remote command and
 structured-output rendering fail, the returned error preserves both causes so
 callers can classify either failure with `errors.Is`.
 

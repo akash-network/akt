@@ -319,8 +319,12 @@ URI unless the user supplies an explicit URL override, verifies a lease before
 opening its log, event, or shell stream, applies bounded log filters locally, and
 treats an EOF as normal completion only for one-shot streams. Shell stdin EOF
 is held until the remote result arrives so a successful command cannot print
-its output and then fail locally. Gateway HTTP errors retain the provider's
-response detail so rejected operations remain actionable on both rails.
+its output and then fail locally. Interactive shells and piped commands attach
+stdin automatically. A one-shot command launched from a terminal does not
+advertise stdin to the provider unless the user explicitly supplies `--stdin`;
+otherwise providers can keep an already-finished command open waiting for
+terminal input. Gateway HTTP errors retain the provider's response detail so
+rejected operations remain actionable on both rails.
 Shell output crosses one shared formatting boundary on both rails: pretty mode
 streams an interactive PTY unchanged, while JSON and YAML require an explicit
 remote command, disable the PTY, capture stdout and stderr separately, and emit
