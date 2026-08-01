@@ -112,6 +112,7 @@ type DeploymentID struct {
 type Deployment struct {
 	ID        DeploymentID    `json:"id"`
 	State     string          `json:"state"`
+	Hash      string          `json:"hash,omitempty"`
 	CreatedAt json.RawMessage `json:"created_at,omitempty"`
 }
 

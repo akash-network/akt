@@ -200,6 +200,13 @@ func TestCommandFromDefDeploy(t *testing.T) {
 			t.Fatalf("deploy command missing --%s flag", flag)
 		}
 	}
+	depositHelp := cmd.Flags().Lookup("deposit").Usage
+	if !strings.Contains(depositHelp, "auto (recommended") {
+		t.Errorf("--deposit help %q does not recommend the network-derived default", depositHelp)
+	}
+	if strings.Contains(depositHelp, "uakt") {
+		t.Errorf("--deposit help %q advertises a network-specific denomination", depositHelp)
+	}
 }
 
 // TestUserWorkflowOverridesBuiltin verifies that a user workflow with the

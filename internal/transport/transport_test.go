@@ -190,7 +190,7 @@ func TestChainTransportRejectsUSDDeposit(t *testing.T) {
 			t.Errorf("deposit %q: expected cross-rail error", deposit)
 			continue
 		}
-		for _, want := range []string{"console-api context", "5000000uakt"} {
+		for _, want := range []string{"console-api context", "auto", "network's deployment deposit denomination"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("deposit %q: error %q does not mention %q", deposit, err, want)
 			}

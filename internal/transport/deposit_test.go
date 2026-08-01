@@ -80,9 +80,9 @@ func TestDepositRailValueChain(t *testing.T) {
 		{"auto", "auto", ""},
 		{"5000000uakt", "5000000uakt", ""},
 		{"5akt", "5akt", ""},
-		{"5usd", "", "USD deposits require a console-api context; specify a coin amount like 5000000uakt"},
-		{"$5", "", "USD deposits require a console-api context; specify a coin amount like 5000000uakt"},
-		{"5", "", "console-api context; specify a coin amount like 5000000uakt"},
+		{"5usd", "", "USD deposits require a console-api context; use auto (recommended)"},
+		{"$5", "", "USD deposits require a console-api context; use auto (recommended)"},
+		{"5", "", "console-api context; use auto (recommended)"},
 	}
 
 	for _, tt := range tests {
@@ -107,6 +107,24 @@ func TestDepositRailValueChain(t *testing.T) {
 		if got != tt.want {
 			t.Errorf("RailValue(chain) for %q = %q, want %q", tt.in, got, tt.want)
 		}
+	}
+}
+
+func TestDepositRailValueChainDoesNotAdvertiseOneNetworkDenomination(t *testing.T) {
+	dep, err := ParseDeposit("5usd")
+	if err != nil {
+		t.Fatalf("ParseDeposit: %v", err)
+	}
+
+	_, err = dep.RailValue(KindChain)
+	if err == nil {
+		t.Fatal("RailValue(chain): expected cross-rail error")
+	}
+	if strings.Contains(err.Error(), "uakt") {
+		t.Errorf("error %q advertises a network-specific denomination", err)
+	}
+	if !strings.Contains(err.Error(), "network's deployment deposit denomination") {
+		t.Errorf("error %q does not explain the explicit-coin requirement", err)
 	}
 }
 

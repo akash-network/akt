@@ -106,7 +106,7 @@ func ParseDeposit(s string) (Deposit, error) {
 	}
 
 	return Deposit{}, fmt.Errorf(
-		"invalid deposit %q: use a USD amount (e.g. 5usd or $5) or a coin amount (e.g. 5000000uakt)", s)
+		"invalid deposit %q: use auto, a USD amount (e.g. 5usd or $5), or an explicit chain coin amount", s)
 }
 
 // RailValue returns the rail-native deposit string for the given transport
@@ -129,10 +129,10 @@ func (d Deposit) RailValue(kind Kind) (string, error) {
 			return d.Coin, nil
 		case d.Bare:
 			return "", fmt.Errorf(
-				"deposit %q: a bare amount is a USD deposit, and USD deposits require a console-api context; specify a coin amount like 5000000uakt", d.Raw)
+				"deposit %q: a bare amount is a USD deposit, and USD deposits require a console-api context; use auto (recommended), or specify an explicit coin amount in the network's deployment deposit denomination", d.Raw)
 		default:
 			return "", fmt.Errorf(
-				"deposit %q: USD deposits require a console-api context; specify a coin amount like 5000000uakt", d.Raw)
+				"deposit %q: USD deposits require a console-api context; use auto (recommended), or specify an explicit coin amount in the network's deployment deposit denomination", d.Raw)
 		}
 
 	case KindConsole:

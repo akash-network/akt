@@ -10,7 +10,7 @@ params:
   deposit:
     type: deposit
     default: "auto"
-    description: "Initial deposit: 5usd or $5 (USD, console-api contexts), 5000000uakt (coin, keyring contexts), auto = chain minimum (keyring)"
+    description: "Initial deposit: auto (recommended chain minimum, keyring), 5usd or $5 (console-api), or an explicit coin in the network's deposit denomination (keyring)"
   bid-timeout:
     type: duration
     default: "5m"

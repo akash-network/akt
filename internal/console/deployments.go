@@ -2,12 +2,15 @@ package console
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+
+	"pkg.akt.dev/go/sdl"
 )
 
 // CreateDeployment creates a deployment via the managed wallet. Deposit is in
@@ -123,14 +126,61 @@ func (c *Client) GetDeployment(ctx context.Context, dseq string) (*DeploymentDet
 func (c *Client) UpdateDeployment(ctx context.Context, dseq, sdl string) (*DeploymentDetail, error) {
 	body := envelope(map[string]any{"sdl": sdl})
 
-	var out DeploymentDetail
-	err := c.doData(ctx, http.MethodPut, "/v1/deployments/"+url.PathEscape(dseq), body, &out)
-	c.record("update-deployment", dseq, err)
-	if err != nil {
-		return nil, err
+	var lastErr error
+	for attempt := range maxRetries {
+		var out DeploymentDetail
+		lastErr = c.doData(ctx, http.MethodPut, "/v1/deployments/"+url.PathEscape(dseq), body, &out)
+		if lastErr == nil {
+			c.record("update-deployment", dseq, nil)
+			return &out, nil
+		}
+
+		// A gateway or API handler can return an error after the idempotent
+		// update reached chain state. The deployment hash is authoritative
+		// proof, so do not replay a write whose desired version is present.
+		if detail, ok := c.reconcileDeploymentUpdate(ctx, dseq, sdl); ok {
+			c.record("update-deployment", dseq, nil)
+			return detail, nil
+		}
+
+		if !isTransientManifestVersionError(lastErr) || attempt == maxRetries-1 {
+			break
+		}
+		if err := waitForRetry(ctx, attempt); err != nil {
+			lastErr = err
+			break
+		}
 	}
 
-	return &out, nil
+	c.record("update-deployment", dseq, lastErr)
+	return nil, lastErr
+}
+
+func (c *Client) reconcileDeploymentUpdate(ctx context.Context, dseq, rawSDL string) (*DeploymentDetail, bool) {
+	doc, err := sdl.Read([]byte(rawSDL))
+	if err != nil {
+		return nil, false
+	}
+
+	version, err := doc.Version()
+	if err != nil {
+		return nil, false
+	}
+
+	detail, err := c.GetDeployment(ctx, dseq)
+	if err != nil {
+		return nil, false
+	}
+
+	expected := base64.StdEncoding.EncodeToString(version)
+	return detail, detail.Deployment.Hash == expected
+}
+
+func isTransientManifestVersionError(err error) bool {
+	var httpErr *HTTPError
+	return errors.As(err, &httpErr) &&
+		httpErr.StatusCode == http.StatusUnprocessableEntity &&
+		strings.Contains(strings.ToLower(httpErr.Body), "manifest version validation failed")
 }
 
 // CloseDeployment closes a deployment. If the deployment is already closed
@@ -236,12 +286,70 @@ func (c *Client) CreateLease(ctx context.Context, manifest string, leases []Leas
 
 	var out DeploymentDetail
 	err := c.doData(ctx, http.MethodPost, "/v1/leases", body, &out)
-	c.record("create-lease", leaseDSeq, err)
 	if err != nil {
+		// Never replay this POST: the live API can return an error after the
+		// lease transaction succeeded. Read back the exact lease identities
+		// and accept only authoritative active state.
+		if detail, ok := c.reconcileCreatedLeases(ctx, leases); ok {
+			c.record("create-lease", leaseDSeq, nil)
+			return detail, nil
+		}
+
+		c.record("create-lease", leaseDSeq, err)
 		return nil, err
 	}
 
+	c.record("create-lease", leaseDSeq, nil)
 	return &out, nil
+}
+
+func (c *Client) reconcileCreatedLeases(ctx context.Context, requested []LeaseRequest) (*DeploymentDetail, bool) {
+	if len(requested) == 0 || requested[0].DSeq == "" {
+		return nil, false
+	}
+
+	dseq := requested[0].DSeq
+	for _, req := range requested[1:] {
+		if req.DSeq != dseq {
+			return nil, false
+		}
+	}
+
+	for attempt := range maxRetries {
+		detail, err := c.GetDeployment(ctx, dseq)
+		if err == nil && requestedLeasesActive(detail.Leases, requested) {
+			return detail, true
+		}
+
+		if attempt < maxRetries-1 {
+			if err := waitForRetry(ctx, attempt); err != nil {
+				return nil, false
+			}
+		}
+	}
+
+	return nil, false
+}
+
+func requestedLeasesActive(actual []Lease, requested []LeaseRequest) bool {
+	for _, req := range requested {
+		matched := false
+		for _, lease := range actual {
+			if lease.ID.DSeq.String() == req.DSeq &&
+				lease.ID.GSeq == req.GSeq &&
+				lease.ID.OSeq == req.OSeq &&
+				lease.ID.Provider == req.Provider &&
+				strings.EqualFold(lease.State, "active") {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+
+	return len(requested) > 0
 }
 
 // GetDeploymentSettings fetches auto-top-up settings for a deployment.
