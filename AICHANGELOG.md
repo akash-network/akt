@@ -11,11 +11,12 @@
   refuses unsupported snapshot selection before network work, and the IBC
   adapter enforces the requested record limit for client-state lists.
 
-- **Pretty query output ignored redirection and `NO_COLOR`**: registered query
-  formatters wrote directly to the process stdout, bypassing Cobra's selected
-  writer and terminal-aware styling boundary. Pretty output now flows through
-  the command writer and strips all ANSI styling for files, pipes, test buffers,
-  and explicit no-color sessions while retaining styling on an interactive TTY.
+- **Pretty output ignored redirection and `NO_COLOR`**: registered query and
+  transaction formatters, plus deployment group rendering, wrote directly to
+  the process stdout, bypassing Cobra's selected writer and terminal-aware
+  styling boundary. Pretty output now flows through the command writer and
+  strips all ANSI styling for files, pipes, test buffers, and explicit no-color
+  sessions while retaining styling on an interactive TTY.
 
 - **SDL output selection and redirected store status were cosmetic flags**:
   `sdl init` silently emitted YAML after an explicit JSON/YAML selection,

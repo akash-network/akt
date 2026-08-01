@@ -44,6 +44,16 @@ func (server *stubIBCClientQueryServer) ClientParams(context.Context, *ibcclient
 	}, nil
 }
 
+func (*stubIBCClientQueryServer) ClientStates(context.Context, *ibcclienttypes.QueryClientStatesRequest) (*ibcclienttypes.QueryClientStatesResponse, error) {
+	return &ibcclienttypes.QueryClientStatesResponse{
+		ClientStates: []ibcclienttypes.IdentifiedClientState{
+			{ClientId: "07-tendermint-0"},
+			{ClientId: "07-tendermint-1"},
+		},
+		Pagination: &querytypes.PageResponse{NextKey: []byte("next"), Total: 2},
+	}, nil
+}
+
 func (*stubIBCClientQueryServer) ConsensusStateHeights(context.Context, *ibcclienttypes.QueryConsensusStateHeightsRequest) (*ibcclienttypes.QueryConsensusStateHeightsResponse, error) {
 	return &ibcclienttypes.QueryConsensusStateHeightsResponse{
 		ConsensusStateHeights: []ibcclienttypes.Height{
@@ -380,6 +390,28 @@ func TestVendoredIBCPaginationAppliesHardLimit(t *testing.T) {
 		require.Equal(t, "bmV4dA==", response.Pagination.NextKey)
 		require.Equal(t, "2", response.Pagination.Total)
 	})
+
+	t.Run("client states excludes lookahead", func(t *testing.T) {
+		out, err := executeVendoredIBCCommand(
+			t,
+			adoptVendoredQueryCmd(ibccore.AppModuleBasic{}.GetQueryCmd()),
+			conn,
+			"client", "states", "--limit", "1", "--output", "json",
+		)
+		require.NoError(t, err)
+
+		var response struct {
+			States     []json.RawMessage `json:"client_states"`
+			Pagination struct {
+				NextKey string `json:"next_key"`
+				Total   string `json:"total"`
+			} `json:"pagination"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &response))
+		require.Len(t, response.States, 1)
+		require.Equal(t, "bmV4dA==", response.Pagination.NextKey)
+		require.Equal(t, "2", response.Pagination.Total)
+	})
 }
 
 func TestVendoredQueryTreeHasUniqueSiblingNames(t *testing.T) {
@@ -506,6 +538,12 @@ func TestQueriesRejectUnsupportedOrConflictingHeight(t *testing.T) {
 			name: "blocks",
 			cmd:  QueryBlocksCmd,
 			args: []string{"--height", "10"},
+			want: "--height",
+		},
+		{
+			name: "gov proposer",
+			cmd:  GetQueryGovProposerCmd,
+			args: []string{"1", "--height", "10"},
 			want: "--height",
 		},
 		{

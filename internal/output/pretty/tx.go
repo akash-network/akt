@@ -3,7 +3,6 @@ package pretty
 import (
 	"fmt"
 	"io"
-	"os"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -11,6 +10,7 @@ import (
 	"github.com/spf13/cobra"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	clioutput "pkg.akt.dev/akt/internal/output"
 )
 
 // PrintTxResult is the main dispatch function for transaction output (SPEC §10.11).
@@ -61,7 +61,7 @@ func PrintTxResult(cmd *cobra.Command, cctx sdkclient.Context, resp interface{})
 		return cctx.PrintObjectLegacy(resp)
 	}
 
-	w := os.Stdout
+	w := clioutput.TerminalAwareWriter(cmd.OutOrStdout())
 
 	// Section 1: Common transaction summary.
 	renderTxSummaryWithCodec(w, cctx, txResp)

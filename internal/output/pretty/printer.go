@@ -1,13 +1,12 @@
 package pretty
 
 import (
-	"os"
-
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/gogoproto/proto"
 	"github.com/spf13/cobra"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	clioutput "pkg.akt.dev/akt/internal/output"
 )
 
 // PrintQueryResult is the main dispatch function for query output.
@@ -33,7 +32,7 @@ func PrintQueryResult(cmd *cobra.Command, cctx sdkclient.Context, msg proto.Mess
 			return cctx.WithOutputFormat("json").PrintProto(msg)
 		}
 
-		return f.Format(os.Stdout, cmd, cctx, msg)
+		return f.Format(clioutput.TerminalAwareWriter(cmd.OutOrStdout()), cmd, cctx, msg)
 	}
 }
 

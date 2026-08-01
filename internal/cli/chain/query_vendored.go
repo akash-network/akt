@@ -134,6 +134,9 @@ func installVendoredQueryOverrides(root *cobra.Command) {
 		if cmd := vendoredSubcommand(root, "client", "params"); cmd != nil {
 			cmd.RunE = queryIBCClientParams
 		}
+		if cmd := vendoredSubcommand(root, "client", "states"); cmd != nil {
+			cmd.RunE = queryIBCClientStates
+		}
 		if cmd := vendoredSubcommand(root, "connection", "params"); cmd != nil {
 			cmd.RunE = queryIBCConnectionParams
 		}
@@ -184,6 +187,27 @@ func queryIBCClientParams(cmd *cobra.Command, _ []string) error {
 	}
 
 	return cctx.PrintProto(res.Params)
+}
+
+func queryIBCClientStates(cmd *cobra.Command, _ []string) error {
+	cctx := sdkclient.GetClientContextFromCmd(cmd)
+	pageReq, err := sdkclient.ReadPageRequest(cmd.Flags())
+	if err != nil {
+		return err
+	}
+
+	res, err := ibcclienttypes.NewQueryClient(cctx).ClientStates(cmd.Context(), &ibcclienttypes.QueryClientStatesRequest{
+		Pagination: pageReq,
+	})
+	if err != nil {
+		return err
+	}
+	if res == nil {
+		return fmt.Errorf("ibc client states query returned an empty response")
+	}
+
+	res.ClientStates = normalizeVendoredPage(res.ClientStates, pageReq)
+	return cctx.PrintProto(res)
 }
 
 func queryIBCConnectionParams(cmd *cobra.Command, _ []string) error {
