@@ -58,17 +58,61 @@ The hub presents three dashboards, navigable via Tab/Shift-Tab:
 - **Context-integrated but not context-dependent**: When a context is active, the RPC endpoint resolves automatically (consistent with the flag-minimal operation goal). A positional argument or `--rpc` flag overrides for ad-hoc monitoring of any network.
 - **Hub-based navigation**: Tab/Shift-Tab cycles between three dashboards (Network, Provider, Oracle/BME); number keys (1/2/3) switch sub-tabs within the Network dashboard. Each dashboard is also directly accessible via its CLI subcommand.
 
+The monitor owns those navigation keys while it is visible. Standalone
+`akt monitor` sends input directly to the monitor model and renders that
+model's full-height view, including its own navigation help and RPC status.
+The hidden resource router is not part of the standalone input path. In the
+experimental embedded shell, monitor-local Tab/Shift-Tab and Network 1/2/3
+take precedence over shell navigation; Esc returns ownership to the shell.
+This keeps the same visible controls functional in both launch modes while
+preserving the shell's global shortcuts outside the monitor.
+
+An explicit monitor RPC also makes configuration optional: it does not launch
+the first-run bootstrap or require a keyring merely because no akt config file
+exists. Cache creation/open failures are startup errors rather than a silent
+empty dashboard, and `--clean-cache` removes both the current and legacy cache
+filenames or reports why it could not.
+
+Governance data follows the same typed query boundary as the CLI. The monitor
+queries the complete `cosmos.gov.v1` parameter response through its selected
+RPC endpoint, converts that protobuf with Cosmos JSON semantics, and delegates
+rendering to the shared pretty parameter renderer. It does not compose a
+modern view from a single legacy REST subtype, because absent deposit and
+tally fields would otherwise render as valid-looking zero values.
+
 Provider monitoring is a continuously running pipeline, not a view that is
 populated only after navigation. Startup loads the persisted provider cache,
 immediately reconciles it with the on-chain provider set, and starts the health
 check, chain-resync, and cache-save schedules. Switching dashboards changes only
 what is rendered; it does not start or stop the pipeline. Manual refresh
 requests an immediate reconciliation while retaining the periodic schedules.
+The selected version is a real table filter, not only a sort preference. Every
+reconciliation rebinds the selection to the rebuilt version list so an
+appearing or disappearing version cannot leave an invalid index. Provider
+detail responses carry the requested provider identity and are discarded when
+the user has since selected another provider or left the detail view.
+Both REST and gRPC provider probes verify TLS certificates by default. The
+diagnostic `--insecure` override is threaded through both transports; neither
+probe may silently opt out on its own.
 
 Monitor examples use an RPC endpoint that is verified to expose CometBFT's
 WebSocket service. HTTP-only public gateways are still valid for ordinary chain
 queries, but they must not be advertised for a command whose primary data path
-is a WebSocket subscription.
+is a WebSocket subscription. The same rule applies to built-in network
+templates: their first RPC is the flagless monitor endpoint and is therefore
+WebSocket-capable. Monitor auxiliary REST reads use the selected context's API
+endpoint only when the selected RPC belongs to that context. An ad-hoc RPC
+override derives a same-origin REST endpoint (or uses explicit `--rest`) rather
+than silently combining one network's RPC with another network's API. Known
+HTTP-only primaries from older built-in templates are replaced at monitor
+resolution by the current template's WebSocket endpoint without rewriting the
+user's context; an explicit endpoint is never substituted. The cache stays
+below the resolved CLI home so `--home` remains a complete isolation boundary.
+
+The standalone monitor receives the entire terminal height. The embedded
+monitor receives exactly the shell content height after all shell chrome is
+reserved; its renderer and input model use the same dimensions so navigation
+help and bottom rows are not clipped.
 
 #### Non-Goals
 

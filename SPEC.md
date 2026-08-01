@@ -58,6 +58,7 @@ networks:
     chain-id: akashnet-2
     endpoints:
       rpc:
+        - https://rpc.akt.dev:443/rpc
         - https://rpc.akashnet.net:443
         - https://rpc-akash.ecostake.com:443
       api:
@@ -287,7 +288,7 @@ All environment variables use the `AKT_` prefix. When set, they override the cor
 | `AKT_HOME`            | Home directory (overrides XDG default)                  | `/path/to/.akt`                |
 | `AKT_CONTEXT`         | Active context name (overrides `current-context`)       | `prod`                         |
 | `AKT_CHAIN_ID`        | `networks[*].chain-id` (via context's network)          | `akashnet-2`                   |
-| `AKT_NODE`            | `networks[*].endpoints.rpc[0]` (via context's network)  | `https://rpc.akashnet.net:443` |
+| `AKT_NODE`            | `networks[*].endpoints.rpc[0]` (via context's network)  | `https://rpc.akt.dev:443/rpc` |
 | `AKT_GRPC_ADDR`       | `networks[*].endpoints.grpc[0]` (via context's network) | `grpc.akashnet.net:443`        |
 | `AKT_FROM`            | `contexts[*].default-account`                           | `alice`                        |
 | `AKT_KEYRING_BACKEND` | `keyrings[*].backend` (via context's keyring)           | `os`                           |
@@ -310,6 +311,7 @@ name: mainnet
 chain-id: akashnet-2
 endpoints:
   rpc:
+    - https://rpc.akt.dev:443/rpc
     - https://rpc.akashnet.net:443
     - https://rpc-akash.ecostake.com:443
   api:
@@ -771,7 +773,7 @@ $ akt context show
 Context:         prod
 Network:         mainnet
   Chain ID:      akashnet-2
-  RPC:           https://rpc.akashnet.net:443 (+1 backup)
+  RPC:           https://rpc.akt.dev:443/rpc (+2 backup)
   API:           https://api.akashnet.net:443 (+1 backup)
   gRPC:          grpc.akashnet.net:443
   Gas Prices:    0.025uakt
@@ -916,7 +918,7 @@ List all networks and which contexts reference each.
 ```bash
 $ akt context network list
   NAME              CHAIN-ID       RPC                          USED BY
-  mainnet           akashnet-2     rpc.akashnet.net:443         prod, monitoring
+  mainnet           akashnet-2     rpc.akt.dev:443/rpc          prod, monitoring
   testnet           testnet-02     rpc.testnet-02.aksh.pw:443   staging
   sandbox           sandbox-01     rpc.sandbox-01.aksh.pw:443
   mainnet-custom    akashnet-2     my-private-rpc:443           (none)
@@ -1653,6 +1655,11 @@ Each dashboard is also directly accessible via its CLI subcommand. When launched
 
 If no endpoint can be resolved, the command exits with an error.
 
+Built-in network templates place a WebSocket-capable RPC first because that is
+the endpoint a flagless monitor launch selects. Ordinary HTTP-only RPCs may
+remain later in the network's failover list for query commands, but MUST NOT be
+the primary endpoint of a built-in template advertised for monitor use.
+
 The monitor connects to `{rpc-endpoint}/websocket`. Help examples use
 `https://rpc.akt.dev:443/rpc`, whose CometBFT WebSocket service is part of the
 documented endpoint. An HTTP-only RPC gateway may still serve ordinary query
@@ -1664,8 +1671,31 @@ commands, but it is not a valid monitor example.
 | ----------------- | ------ | --------------- | -------------------------------------------------------- |
 | `--rpc`           | string | context default | RPC endpoint (WebSocket-capable)                         |
 | `--rest`          | string | auto-derived    | REST API endpoint (for governance/oracle/BME queries). Default: derived from the context's `endpoints.api[0]`. If no API endpoint is configured, falls back to the RPC host on port 1317 (standard Cosmos REST port). |
-| `--insecure`      | bool   | `false`         | Skip TLS certificate verification                        |
+| `--insecure`      | bool   | `false`         | Skip TLS certificate verification for REST and gRPC provider probes |
 | `--clean-cache`   | bool   | `false`         | Clear the local cache before start                       |
+
+An explicit `--rest` always wins. Without it, a context API endpoint is used
+only when the selected RPC is one of that same context network's configured RPC
+endpoints. For an ad-hoc positional or `--rpc` override, the REST endpoint is
+derived from that RPC: a terminal `/rpc` path becomes `/rest`; otherwise the
+same hostname uses the standard Cosmos REST port 1317. WebSocket and Cosmos
+`tcp` schemes are converted to their HTTP equivalents for REST requests. The
+monitor MUST NOT combine an overridden RPC with an unrelated active-context
+API. Its cache is always `<resolved --home>/cache`; an explicit `--home` MUST
+govern the monitor just as it governs contexts, keyrings, stores, and action
+logs.
+
+For implicit context resolution only, a primary endpoint that exactly matches
+a retired HTTP-only endpoint from an older built-in template is replaced at
+runtime by that template's current WebSocket-capable primary. This compatibility
+selection does not rewrite the context. Positional and `--rpc` endpoints are
+explicit user choices and are never substituted.
+
+An explicit positional or `--rpc` endpoint MUST work with no config file and
+MUST NOT trigger first-run bootstrap. Monitor cache directory creation/open
+errors are fatal startup errors. `--clean-cache` removes both `monitor.db` and
+the legacy `top.db`; a failed deletion is reported and the monitor does not
+claim the cache was cleared.
 
 **Hub navigation:**
 
@@ -1674,6 +1704,21 @@ commands, but it is not a valid monitor example.
 | `Tab` | Switch to next dashboard (Network → Provider → Oracle/BME → Network) |
 | `Shift-Tab` | Switch to previous dashboard |
 | `1`/`2`/`3` | Switch sub-tab within the active dashboard (Network only) |
+
+These keys belong to the monitor whenever its view is active. In standalone
+mode, keypresses are delivered directly to the monitor model; the inactive TUI
+resource router MUST NOT receive them. When the monitor is embedded in the
+experimental TUI shell, `Tab`, `Shift-Tab`, and `1`/`2`/`3` still take
+precedence over shell-level navigation. `Esc`/Back returns to the shell in
+embedded mode. In standalone mode, `q` and Ctrl-C save monitor cache state and
+quit.
+
+The standalone view uses the full terminal height and renders its own bottom
+help and RPC status lines. Help distinguishes dashboard navigation
+(`Tab`/`Shift-Tab`) from Network sub-tab selection (`1`/`2`/`3`); it MUST NOT
+describe both controls as one ambiguous "switch tabs" action.
+An embedded monitor receives exactly the height remaining after the shell's
+chrome; the parent MUST NOT size it for one height and clip it to another.
 
 **Standalone operation**: `akt monitor` (and all subcommands) requires only an RPC endpoint. It does not require a keyring, default account, or chain-id. A monitoring-only context (with no `default-account`) or a bare `--rpc` flag is sufficient, making it usable by anyone observing the network.
 
@@ -1689,6 +1734,14 @@ The Network dashboard has three sub-tabs:
 | `2` | **Validators**   | Scrollable validator list with moniker, voting power, prevote/precommit status, block signing history bar, proposer indicator | [§8.3.9](#839-validator-voting-view-from-aktop) |
 | `3` | **Governance**   | Module-by-module governance parameter browser with pretty-printed JSON | [§8.3.11](#8311-governance-parameters-view-from-aktop) |
 
+The Governance view obtains the complete modern governance parameter object
+from `/cosmos.gov.v1.Query/Params` through the monitor's selected RPC endpoint
+and renders it with the same pretty renderer as `akt query gov params`. It MUST
+NOT treat one legacy v1beta1 REST subtype (`voting`, `deposit`, or `tallying`)
+as the combined response: doing so turns the other live values into plausible
+zeros. Voting period, deposit, quorum, threshold, veto, expedited, and burn
+fields shown by monitor therefore match the single-shot CLI query.
+
 #### `akt monitor provider [rpc-endpoint]`
 
 Launches directly into the Provider dashboard. Displays real-time provider fleet monitoring:
@@ -1697,6 +1750,20 @@ Launches directly into the Provider dashboard. Displays real-time provider fleet
 - **Version distribution**: Versions sorted newest-first (semver-aware, handles `-rc` suffixes). Dot visualization with `●` for selected version, `○` for others. h/l to select version filter.
 - **Provider list**: Scrollable table with URL, version, CPU, memory, GPU, location. Filtered by selected version.
 - **Provider detail**: Enter on a provider shows node-level breakdown with CPU, memory, GPU model + count.
+
+Provider health and detail probes verify certificates on both REST and gRPC
+paths by default. `--insecure` is the single explicit opt-out for both paths.
+
+Every provider-list rebuild reconciles the selected version by value against
+the newly sorted version set. If the version disappeared, selection falls back
+to the first available version; if no versions remain, selection is cleared.
+The selected index MUST therefore remain in bounds while live scan results add
+or remove versions. Table rows and Enter-to-detail mapping use the same selected
+version filter.
+
+Provider detail fetches are correlated by provider identity. A response is
+applied only while the matching provider remains the active detail target;
+responses from a provider the user left or superseded are discarded.
 
 Data sources: on-chain provider list (ABCI query), per-provider health (gRPC port 8444 preferred, REST `/status` + `/version` fallback), active leases (REST, for priority scheduling).
 
@@ -3358,7 +3425,7 @@ Lines with no content are omitted — the status bar shrinks to 1 or 2 lines whe
 Status bar example (3-line, on monitor view):
 ```
 <1> Overview  <2> Validators  <3> Governance  <j/k> Scroll  <r> Refresh
-RPC: rpc.akashnet.net:443  WS: connected
+RPC: rpc.akt.dev:443/rpc  WS: connected
 <:> Command  <Esc> Back  <Ctrl+c> Quit
 ```
 
