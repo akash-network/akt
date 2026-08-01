@@ -579,8 +579,10 @@ The `chain-sdk` CLI package (`pkg.akt.dev/go/cli`) will be deprecated and eventu
   required, typed, and semantic parameter validators as execution. They may
   skip client discovery and every state-changing step, but they cannot skip
   SDL, deposit, duration, sequence, selector, transaction chain, or enum
-  validation. A printed plan therefore describes an invocation that could
-  enter execution, not merely one that Cobra could parse.
+  validation. A plan therefore describes an invocation that could enter
+  execution, not merely one that Cobra could parse. Pretty dry-runs render the
+  human plan; JSONL dry-runs render one `planned` record per step and never mix
+  prose into stdout.
 - **Transaction identity is checked at the boundary**: online construction,
   simulation, and broadcast require an explicit chain ID to agree with the
   selected context and accept only advertised sign modes. Explicit offline

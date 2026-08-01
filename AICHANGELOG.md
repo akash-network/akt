@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- **Workflow JSONL dry-runs emitted human prose**: `deploy`, `update`, and
+  `close` now emit one valid JSONL `planned` record per step, with a shared run
+  ID and empty error/transaction arrays, instead of silently ignoring their
+  advertised output mode.
+
 - **Console mutation responses could contradict the resulting chain state**:
   lease creation now reads the deployment back after a failed response and
   reports success only when every exact requested lease is active, without

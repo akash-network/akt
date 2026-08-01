@@ -410,7 +410,10 @@ validation. Workflow commands validate required parameters and their declared
 types before printing a plan. Built-in deployment workflows additionally parse
 the SDL and validate deposit syntax, positive sequence identifiers, bid
 timeouts, bid selectors, output mode, and transaction chain identity. Invalid
-input produces a non-zero usage error and no plan.
+input produces a non-zero usage error and no plan. In `--output jsonl` mode, a
+valid dry-run emits one JSON object per planned step with `result:"planned"`,
+empty `errors` and `txs` arrays, and one generated run ID shared by every line;
+it emits no human plan text.
 
 ### 2.0 Root Command Behavior (`akt` with no subcommand)
 
@@ -1199,7 +1202,7 @@ On error:
 | `workflow` | string   | Workflow name (e.g., `deploy`, `update`, `close`)               |
 | `id`       | string   | Unique workflow run ID (generated at start, same for all steps) |
 | `step`     | string   | Step name from the workflow definition                          |
-| `result`   | string   | `completed`, `error`, or `skipped` (step skipped by its on-error policy) |
+| `result`   | string   | `planned` (dry-run), `completed`, `error`, or `skipped` (step skipped by its on-error policy) |
 | `errors`   | []string | Array of error messages (empty when `result` is `completed`)    |
 | `txs`      | []object | Array of raw transaction results (empty for non-tx steps)       |
 
