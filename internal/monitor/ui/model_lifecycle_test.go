@@ -62,9 +62,9 @@ func TestModelInitStartsProviderPipeline(t *testing.T) {
 		t.Fatalf("Init() message = %T, want tea.BatchMsg", msg)
 	}
 
-	// Nine commands serve the network/oracle dashboards. The provider
+	// Eleven commands serve the network/oracle dashboards. The provider
 	// pipeline adds one ordered load/sync command and three timer chains.
-	if got, want := len(cmds), 13; got != want {
+	if got, want := len(cmds), 15; got != want {
 		t.Fatalf("Init() command count = %d, want %d", got, want)
 	}
 }

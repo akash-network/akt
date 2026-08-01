@@ -3,6 +3,7 @@ package pretty
 import (
 	"fmt"
 	"io"
+	"math/big"
 	"strings"
 
 	"github.com/cosmos/gogoproto/proto"
@@ -27,26 +28,51 @@ func formatProposalStatus(status govv1.ProposalStatus) string {
 // RenderProposalList renders a proposals list as a styled string.
 func RenderProposalList(res *govv1.QueryProposalsResponse) string {
 	var buf strings.Builder
-	headers := []string{"ID", "TITLE", "STATUS", "SUBMIT TIME", "VOTING END"}
+	headers := []string{"ID", "TITLE", "STATUS", "YES", "NO", "ABSTAIN", "VETO", "VOTING END"}
 	rows := make([][]string, 0, len(res.Proposals))
 	for _, p := range res.Proposals {
-		submitTime := "-"
-		if p.SubmitTime != nil {
-			submitTime = p.SubmitTime.Format("2006-01-02 15:04")
-		}
 		votingEnd := "-"
 		if p.VotingEndTime != nil {
 			votingEnd = p.VotingEndTime.Format("2006-01-02 15:04")
 		}
+		yes, no, abstain, veto := formatTallyPercentages(p.FinalTallyResult)
 		rows = append(rows, []string{
 			Bold(fmt.Sprintf("%d", p.Id)),
 			truncateString(p.Title, 40),
 			ColorState(formatProposalStatus(p.Status)),
-			submitTime, votingEnd,
+			yes, no, abstain, veto,
+			votingEnd,
 		})
 	}
 	WriteTable(&buf, headers, rows)
 	return buf.String()
+}
+
+func formatTallyPercentages(tally *govv1.TallyResult) (string, string, string, string) {
+	if tally == nil {
+		return "-", "-", "-", "-"
+	}
+
+	counts := []*big.Int{new(big.Int), new(big.Int), new(big.Int), new(big.Int)}
+	values := []string{tally.YesCount, tally.NoCount, tally.AbstainCount, tally.NoWithVetoCount}
+	total := new(big.Int)
+	for i, value := range values {
+		if _, ok := counts[i].SetString(value, 10); !ok || counts[i].Sign() < 0 {
+			return "-", "-", "-", "-"
+		}
+		total.Add(total, counts[i])
+	}
+	if total.Sign() == 0 {
+		return "-", "-", "-", "-"
+	}
+
+	percent := func(count *big.Int) string {
+		ratio := new(big.Rat).SetFrac(count, total)
+		ratio.Mul(ratio, big.NewRat(100, 1))
+		return strings.TrimSuffix(ratio.FloatString(1), ".0") + "%"
+	}
+
+	return percent(counts[0]), percent(counts[1]), percent(counts[2]), percent(counts[3])
 }
 
 func formatProposalsList(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {

@@ -1,6 +1,7 @@
 package pretty
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -8,6 +9,44 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 )
+
+func TestRenderProposalListShowsTallyPercentages(t *testing.T) {
+	res := &govv1.QueryProposalsResponse{Proposals: []*govv1.Proposal{
+		{
+			Id:     1,
+			Title:  "Active proposal",
+			Status: govv1.StatusVotingPeriod,
+			FinalTallyResult: &govv1.TallyResult{
+				YesCount:        "70",
+				NoCount:         "20",
+				AbstainCount:    "5",
+				NoWithVetoCount: "5",
+			},
+		},
+		{
+			Id:     2,
+			Title:  "Awaiting votes",
+			Status: govv1.StatusDepositPeriod,
+		},
+	}}
+
+	got := RenderProposalList(res)
+	for _, want := range []string{"YES", "NO", "ABSTAIN", "VETO", "70%", "20%", "5%"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("proposal list does not contain %q:\n%s", want, got)
+		}
+	}
+	var awaitingLine string
+	for _, line := range strings.Split(got, "\n") {
+		if strings.Contains(line, "Awaiting votes") {
+			awaitingLine = line
+			break
+		}
+	}
+	if awaitingLine == "" || strings.Count(awaitingLine, "-") < 5 {
+		t.Errorf("proposal without a tally should render four tally placeholders and its missing deadline:\n%s", got)
+	}
+}
 
 func TestRenderProposalList(t *testing.T) {
 	submitTime := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)

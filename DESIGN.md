@@ -41,7 +41,7 @@ The hub presents three dashboards, navigable via Tab/Shift-Tab:
 
 | Dashboard | CLI Subcommand | Content |
 |-----------|---------------|---------|
-| **Network** (default) | `akt monitor network` | Consensus state, validator voting, governance parameters |
+| **Network** (default) | `akt monitor network` | Consensus state, validator voting, governance proposals, governance parameters |
 | **Provider** | `akt monitor provider` | Provider fleet health, version distribution, resource utilization |
 | **Oracle/BME** | `akt monitor oracle` / `akt monitor bme` | Aggregated prices, price health, vault state, mint status, ledger |
 
@@ -56,13 +56,13 @@ The hub presents three dashboards, navigable via Tab/Shift-Tab:
 - **Critical tool during network upgrades**: Validators coordinate upgrades at a specific block height; the chain halts while validators upgrade their software. Online block explorers and status pages frequently lag, stall, or lose their WebSocket connections during these windows, making them unreliable. `akt monitor` connects directly to the user's chosen RPC endpoint, providing the authoritative local view of: which round and step the chain is in, which validators have come back online and are voting, whether 2/3+ voting power has reached precommit, and when the chain resumes block production.
 - **Standalone operation**: Requires only an RPC endpoint — no keyring, no default account, no chain-id. A monitoring-only context (with no `default-account`) or a bare `--rpc` flag is sufficient. This makes it usable by anyone observing the network, not just deployers.
 - **Context-integrated but not context-dependent**: When a context is active, the RPC endpoint resolves automatically (consistent with the flag-minimal operation goal). A positional argument or `--rpc` flag overrides for ad-hoc monitoring of any network.
-- **Hub-based navigation**: Tab/Shift-Tab cycles between three dashboards (Network, Provider, Oracle/BME); number keys (1/2/3) switch sub-tabs within the Network dashboard. Each dashboard is also directly accessible via its CLI subcommand.
+- **Hub-based navigation**: Tab/Shift-Tab cycles between three dashboards (Network, Provider, Oracle/BME); number keys (1/2/3/4) switch sub-tabs within the Network dashboard. Each dashboard is also directly accessible via its CLI subcommand.
 
 The monitor owns those navigation keys while it is visible. Standalone
 `akt monitor` sends input directly to the monitor model and renders that
 model's full-height view, including its own navigation help and RPC status.
 The hidden resource router is not part of the standalone input path. In the
-experimental embedded shell, monitor-local Tab/Shift-Tab and Network 1/2/3
+experimental embedded shell, monitor-local Tab/Shift-Tab and Network 1/2/3/4
 take precedence over shell navigation; Esc returns ownership to the shell.
 This keeps the same visible controls functional in both launch modes while
 preserving the shell's global shortcuts outside the monitor.
@@ -74,11 +74,16 @@ empty dashboard, and `--clean-cache` removes both the current and legacy cache
 filenames or reports why it could not.
 
 Governance data follows the same typed query boundary as the CLI. The monitor
-queries the complete `cosmos.gov.v1` parameter response through its selected
-RPC endpoint, converts that protobuf with Cosmos JSON semantics, and delegates
-rendering to the shared pretty parameter renderer. It does not compose a
-modern view from a single legacy REST subtype, because absent deposit and
-tally fields would otherwise render as valid-looking zero values.
+queries recent `cosmos.gov.v1` proposals through its selected RPC endpoint and
+uses the live tally query for proposals still in the voting period. The
+proposal list delegates to the same pretty renderer as `akt query gov
+proposals`; completed proposals show their final tallies and active proposals
+show the current tally. A separate Parameters sub-tab queries the complete
+`cosmos.gov.v1` parameter response, converts that protobuf with Cosmos JSON
+semantics, and delegates rendering to the shared pretty parameter renderer. It
+does not compose a modern view from a single legacy REST subtype, because
+absent deposit and tally fields would otherwise render as valid-looking zero
+values.
 
 Provider monitoring is a continuously running pipeline, not a view that is
 populated only after navigation. Startup loads the persisted provider cache,

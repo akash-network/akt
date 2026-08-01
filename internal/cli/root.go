@@ -101,7 +101,26 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "akt",
 		Short: "Akash Network CLI",
-		Long:  "akt is the unified command-line interface for the Akash Network.",
+		Long: `akt is the unified command-line interface for the Akash Network. Configure
+networks, contexts, and keys; query chain state; sign and broadcast
+transactions; deploy and operate workloads through local keys or Akash
+Console; interact with provider gateways; and monitor network health.
+
+Getting started:
+  akt sdl init web > deploy.yaml     # generate a starter SDL
+  akt deploy deploy.yaml             # deploy it and pick a bid
+  akt context show                   # see the active configuration
+
+Running akt for the first time in a terminal walks you through creating a
+context: the network to talk to, the keyring that signs, and where akt keeps
+its record of your deployments.
+
+Two ways to pay and sign, chosen per context:
+  keyring       you hold the key, akt signs and broadcasts, costs are in AKT
+  console-api   Akash Console holds a managed wallet and signs for you, in USD
+
+Deployments are identified by a dseq (deployment sequence number), printed when
+the deployment is created.`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// 1. Seed the SDK client.Context with encoding config so that
 			//    downstream PersistentPreRunE hooks (tx/query) always find
@@ -891,7 +910,7 @@ func monitorCmd(
 
 The monitor hub provides three dashboards navigable via Tab/Shift-Tab:
 
-  Network     Consensus state, validator voting, governance parameters
+  Network     Consensus state, validators, governance proposals and parameters
   Provider    Provider fleet health, version distribution, resources
   Oracle/BME  Oracle prices, price health, vault state, mint status
 
@@ -940,12 +959,13 @@ func monitorNetworkCmd(
 		Short: "Network monitoring (consensus, validators, governance)",
 		Long: `Launch the monitor directly into the Network dashboard.
 
-Displays real-time consensus state (height, round, step), validator
-voting progress, and governance parameters. Sub-tabs:
+Displays real-time consensus state (height, round, step), validator voting
+progress, governance proposals and network parameters. Sub-tabs:
 
   1  Overview    Consensus state, vote progress bars, vote grid
   2  Validators  Scrollable validator list with signing history
-  3  Governance  Module-by-module parameter browser`,
+  3  Governance  Recent and active proposals with vote tallies
+  4  Parameters  Module-by-module parameter browser`,
 		Args:    cobra.MaximumNArgs(1),
 		Example: `  akt monitor network https://rpc.akt.dev:443/rpc`,
 		RunE:    monitorRunE(v, "network", homeFn, mgrFn),

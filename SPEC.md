@@ -426,6 +426,12 @@ When `akt` is invoked with no subcommand, the following flow determines what hap
 1. **No config exists** (first run): The bootstrap wizard runs (§1.11, `internal/bootstrap/wizard.go`). It prompts the user to select networks, select a keyring backend (`os`, `file`, or `test`; default: `os`), and configure an initial context. It then offers optional Akash Console onboarding: the user may enter a Console API key (validated best-effort against `/v1/user/me`, stored as the initial context's per-context credential per §7.1) and choose whether deployments for that context should be routed through Console (`auth-method: console-api`). Both prompts default to "no" and are skipped entirely in non-interactive runs. The wizard runs only when stdin is a terminal: in headless environments it declines to bootstrap (no network fetch, no config written) and prints guidance to create a config via `akt context network create` / `akt context create`; the root command then continues to step 2 without a config. After bootstrap completes, the root command continues to step 2.
 > **TUI shell status (2026-07): DISABLED pending UX feedback.** Bare `akt` prints the help text and `--interactive`/`-i` reports that the TUI is disabled. The launch path remains compiled behind `AKT_EXPERIMENTAL_TUI=1` for feedback sessions, and `akt monitor` (§2.6) is unaffected. Steps 2–5 below describe the behavior that resumes when the TUI is re-enabled.
 
+The root help introduction describes `akt` as the unified Akash Network CLI.
+It names the major jobs available from the command tree: chain queries and
+transactions, deployments through either payment rail, provider gateway
+operations, context and key management, and network monitoring. It MUST NOT
+describe workload deployment as though it were the CLI's only purpose.
+
 2. **Config exists, `defaults.interactive` is `true` (default), and a TTY is attached**: The interactive TUI application launches (§8).
 3. **Config exists, `defaults.interactive` is `false`**: Print the help text (equivalent to `akt --help`). The user has opted out of TUI mode and must use explicit subcommands.
 4. **Config exists, no TTY attached** (e.g., `akt | cat`): Print the help text. The TUI requires a terminal.
@@ -1684,7 +1690,7 @@ Hub-based real-time monitoring tool for network state, provider fleet health, or
 
 | Hub Tab | Dashboard | Content |
 |---------|-----------|---------|
-| **Network** (default) | Consensus, validators, governance | [§8.3.8](#838-consensus-monitor-view-from-aktop), [§8.3.9](#839-validator-voting-view-from-aktop), [§8.3.11](#8311-governance-parameters-view-from-aktop) |
+| **Network** (default) | Consensus, validators, governance proposals, governance parameters | [§8.3.8](#838-consensus-monitor-view-from-aktop), [§8.3.9](#839-validator-voting-view-from-aktop), [§8.3.11](#8311-governance-monitor-views) |
 | **Provider** | Fleet health, versions, resources | [§8.3.10](#8310-provider-fleet-monitor-view) |
 | **Oracle/BME** | Prices, health, vault state, mint status, ledger | [§8.3.12](#8312-oraclebme-monitor-view) |
 
@@ -1748,19 +1754,19 @@ claim the cache was cleared.
 |-----|--------|
 | `Tab` | Switch to next dashboard (Network → Provider → Oracle/BME → Network) |
 | `Shift-Tab` | Switch to previous dashboard |
-| `1`/`2`/`3` | Switch sub-tab within the active dashboard (Network only) |
+| `1`/`2`/`3`/`4` | Switch sub-tab within the active dashboard (Network only) |
 
 These keys belong to the monitor whenever its view is active. In standalone
 mode, keypresses are delivered directly to the monitor model; the inactive TUI
 resource router MUST NOT receive them. When the monitor is embedded in the
-experimental TUI shell, `Tab`, `Shift-Tab`, and `1`/`2`/`3` still take
+experimental TUI shell, `Tab`, `Shift-Tab`, and `1`/`2`/`3`/`4` still take
 precedence over shell-level navigation. `Esc`/Back returns to the shell in
 embedded mode. In standalone mode, `q` and Ctrl-C save monitor cache state and
 quit.
 
 The standalone view uses the full terminal height and renders its own bottom
 help and RPC status lines. Help distinguishes dashboard navigation
-(`Tab`/`Shift-Tab`) from Network sub-tab selection (`1`/`2`/`3`); it MUST NOT
+(`Tab`/`Shift-Tab`) from Network sub-tab selection (`1`/`2`/`3`/`4`); it MUST NOT
 describe both controls as one ambiguous "switch tabs" action.
 An embedded monitor receives exactly the height remaining after the shell's
 chrome; the parent MUST NOT size it for one height and clip it to another.
@@ -1771,15 +1777,25 @@ chrome; the parent MUST NOT size it for one height and clip it to another.
 
 Launches directly into the Network dashboard. This is the replacement for the former `akt top` command.
 
-The Network dashboard has three sub-tabs:
+The Network dashboard has four sub-tabs:
 
 | Key | Tab              | Description                                                                | Spec reference |
 | --- | ---------------- | -------------------------------------------------------------------------- | -------------- |
 | `1` | **Overview**     | Consensus state (height, round, step, elapsed, proposer), vote progress bars (prevote/precommit with power fractions), validator vote grid (`●`/`○`) | [§8.3.8](#838-consensus-monitor-view-from-aktop) |
 | `2` | **Validators**   | Scrollable validator list with moniker, voting power, prevote/precommit status, block signing history bar, proposer indicator | [§8.3.9](#839-validator-voting-view-from-aktop) |
-| `3` | **Governance**   | Module-by-module governance parameter browser with pretty-printed JSON | [§8.3.11](#8311-governance-parameters-view-from-aktop) |
+| `3` | **Governance**   | Recent proposals with status, voting deadline, and vote tallies | [§8.3.11](#8311-governance-monitor-views) |
+| `4` | **Parameters**   | Module-by-module governance parameter browser | [§8.3.11](#8311-governance-monitor-views) |
 
-The Governance view obtains the complete modern governance parameter object
+The Governance view queries the most recent proposals from
+`/cosmos.gov.v1.Query/Proposals` through the selected RPC endpoint, newest
+first. It remains useful when no proposal is active by showing recent completed
+proposals. For a proposal in the voting period, the monitor also calls
+`/cosmos.gov.v1.Query/TallyResult` and displays the current tally; completed
+proposals display their final tally. The view renders through the same
+`RenderProposalList` function as `akt query gov proposals`, scrolls with `j/k`,
+and refreshes with `r`.
+
+The Parameters view obtains the complete modern governance parameter object
 from `/cosmos.gov.v1.Query/Params` through the monitor's selected RPC endpoint
 and renders it with the same pretty renderer as `akt query gov params`. It MUST
 NOT treat one legacy v1beta1 REST subtype (`voting`, `deposit`, or `tallying`)
@@ -1947,6 +1963,12 @@ only that rail's subset.
 | `console_deposit`              | Add USD credit to a Console-managed deployment                             |
 
 **Transport:** stdio (JSON-RPC over stdin/stdout). Designed for use with any MCP-compatible client.
+
+SIGINT and SIGTERM cancel the stdio server context, stop the blocked input
+loop, allow in-flight tool workers to return, and exit cleanly without printing
+`context canceled`. Closing stdin remains a normal clean shutdown. The request
+contexts passed to tool handlers retain command-level cancellation while also
+observing these process signals.
 
 **Client implementation:** Uses `v1beta3.LightClient` from chain-sdk for read-only mode, `v1beta3.Client` for write mode, and the shared authenticated provider gateway client for provider REST tools. A `provider_url` selects the endpoint; it does not disable authentication. Keyring contexts attach a wallet-signed JWT, and missing signing identity is reported before the request.
 
@@ -3507,7 +3529,7 @@ Lines with no content are omitted — the status bar shrinks to 1 or 2 lines whe
 
 Status bar example (3-line, on monitor view):
 ```
-<1> Overview  <2> Validators  <3> Governance  <j/k> Scroll  <r> Refresh
+<1> Overview  <2> Validators  <3> Governance  <4> Parameters  <j/k> Scroll  <r> Refresh
 RPC: rpc.akt.dev:443/rpc  WS: connected
 <:> Command  <Esc> Back  <Ctrl+c> Quit
 ```
@@ -3796,9 +3818,20 @@ Real-time monitoring of all Akash providers -- version distribution, resource ut
 
 **Components:** bubbles/progress (scan progress bar), bubbles/table (provider list, node detail table), custom (version dot chart).
 
-#### 8.3.11 Governance Parameters View (from aktop)
+#### 8.3.11 Governance Monitor Views
 
-Module-by-module governance parameter browsing. The right pane renders pretty-formatted key-value output (same `Render*Params()` functions as CLI `--output pretty`) instead of raw JSON. This follows the Pretty/TUI visual parity rule (§10.8).
+**Governance proposals (key 3).** The proposal view shows the 20 most recent
+proposals plus any proposal currently in deposit or voting period, de-duplicated
+by ID and sorted newest first. Columns are ID, title, status, yes, no, abstain,
+veto, and voting end. Tally columns show percentages of votes cast; a proposal
+with no tally yet shows `-`. The monitor populates voting-period proposals from
+the live tally query before calling the shared `RenderProposalList()` renderer.
+`j/k` scroll and `r` refreshes immediately.
+
+**Governance parameters (key 4).** Module-by-module governance parameter
+browsing. The right pane renders pretty-formatted key-value output (the same
+`Render*Params()` functions as CLI `--output pretty`) instead of raw JSON. This
+follows the Pretty/TUI visual parity rule (§10.8).
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -3849,7 +3882,7 @@ Module-by-module governance parameter browsing. The right pane renders pretty-fo
 
 "CLI `Render*Params()`" means the module has a registered `PrettyFormatter` for `akt query <module> params`. "TUI-only" modules are displayed in the TUI governance tab via `RenderModuleParamsFromJSON()` but don't have a standalone CLI query command in akt (their params are queried via the generic Cosmos SDK params subspace).
 
-**Refresh interval**: 5 minutes.
+**Refresh intervals**: proposals every 30 seconds; parameters every 5 minutes.
 
 **Components:** bubbles/list (module selector), bubbles/viewport (parameter display).
 
@@ -4014,7 +4047,7 @@ Transaction actions (close, update, delegate, vote, etc.) show a confirmation di
 | `Tab`         | Cycle between monitor dashboards (in monitor view) or panes (in split view) |
 | `Shift-Tab`   | Cycle to previous monitor dashboard     |
 
-**Note:** When the monitor view (4) is active, `1`/`2`/`3` switch sub-tabs within the Network dashboard instead of navigating to global views. All other number keys retain their global behavior.
+**Note:** When the monitor view (4) is active, `1`/`2`/`3`/`4` switch sub-tabs within the Network dashboard instead of navigating to global views. All other number keys retain their global behavior.
 
 **List Navigation**:
 | Key         | Action                             |
@@ -4134,7 +4167,8 @@ App (root model)
 │   │   ├── NetworkDashboard   (from aktop: consensus, validators, governance)
 │   │   │   ├── ConsensusView    (bubbles/progress for vote bars, custom vote grid)
 │   │   │   ├── ValidatorView    (bubbles/table, custom signing history bar)
-│   │   │   └── GovernanceView   (bubbles/list for modules, bubbles/viewport for params)
+│   │   │   ├── GovernanceView   (shared proposal renderer in a bubbles/viewport)
+│   │   │   └── ParametersView   (bubbles/list for modules, bubbles/viewport for params)
 │   │   ├── ProviderDashboard  (from aktop: provider fleet health)
 │   │   │   ├── ScanProgress     (bubbles/progress)
 │   │   │   ├── VersionDist      (custom dot visualization)
@@ -4524,9 +4558,12 @@ Addresses are **always displayed in full**. Never truncated or shortened by defa
 | Column | Source | Format |
 |--------|--------|--------|
 | ID | `Proposal.Id` | Bold |
-| TITLE | `Proposal.Title` | Full text |
+| TITLE | `Proposal.Title` | Up to 40 characters, with `...` when truncated |
 | STATUS | `Proposal.Status` | Color-coded |
-| SUBMIT TIME | `Proposal.SubmitTime` | ISO date |
+| YES | `Proposal.FinalTallyResult.YesCount` | Percentage of votes cast, or `-` when no tally exists |
+| NO | `Proposal.FinalTallyResult.NoCount` | Percentage of votes cast, or `-` when no tally exists |
+| ABSTAIN | `Proposal.FinalTallyResult.AbstainCount` | Percentage of votes cast, or `-` when no tally exists |
+| VETO | `Proposal.FinalTallyResult.NoWithVetoCount` | Percentage of votes cast, or `-` when no tally exists |
 | VOTING END | `Proposal.VotingEndTime` | ISO date |
 
 **Single proposal** (detail): Sections for Proposal (ID, title, status, type, description), Timeline (submit, deposit end, voting start, voting end), and Tally (yes/no/abstain/no_with_veto with percentages).
@@ -5404,7 +5441,7 @@ Cobra provides this feature via `Command.SuggestionsMinimumDistance` and `Comman
 | 2.9  | Store status command    | Display store info, sync state, record counts                                                                                  | Accurate reporting of store contents                                      |
 | 2.10 | Events command          | Live blockchain event streaming                                                                                                | `akt events` shows real-time events                                       |
 | 2.11 | Console API client      | `auth-method: console-api` support, API key resolved flag > env > per-context stored credential (§7.1), deployment CRUD via Console managed wallet API, `akt console` command group (§2.9) | Create, update, close deployments; list bids; create leases via Console API with the API key resolved per §7.1 |
-| 2.12 | MCP server              | `akt mcp` command with stdio JSON-RPC transport, up to 27 read-only tools and 6 write tools gated behind `--enable-writes`     | Read-only tools query the configured chain and/or Console rail; write tools are opt-in. Provider calls authenticate through the shared gateway client. |
+| 2.12 | MCP server              | `akt mcp` command with stdio JSON-RPC transport, up to 27 read-only tools and 6 write tools gated behind `--enable-writes`     | Read-only tools query the configured chain and/or Console rail; write tools are opt-in. Provider calls authenticate through the shared gateway client. EOF and process signals stop the server cleanly. |
 
 ### Phase 3: TUI Mode
 
@@ -5425,7 +5462,7 @@ Cobra provides this feature via `Command.SuggestionsMinimumDistance` and `Comman
 | 3.7  | Providers view                      | List + detail views                                                                                                                       | User can browse providers and their attributes                                                    |
 | 3.8  | Log viewer                          | Streaming viewport with service filter and search                                                                                         | Logs stream in real-time, search works                                                            |
 | 3.9  | Monitor hub (`akt monitor`)         | Hub-based monitoring with Tab/Shift-Tab navigation between Network, Provider, and Oracle/BME dashboards. Subcommands: `monitor network`, `monitor provider`, `monitor oracle`/`monitor bme`. | Hub launches, Tab/Shift-Tab cycles dashboards, subcommands open correct dashboard |
-| 3.10 | Network dashboard (from aktop)      | Consensus state (height/round/step, vote progress bars, vote grid), validator voting view (scrollable list, moniker resolution, signing history), governance params   | Consensus updates via WebSocket, validator monikers resolved and cached, governance params for all 12 modules |
+| 3.10 | Network dashboard (from aktop)      | Consensus state (height/round/step, vote progress bars, vote grid), validator voting view (scrollable list, moniker resolution, signing history), recent governance proposals with tallies, governance params | Consensus updates via WebSocket, validator monikers resolved and cached, active proposal tallies refresh, governance params for all 12 modules |
 | 3.11 | Provider dashboard (from aktop)     | Version distribution visualization, provider health scanning with priority scheduling, per-provider detail with node-level CPU/memory/GPU | Providers scanned with smart scheduling, version distribution accurate, GPU models shown via gRPC |
 | 3.12 | Provider cache                      | Smart-scheduled provider cache with disk persistence                                                                                      | Cache persists across sessions, scheduling intervals respected (1m/5m/6h)                         |
 | 3.13 | Oracle/BME dashboard                | Combined oracle prices (TWAP, median, health) and BME state (mint status, vault, ledger). REST-based polling + real-time bus events.        | Oracle prices and BME state displayed, color-coded, amounts formatted correctly                    |
@@ -5451,7 +5488,7 @@ Cobra provides this feature via `Command.SuggestionsMinimumDistance` and `Comman
 | 4.3  | Plugin management        | install, list, remove commands                     | Full plugin lifecycle works                        |
 | 4.4  | Plugin manifest          | Optional plugin.yaml parsing                       | Manifest info shown in `akt plugin list` and help  |
 | 4.5  | Certificates view (TUI)  | List and detail for certificates                   | Certificate management in TUI                      |
-| 4.6  | Governance view (TUI)    | Proposals with voting actions                      | User can browse proposals and vote from TUI        |
+| 4.6  | Governance actions (TUI) | Voting and deposit actions for the read-only proposal view | User can vote and deposit from TUI after confirmation |
 | 4.7  | Validators view (TUI)    | Validator list with delegation actions             | User can delegate/undelegate from TUI              |
 | 4.8  | Escrow view (TUI)        | Escrow account list and detail                     | Escrow state visible in TUI                        |
 | 4.9  | Wasm view (TUI)          | Contract list, info, state queries                 | Wasm contract browsing in TUI                      |

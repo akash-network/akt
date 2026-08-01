@@ -4,6 +4,20 @@
 
 ### Fixed
 
+- **Root help described deployment as the whole CLI**: the introduction now
+  presents akt as the unified interface for chain queries and transactions,
+  deployments on either payment rail, provider operations, context and key
+  management, and network monitoring.
+
+- **Monitor governance showed parameters but no proposals**: the Network
+  dashboard now separates recent governance proposals from module parameters.
+  Proposal rows include current tallies during voting and final tallies after
+  completion, rendered through the same formatter as the query command.
+
+- **Ctrl-C left the MCP stdio server blocked on stdin**: MCP now preserves
+  command cancellation while attaching SIGINT and SIGTERM to the actual stdio
+  loop, then treats an intentional cancellation as a clean shutdown.
+
 - **The built-in sandbox context targeted a retired network**: the sandbox
   template now uses the live `sandbox-2` chain ID and the RPC, API, and gRPC
   endpoints published by the Akash network registry, restoring context

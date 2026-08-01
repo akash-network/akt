@@ -993,6 +993,93 @@ func (c *Client) abciQuery(ctx context.Context, path string, req proto.Marshaler
 	return dst.Unmarshal(valueBytes)
 }
 
+// GetGovernanceProposals returns the latest proposals together with every
+// proposal still accepting deposits or votes. Voting-period proposals carry
+// a live tally; completed proposals keep the final tally returned by the
+// proposals query.
+func (c *Client) GetGovernanceProposals(ctx context.Context) (*govv1.QueryProposalsResponse, error) {
+	recent, err := c.queryGovernanceProposals(ctx, govv1.StatusNil, &querytypes.PageRequest{
+		Limit:   20,
+		Reverse: true,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("fetch recent governance proposals: %w", err)
+	}
+
+	byID := make(map[uint64]*govv1.Proposal, len(recent.Proposals))
+	for _, proposal := range recent.Proposals {
+		byID[proposal.Id] = proposal
+	}
+
+	for _, status := range []govv1.ProposalStatus{govv1.StatusDepositPeriod, govv1.StatusVotingPeriod} {
+		active, err := c.queryAllGovernanceProposals(ctx, status)
+		if err != nil {
+			return nil, fmt.Errorf("fetch %s governance proposals: %w", formatGovernanceStatus(status), err)
+		}
+		for _, proposal := range active {
+			byID[proposal.Id] = proposal
+		}
+	}
+
+	proposals := make([]*govv1.Proposal, 0, len(byID))
+	for _, proposal := range byID {
+		if proposal.Status == govv1.StatusVotingPeriod {
+			var tally govv1.QueryTallyResultResponse
+			if err := c.abciQuery(ctx, "/cosmos.gov.v1.Query/TallyResult", &govv1.QueryTallyResultRequest{
+				ProposalId: proposal.Id,
+			}, &tally); err != nil {
+				return nil, fmt.Errorf("fetch live tally for proposal %d: %w", proposal.Id, err)
+			}
+			proposal.FinalTallyResult = tally.Tally
+		}
+		proposals = append(proposals, proposal)
+	}
+
+	sort.Slice(proposals, func(i, j int) bool {
+		return proposals[i].Id > proposals[j].Id
+	})
+
+	return &govv1.QueryProposalsResponse{Proposals: proposals}, nil
+}
+
+func (c *Client) queryAllGovernanceProposals(ctx context.Context, status govv1.ProposalStatus) ([]*govv1.Proposal, error) {
+	var proposals []*govv1.Proposal
+	var nextKey []byte
+	for {
+		response, err := c.queryGovernanceProposals(ctx, status, &querytypes.PageRequest{
+			Key:   nextKey,
+			Limit: 100,
+		})
+		if err != nil {
+			return nil, err
+		}
+		proposals = append(proposals, response.Proposals...)
+		if response.Pagination == nil || len(response.Pagination.NextKey) == 0 {
+			return proposals, nil
+		}
+		nextKey = response.Pagination.NextKey
+	}
+}
+
+func (c *Client) queryGovernanceProposals(
+	ctx context.Context,
+	status govv1.ProposalStatus,
+	pagination *querytypes.PageRequest,
+) (*govv1.QueryProposalsResponse, error) {
+	var response govv1.QueryProposalsResponse
+	if err := c.abciQuery(ctx, "/cosmos.gov.v1.Query/Proposals", &govv1.QueryProposalsRequest{
+		ProposalStatus: status,
+		Pagination:     pagination,
+	}, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
+func formatGovernanceStatus(status govv1.ProposalStatus) string {
+	return strings.ToLower(strings.TrimPrefix(status.String(), "PROPOSAL_STATUS_"))
+}
+
 // GetAllGovernanceParams fetches all governance parameters
 func (c *Client) GetAllGovernanceParams(ctx context.Context) (*governance.AllParams, error) {
 	allParams := governance.NewAllParams()

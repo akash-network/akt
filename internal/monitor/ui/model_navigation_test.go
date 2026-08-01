@@ -40,6 +40,27 @@ func TestProviderVersionNavigationKeys(t *testing.T) {
 	}
 }
 
+func TestNetworkNumberKeysSelectGovernanceViews(t *testing.T) {
+	tests := map[string]struct {
+		key  rune
+		want Tab
+	}{
+		"governance proposals":  {key: '3', want: TabGovernance},
+		"governance parameters": {key: '4', want: TabParameters},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			m := Model{hubTab: HubNetwork, activeTab: TabOverview}
+			updated, _ := m.Update(tea.KeyPressMsg{Code: tc.key})
+			got := updated.(*Model)
+			if got.activeTab != tc.want {
+				t.Fatalf("active tab = %v, want %v", got.activeTab, tc.want)
+			}
+		})
+	}
+}
+
 func TestProviderVersionNavigationReconcilesStaleIndex(t *testing.T) {
 	tests := map[string]struct {
 		versions  []string

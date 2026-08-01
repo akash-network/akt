@@ -324,17 +324,17 @@ func TestRenderGovernanceTab(t *testing.T) {
 	}{
 		"Loading": {
 			ctx: func() ViewContext {
-				ctx := newTestViewContext(withHubTab(HubNetwork), withTab(TabGovernance))
+				ctx := newTestViewContext(withHubTab(HubNetwork), withTab(TabParameters))
 				ctx.GovernanceParams = nil
 				return ctx
 			}(),
 		},
 		"WithParams": {
-			ctx: newTestViewContext(withHubTab(HubNetwork), withTab(TabGovernance), withGovernanceParams()),
+			ctx: newTestViewContext(withHubTab(HubNetwork), withTab(TabParameters), withGovernanceParams()),
 		},
 		"ScrolledToBottom": {
 			ctx: func() ViewContext {
-				ctx := newTestViewContext(withHubTab(HubNetwork), withTab(TabGovernance), withGovernanceParams())
+				ctx := newTestViewContext(withHubTab(HubNetwork), withTab(TabParameters), withGovernanceParams())
 				ctx.GovModuleHeight = 8 // simulate small terminal: only 8 rows for the list
 				ctx.GovModuleIdx = 11   // last module (crisis)
 				ctx.GovModuleScroll = 5 // scrolled so items 5..11 + indicator visible
@@ -344,7 +344,7 @@ func TestRenderGovernanceTab(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			golden.RequireEqual(t, renderGovernanceTab(tc.ctx))
+			golden.RequireEqual(t, renderParametersTab(tc.ctx))
 		})
 	}
 }
@@ -442,12 +442,12 @@ func TestRenderStatusBarDistinguishesDashboardAndNetworkNavigation(t *testing.T)
 		true,
 		testWidth,
 	)
-	for _, want := range []string{"Tab/Shift-Tab", "1-3"} {
+	for _, want := range []string{"Tab/Shift-Tab", "1-4"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("status bar missing %q:\n%s", want, got)
 		}
 	}
-	if strings.Contains(got, "Tab/1-3") {
+	if strings.Contains(got, "Tab/1-4") {
 		t.Errorf("status bar conflates dashboard and sub-tab navigation:\n%s", got)
 	}
 }

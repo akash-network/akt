@@ -12,6 +12,7 @@ import (
 	"charm.land/bubbles/v2/viewport"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 
 	"pkg.akt.dev/akt/internal/monitor/cache"
 	"pkg.akt.dev/akt/internal/monitor/consensus"
@@ -41,19 +42,21 @@ const (
 	TabOverview Tab = iota
 	TabValidators
 	TabGovernance
+	TabParameters
 )
 
-const networkTabCount = 3
+const networkTabCount = 4
 
 const (
-	RenderInterval         = 100 * time.Millisecond // throttle re-renders
-	ChainSyncInterval      = 10 * time.Minute
-	ProviderCheckInterval  = 200 * time.Millisecond
-	CacheSaveInterval      = 30 * time.Second
-	GovernanceSyncInterval = 5 * time.Minute
-	OracleSyncInterval     = 30 * time.Second
-	MaxConcurrentChecks    = 10
-	MaxBlockHistory        = 50
+	RenderInterval                 = 100 * time.Millisecond // throttle re-renders
+	ChainSyncInterval              = 10 * time.Minute
+	ProviderCheckInterval          = 200 * time.Millisecond
+	CacheSaveInterval              = 30 * time.Second
+	GovernanceSyncInterval         = 5 * time.Minute
+	GovernanceProposalSyncInterval = 30 * time.Second
+	OracleSyncInterval             = 30 * time.Second
+	MaxConcurrentChecks            = 10
+	MaxBlockHistory                = 50
 )
 
 // BlockValidatorVote stores a single validator's vote state for a block.
@@ -116,11 +119,13 @@ func (si StatusInfo) TabHelpText() string {
 	default: // HubNetwork
 		switch si.ActiveTab {
 		case TabValidators:
-			return "Tab: dashboard | 1-3: sub-tab | j/k: scroll | r: refresh"
+			return "Tab: dashboard | 1-4: sub-tab | j/k: scroll | r: refresh"
 		case TabGovernance:
-			return "Tab: dashboard | 1-3: sub-tab | j/k: select | r: refresh"
+			return "Tab: dashboard | 1-4: sub-tab | j/k: scroll | r: refresh"
+		case TabParameters:
+			return "Tab: dashboard | 1-4: sub-tab | j/k: select | r: refresh"
 		default:
-			return "Tab: dashboard | 1-3: sub-tab | j/k: select | enter: expand"
+			return "Tab: dashboard | 1-4: sub-tab | j/k: select | enter: expand"
 		}
 	}
 }
@@ -191,7 +196,9 @@ type Model struct {
 	detailRequestID uint64
 
 	// Governance state
-	governanceParams *governance.AllParams
+	governanceProposals    *govv1.QueryProposalsResponse
+	governanceProposalsErr error
+	governanceParams       *governance.AllParams
 
 	// Bubbles component models for tables/lists/viewports
 	providerTable   table.Model
@@ -201,6 +208,7 @@ type Model struct {
 	govModuleIdx    int // selected module index in governance.ModuleOrder
 	govModuleScroll int // first visible module index (scroll offset)
 	govModuleHeight int // visible rows for the module list
+	govProposalView viewport.Model
 	govParamView    viewport.Model
 
 	// Event bus — shared across the application; carries all typed ABCI
@@ -214,10 +222,12 @@ type Model struct {
 
 // Message types
 type (
-	renderTickMsg        time.Time // periodic render trigger for throttled updates
-	providerCheckTickMsg time.Time
-	chainSyncTickMsg     time.Time
-	cacheSaveTickMsg     time.Time
+	renderTickMsg              time.Time // periodic render trigger for throttled updates
+	providerCheckTickMsg       time.Time
+	chainSyncTickMsg           time.Time
+	cacheSaveTickMsg           time.Time
+	governanceProposalsTickMsg time.Time
+	governanceParamsTickMsg    time.Time
 
 	// busEventMsg carries a single typed event from the shared pubsub bus.
 	busEventMsg struct {
@@ -271,6 +281,11 @@ type (
 	}
 
 	// governanceParamsMsg is sent when governance params fetch completes
+	governanceProposalsMsg struct {
+		proposals *govv1.QueryProposalsResponse
+		err       error
+	}
+
 	governanceParamsMsg struct {
 		params *governance.AllParams
 		err    error
@@ -409,6 +424,7 @@ func NewModel(cfg ModelConfig) Model {
 	m.blockTable.SetStyles(ts)
 	m.nodeTable.SetStyles(ts)
 
+	m.govProposalView = viewport.New(viewport.WithWidth(80), viewport.WithHeight(20))
 	m.govParamView = viewport.New(viewport.WithWidth(60), viewport.WithHeight(20))
 	m.govModuleHeight = 20 // updated in resizeComponents
 
@@ -457,10 +473,12 @@ func (m Model) Init() tea.Cmd {
 		m.fetchMonikers,
 		m.fetchInitialSigning,
 		m.fetchProposer,
+		m.fetchGovernanceProposals,
 		m.fetchGovernanceParams,
 		m.fetchOracleState,
 		m.fetchBMEState,
 		m.renderTick(),
+		m.governanceProposalSyncTick(),
 		m.governanceSyncTick(),
 		tea.Sequence(m.loadFromCache, m.syncChain),
 		m.providerCheckTick(),
@@ -705,7 +723,13 @@ func (m Model) cacheSaveTick() tea.Cmd {
 
 func (m Model) governanceSyncTick() tea.Cmd {
 	return tea.Tick(GovernanceSyncInterval, func(t time.Time) tea.Msg {
-		return m.fetchGovernanceParams()
+		return governanceParamsTickMsg(t)
+	})
+}
+
+func (m Model) governanceProposalSyncTick() tea.Cmd {
+	return tea.Tick(GovernanceProposalSyncInterval, func(t time.Time) tea.Msg {
+		return governanceProposalsTickMsg(t)
 	})
 }
 
@@ -746,6 +770,12 @@ func (m Model) fetchGovernanceParams() tea.Msg {
 		return governanceParamsMsg{err: err}
 	}
 	return governanceParamsMsg{params: params}
+}
+
+func (m Model) fetchGovernanceProposals() tea.Msg {
+	ctx := context.Background()
+	proposals, err := m.client.GetGovernanceProposals(ctx)
+	return governanceProposalsMsg{proposals: proposals, err: err}
 }
 
 // rebuildProviderList rebuilds the provider list from cache
@@ -1121,6 +1151,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case cacheSaveTickMsg:
 		m.saveCache()
 		return m, m.cacheSaveTick()
+	case governanceProposalsTickMsg:
+		return m, tea.Batch(m.fetchGovernanceProposals, m.governanceProposalSyncTick())
+	case governanceParamsTickMsg:
+		return m, tea.Batch(m.fetchGovernanceParams, m.governanceSyncTick())
 	case stateMsg:
 		return m.handleStateMsg(msg)
 	case monikersMsg:
@@ -1148,6 +1182,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleProviderCheckedMsg(msg)
 	case providerDetailMsg:
 		return m.handleProviderDetailMsg(msg)
+	case governanceProposalsMsg:
+		return m.handleGovernanceProposalsMsg(msg)
 	case governanceParamsMsg:
 		return m.handleGovernanceParamsMsg(msg)
 	case oracleStateMsg:
@@ -1270,6 +1306,9 @@ func (m *Model) handleKeyMsg(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.syncChain
 		}
 		if m.activeTab == TabGovernance {
+			return m, m.fetchGovernanceProposals
+		}
+		if m.activeTab == TabParameters {
 			return m, m.fetchGovernanceParams
 		}
 		// Consensus is event-driven, no manual refresh needed.
@@ -1287,6 +1326,10 @@ func (m *Model) handleKeyMsg(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.hubTab == HubNetwork {
 			m.activeTab = TabGovernance
 		}
+	case "4":
+		if m.hubTab == HubNetwork {
+			m.activeTab = TabParameters
+		}
 	case "tab":
 		m.hubTab = (m.hubTab + 1) % HubTab(hubTabCount)
 		m.resetScrollForTab()
@@ -1299,6 +1342,8 @@ func (m *Model) handleKeyMsg(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case m.hubTab == HubProvider:
 			m.providerTable, cmd = m.providerTable.Update(msg)
 		case m.hubTab == HubNetwork && m.activeTab == TabGovernance:
+			m.govProposalView.SetYOffset(m.govProposalView.YOffset() - 1)
+		case m.hubTab == HubNetwork && m.activeTab == TabParameters:
 			if m.govModuleIdx > 0 {
 				m.govModuleIdx--
 				if m.govModuleIdx < m.govModuleScroll {
@@ -1326,6 +1371,8 @@ func (m *Model) handleKeyMsg(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case m.hubTab == HubProvider:
 			m.providerTable, cmd = m.providerTable.Update(msg)
 		case m.hubTab == HubNetwork && m.activeTab == TabGovernance:
+			m.govProposalView.SetYOffset(m.govProposalView.YOffset() + 1)
+		case m.hubTab == HubNetwork && m.activeTab == TabParameters:
 			if m.govModuleIdx < len(governance.ModuleOrder)-1 {
 				m.govModuleIdx++
 				if m.govModuleIdx >= m.govModuleScroll+m.govModuleHeight {
@@ -1351,6 +1398,8 @@ func (m *Model) handleKeyMsg(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case m.hubTab == HubProvider:
 			m.providerTable, cmd = m.providerTable.Update(msg)
 		case m.hubTab == HubNetwork && m.activeTab == TabGovernance:
+			m.govProposalView.GotoTop()
+		case m.hubTab == HubNetwork && m.activeTab == TabParameters:
 			m.govModuleIdx = 0
 			m.govModuleScroll = 0
 			m.updateGovParamView()
@@ -1366,6 +1415,8 @@ func (m *Model) handleKeyMsg(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		case m.hubTab == HubProvider:
 			m.providerTable, cmd = m.providerTable.Update(msg)
 		case m.hubTab == HubNetwork && m.activeTab == TabGovernance:
+			m.govProposalView.GotoBottom()
+		case m.hubTab == HubNetwork && m.activeTab == TabParameters:
 			m.govModuleIdx = len(governance.ModuleOrder) - 1
 			m.govModuleScroll = max(0, m.govModuleIdx-m.govModuleHeight+1)
 			m.updateGovParamView()
@@ -1387,6 +1438,8 @@ func (m *Model) handleKeyMsg(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.expandedValidator = -1
 			return m, nil
 		} else if m.hubTab == HubNetwork && m.activeTab == TabGovernance {
+			m.govProposalView.ScrollLeft(4)
+		} else if m.hubTab == HubNetwork && m.activeTab == TabParameters {
 			if m.govParamView.YOffset() > 0 {
 				m.govParamView.SetYOffset(m.govParamView.YOffset() - 1)
 			}
@@ -1395,6 +1448,8 @@ func (m *Model) handleKeyMsg(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if m.hubTab == HubProvider {
 			m.selectNextVersion()
 		} else if m.hubTab == HubNetwork && m.activeTab == TabGovernance {
+			m.govProposalView.ScrollRight(4)
+		} else if m.hubTab == HubNetwork && m.activeTab == TabParameters {
 			m.govParamView.SetYOffset(m.govParamView.YOffset() + 1)
 		}
 	case "enter":
@@ -1614,6 +1669,15 @@ func (m *Model) handleGovernanceParamsMsg(msg governanceParamsMsg) (tea.Model, t
 	if msg.err == nil {
 		m.governanceParams = msg.params
 		m.updateGovParamView()
+	}
+	return m, nil
+}
+
+func (m *Model) handleGovernanceProposalsMsg(msg governanceProposalsMsg) (tea.Model, tea.Cmd) {
+	m.governanceProposalsErr = msg.err
+	if msg.err == nil {
+		m.governanceProposals = msg.proposals
+		m.govProposalView.SetContent(pretty.RenderProposalList(msg.proposals))
 	}
 	return m, nil
 }
@@ -1908,6 +1972,8 @@ func (m *Model) resizeComponents() {
 	}
 	m.govParamView.SetHeight(govHeight)
 	m.govParamView.SetWidth(m.width - 22)
+	m.govProposalView.SetHeight(govHeight)
+	m.govProposalView.SetWidth(m.width)
 }
 
 // View renders the UI
@@ -1921,33 +1987,36 @@ func (m Model) View() tea.View {
 	// because View() is a value-receiver and mutations would be lost.
 
 	ctx := ViewContext{
-		State:              m.state,
-		Endpoint:           m.client.Endpoint(),
-		Width:              m.width,
-		Height:             m.height,
-		HubTab:             m.hubTab,
-		ActiveTab:          m.activeTab,
-		Embedded:           m.embedded,
-		Monikers:           m.monikers,
-		GovernanceParams:   m.governanceParams,
-		BlockHistory:       m.blockHistory,
-		ExpandedBlock:      m.expandedBlock,
-		ExpandedScroll:     m.expandedScroll,
-		ExpandedValidators: m.expandedValidators,
-		ExpandedValidator:  m.expandedValidator,
-		ValSignHistory:     m.valSignHistory,
-		ProposerHistory:    m.proposerHistory,
-		CurrentProposer:    m.knownProposerIndex,
-		WSConnected:        m.wsConnected,
-		Oracle:             m.oracle,
-		ProviderTable:      m.providerTable,
-		NodeTable:          m.nodeTable,
-		ValidatorTable:     m.validatorTable,
-		BlockTable:         m.blockTable,
-		GovModuleIdx:       m.govModuleIdx,
-		GovModuleScroll:    m.govModuleScroll,
-		GovModuleHeight:    m.govModuleHeight,
-		GovParamView:       m.govParamView,
+		State:                  m.state,
+		Endpoint:               m.client.Endpoint(),
+		Width:                  m.width,
+		Height:                 m.height,
+		HubTab:                 m.hubTab,
+		ActiveTab:              m.activeTab,
+		Embedded:               m.embedded,
+		Monikers:               m.monikers,
+		GovernanceProposals:    m.governanceProposals,
+		GovernanceProposalsErr: m.governanceProposalsErr,
+		GovernanceParams:       m.governanceParams,
+		BlockHistory:           m.blockHistory,
+		ExpandedBlock:          m.expandedBlock,
+		ExpandedScroll:         m.expandedScroll,
+		ExpandedValidators:     m.expandedValidators,
+		ExpandedValidator:      m.expandedValidator,
+		ValSignHistory:         m.valSignHistory,
+		ProposerHistory:        m.proposerHistory,
+		CurrentProposer:        m.knownProposerIndex,
+		WSConnected:            m.wsConnected,
+		Oracle:                 m.oracle,
+		ProviderTable:          m.providerTable,
+		NodeTable:              m.nodeTable,
+		ValidatorTable:         m.validatorTable,
+		BlockTable:             m.blockTable,
+		GovModuleIdx:           m.govModuleIdx,
+		GovModuleScroll:        m.govModuleScroll,
+		GovModuleHeight:        m.govModuleHeight,
+		GovProposalView:        m.govProposalView,
+		GovParamView:           m.govParamView,
 		Providers: ProviderViewState{
 			Providers: m.providers.Items,
 			Versions:  m.providers.Versions,

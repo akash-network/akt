@@ -7,6 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -154,9 +157,15 @@ func (s *Server) registerConsoleWriteTools(cl *aktconsole.Client) {
 
 // ServeStdio starts the server over stdio transport.
 func (s *Server) ServeStdio(ctx context.Context) error {
-	return mcpserver.ServeStdio(s.mcp, mcpserver.WithStdioContextFunc(func(_ context.Context) context.Context {
-		return ctx
-	}))
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	stdio := mcpserver.NewStdioServer(s.mcp)
+	err := stdio.Listen(ctx, os.Stdin, os.Stdout)
+	if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+		return nil
+	}
+	return err
 }
 
 // registerQueryTools registers all read-only query tools.
