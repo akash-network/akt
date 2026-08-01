@@ -98,11 +98,7 @@ func makeMultiSignCmd() func(cmd *cobra.Command, args []string) (err error) {
 			return err
 		}
 
-		k, err := getMultisigRecord(cctx, args[1])
-		if err != nil {
-			return err
-		}
-		pubKey, err := k.GetPubKey()
+		k, multisigPub, err := getMultisigRecord(cctx, args[1])
 		if err != nil {
 			return err
 		}
@@ -118,7 +114,6 @@ func makeMultiSignCmd() func(cmd *cobra.Command, args []string) (err error) {
 		if err != nil {
 			return err
 		}
-		multisigPub := pubKey.(*kmultisig.LegacyAminoPubKey)
 		multisigSig := multisig.NewMultisig(len(multisigPub.PubKeys))
 		if !cctx.Offline {
 			accnum, seq, err := cctx.AccountRetriever.GetAccountNumberSequence(cctx, addr)
@@ -268,7 +263,7 @@ func makeBatchMultisignCmd() func(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
-		k, err := getMultisigRecord(cctx, args[1])
+		k, multisigPub, err := getMultisigRecord(cctx, args[1])
 		if err != nil {
 			return err
 		}
@@ -312,11 +307,6 @@ func makeBatchMultisignCmd() func(cmd *cobra.Command, args []string) error {
 			if err != nil {
 				return err
 			}
-			pubKey, err := k.GetPubKey()
-			if err != nil {
-				return err
-			}
-			multisigPub := pubKey.(*kmultisig.LegacyAminoPubKey)
 			multisigSig := multisig.NewMultisig(len(multisigPub.PubKeys))
 
 			anyPk, err := codectypes.NewAnyWithValue(multisigPub)
@@ -327,7 +317,7 @@ func makeBatchMultisignCmd() func(cmd *cobra.Command, args []string) error {
 				ChainID:       txFactory.ChainID(),
 				AccountNumber: txFactory.AccountNumber(),
 				Sequence:      txFactory.Sequence(),
-				Address:       sdk.AccAddress(pubKey.Address()).String(),
+				Address:       sdk.AccAddress(multisigPub.Address()).String(),
 				PubKey: &anypb.Any{
 					TypeUrl: anyPk.TypeUrl,
 					Value:   anyPk.Value,
@@ -341,14 +331,18 @@ func makeBatchMultisignCmd() func(cmd *cobra.Command, args []string) error {
 			}
 			txData := adaptableTx.GetSigningTxData()
 
-			for _, sig := range signatureBatch {
-				err = signing.VerifySignature(cmd.Context(), sig[i].PubKey, txSignerData, sig[i].Data,
+			for batchIndex, signatures := range signatureBatch {
+				sig, err := signatureForTransaction(signatures, i, args[batchIndex+2])
+				if err != nil {
+					return err
+				}
+				err = signing.VerifySignature(cmd.Context(), sig.PubKey, txSignerData, sig.Data,
 					txCfg.SignModeHandler(), txData)
 				if err != nil {
-					return fmt.Errorf("couldn't verify signature: %w %v", err, sig)
+					return fmt.Errorf("couldn't verify signature: %w %v", err, signatures)
 				}
 
-				if err := multisig.AddSignatureV2(multisigSig, sig[i], multisigPub.GetPubKeys()); err != nil {
+				if err := multisig.AddSignatureV2(multisigSig, sig, multisigPub.GetPubKeys()); err != nil {
 					return err
 				}
 			}
@@ -392,6 +386,19 @@ func batchNoAutoIncrement(cmd *cobra.Command) bool {
 	return value
 }
 
+func signatureForTransaction(signatures []signingtypes.SignatureV2, txIndex int, source string) (signingtypes.SignatureV2, error) {
+	if txIndex >= len(signatures) {
+		return signingtypes.SignatureV2{}, fmt.Errorf(
+			"signature file %q contains %d signatures; transaction %d has no corresponding signature",
+			source,
+			len(signatures),
+			txIndex+1,
+		)
+	}
+
+	return signatures[txIndex], nil
+}
+
 func unmarshalSignatureJSON(cctx client.Context, filename string) (sigs []signingtypes.SignatureV2, err error) {
 	var bytes []byte
 	if bytes, err = os.ReadFile(filename); err != nil { //nolint: gosec
@@ -420,12 +427,21 @@ func readSignaturesFromFile(ctx client.Context, filename string) (sigs []signing
 	return sigs, nil
 }
 
-func getMultisigRecord(cctx client.Context, name string) (*keyring.Record, error) {
+func getMultisigRecord(cctx client.Context, name string) (*keyring.Record, *kmultisig.LegacyAminoPubKey, error) {
 	kb := cctx.Keyring
 	multisigRecord, err := kb.Key(name)
 	if err != nil {
-		return nil, errorsmod.Wrap(err, "error getting keybase multisig account")
+		return nil, nil, errorsmod.Wrap(err, "error getting keybase multisig account")
 	}
 
-	return multisigRecord, nil
+	pubKey, err := multisigRecord.GetPubKey()
+	if err != nil {
+		return nil, nil, errorsmod.Wrapf(err, "read multisig key %q", name)
+	}
+	multisigPub, ok := pubKey.(*kmultisig.LegacyAminoPubKey)
+	if !ok {
+		return nil, nil, fmt.Errorf("key %q is %T; expected a legacy amino multisig key", name, pubKey)
+	}
+
+	return multisigRecord, multisigPub, nil
 }

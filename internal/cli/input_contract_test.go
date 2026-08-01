@@ -13,7 +13,7 @@ func TestEveryCommandGroupRejectsUnknownSubcommands(t *testing.T) {
 	root := NewRootCmd(BuildInfo{Version: "test"})
 
 	var violations []string
-	walkCommands(root, func(cmd *cobra.Command) {
+	walkInputContractCommands(root, func(cmd *cobra.Command) {
 		if cmd.HasSubCommands() && !cmd.Runnable() {
 			violations = append(violations, cmd.CommandPath())
 		}
@@ -31,7 +31,7 @@ func TestEveryOutputFlagRejectsUnknownFormats(t *testing.T) {
 
 	seen := make(map[*pflag.Flag]string)
 	var violations []string
-	walkCommands(root, func(cmd *cobra.Command) {
+	walkInputContractCommands(root, func(cmd *cobra.Command) {
 		for _, flags := range []*pflag.FlagSet{cmd.LocalFlags(), cmd.PersistentFlags()} {
 			flag := flags.Lookup("output")
 			if flag == nil {
@@ -81,10 +81,39 @@ func TestOutputEnumsAreCommandSpecific(t *testing.T) {
 	}
 }
 
-func walkCommands(cmd *cobra.Command, visit func(*cobra.Command)) {
+func TestAdoptedOutputHelpMatchesEnforcedEnum(t *testing.T) {
+	t.Setenv("AKT_HOME", t.TempDir())
+	root := NewRootCmd(BuildInfo{Version: "test"})
+
+	states := childCommand(childCommand(childCommand(root, "query"), "ibc"), "client")
+	states = childCommand(states, "states")
+	if states == nil {
+		t.Fatal("query ibc client states command not found")
+	}
+
+	flag := states.Flags().Lookup("output")
+	if flag == nil {
+		t.Fatal("query ibc client states output flag not found")
+	}
+	if flag.Usage != "Output format (pretty|json|yaml)" {
+		t.Fatalf("output help = %q", flag.Usage)
+	}
+}
+
+func TestQuietHelpDescribesInformationalSuppression(t *testing.T) {
+	t.Setenv("AKT_HOME", t.TempDir())
+	root := NewRootCmd(BuildInfo{Version: "test"})
+
+	usage := root.PersistentFlags().Lookup("quiet").Usage
+	if !strings.Contains(usage, "informational") || strings.Contains(usage, "all output") {
+		t.Fatalf("quiet help = %q", usage)
+	}
+}
+
+func walkInputContractCommands(cmd *cobra.Command, visit func(*cobra.Command)) {
 	visit(cmd)
 	for _, child := range cmd.Commands() {
-		walkCommands(child, visit)
+		walkInputContractCommands(child, visit)
 	}
 }
 

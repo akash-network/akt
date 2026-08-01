@@ -320,6 +320,29 @@ func TestShowResolvesTheActiveContext(t *testing.T) {
 	}
 }
 
+func TestShowUsesPlainCommandWriterOutsideTTY(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+
+	m := newTestManager(t)
+	mgrFn := func() *aktctx.Manager { return m }
+	runOK(t, createCmd(mgrFn), "prod", "--network", "mainnet", "--set-current")
+
+	cmd := currentCmd(mgrFn)
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&bytes.Buffer{})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("context show: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "prod") {
+		t.Fatalf("context show did not use command writer: %q", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "\x1b[") {
+		t.Fatalf("context show emitted ANSI outside a TTY: %q", stdout.String())
+	}
+}
+
 func TestShowHonorsContextOverrideAndIncludesResolvedPaths(t *testing.T) {
 	m := newTestManager(t)
 	mgrFn := func() *aktctx.Manager { return m }

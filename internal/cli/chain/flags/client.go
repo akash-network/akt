@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strconv"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/pflag"
 
 	cltypes "pkg.akt.dev/go/node/client/types"
@@ -56,10 +57,16 @@ func ClientOptionsFromFlags(flagSet *pflag.FlagSet) ([]cltypes.ClientOption, err
 
 	feesStr, _ := flagSet.GetString(FlagFees)
 	if feesStr != "" {
+		if _, err := sdk.ParseCoinsNormalized(feesStr); err != nil {
+			return nil, fmt.Errorf("--%s: %w", FlagFees, err)
+		}
 		opts = append(opts, cltypes.WithFees(feesStr))
 	} else {
 		gasPrices, _ := flagSet.GetString(FlagGasPrices)
 		if gasPrices != "" {
+			if _, err := sdk.ParseDecCoins(gasPrices); err != nil {
+				return nil, fmt.Errorf("--%s: %w", FlagGasPrices, err)
+			}
 			opts = append(opts, cltypes.WithGasPrices(gasPrices))
 		}
 	}

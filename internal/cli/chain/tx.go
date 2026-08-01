@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
 	ibctransfer "github.com/cosmos/ibc-go/v10/modules/apps/transfer"
@@ -54,7 +55,7 @@ func TxPersistentPreRunE(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
-		cl, err := aclient.DiscoverClient(ctx, cctx, opts...)
+		cl, err := aclient.DiscoverClient(ctx, clientContextForTxClient(cctx), opts...)
 		if err != nil {
 			return err
 		}
@@ -68,6 +69,18 @@ func TxPersistentPreRunE(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// clientContextForTxClient prevents the downstream transaction client from
+// interpreting an already parsed address as a key name. Unsigned construction
+// needs the address for messages but does not sign.
+func clientContextForTxClient(cctx sdkclient.Context) sdkclient.Context {
+	addressOnly := cctx.FromName == "" && len(cctx.FromAddress) != 0
+	if addressOnly && cctx.GenerateOnly {
+		return cctx.WithFrom("")
+	}
+
+	return cctx
 }
 
 func TxCmd() *cobra.Command {
@@ -93,10 +106,8 @@ func TxCmd() *cobra.Command {
 		GetEncodeCommand(),
 		GetDecodeCommand(),
 		GetTxVestingCmd(),
-		cflags.LineBreak,
 		adoptVendoredTxCmd(withoutEmptyVendoredGroup(ibccore.AppModuleBasic{}.GetTxCmd(), "channelv2")),
 		adoptVendoredTxCmd(ibctransfer.AppModuleBasic{}.GetTxCmd()),
-		cflags.LineBreak,
 		GetTxAuditCmd(),
 		GetTxCertCmd(),
 		GetTxDeploymentCmds(),

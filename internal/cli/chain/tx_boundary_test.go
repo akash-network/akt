@@ -7,6 +7,9 @@ import (
 	"time"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
+	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	signingtypes "github.com/cosmos/cosmos-sdk/types/tx/signing"
 	"github.com/spf13/cobra"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
@@ -209,5 +212,52 @@ func TestBatchMultisignReadsNoAutoIncrementFromItsCommand(t *testing.T) {
 	}
 	if !batchNoAutoIncrement(cmd) {
 		t.Fatal("--no-auto-increment was ignored")
+	}
+}
+
+func TestGetMultisigRecordRejectsOrdinaryKey(t *testing.T) {
+	kr := aktkeyring.NewInMemory(aktcodec.MakeEncodingConfig().Codec)
+	_, _, err := kr.NewMnemonic(
+		"ordinary",
+		sdkkeyring.English,
+		"m/44'/118'/0'/0/0",
+		"",
+		aktkeyring.DefaultAlgo(),
+	)
+	if err != nil {
+		t.Fatalf("create ordinary key: %v", err)
+	}
+
+	cctx := sdkclient.Context{}.WithKeyring(kr)
+	_, _, err = getMultisigRecord(cctx, "ordinary")
+	if err == nil || !strings.Contains(err.Error(), "ordinary") || !strings.Contains(err.Error(), "multisig") {
+		t.Fatalf("getMultisigRecord error = %v", err)
+	}
+}
+
+func TestSignatureForTransactionRejectsShortBatch(t *testing.T) {
+	_, err := signatureForTransaction([]signingtypes.SignatureV2{}, 0, "short.json")
+	if err == nil || !strings.Contains(err.Error(), "short.json") || !strings.Contains(err.Error(), "transaction 1") {
+		t.Fatalf("signatureForTransaction error = %v", err)
+	}
+}
+
+func TestClientContextForTxClientPreservesAddressWithoutKeyLookup(t *testing.T) {
+	address := sdk.AccAddress([]byte("01234567890123456789"))
+	base := sdkclient.Context{}.
+		WithFrom(address.String()).
+		WithFromAddress(address)
+
+	got := clientContextForTxClient(base.WithGenerateOnly(true))
+	if got.From != "" || got.FromName != "" {
+		t.Fatalf("signer lookup fields remain: from=%q name=%q", got.From, got.FromName)
+	}
+	if !got.GetFromAddress().Equals(address) {
+		t.Fatalf("from address = %s, want %s", got.GetFromAddress(), address)
+	}
+
+	named := base.WithFrom("ordinary").WithFromName("ordinary").WithGenerateOnly(true)
+	if got := clientContextForTxClient(named); got.From != "ordinary" || got.FromName != "ordinary" {
+		t.Fatalf("named signer was cleared: from=%q name=%q", got.From, got.FromName)
 	}
 }
