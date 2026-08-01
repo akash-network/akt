@@ -2138,13 +2138,13 @@ fixed fees use the integer-coin grammar and gas prices use the decimal-coin
 grammar. Invalid input is a normal error naming `--fees` or `--gas-prices`,
 never an SDK panic.
 
-`--generate-only` and `--dry-run` accept a signer address that is not stored in
-the local keyring. The address identifies the unsigned message or simulation;
-it does not imply a signing-key lookup. A signer name still resolves through
-the selected keyring. Multisign assembly accepts only a legacy amino multisig
-record and validates that each signature batch contains an entry for every
-transaction before indexing it; ordinary keys and short batches are normal
-input errors, never panics.
+`--generate-only` accepts a signer address that is not stored in the local
+keyring. The address identifies the unsigned message and does not imply a
+signing-key lookup. A signer name still resolves through the selected keyring.
+Multisign assembly accepts only a legacy amino multisig record and validates
+that each signature batch contains an entry for every transaction before
+indexing it; ordinary keys and short batches are normal input errors, never
+panics.
 
 **Pretty output for transaction results**: When `--output pretty` is active (the global default), transaction results are rendered in a two-section layout: a common transaction summary (hash, signer, height, gas, fee, status) followed by a message-specific detail section. See [§10.11](#1011-transaction-result-formatting) for the full specification.
 

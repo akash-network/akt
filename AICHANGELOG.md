@@ -7,8 +7,7 @@
 - **Transaction boundary inputs could still panic or demand an unnecessary
   key**: fee and gas-price strings are validated before the SDK factory,
   multisign assembly rejects ordinary keys and short signature batches, and
-  unsigned generation or simulation can use a signer address absent from the
-  keyring.
+  unsigned generation can use a signer address absent from the keyring.
 
 - **Vendored transaction separators became unnamed actionless leaves when the
   full PR set was assembled**: IBC client and transfer adapters remain grouped
