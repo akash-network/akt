@@ -21,6 +21,26 @@ func openTestStore(t *testing.T) *BoltStore {
 	return s
 }
 
+func TestEmptyListsReturnNonNilSlices(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	deployments, err := s.ListDeployments(ctx, store.DeploymentFilter{})
+	require.NoError(t, err)
+	require.NotNil(t, deployments)
+	require.Empty(t, deployments)
+
+	leases, err := s.ListLeases(ctx, store.LeaseFilter{})
+	require.NoError(t, err)
+	require.NotNil(t, leases)
+	require.Empty(t, leases)
+
+	bids, err := s.ListBids(ctx, store.BidFilter{})
+	require.NoError(t, err)
+	require.NotNil(t, bids)
+	require.Empty(t, bids)
+}
+
 func TestDeploymentCRUD(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()

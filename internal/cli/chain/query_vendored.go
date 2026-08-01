@@ -12,6 +12,7 @@ import (
 	transfertypes "github.com/cosmos/ibc-go/v10/modules/apps/transfer/types"
 	ibcclienttypes "github.com/cosmos/ibc-go/v10/modules/core/02-client/types"
 	connectiontypes "github.com/cosmos/ibc-go/v10/modules/core/03-connection/types"
+	channeltypes "github.com/cosmos/ibc-go/v10/modules/core/04-channel/types"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 )
@@ -134,6 +135,9 @@ func installVendoredQueryOverrides(root *cobra.Command) {
 		if cmd := vendoredSubcommand(root, "client", "params"); cmd != nil {
 			cmd.RunE = queryIBCClientParams
 		}
+		if cmd := vendoredSubcommand(root, "client", "states"); cmd != nil {
+			cmd.RunE = queryIBCClientStates
+		}
 		if cmd := vendoredSubcommand(root, "connection", "params"); cmd != nil {
 			cmd.RunE = queryIBCConnectionParams
 		}
@@ -142,6 +146,9 @@ func installVendoredQueryOverrides(root *cobra.Command) {
 		}
 		if cmd := vendoredSubcommand(root, "client", "consensus-states"); cmd != nil {
 			cmd.RunE = queryIBCConsensusStates
+		}
+		if cmd := vendoredSubcommand(root, "channel", "connections"); cmd != nil {
+			cmd.RunE = queryIBCConnectionChannels
 		}
 	case "ibc-transfer":
 		if cmd := vendoredSubcommand(root, "escrow-address"); cmd != nil {
@@ -184,6 +191,27 @@ func queryIBCClientParams(cmd *cobra.Command, _ []string) error {
 	}
 
 	return cctx.PrintProto(res.Params)
+}
+
+func queryIBCClientStates(cmd *cobra.Command, _ []string) error {
+	cctx := sdkclient.GetClientContextFromCmd(cmd)
+	pageReq, err := sdkclient.ReadPageRequest(cmd.Flags())
+	if err != nil {
+		return err
+	}
+
+	res, err := ibcclienttypes.NewQueryClient(cctx).ClientStates(cmd.Context(), &ibcclienttypes.QueryClientStatesRequest{
+		Pagination: pageReq,
+	})
+	if err != nil {
+		return err
+	}
+	if res == nil {
+		return fmt.Errorf("ibc client states query returned an empty response")
+	}
+
+	res.ClientStates = normalizeVendoredPage(res.ClientStates, pageReq)
+	return cctx.PrintProto(res)
 }
 
 func queryIBCConnectionParams(cmd *cobra.Command, _ []string) error {
@@ -243,9 +271,31 @@ func queryIBCConsensusStates(cmd *cobra.Command, args []string) error {
 	return cctx.PrintProto(res)
 }
 
+func queryIBCConnectionChannels(cmd *cobra.Command, args []string) error {
+	cctx := sdkclient.GetClientContextFromCmd(cmd)
+	pageReq, err := sdkclient.ReadPageRequest(cmd.Flags())
+	if err != nil {
+		return err
+	}
+
+	res, err := channeltypes.NewQueryClient(cctx).ConnectionChannels(cmd.Context(), &channeltypes.QueryConnectionChannelsRequest{
+		Connection: args[0],
+		Pagination: pageReq,
+	})
+	if err != nil {
+		return err
+	}
+	if res == nil {
+		return fmt.Errorf("ibc connection channels query returned an empty response")
+	}
+
+	res.Channels = normalizeVendoredPage(res.Channels, pageReq)
+	return cctx.PrintProto(res)
+}
+
 // normalizeVendoredPage enforces the requested record limit while compensating
-// for ibc-go's current offset path, which includes the skipped prefix and one
-// lookahead item in these two responses. Pagination metadata remains untouched.
+// for ibc-go offset paths that include a skipped prefix or lookahead item.
+// Pagination metadata remains untouched.
 func normalizeVendoredPage[T any](records []T, req *sdkquery.PageRequest) []T {
 	if req == nil {
 		req = &sdkquery.PageRequest{}
