@@ -238,6 +238,10 @@ account and keyring before installing the selected JWT or mTLS identity, so a
 walletless invocation fails with a direct configuration remedy rather than an
 empty-address signer error. Callers may choose the provider URL, but do not
 construct provider REST clients ad hoc.
+The MCP adapter follows the same boundary: protected chain-backed gateway tools
+use that resolved wallet identity, while public status remains unauthenticated.
+Console MCP tools likewise translate Console wire values into the semantic
+units promised by their schemas before returning them to a client.
 
 #### 3.1.5 Console Provider Gateway Access
 

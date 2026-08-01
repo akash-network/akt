@@ -8,6 +8,8 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	"github.com/spf13/cobra"
 
+	aclient "pkg.akt.dev/go/node/client"
+
 	"pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
 	aktmcp "pkg.akt.dev/akt/internal/mcp"
@@ -59,6 +61,21 @@ Write tools, unlocked only by --enable-writes:
 			// same value the flag would have.
 			if enableWrites && cctx.SignModeStr == "" {
 				cctx = cctx.WithSignModeStr(flags.SignModeDirect)
+			}
+
+			// Attach an RPC client. The tx and query trees build one in their
+			// own PersistentPreRunE; this command has neither, so the context
+			// arrives with a node URI and no client. Every chain tool then
+			// fails -- the query tools with "no RPC client is defined in
+			// offline mode", and the node tools by dereferencing the missing
+			// client, which takes the whole server down.
+			if cctx.Client == nil && cctx.NodeURI != "" {
+				rpcClient, err := aclient.NewClient(ctx, cctx.NodeURI)
+				if err != nil {
+					return fmt.Errorf("connect to %s: %w", cctx.NodeURI, err)
+				}
+
+				cctx = cctx.WithClient(rpcClient)
 			}
 
 			srv, err := aktmcp.New(ctx, cctx, enableWrites, consoleClientFor(cmd, mgrFn))
