@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- **Public provider status incorrectly required a wallet and could panic on an
+  empty keyring**: CLI and MCP status calls now use an unauthenticated public
+  gateway client, while lease- and manifest-scoped clients reject a missing
+  default account or keyring before installing a signer or making a request.
+  The inherited `--auth-type` flag is refused on public status instead of
+  being ignored.
+
 - **Monitor provider loading and WebSocket discovery were underspecified**:
   provider cache loading, on-chain reconciliation, health checks, periodic
   resync, and cache persistence now form one startup-owned pipeline independent
