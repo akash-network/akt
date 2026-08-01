@@ -568,6 +568,25 @@ func TestAuthenticatedGatewayRequiresDefaultAccountBeforeRequest(t *testing.T) {
 	}
 }
 
+func TestAuthenticatedGatewayPreflightRunsBeforeProviderLookup(t *testing.T) {
+	root := Commands()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{
+		"lease-status", "1",
+		"--provider", testProviderAddr,
+	})
+
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "configured default account") {
+		t.Fatalf("error = %v, want local signing identity before provider lookup", err)
+	}
+	if strings.Contains(err.Error(), "initialize provider query client") ||
+		strings.Contains(err.Error(), "query provider") {
+		t.Fatalf("provider discovery hid authentication preflight: %v", err)
+	}
+}
+
 func TestAuthenticatedGatewayRejectsUnknownAuthTypeBeforeIdentityChecks(t *testing.T) {
 	root := Commands()
 	root.SetOut(&bytes.Buffer{})

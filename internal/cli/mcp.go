@@ -51,6 +51,10 @@ Write tools, unlocked only by --enable-writes:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cctx := sdkclient.GetClientContextFromCmd(cmd)
+			providerAuthType, err := providerAuthTypeFor(cmd, mgrFn)
+			if err != nil {
+				return err
+			}
 
 			enableWrites, _ := cmd.Flags().GetBool("enable-writes")
 
@@ -78,7 +82,13 @@ Write tools, unlocked only by --enable-writes:
 				cctx = cctx.WithClient(rpcClient)
 			}
 
-			srv, err := aktmcp.New(ctx, cctx, enableWrites, consoleClientFor(cmd, mgrFn))
+			srv, err := aktmcp.New(
+				ctx,
+				cctx,
+				providerAuthType,
+				enableWrites,
+				consoleClientFor(cmd, mgrFn),
+			)
 			if err != nil {
 				return fmt.Errorf("failed to create MCP server: %w", err)
 			}
@@ -107,6 +117,25 @@ Write tools, unlocked only by --enable-writes:
 			"Without this flag, only read-only query tools are available.")
 
 	return cmd
+}
+
+func providerAuthTypeFor(cmd *cobra.Command, mgrFn func() *aktctx.Manager) (string, error) {
+	m := mgrFn()
+	if m == nil {
+		return aktctx.ProviderAuthJWT, nil
+	}
+	override := ""
+	if flag := cmd.Flags().Lookup("context"); flag != nil {
+		override = flag.Value.String()
+	}
+	rc, err := m.Resolve(m.ActiveContext(override))
+	if err != nil {
+		return "", fmt.Errorf("resolve MCP provider authentication: %w", err)
+	}
+	if rc == nil {
+		return "", fmt.Errorf("resolve MCP provider authentication: empty context")
+	}
+	return aktctx.ResolveProviderAuthType(rc.AuthType)
 }
 
 // consoleClientFor resolves a Console API client for the MCP server, or nil

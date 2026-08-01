@@ -84,7 +84,7 @@ func TestQueryAndWriteAnnotationsDiffer(t *testing.T) {
 // the server would start and advertise 19 chain tools that cannot work --
 // and the "nothing available" error could never fire.
 func TestNewWithoutChainOrConsoleFails(t *testing.T) {
-	_, err := New(context.Background(), sdkclient.Context{}, false, nil)
+	_, err := New(context.Background(), sdkclient.Context{}, "jwt", false, nil)
 	if err == nil {
 		t.Fatal("expected an error when there is no chain endpoint and no Console key")
 	}
@@ -99,7 +99,7 @@ func TestNewWithoutChainOrConsoleFails(t *testing.T) {
 // TestNewWithConsoleOnlySucceeds is the point of the change: a managed setup
 // has an API key and no wallet or RPC endpoint, and must still get a server.
 func TestNewWithConsoleOnlySucceeds(t *testing.T) {
-	s, err := New(context.Background(), sdkclient.Context{}, false, aktconsole.New("", "key"))
+	s, err := New(context.Background(), sdkclient.Context{}, "jwt", false, aktconsole.New("", "key"))
 	if err != nil {
 		t.Fatalf("a Console key alone must be enough to start: %v", err)
 	}

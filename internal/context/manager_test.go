@@ -3,6 +3,7 @@ package context_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	aktctx "pkg.akt.dev/akt/internal/context"
@@ -222,6 +223,22 @@ func TestCreateContextDefaults(t *testing.T) {
 	}
 }
 
+func TestCreateContextRejectsInvalidProviderAuthType(t *testing.T) {
+	m := newTestManager(t)
+	_ = m.CreateNetworkFromTemplate("mainnet", "mainnet")
+
+	err := m.CreateContext(aktctx.Context{
+		Name:    "prod",
+		Network: aktctx.Network{Name: "mainnet"},
+		ProviderDefaults: aktctx.ProviderDefaults{
+			AuthType: "password",
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "provider auth type") {
+		t.Fatalf("error = %v, want provider auth enum validation", err)
+	}
+}
+
 func TestCreateContextDataDirs(t *testing.T) {
 	m := newTestManager(t)
 	_ = m.CreateNetworkFromTemplate("mainnet", "mainnet")
@@ -422,6 +439,44 @@ func TestResolve(t *testing.T) {
 
 	if rc.GasPrices != "0.025uakt" {
 		t.Errorf("gas-prices = %q, want 0.025uakt (from network)", rc.GasPrices)
+	}
+}
+
+func TestResolveDefaultsLegacyProviderAuthType(t *testing.T) {
+	root := t.TempDir()
+	cfg := aktctx.Config{
+		Version:        aktctx.ConfigVersion,
+		CurrentContext: "prod",
+		Networks: []aktctx.Network{{
+			Name:      "mainnet",
+			ChainID:   "akashnet-2",
+			Endpoints: aktctx.Endpoints{RPC: []string{"https://rpc.example"}},
+		}},
+		Keyrings: []aktctx.Keyring{{Name: "default", Backend: "test"}},
+		Contexts: []aktctx.Context{{
+			Name:       "prod",
+			Network:    aktctx.Network{Name: "mainnet"},
+			Keyring:    aktctx.Keyring{Name: "default"},
+			AuthMethod: aktctx.AuthMethodKeyring,
+		}},
+	}
+	if err := aktctx.SaveConfig(root, &cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	m, err := aktctx.NewManager(root)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	rc, err := m.Resolve("")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if rc.AuthType != aktctx.ProviderAuthJWT {
+		t.Errorf("AuthType = %q, want %q", rc.AuthType, aktctx.ProviderAuthJWT)
+	}
+	if rc.ProviderDefaults.AuthType != aktctx.ProviderAuthJWT {
+		t.Errorf("ProviderDefaults.AuthType = %q, want %q", rc.ProviderDefaults.AuthType, aktctx.ProviderAuthJWT)
 	}
 }
 

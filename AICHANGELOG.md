@@ -6,10 +6,11 @@
 
 - **Public provider status incorrectly required a wallet and could panic on an
   empty keyring**: CLI and MCP status calls now use an unauthenticated public
-  gateway client, while lease- and manifest-scoped clients reject a missing
-  default account or keyring before installing a signer or making a request.
-  The inherited `--auth-type` flag is refused on public status instead of
-  being ignored.
+  gateway client. Protected CLI and MCP operations resolve the context's
+  `jwt`/`mtls` default, then reject an invalid auth type, missing account,
+  missing keyring, or absent signing key before provider discovery or
+  gateway I/O. The inherited `--auth-type` flag is refused on public status
+  instead of being ignored.
 
 - **Structured shell error composition is lossless**: when both the remote
   command and JSON/YAML rendering fail, the returned error wraps both causes
@@ -250,7 +251,11 @@
   refuse locally instead of querying every certificate on the network. The
   localnet query and deployment lifecycle coverage now supplies its validator
   address explicitly so CI exercises that scoped contract.
-- **MCP provider tools reached authenticated gateway endpoints anonymously**: provider status, lease status, service status, and manifest submission now use the shared provider gateway client, which attaches the resolved wallet's JWT. The MCP inventory documentation now matches the capability-driven 27 read / 33 total maximum.
+- **MCP provider tools reached authenticated gateway endpoints anonymously**:
+  lease status, service status, and manifest submission now use the shared
+  authenticated provider gateway client. Public provider status remains
+  walletless. The MCP inventory documentation now matches the
+  capability-driven 27 read / 33 total maximum.
 
 - **`console_wallet_balance` returned µACT while describing Console credits**: the MCP result now exposes `available_usd`, `in_deployments_usd`, and `total_usd`, derived from the Console balance helpers, so a `$17.94` balance cannot be mistaken for `17,940,000` dollars.
 

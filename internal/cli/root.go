@@ -215,6 +215,9 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 					return resolveErr
 				}
 				applyTransactionDefaults(cmd, rc)
+				if err := applyProviderDefaults(cmd, rc); err != nil {
+					return err
+				}
 			}
 			if resolved && cmd.Flags().Lookup(cflags.FlagOffline) != nil {
 				if err := chaincli.ValidateTxInvocation(cmd); err != nil {
@@ -459,6 +462,29 @@ func applyTransactionDefaults(cmd *cobra.Command, rc *aktctx.Context) {
 	case rc.GasPrices != "":
 		_ = pricesFlag.Value.Set(rc.GasPrices)
 	}
+}
+
+func applyProviderDefaults(cmd *cobra.Command, rc *aktctx.Context) error {
+	if cmd.Name() == "status" && cmd.Parent() != nil && cmd.Parent().Name() == "provider" {
+		return nil
+	}
+
+	flag := cmd.Flags().Lookup("auth-type")
+	if flag == nil {
+		flag = cmd.InheritedFlags().Lookup("auth-type")
+	}
+	if flag == nil || flag.Changed {
+		return nil
+	}
+
+	authType, err := aktctx.ResolveProviderAuthType(rc.AuthType)
+	if err != nil {
+		return err
+	}
+	if err := flag.Value.Set(authType); err != nil {
+		return fmt.Errorf("apply context provider auth type: %w", err)
+	}
+	return nil
 }
 
 // Execute seeds the SDK client and server context keys on the command context

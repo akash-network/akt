@@ -37,17 +37,8 @@ func NewGatewayClient(
 	authType string,
 	kr sdkkeyring.Keyring,
 ) (rest.Client, error) {
-	switch authType {
-	case "jwt", "", "mtls":
-	default:
-		return nil, fmt.Errorf("unsupported auth type %q (expected \"jwt\" or \"mtls\")", authType)
-	}
-
-	if addr.Empty() {
-		return nil, fmt.Errorf("provider gateway authentication requires a configured default account")
-	}
-	if kr == nil {
-		return nil, fmt.Errorf("provider gateway authentication requires a keyring")
+	if err := ValidateGatewayAuthentication(addr, authType, kr); err != nil {
+		return nil, err
 	}
 
 	opts := []rest.ClientOption{
@@ -67,6 +58,30 @@ func NewGatewayClient(
 	}
 
 	return rest.NewClient(ctx, addr, opts...)
+}
+
+// ValidateGatewayAuthentication checks every local prerequisite before a
+// protected provider command performs URL discovery or gateway network work.
+func ValidateGatewayAuthentication(
+	addr sdk.AccAddress,
+	authType string,
+	kr sdkkeyring.Keyring,
+) error {
+	switch authType {
+	case "jwt", "", "mtls":
+	default:
+		return fmt.Errorf("unsupported auth type %q (expected \"jwt\" or \"mtls\")", authType)
+	}
+	if addr.Empty() {
+		return fmt.Errorf("provider gateway authentication requires a configured default account")
+	}
+	if kr == nil {
+		return fmt.Errorf("provider gateway authentication requires a keyring")
+	}
+	if _, err := kr.KeyByAddress(addr); err != nil {
+		return fmt.Errorf("provider gateway authentication selected account %s is not present in the configured keyring; import that key or change the context default account", addr)
+	}
+	return nil
 }
 
 // loadMTLSCert loads and validates the mTLS certificate for the current account.

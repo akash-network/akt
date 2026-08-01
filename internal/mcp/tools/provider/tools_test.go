@@ -81,7 +81,7 @@ func TestProtectedProviderGatewayHandlersAuthenticate(t *testing.T) {
 	}{
 		{
 			name:    "lease status",
-			handler: HandleLeaseStatus(cl),
+			handler: HandleLeaseStatus(cl, "jwt"),
 			args: map[string]any{
 				"provider_url": srv.URL,
 				"dseq":         float64(1),
@@ -91,7 +91,7 @@ func TestProtectedProviderGatewayHandlersAuthenticate(t *testing.T) {
 		},
 		{
 			name:    "service status",
-			handler: HandleServiceStatus(cl),
+			handler: HandleServiceStatus(cl, "jwt"),
 			args: map[string]any{
 				"provider_url": srv.URL,
 				"dseq":         float64(1),
@@ -102,7 +102,7 @@ func TestProtectedProviderGatewayHandlersAuthenticate(t *testing.T) {
 		},
 		{
 			name:    "submit manifest",
-			handler: HandleSubmitManifest(cl),
+			handler: HandleSubmitManifest(cl, "jwt"),
 			args: map[string]any{
 				"provider_url":  srv.URL,
 				"dseq":          float64(1),
@@ -157,11 +157,23 @@ func TestGatewayClientRequiresSigningIdentity(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := gatewayClient(context.Background(), tt.cl, "https://provider.example.com")
+			_, err := gatewayClient(context.Background(), tt.cl, "https://provider.example.com", "jwt")
 			if err == nil || !strings.Contains(err.Error(), tt.want) {
 				t.Fatalf("error = %v, want one containing %q", err, tt.want)
 			}
 		})
+	}
+}
+
+func TestGatewayClientRejectsUnknownContextAuthType(t *testing.T) {
+	_, err := gatewayClient(
+		context.Background(),
+		newSignedLightClient(t),
+		"https://provider.example.com",
+		"password",
+	)
+	if err == nil || !strings.Contains(err.Error(), "unsupported auth type") {
+		t.Fatalf("error = %v, want provider auth enum rejection", err)
 	}
 }
 
