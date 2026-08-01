@@ -531,6 +531,24 @@ func streamOutputCommand(t *testing.T, format string) (*cobra.Command, *bytes.Bu
 	return cmd, &buf
 }
 
+func TestShellRejectsStructuredInteractiveModeBeforeContextResolution(t *testing.T) {
+	resolved := false
+	cmd := shellCmd(func() *aktctx.Manager {
+		resolved = true
+		return nil
+	})
+	cmd.Flags().String("output", "json", "")
+	cmd.SetArgs([]string{"12345", "web"})
+
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "explicit remote command") {
+		t.Fatalf("shell error = %v", err)
+	}
+	if resolved {
+		t.Fatal("structured interactive shell resolved context before refusal")
+	}
+}
+
 func TestMatchesService(t *testing.T) {
 	tests := []struct {
 		name    string
