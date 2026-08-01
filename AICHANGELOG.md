@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- **IBC connection-channel pagination ignored offsets and pages**: the
+  dependency's filtered-pagination callback appends matching channels even
+  while the SDK marks them as skipped, so `--offset` and `--page` returned the
+  first channel again. The vendored query boundary now removes that skipped
+  prefix and enforces the requested hard limit before rendering.
+
 - **Two query boundaries still accepted misleading results**: `query gov
   proposer --height` returned the current transaction-index answer under a
   historical-looking invocation, and `query ibc client states --limit N`

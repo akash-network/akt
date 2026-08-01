@@ -2096,7 +2096,10 @@ Added to list-type query commands via `AddPaginationFlagsToCmd()`.
 The requested limit is a hard upper bound on returned records. Client adapters
 must trim any upstream pagination lookahead item, including IBC client-state
 lists, while preserving the response pagination metadata needed to request the
-next page.
+next page. If a dependency's filtered-pagination callback appends records while
+the SDK marks them as excluded by `--offset` or `--page`, the adapter must also
+remove that skipped prefix before applying the limit. This includes
+`query ibc channel connections`.
 
 ### 3.5 Akash Resource ID Flags
 
