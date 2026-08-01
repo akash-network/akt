@@ -58,6 +58,7 @@ networks:
     chain-id: akashnet-2
     endpoints:
       rpc:
+        - https://rpc.akt.dev:443/rpc
         - https://rpc.akashnet.net:443
         - https://rpc-akash.ecostake.com:443
       api:
@@ -287,7 +288,7 @@ All environment variables use the `AKT_` prefix. When set, they override the cor
 | `AKT_HOME`            | Home directory (overrides XDG default)                  | `/path/to/.akt`                |
 | `AKT_CONTEXT`         | Active context name (overrides `current-context`)       | `prod`                         |
 | `AKT_CHAIN_ID`        | `networks[*].chain-id` (via context's network)          | `akashnet-2`                   |
-| `AKT_NODE`            | `networks[*].endpoints.rpc[0]` (via context's network)  | `https://rpc.akashnet.net:443` |
+| `AKT_NODE`            | `networks[*].endpoints.rpc[0]` (via context's network)  | `https://rpc.akt.dev:443/rpc` |
 | `AKT_GRPC_ADDR`       | `networks[*].endpoints.grpc[0]` (via context's network) | `grpc.akashnet.net:443`        |
 | `AKT_FROM`            | `contexts[*].default-account`                           | `alice`                        |
 | `AKT_KEYRING_BACKEND` | `keyrings[*].backend` (via context's keyring)           | `os`                           |
@@ -310,6 +311,7 @@ name: mainnet
 chain-id: akashnet-2
 endpoints:
   rpc:
+    - https://rpc.akt.dev:443/rpc
     - https://rpc.akashnet.net:443
     - https://rpc-akash.ecostake.com:443
   api:
@@ -722,6 +724,7 @@ Create a new named context. A context references a network and keyring by name.
 | `--default-account`   | string | `""`        | Default account name (only with `keyring` auth)                  |
 | `--gas`               | string | `"auto"`    | Gas limit override (only with `keyring` auth)                    |
 | `--fees`              | string | `""`        | Fixed fees override (only with `keyring` auth)                   |
+| `--provider-auth-type`| string | `"jwt"`     | Provider gateway auth default: `jwt` or `mtls`                   |
 | `--set-current`       | bool   | `false`     | Set as current context after creation                            |
 
 **Examples:**
@@ -774,7 +777,7 @@ $ akt context show
 Context:         prod
 Network:         mainnet
   Chain ID:      akashnet-2
-  RPC:           https://rpc.akashnet.net:443 (+1 backup)
+  RPC:           https://rpc.akt.dev:443/rpc (+2 backup)
   API:           https://api.akashnet.net:443 (+1 backup)
   gRPC:          grpc.akashnet.net:443
   Gas Prices:    0.025uakt
@@ -801,6 +804,7 @@ Edit context-level settings. For network-level changes (endpoints, gas-prices), 
 | `--default-account` | string | `""`    | Change default account                 |
 | `--gas`             | string | `""`    | Change gas setting                     |
 | `--fees`            | string | `""`    | Change fees setting                    |
+| `--provider-auth-type` | string | unchanged | Change provider gateway auth default: `jwt` or `mtls` |
 | `--auth-method`     | string | `""`    | Change authentication method: `keyring` or `console-api` |
 | `--console-api-url` | string | `""`    | Change Console API base URL (empty = default) |
 | `--console-api-key` | string | `""`    | Set the per-context Console API key (empty string removes it; §7.1) |
@@ -919,7 +923,7 @@ List all networks and which contexts reference each.
 ```bash
 $ akt context network list
   NAME              CHAIN-ID       RPC                          USED BY
-  mainnet           akashnet-2     rpc.akashnet.net:443         prod, monitoring
+  mainnet           akashnet-2     rpc.akt.dev:443/rpc          prod, monitoring
   testnet           testnet-02     rpc.testnet-02.aksh.pw:443   staging
   sandbox           sandbox-01     rpc.sandbox-01.aksh.pw:443
   mainnet-custom    akashnet-2     my-private-rpc:443           (none)
@@ -1475,11 +1479,33 @@ Query provider status. Supply the provider address positionally or with
 private gateways. A provider with no on-chain host URI is refused before a
 gateway request is attempted.
 
+Provider `/status` is a public gateway endpoint. This command MUST NOT load a
+default account, open a keyring, mint a JWT, or load an mTLS certificate. It is
+valid from a monitoring-only context with chain-query access and no wallet.
+The provider address is still required because it identifies the gateway and,
+unless `--provider-url` is supplied, selects the on-chain `host_uri`. The
+provider group's inherited `--auth-type` flag does not apply to this public
+endpoint; explicitly passing it is refused instead of being silently ignored.
+
 | Flag             | Type   | Default         | Description                                      |
 | ---------------- | ------ | --------------- | ------------------------------------------------ |
 | `--provider`     | string | `""`            | Provider address; alternative to positional form |
 | `--provider-url` | string | on-chain record | Explicit provider gateway URL override           |
-| `--auth-type`    | string | context default | Auth type: `jwt`, `mtls`                         |
+
+All lease-, manifest-, migration-, log-, event-, and shell-scoped provider
+commands remain authenticated. Before constructing their gateway client they
+resolve `--auth-type` over `provider-defaults.auth-type` from the selected
+context and default to `jwt`. Before provider URL discovery or gateway network
+work, they MUST validate the auth enum, default account, keyring, and that the
+selected account exists in that keyring. Both JWT signing and mTLS certificate
+loading require that local signing identity. Failures name the missing
+provider signing identity and how to repair the context; they MUST NOT defer to
+a signer as raw `key with address ... not found` output.
+
+MCP uses the same selected context auth default for protected provider tools.
+Provider status remains public; lease status, service status, and manifest
+submission use the shared authenticated gateway boundary with JWT or mTLS as
+configured.
 
 #### `akt provider lease-status [dseq]`
 
@@ -1660,6 +1686,11 @@ Each dashboard is also directly accessible via its CLI subcommand. When launched
 
 If no endpoint can be resolved, the command exits with an error.
 
+Built-in network templates place a WebSocket-capable RPC first because that is
+the endpoint a flagless monitor launch selects. Ordinary HTTP-only RPCs may
+remain later in the network's failover list for query commands, but MUST NOT be
+the primary endpoint of a built-in template advertised for monitor use.
+
 The monitor connects to `{rpc-endpoint}/websocket`. Help examples use
 `https://rpc.akt.dev:443/rpc`, whose CometBFT WebSocket service is part of the
 documented endpoint. An HTTP-only RPC gateway may still serve ordinary query
@@ -1671,8 +1702,31 @@ commands, but it is not a valid monitor example.
 | ----------------- | ------ | --------------- | -------------------------------------------------------- |
 | `--rpc`           | string | context default | RPC endpoint (WebSocket-capable)                         |
 | `--rest`          | string | auto-derived    | REST API endpoint (for governance/oracle/BME queries). Default: derived from the context's `endpoints.api[0]`. If no API endpoint is configured, falls back to the RPC host on port 1317 (standard Cosmos REST port). |
-| `--insecure`      | bool   | `false`         | Skip TLS certificate verification                        |
+| `--insecure`      | bool   | `false`         | Skip TLS certificate verification for REST and gRPC provider probes |
 | `--clean-cache`   | bool   | `false`         | Clear the local cache before start                       |
+
+An explicit `--rest` always wins. Without it, a context API endpoint is used
+only when the selected RPC is one of that same context network's configured RPC
+endpoints. For an ad-hoc positional or `--rpc` override, the REST endpoint is
+derived from that RPC: a terminal `/rpc` path becomes `/rest`; otherwise the
+same hostname uses the standard Cosmos REST port 1317. WebSocket and Cosmos
+`tcp` schemes are converted to their HTTP equivalents for REST requests. The
+monitor MUST NOT combine an overridden RPC with an unrelated active-context
+API. Its cache is always `<resolved --home>/cache`; an explicit `--home` MUST
+govern the monitor just as it governs contexts, keyrings, stores, and action
+logs.
+
+For implicit context resolution only, a primary endpoint that exactly matches
+a retired HTTP-only endpoint from an older built-in template is replaced at
+runtime by that template's current WebSocket-capable primary. This compatibility
+selection does not rewrite the context. Positional and `--rpc` endpoints are
+explicit user choices and are never substituted.
+
+An explicit positional or `--rpc` endpoint MUST work with no config file and
+MUST NOT trigger first-run bootstrap. Monitor cache directory creation/open
+errors are fatal startup errors. `--clean-cache` removes both `monitor.db` and
+the legacy `top.db`; a failed deletion is reported and the monitor does not
+claim the cache was cleared.
 
 **Hub navigation:**
 
@@ -1681,6 +1735,21 @@ commands, but it is not a valid monitor example.
 | `Tab` | Switch to next dashboard (Network → Provider → Oracle/BME → Network) |
 | `Shift-Tab` | Switch to previous dashboard |
 | `1`/`2`/`3` | Switch sub-tab within the active dashboard (Network only) |
+
+These keys belong to the monitor whenever its view is active. In standalone
+mode, keypresses are delivered directly to the monitor model; the inactive TUI
+resource router MUST NOT receive them. When the monitor is embedded in the
+experimental TUI shell, `Tab`, `Shift-Tab`, and `1`/`2`/`3` still take
+precedence over shell-level navigation. `Esc`/Back returns to the shell in
+embedded mode. In standalone mode, `q` and Ctrl-C save monitor cache state and
+quit.
+
+The standalone view uses the full terminal height and renders its own bottom
+help and RPC status lines. Help distinguishes dashboard navigation
+(`Tab`/`Shift-Tab`) from Network sub-tab selection (`1`/`2`/`3`); it MUST NOT
+describe both controls as one ambiguous "switch tabs" action.
+An embedded monitor receives exactly the height remaining after the shell's
+chrome; the parent MUST NOT size it for one height and clip it to another.
 
 **Standalone operation**: `akt monitor` (and all subcommands) requires only an RPC endpoint. It does not require a keyring, default account, or chain-id. A monitoring-only context (with no `default-account`) or a bare `--rpc` flag is sufficient, making it usable by anyone observing the network.
 
@@ -1696,6 +1765,14 @@ The Network dashboard has three sub-tabs:
 | `2` | **Validators**   | Scrollable validator list with moniker, voting power, prevote/precommit status, block signing history bar, proposer indicator | [§8.3.9](#839-validator-voting-view-from-aktop) |
 | `3` | **Governance**   | Module-by-module governance parameter browser with pretty-printed JSON | [§8.3.11](#8311-governance-parameters-view-from-aktop) |
 
+The Governance view obtains the complete modern governance parameter object
+from `/cosmos.gov.v1.Query/Params` through the monitor's selected RPC endpoint
+and renders it with the same pretty renderer as `akt query gov params`. It MUST
+NOT treat one legacy v1beta1 REST subtype (`voting`, `deposit`, or `tallying`)
+as the combined response: doing so turns the other live values into plausible
+zeros. Voting period, deposit, quorum, threshold, veto, expedited, and burn
+fields shown by monitor therefore match the single-shot CLI query.
+
 #### `akt monitor provider [rpc-endpoint]`
 
 Launches directly into the Provider dashboard. Displays real-time provider fleet monitoring:
@@ -1704,6 +1781,20 @@ Launches directly into the Provider dashboard. Displays real-time provider fleet
 - **Version distribution**: Versions sorted newest-first (semver-aware, handles `-rc` suffixes). Dot visualization with `●` for selected version, `○` for others. h/l to select version filter.
 - **Provider list**: Scrollable table with URL, version, CPU, memory, GPU, location. Filtered by selected version.
 - **Provider detail**: Enter on a provider shows node-level breakdown with CPU, memory, GPU model + count.
+
+Provider health and detail probes verify certificates on both REST and gRPC
+paths by default. `--insecure` is the single explicit opt-out for both paths.
+
+Every provider-list rebuild reconciles the selected version by value against
+the newly sorted version set. If the version disappeared, selection falls back
+to the first available version; if no versions remain, selection is cleared.
+The selected index MUST therefore remain in bounds while live scan results add
+or remove versions. Table rows and Enter-to-detail mapping use the same selected
+version filter.
+
+Provider detail fetches are correlated by provider identity. A response is
+applied only while the matching provider remains the active detail target;
+responses from a provider the user left or superseded are discarded.
 
 Data sources: on-chain provider list (ABCI query), per-provider health (gRPC port 8444 preferred, REST `/status` + `/version` fallback), active leases (REST, for priority scheduling).
 
@@ -1779,19 +1870,26 @@ akt events --module market --output json
 
 #### `akt mcp`
 
-Start an MCP (Model Context Protocol) server over stdio transport for AI assistant integration. The server exposes Akash Network tools that AI assistants can invoke to query chain state, check provider status, and (with explicit permission) perform mutating operations.
+Start an MCP (Model Context Protocol) server over stdio transport. The server exposes Akash Network tools that compatible clients can invoke to query chain state, check provider status, and (with explicit permission) perform mutating operations.
 
-Configuration is resolved from the active akt context (network, keyring, default account). No additional environment variables are required beyond a configured context.
+Configuration is resolved from the active akt context (network, keyring, default account). Console tools are registered when a Console API key resolves through `--console-api-key`, `AKT_CONSOLE_API_KEY`, or the active context credential.
 
-| Flag               | Type | Default | Description                                                                       |
-| ------------------ | ---- | ------- | --------------------------------------------------------------------------------- |
-| `--enable-writes`  | bool | `false` | Enable write tools (on-chain transactions and provider mutations). Without this flag, only read-only query tools are available. |
+| Flag                | Type   | Default | Description                                                                       |
+| ------------------- | ------ | ------- | --------------------------------------------------------------------------------- |
+| `--console-api-key` | string | `""`    | Console API key for this process; overrides environment and context credentials.  |
+| `--enable-writes`   | bool   | `false` | Enable write tools (on-chain transactions and provider mutations). Without this flag, only read-only query tools are available. |
 
 **Permission model:**
 
-By default, only read-only query tools are registered. This prevents AI agents from sending unapproved transactions or performing mutating operations. The `--enable-writes` flag must be explicitly passed to enable write tools. This flag covers both on-chain transactions (which require keyring signing) and mutating provider REST API calls (e.g., submitting manifests).
+By default, only read-only query tools are registered. This prevents an MCP client from sending unapproved transactions or performing mutating operations. The `--enable-writes` flag must be explicitly passed to enable write tools. This flag covers both on-chain transactions (which require keyring signing), Console mutations, and mutating provider REST API calls (e.g., submitting manifests).
 
-**Read-only tools (always available, 21 tools):**
+The inventory is capability-driven. A chain RPC registers 19 read tools; a
+Console credential registers eight. With both configured, `tools/list`
+returns 27 read-only tools. `--enable-writes` adds four chain/provider writes
+and two Console writes, for 33 tools total. A server with only one rail exposes
+only that rail's subset.
+
+**Read-only tools (up to 27 tools):**
 
 | Tool Name                      | Description                                                                |
 | ------------------------------ | -------------------------------------------------------------------------- |
@@ -1814,8 +1912,16 @@ By default, only read-only query tools are registered. This prevents AI agents f
 | `akash_service_status`         | Service status within a lease                                              |
 | `akash_list_audited_providers` | List audited provider attributes                                           |
 | `akash_list_certificates`      | List on-chain certificates                                                 |
+| `console_list_deployments`     | List deployments belonging to the configured Console account              |
+| `console_get_deployment`       | Get one Console-managed deployment                                         |
+| `console_list_bids`            | List bids for a Console-managed deployment                                 |
+| `console_wallet_balance`       | Available, in-deployment, and total Console credits in USD                  |
+| `console_usage_history`        | Get Console spend history                                                  |
+| `console_list_providers`       | List providers in the Console catalog                                      |
+| `console_get_provider`         | Get one provider from the Console catalog                                  |
+| `console_gpu_prices`           | List current Console GPU pricing                                           |
 
-**Write tools (only with `--enable-writes`, 4 tools):**
+**Write tools (only with `--enable-writes`, up to 6 tools):**
 
 | Tool Name                      | Description                                                                |
 | ------------------------------ | -------------------------------------------------------------------------- |
@@ -1823,10 +1929,14 @@ By default, only read-only query tools are registered. This prevents AI agents f
 | `akash_create_lease`           | Create a lease from a bid (on-chain transaction)                           |
 | `akash_close_lease`            | Close an active lease (on-chain transaction)                               |
 | `akash_submit_manifest`        | Submit manifest to provider (provider REST mutation)                       |
+| `console_close_deployment`     | Close a Console-managed deployment                                         |
+| `console_deposit`              | Add USD credit to a Console-managed deployment                             |
 
-**Transport:** stdio (JSON-RPC over stdin/stdout). Designed for use with MCP-compatible AI assistants (e.g., Claude Desktop).
+**Transport:** stdio (JSON-RPC over stdin/stdout). Designed for use with any MCP-compatible client.
 
-**Client implementation:** Uses `v1beta3.LightClient` from chain-sdk for read-only mode, `v1beta3.Client` for write mode.
+**Client implementation:** Uses `v1beta3.LightClient` from chain-sdk for read-only mode, `v1beta3.Client` for write mode, and the shared authenticated provider gateway client for provider REST tools. A `provider_url` selects the endpoint; it does not disable authentication. Keyring contexts attach a wallet-signed JWT, and missing signing identity is reported before the request.
+
+**Money units:** `console_wallet_balance` returns explicit `available_usd`, `in_deployments_usd`, and `total_usd` numbers. Console's integer µACT wire values must not leak through this semantic interface.
 
 **Default account handling:** Tools that accept an `owner` parameter (e.g., `akash_list_deployments`, `akash_list_leases`) default to the context's `default-account` when the parameter is omitted. If no `default-account` is configured (e.g., a monitoring-only context), the `owner` parameter is **required** — the tool returns an error explaining that the owner must be specified explicitly when no default account is available.
 
@@ -1840,7 +1950,7 @@ coerce them to a different identifier or silently substitute a default.
 **Examples:**
 
 ```bash
-# Read-only mode (default, safe for AI agents)
+# Read-only mode (default)
 akt mcp
 
 # With write tools enabled (explicit user consent)
@@ -3380,7 +3490,7 @@ Lines with no content are omitted — the status bar shrinks to 1 or 2 lines whe
 Status bar example (3-line, on monitor view):
 ```
 <1> Overview  <2> Validators  <3> Governance  <j/k> Scroll  <r> Refresh
-RPC: rpc.akashnet.net:443  WS: connected
+RPC: rpc.akt.dev:443/rpc  WS: connected
 <:> Command  <Esc> Back  <Ctrl+c> Quit
 ```
 
@@ -5276,7 +5386,7 @@ Cobra provides this feature via `Command.SuggestionsMinimumDistance` and `Comman
 | 2.9  | Store status command    | Display store info, sync state, record counts                                                                                  | Accurate reporting of store contents                                      |
 | 2.10 | Events command          | Live blockchain event streaming                                                                                                | `akt events` shows real-time events                                       |
 | 2.11 | Console API client      | `auth-method: console-api` support, API key resolved flag > env > per-context stored credential (§7.1), deployment CRUD via Console managed wallet API, `akt console` command group (§2.9) | Create, update, close deployments; list bids; create leases via Console API with the API key resolved per §7.1 |
-| 2.12 | MCP server              | `akt mcp` command with stdio JSON-RPC transport, 21 read-only tools, 4 write tools gated behind `--enable-writes`              | Read-only tools query chain state; write tools send transactions. Config resolved from active context. |
+| 2.12 | MCP server              | `akt mcp` command with stdio JSON-RPC transport, up to 27 read-only tools and 6 write tools gated behind `--enable-writes`     | Read-only tools query the configured chain and/or Console rail; write tools are opt-in. Provider calls authenticate through the shared gateway client. |
 
 ### Phase 3: TUI Mode
 

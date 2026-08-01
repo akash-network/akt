@@ -8,6 +8,8 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	"github.com/spf13/cobra"
 
+	aclient "pkg.akt.dev/go/node/client"
+
 	"pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
 	aktmcp "pkg.akt.dev/akt/internal/mcp"
@@ -49,6 +51,10 @@ Write tools, unlocked only by --enable-writes:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cctx := sdkclient.GetClientContextFromCmd(cmd)
+			providerAuthType, err := providerAuthTypeFor(cmd, mgrFn)
+			if err != nil {
+				return err
+			}
 
 			enableWrites, _ := cmd.Flags().GetBool("enable-writes")
 
@@ -61,7 +67,28 @@ Write tools, unlocked only by --enable-writes:
 				cctx = cctx.WithSignModeStr(flags.SignModeDirect)
 			}
 
-			srv, err := aktmcp.New(ctx, cctx, enableWrites, consoleClientFor(cmd, mgrFn))
+			// Attach an RPC client. The tx and query trees build one in their
+			// own PersistentPreRunE; this command has neither, so the context
+			// arrives with a node URI and no client. Every chain tool then
+			// fails -- the query tools with "no RPC client is defined in
+			// offline mode", and the node tools by dereferencing the missing
+			// client, which takes the whole server down.
+			if cctx.Client == nil && cctx.NodeURI != "" {
+				rpcClient, err := aclient.NewClient(ctx, cctx.NodeURI)
+				if err != nil {
+					return fmt.Errorf("connect to %s: %w", cctx.NodeURI, err)
+				}
+
+				cctx = cctx.WithClient(rpcClient)
+			}
+
+			srv, err := aktmcp.New(
+				ctx,
+				cctx,
+				providerAuthType,
+				enableWrites,
+				consoleClientFor(cmd, mgrFn),
+			)
 			if err != nil {
 				return fmt.Errorf("failed to create MCP server: %w", err)
 			}
@@ -90,6 +117,25 @@ Write tools, unlocked only by --enable-writes:
 			"Without this flag, only read-only query tools are available.")
 
 	return cmd
+}
+
+func providerAuthTypeFor(cmd *cobra.Command, mgrFn func() *aktctx.Manager) (string, error) {
+	m := mgrFn()
+	if m == nil {
+		return aktctx.ProviderAuthJWT, nil
+	}
+	override := ""
+	if flag := cmd.Flags().Lookup("context"); flag != nil {
+		override = flag.Value.String()
+	}
+	rc, err := m.Resolve(m.ActiveContext(override))
+	if err != nil {
+		return "", fmt.Errorf("resolve MCP provider authentication: %w", err)
+	}
+	if rc == nil {
+		return "", fmt.Errorf("resolve MCP provider authentication: empty context")
+	}
+	return aktctx.ResolveProviderAuthType(rc.AuthType)
 }
 
 // consoleClientFor resolves a Console API client for the MCP server, or nil

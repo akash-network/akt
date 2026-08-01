@@ -3,6 +3,7 @@ package context_test
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	aktctx "pkg.akt.dev/akt/internal/context"
@@ -43,6 +44,8 @@ func TestCreateNetworkFromTemplate(t *testing.T) {
 
 	if len(net.Endpoints.RPC) < 1 {
 		t.Error("expected at least one RPC endpoint")
+	} else if got := net.Endpoints.RPC[0]; got != "https://rpc.akt.dev:443/rpc" {
+		t.Errorf("primary mainnet RPC = %q, want the WebSocket-capable monitor endpoint", got)
 	}
 }
 
@@ -219,6 +222,22 @@ func TestCreateContextDefaults(t *testing.T) {
 
 	if ctx.ProviderDefaults.AuthType != "jwt" {
 		t.Errorf("auth-type = %q, want jwt", ctx.ProviderDefaults.AuthType)
+	}
+}
+
+func TestCreateContextRejectsInvalidProviderAuthType(t *testing.T) {
+	m := newTestManager(t)
+	_ = m.CreateNetworkFromTemplate("mainnet", "mainnet")
+
+	err := m.CreateContext(aktctx.Context{
+		Name:    "prod",
+		Network: aktctx.Network{Name: "mainnet"},
+		ProviderDefaults: aktctx.ProviderDefaults{
+			AuthType: "password",
+		},
+	})
+	if err == nil || !strings.Contains(err.Error(), "provider auth type") {
+		t.Fatalf("error = %v, want provider auth enum validation", err)
 	}
 }
 
@@ -422,6 +441,44 @@ func TestResolve(t *testing.T) {
 
 	if rc.GasPrices != "0.025uakt" {
 		t.Errorf("gas-prices = %q, want 0.025uakt (from network)", rc.GasPrices)
+	}
+}
+
+func TestResolveDefaultsLegacyProviderAuthType(t *testing.T) {
+	root := t.TempDir()
+	cfg := aktctx.Config{
+		Version:        aktctx.ConfigVersion,
+		CurrentContext: "prod",
+		Networks: []aktctx.Network{{
+			Name:      "mainnet",
+			ChainID:   "akashnet-2",
+			Endpoints: aktctx.Endpoints{RPC: []string{"https://rpc.example"}},
+		}},
+		Keyrings: []aktctx.Keyring{{Name: "default", Backend: "test"}},
+		Contexts: []aktctx.Context{{
+			Name:       "prod",
+			Network:    aktctx.Network{Name: "mainnet"},
+			Keyring:    aktctx.Keyring{Name: "default"},
+			AuthMethod: aktctx.AuthMethodKeyring,
+		}},
+	}
+	if err := aktctx.SaveConfig(root, &cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	m, err := aktctx.NewManager(root)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	rc, err := m.Resolve("")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if rc.AuthType != aktctx.ProviderAuthJWT {
+		t.Errorf("AuthType = %q, want %q", rc.AuthType, aktctx.ProviderAuthJWT)
+	}
+	if rc.ProviderDefaults.AuthType != aktctx.ProviderAuthJWT {
+		t.Errorf("ProviderDefaults.AuthType = %q, want %q", rc.ProviderDefaults.AuthType, aktctx.ProviderAuthJWT)
 	}
 }
 

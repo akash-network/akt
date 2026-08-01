@@ -203,6 +203,30 @@ func TestEditRejectsInvalidAuthMethod(t *testing.T) {
 	}
 }
 
+func TestCreateAndEditProviderAuthType(t *testing.T) {
+	m := newTestManager(t)
+	mgrFn := func() *aktctx.Manager { return m }
+
+	runOK(t, createCmd(mgrFn),
+		"prod", "--network", "mainnet", "--provider-auth-type", "mtls")
+	if got := m.GetContext("prod").ProviderDefaults.AuthType; got != "mtls" {
+		t.Fatalf("created provider auth type = %q, want mtls", got)
+	}
+
+	runOK(t, editCmd(mgrFn), "prod", "--provider-auth-type", "jwt")
+	if got := m.GetContext("prod").ProviderDefaults.AuthType; got != "jwt" {
+		t.Fatalf("edited provider auth type = %q, want jwt", got)
+	}
+
+	err := runErr(t, editCmd(mgrFn), "prod", "--provider-auth-type", "password")
+	if !strings.Contains(err.Error(), "provider auth type") {
+		t.Fatalf("error = %v, want provider auth enum validation", err)
+	}
+	if got := m.GetContext("prod").ProviderDefaults.AuthType; got != "jwt" {
+		t.Fatalf("rejected edit persisted provider auth type %q", got)
+	}
+}
+
 // TestEditRejectsForkNetworkWithNetwork covers the mutually-exclusive flag
 // guard: forking and switching networks in one command is ambiguous, and
 // silently picking one would move the context to the wrong network.

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/x/exp/golden"
@@ -404,19 +405,50 @@ func TestRenderBMEPanel(t *testing.T) {
 
 func TestRenderStatusBar(t *testing.T) {
 	tests := map[string]struct {
+		hub         HubTab
 		tab         Tab
+		detail      bool
 		wsConnected bool
 	}{
-		"Overview":    {TabOverview, true},
-		"Validators":  {TabValidators, true},
-		"Governance":  {TabGovernance, true},
-		"WSConnected": {TabOverview, true},
-		"HTTPOnly":    {TabOverview, false},
+		"Overview":       {HubNetwork, TabOverview, false, true},
+		"Validators":     {HubNetwork, TabValidators, false, true},
+		"Governance":     {HubNetwork, TabGovernance, false, true},
+		"Provider":       {HubProvider, TabOverview, false, true},
+		"ProviderDetail": {HubProvider, TabOverview, true, true},
+		"OracleBME":      {HubOracleBME, TabOverview, false, true},
+		"WSConnected":    {HubNetwork, TabOverview, false, true},
+		"HTTPOnly":       {HubNetwork, TabOverview, false, false},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			golden.RequireEqual(t, renderStatusBar("https://rpc.akashnet.net:443", tc.tab, false, tc.wsConnected, testWidth))
+			golden.RequireEqual(t, renderStatusBar(
+				"https://rpc.akashnet.net:443",
+				tc.hub,
+				tc.tab,
+				tc.detail,
+				tc.wsConnected,
+				testWidth,
+			))
 		})
+	}
+}
+
+func TestRenderStatusBarDistinguishesDashboardAndNetworkNavigation(t *testing.T) {
+	got := renderStatusBar(
+		"https://rpc.akashnet.net:443",
+		HubNetwork,
+		TabOverview,
+		false,
+		true,
+		testWidth,
+	)
+	for _, want := range []string{"Tab/Shift-Tab", "1-3"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("status bar missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Tab/1-3") {
+		t.Errorf("status bar conflates dashboard and sub-tab navigation:\n%s", got)
 	}
 }
 

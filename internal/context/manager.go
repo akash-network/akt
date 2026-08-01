@@ -294,9 +294,11 @@ func (m *Manager) CreateContext(ctx Context) error {
 		ctx.Gas = "auto"
 	}
 
-	if ctx.ProviderDefaults.AuthType == "" {
-		ctx.ProviderDefaults.AuthType = "jwt"
+	providerAuthType, err := ResolveProviderAuthType(ctx.ProviderDefaults.AuthType)
+	if err != nil {
+		return err
 	}
+	ctx.ProviderDefaults.AuthType = providerAuthType
 
 	switch ctx.AuthMethod {
 	case "", AuthMethodKeyring, AuthMethodConsoleAPI:
@@ -409,6 +411,11 @@ func (m *Manager) UpdateContextAndNetwork(
 	if m.getKeyring(ctx.Keyring.Name) == nil {
 		return fmt.Errorf("keyring %q not found", ctx.Keyring.Name)
 	}
+	providerAuthType, err := ResolveProviderAuthType(ctx.ProviderDefaults.AuthType)
+	if err != nil {
+		return err
+	}
+	ctx.ProviderDefaults.AuthType = providerAuthType
 
 	oldContexts := append([]Context(nil), m.cfg.Contexts...)
 	oldNetworks := append([]Network(nil), m.cfg.Networks...)
@@ -600,6 +607,13 @@ func (m *Manager) Resolve(name string) (*Context, error) {
 		consoleURL = DefaultConsoleAPIURL
 	}
 
+	providerAuthType, err := ResolveProviderAuthType(ctx.ProviderDefaults.AuthType)
+	if err != nil {
+		return nil, fmt.Errorf("context %q: %w", name, err)
+	}
+	providerDefaults := ctx.ProviderDefaults
+	providerDefaults.AuthType = providerAuthType
+
 	return &Context{
 		Name:             ctx.Name,
 		Network:          *net,
@@ -609,10 +623,10 @@ func (m *Manager) Resolve(name string) (*Context, error) {
 		DefaultAccount:   ctx.DefaultAccount,
 		Gas:              ctx.Gas,
 		Fees:             ctx.Fees,
-		ProviderDefaults: ctx.ProviderDefaults,
+		ProviderDefaults: providerDefaults,
 		GasPrices:        net.GasPrices,
 		GasAdjustment:    net.GasAdjustment,
-		AuthType:         ctx.ProviderDefaults.AuthType,
+		AuthType:         providerAuthType,
 		Root:             m.root,
 		ConsoleAPIKey:    ResolveConsoleAPIKey(m.root, ctx.Name),
 	}, nil

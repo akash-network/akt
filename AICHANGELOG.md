@@ -27,6 +27,36 @@
   failing, and remain safely retryable; Console-backed updates continue to use
   the Console API's manifest handling.
 
+- **Standalone monitor navigation was routed to an invisible TUI view**:
+  dashboard and Network sub-tab keys now reach the monitor in standalone and
+  embedded modes, full-height rendering preserves the visible help/status
+  footer, and resize events are delivered once. Provider version selection,
+  detail-view reverse navigation, and dashboard-specific help now match the
+  controls shown on screen. Governance loads the complete modern parameter
+  response through RPC instead of rendering absent legacy REST fields as
+  plausible zeros. The monitor cache now honors `--home`, context API endpoints
+  supply auxiliary REST reads, and new mainnet templates select a verified
+  WebSocket RPC first. Provider scans now verify TLS certificates by default;
+  `--insecure` remains an explicit opt-in for debugging non-standard gateways.
+  Ad-hoc RPCs now derive a same-origin REST endpoint instead of inheriting an
+  unrelated context API, and legacy built-in mainnet contexts select the
+  current WebSocket endpoint without rewriting user config. Live provider
+  version sets reconcile safely, the table applies the advertised version
+  filter, release candidates sort by their numeric suffix, and stale detail
+  responses can no longer overwrite a newer choice. Provider gRPC probes now
+  honor the same certificate-verification setting as REST probes. A standalone
+  explicit RPC no longer triggers first-run config bootstrap, Cosmos `tcp`
+  endpoints derive an HTTP REST peer, monitor cache failures reach the user,
+  and cache cleanup removes both current and legacy files or reports failure.
+
+- **Public provider status incorrectly required a wallet and could panic on an
+  empty keyring**: CLI and MCP status calls now use an unauthenticated public
+  gateway client. Protected CLI and MCP operations resolve the context's
+  `jwt`/`mtls` default, then reject an invalid auth type, missing account,
+  missing keyring, or absent signing key before provider discovery or
+  gateway I/O. The inherited `--auth-type` flag is refused on public status
+  instead of being ignored.
+
 - **Monitor provider loading and WebSocket discovery were underspecified**:
   provider cache loading, on-chain reconciliation, health checks, periodic
   resync, and cache persistence now form one startup-owned pipeline independent
@@ -272,6 +302,13 @@
   refuse locally instead of querying every certificate on the network. The
   localnet query and deployment lifecycle coverage now supplies its validator
   address explicitly so CI exercises that scoped contract.
+- **MCP provider tools reached authenticated gateway endpoints anonymously**:
+  lease status, service status, and manifest submission now use the shared
+  authenticated provider gateway client. Public provider status remains
+  walletless. The MCP inventory documentation now matches the
+  capability-driven 27 read / 33 total maximum.
+
+- **`console_wallet_balance` returned µACT while describing Console credits**: the MCP result now exposes `available_usd`, `in_deployments_usd`, and `total_usd`, derived from the Console balance helpers, so a `$17.94` balance cannot be mistaken for `17,940,000` dollars.
 
 - **`akt q staking params`/`pool` could panic on a sparse response**: proto3 omits zero-valued fields, so an unset `LegacyDec`/`Int` unmarshals with a nil inner `big.Int` and any arithmetic on it panics — `FormatPercentDec` and `FormatDecAsAKT` did exactly that. Two independent reviewers hit it. Formatting now goes through `DecOrZero`/`IntOrZero`, so an omitted field renders as `0` instead of crashing the command. 3 regression tests.
 
