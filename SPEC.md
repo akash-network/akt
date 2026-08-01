@@ -719,6 +719,7 @@ Create a new named context. A context references a network and keyring by name.
 | `--default-account`   | string | `""`        | Default account name (only with `keyring` auth)                  |
 | `--gas`               | string | `"auto"`    | Gas limit override (only with `keyring` auth)                    |
 | `--fees`              | string | `""`        | Fixed fees override (only with `keyring` auth)                   |
+| `--provider-auth-type`| string | `"jwt"`     | Provider gateway auth default: `jwt` or `mtls`                   |
 | `--set-current`       | bool   | `false`     | Set as current context after creation                            |
 
 **Examples:**
@@ -798,6 +799,7 @@ Edit context-level settings. For network-level changes (endpoints, gas-prices), 
 | `--default-account` | string | `""`    | Change default account                 |
 | `--gas`             | string | `""`    | Change gas setting                     |
 | `--fees`            | string | `""`    | Change fees setting                    |
+| `--provider-auth-type` | string | unchanged | Change provider gateway auth default: `jwt` or `mtls` |
 | `--auth-method`     | string | `""`    | Change authentication method: `keyring` or `console-api` |
 | `--console-api-url` | string | `""`    | Change Console API base URL (empty = default) |
 | `--console-api-key` | string | `""`    | Set the per-context Console API key (empty string removes it; §7.1) |
@@ -1470,9 +1472,17 @@ endpoint; explicitly passing it is refused instead of being silently ignored.
 
 All lease-, manifest-, migration-, log-, event-, and shell-scoped provider
 commands remain authenticated. Before constructing their gateway client they
-MUST fail locally with a direct remedy when no default account or keyring is
-configured; they MUST NOT defer that failure to a signer as `key with address
-not found`.
+resolve `--auth-type` over `provider-defaults.auth-type` from the selected
+context and default to `jwt`. Before provider URL discovery or gateway network
+work, they MUST validate the auth enum, default account, keyring, and (for JWT)
+that the selected account exists in that keyring. Failures name the missing
+provider signing identity and how to repair the context; they MUST NOT defer to
+a signer as raw `key with address ... not found` output.
+
+MCP uses the same selected context auth default for protected provider tools.
+Provider status remains public; lease status, service status, and manifest
+submission use the shared authenticated gateway boundary with JWT or mTLS as
+configured.
 
 #### `akt provider lease-status [dseq]`
 
