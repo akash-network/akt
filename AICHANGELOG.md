@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- **Vendored transaction separators became unnamed actionless leaves when the
+  full PR set was assembled**: IBC client and transfer adapters remain grouped
+  together without registering sentinel commands in the executable tree.
+
 - **Unsupported and empty transaction groups looked executable**: the Akash
   app has no crisis message handler, the evidence transaction group has no
   concrete submission type, and upstream IBC channel-v2 has no packet actions.
