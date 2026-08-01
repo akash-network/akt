@@ -82,14 +82,14 @@ networks:
     gas-adjustment: "1.5"
 
   - name: sandbox
-    chain-id: sandbox-01
+    chain-id: sandbox-2
     endpoints:
       rpc:
-        - https://rpc.sandbox-01.aksh.pw:443
+        - https://rpc.sandbox-2.aksh.pw:443
       api:
-        - https://api.sandbox-01.aksh.pw:443
+        - https://api.sandbox-2.aksh.pw:443
       grpc:
-        - grpc.sandbox-01.aksh.pw:443
+        - grpc.sandbox-2.aksh.pw:9090
     gas-prices: "0.025uakt"
     gas-adjustment: "1.5"
 
@@ -341,14 +341,14 @@ gas-adjustment: "1.5"
 **Template: `sandbox`**
 ```yaml
 name: sandbox
-chain-id: sandbox-01
+chain-id: sandbox-2
 endpoints:
   rpc:
-    - https://rpc.sandbox-01.aksh.pw:443
+    - https://rpc.sandbox-2.aksh.pw:443
   api:
-    - https://api.sandbox-01.aksh.pw:443
+    - https://api.sandbox-2.aksh.pw:443
   grpc:
-    - grpc.sandbox-01.aksh.pw:443
+    - grpc.sandbox-2.aksh.pw:9090
 gas-prices: "0.025uakt"
 gas-adjustment: "1.5"
 ```
@@ -925,7 +925,7 @@ $ akt context network list
   NAME              CHAIN-ID       RPC                          USED BY
   mainnet           akashnet-2     rpc.akt.dev:443/rpc          prod, monitoring
   testnet           testnet-02     rpc.testnet-02.aksh.pw:443   staging
-  sandbox           sandbox-01     rpc.sandbox-01.aksh.pw:443
+  sandbox           sandbox-2      rpc.sandbox-2.aksh.pw:443
   mainnet-custom    akashnet-2     my-private-rpc:443           (none)
 ```
 
@@ -2633,7 +2633,7 @@ Select networks  ↑↓ move  space toggle  enter confirm
 
     [x]  mainnet             akashnet-2        [3 rpc, 2 api, 1 grpc]
     [x]  testnet             testnet-02        [1 rpc, 1 api, 1 grpc]
-    [x]  sandbox             sandbox-01        [1 rpc, 1 api, 1 grpc]
+    [x]  sandbox             sandbox-2         [1 rpc, 1 api, 1 grpc]
 
   q quit
 ```

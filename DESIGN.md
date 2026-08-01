@@ -215,6 +215,8 @@ graph TB
 - Defines chain connectivity: chain-id, RPC/API/gRPC endpoints, gas prices, gas adjustment.
 - Can be shared by multiple contexts (e.g., a "mainnet" network used by both "prod" and "monitoring" contexts).
 - Instantiatable from built-in templates (mainnet, testnet, sandbox).
+- Built-in templates track the Akash network registry's current chain IDs and
+  endpoints; the sandbox template targets the live `sandbox-2` network.
 - When a shared network's config is edited within a context, two modes are offered:
   - **Edit parent**: Modify the network definition. Change applies to all contexts using it.
   - **Fork**: Create a copy of the network for this context only. The context switches to the forked copy.
