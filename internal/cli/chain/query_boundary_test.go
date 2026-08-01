@@ -24,6 +24,7 @@ import (
 	ibccore "github.com/cosmos/ibc-go/v10/modules/core"
 	ibcclienttypes "github.com/cosmos/ibc-go/v10/modules/core/02-client/types"
 	connectiontypes "github.com/cosmos/ibc-go/v10/modules/core/03-connection/types"
+	channeltypes "github.com/cosmos/ibc-go/v10/modules/core/04-channel/types"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	clioutput "pkg.akt.dev/akt/internal/output"
@@ -91,10 +92,27 @@ func (server *stubIBCConnectionQueryServer) ConnectionParams(context.Context, *c
 	}, nil
 }
 
+type stubIBCChannelQueryServer struct {
+	channeltypes.UnimplementedQueryServer
+}
+
+func (*stubIBCChannelQueryServer) ConnectionChannels(context.Context, *channeltypes.QueryConnectionChannelsRequest) (*channeltypes.QueryConnectionChannelsResponse, error) {
+	return &channeltypes.QueryConnectionChannelsResponse{
+		Channels: []*channeltypes.IdentifiedChannel{
+			{ChannelId: "channel-0", PortId: "transfer"},
+			{ChannelId: "channel-1", PortId: "transfer"},
+			{ChannelId: "channel-2", PortId: "transfer"},
+		},
+		Pagination: &querytypes.PageResponse{NextKey: []byte("next"), Total: 3},
+		Height:     ibcclienttypes.Height{RevisionNumber: 2, RevisionHeight: 10},
+	}, nil
+}
+
 func newIBCQueryTestConn(
 	t *testing.T,
 	clientServer ibcclienttypes.QueryServer,
 	connectionServer connectiontypes.QueryServer,
+	channelServer channeltypes.QueryServer,
 ) *grpc.ClientConn {
 	t.Helper()
 
@@ -102,6 +120,7 @@ func newIBCQueryTestConn(
 	server := grpc.NewServer()
 	ibcclienttypes.RegisterQueryServer(server, clientServer)
 	connectiontypes.RegisterQueryServer(server, connectionServer)
+	channeltypes.RegisterQueryServer(server, channelServer)
 
 	go func() {
 		_ = server.Serve(listener)
@@ -187,6 +206,7 @@ func TestVendoredIBCParamsReturnTransportErrorsWithoutPanicking(t *testing.T) {
 		t,
 		&stubIBCClientQueryServer{err: transportErr},
 		&stubIBCConnectionQueryServer{err: transportErr},
+		&stubIBCChannelQueryServer{},
 	)
 
 	cases := []struct {
@@ -226,6 +246,7 @@ func TestVendoredIBCYAMLEmitsYAML(t *testing.T) {
 		t,
 		&stubIBCClientQueryServer{},
 		&stubIBCConnectionQueryServer{},
+		&stubIBCChannelQueryServer{},
 	)
 	root := adoptVendoredQueryCmd(ibccore.AppModuleBasic{}.GetQueryCmd())
 	var constrainOutput func(*cobra.Command)
@@ -253,6 +274,7 @@ func TestVendoredIBCVerboseReportsSelectedEndpoint(t *testing.T) {
 		t,
 		&stubIBCClientQueryServer{},
 		&stubIBCConnectionQueryServer{},
+		&stubIBCChannelQueryServer{},
 	)
 	root := adoptVendoredQueryCmd(ibccore.AppModuleBasic{}.GetQueryCmd())
 	root.PersistentFlags().CountP("verbose", "v", "verbose")
@@ -316,6 +338,7 @@ func TestAlternateQueryPreRunsHonorVerbose(t *testing.T) {
 			require.Contains(t, stderr.String(), "querying https://rpc.test.invalid (chain akashnet-2)")
 		})
 	}
+
 }
 
 func TestVendoredIBCPaginationAppliesHardLimit(t *testing.T) {
@@ -323,6 +346,7 @@ func TestVendoredIBCPaginationAppliesHardLimit(t *testing.T) {
 		t,
 		&stubIBCClientQueryServer{},
 		&stubIBCConnectionQueryServer{},
+		&stubIBCChannelQueryServer{},
 	)
 
 	t.Run("height offset excludes prefix and lookahead", func(t *testing.T) {
@@ -411,6 +435,52 @@ func TestVendoredIBCPaginationAppliesHardLimit(t *testing.T) {
 		require.Len(t, response.States, 1)
 		require.Equal(t, "bmV4dA==", response.Pagination.NextKey)
 		require.Equal(t, "2", response.Pagination.Total)
+	})
+
+	for _, tc := range []struct {
+		name string
+		args []string
+	}{
+		{"connection channels excludes offset prefix", []string{"--offset", "1"}},
+		{"connection channels applies page offset", []string{"--page", "2"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			args := []string{"channel", "connections", "connection-2", "--limit", "1", "--output", "json"}
+			args = append(args, tc.args...)
+			out, err := executeVendoredIBCCommand(
+				t,
+				adoptVendoredQueryCmd(ibccore.AppModuleBasic{}.GetQueryCmd()),
+				conn,
+				args...,
+			)
+			require.NoError(t, err)
+
+			var response struct {
+				Channels []struct {
+					ChannelID string `json:"channel_id"`
+				} `json:"channels"`
+			}
+			require.NoError(t, json.Unmarshal([]byte(out), &response))
+			require.Len(t, response.Channels, 1)
+			require.Equal(t, "channel-1", response.Channels[0].ChannelID)
+		})
+	}
+
+	t.Run("connection channels beyond final page is empty", func(t *testing.T) {
+		out, err := executeVendoredIBCCommand(
+			t,
+			adoptVendoredQueryCmd(ibccore.AppModuleBasic{}.GetQueryCmd()),
+			conn,
+			"channel", "connections", "connection-2",
+			"--offset", "3", "--limit", "1", "--output", "json",
+		)
+		require.NoError(t, err)
+
+		var response struct {
+			Channels []json.RawMessage `json:"channels"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out), &response))
+		require.Empty(t, response.Channels)
 	})
 }
 
