@@ -1455,11 +1455,24 @@ Query provider status. Supply the provider address positionally or with
 private gateways. A provider with no on-chain host URI is refused before a
 gateway request is attempted.
 
+Provider `/status` is a public gateway endpoint. This command MUST NOT load a
+default account, open a keyring, mint a JWT, or load an mTLS certificate. It is
+valid from a monitoring-only context with chain-query access and no wallet.
+The provider address is still required because it identifies the gateway and,
+unless `--provider-url` is supplied, selects the on-chain `host_uri`. The
+provider group's inherited `--auth-type` flag does not apply to this public
+endpoint; explicitly passing it is refused instead of being silently ignored.
+
 | Flag             | Type   | Default         | Description                                      |
 | ---------------- | ------ | --------------- | ------------------------------------------------ |
 | `--provider`     | string | `""`            | Provider address; alternative to positional form |
 | `--provider-url` | string | on-chain record | Explicit provider gateway URL override           |
-| `--auth-type`    | string | context default | Auth type: `jwt`, `mtls`                         |
+
+All lease-, manifest-, migration-, log-, event-, and shell-scoped provider
+commands remain authenticated. Before constructing their gateway client they
+MUST fail locally with a direct remedy when no default account or keyring is
+configured; they MUST NOT defer that failure to a signer as `key with address
+not found`.
 
 #### `akt provider lease-status [dseq]`
 

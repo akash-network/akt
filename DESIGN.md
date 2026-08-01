@@ -227,6 +227,18 @@ Each context has an `auth-method` that determines how transactions are signed an
 
 A context uses **one** auth method. Users who need both can create separate contexts (e.g., `prod` with keyring auth and `console` with console-api auth), potentially sharing the same network definition.
 
+Provider authentication is selected by operation, not merely by command
+group. Provider `/status` is a public read: CLI and MCP callers construct it
+through `internal/provider.NewPublicGatewayClient`, which attaches neither a
+wallet JWT nor an mTLS certificate and therefore works without a default
+account or keyring. Lease-, service-, manifest-, migration-, log-, event-, and
+shell-scoped chain-backed operations construct clients through
+`internal/provider.NewGatewayClient`. That boundary validates the resolved
+account and keyring before installing the selected JWT or mTLS identity, so a
+walletless invocation fails with a direct configuration remedy rather than an
+empty-address signer error. Callers may choose the provider URL, but do not
+construct provider REST clients ad hoc.
+
 #### 3.1.5 Console Provider Gateway Access
 
 A `console-api` context has no wallet, yet the operations users reach for most after a deployment goes live — container logs, cluster events, live lease status, an interactive shell — are served by the **provider's** gateway, not by the Console API. `akt` reaches those gateways directly from a managed context, with no wallet and no local signing key involved (`internal/cli/console/gateway.go`):
@@ -403,7 +415,7 @@ Capabilities are deliberately coarse — they describe what the *configuration* 
 |---|---|---|
 | `chain-query` | network has at least one RPC endpoint | `akt query`, `akt monitor` |
 | `chain-tx` | network has at least one RPC endpoint | `akt tx` |
-| `provider` | network has at least one RPC endpoint (gateway discovery + wallet auth) | `akt provider` |
+| `provider` | network has at least one RPC endpoint (gateway discovery; protected operations validate wallet auth at execution) | `akt provider` |
 | `console` | a Console API key is resolvable (§3.1.4) | `akt console` subcommands |
 
 `chain-tx` deliberately does not probe for a funded key: opening an OS keyring can prompt for a password, and a help listing must never do that. Key and balance problems remain execution-time failures. `akt sdl` declares nothing at all — SDL scaffolding, validation, and linting run entirely locally, so gating them would be wrong.
