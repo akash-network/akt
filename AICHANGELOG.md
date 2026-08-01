@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- **Independent command-tree contract tests used the same package helper**:
+  the input-validation walker now has a domain-specific name so the scoping
+  and executable-help branches compile and run together after merge.
+
 - **CLI groups and output flags could accept the wrong input at exit 0**:
   unknown tokens under completion, IBC, and upgrade groups printed help as a
   successful command, while leaf-local `--output` strings bypassed the root
