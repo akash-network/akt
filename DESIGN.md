@@ -389,6 +389,16 @@ known), and exact retry and explicit-close commands in both human and JSONL
 output. This keeps irreversible cleanup under the user's control while making
 the continuing escrow liability unmistakable.
 
+Console mutation responses are not trusted as the only evidence of resulting
+state. A non-idempotent lease POST is never replayed after an error; the client
+instead reads the deployment back and accepts success only when every exact
+requested lease is active. Deployment updates are idempotent, so the Console's
+specific transient manifest-version rejection is retried within the normal
+three-attempt bound. After any failed update response, the client compares the
+deployment's API-reported version hash with the deterministic hash of the SDL
+before deciding whether the update failed. Action logs record the reconciled
+outcome, not merely the first HTTP response.
+
 **Why a translation layer and not per-rail commands**: the alternative — a `deploy` that knows about keyrings and a separate Console `deploy` — means every new action is designed twice, and the two surfaces drift on flag names, defaults, argument order, and error text. Here, adding an action is a workflow definition plus (at most) a message mapping in the console adapter. Neither rail's command handler changes, and no rail-specific redesign is required.
 
 **One argument surface**: the CLI's argument surface is *generated* from the workflow definition (`internal/cli/workflow`). Positional arguments come from the definition's required file param and its optional `dseq` param, and every non-file param also gets a flag carrying the definition's type, default, and description. Because the definition is shared, `akt deploy`, `akt update`, and `akt close` take **identical arguments on both rails** — the rail is a property of the active context (`auth-method`), not of the command line. A user switching from a keyring context to a console-api one types the same command.
@@ -398,11 +408,18 @@ the continuing escrow liability unmistakable.
 | Form | Examples | Meaning |
 |---|---|---|
 | USD | `5usd`, `$5`, `5.50usd` | A USD amount. The `usd` unit is case-insensitive and always wins over coin parsing, so a value ending in `usd` is never read as a chain denomination. |
-| Coin | `5000000uakt`, `5akt` | A chain coin amount, parsed as a decimal coin. |
+| Coin | an explicit `<amount><denom>` | A chain coin amount, parsed as a decimal coin. The denomination must match the active network's deployment deposit parameter. |
 | Bare number | `5`, `5.50` | Unit-less: USD on the console rail, rejected on the chain rail (coins have always required a denomination). |
 | `auto` / empty | `auto` | Defer to the rail default: the chain-minimum deployment deposit on the chain rail; the console rail has no default and asks for an explicit USD amount. |
 
-Every form parses on every rail; only the *interpretation* is rail-specific, and each rejection names the rail that would accept the value ("USD deposits require a console-api context; specify a coin amount like `5000000uakt`"). SPEC §7.4 carries the full per-rail acceptance table. The Console minimum is a single exported constant (`transport.MinConsoleDepositUSD`, aliasing `console.MinDepositUSD`) so every surface that enforces it — CLI commands and workflow adapters alike — shares one value.
+Every form parses on every rail; only the *interpretation* is rail-specific,
+and each rejection names the rail that would accept the value. Chain users are
+directed to `auto` first because it queries the active network's minimum amount
+and denomination; an explicit coin remains available as an override. SPEC
+§7.4 carries the full per-rail acceptance table. The Console minimum is a
+single exported constant (`transport.MinConsoleDepositUSD`, aliasing
+`console.MinDepositUSD`) so every surface that enforces it — CLI commands and
+workflow adapters alike — shares one value.
 
 ### 3.6 Capability Gating
 

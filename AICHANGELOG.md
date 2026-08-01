@@ -4,6 +4,16 @@
 
 ### Fixed
 
+- **Console mutation responses could contradict the resulting chain state**:
+  lease creation now reads the deployment back after a failed response and
+  reports success only when every exact requested lease is active, without
+  replaying the non-idempotent POST. Deployment updates retry the Console's
+  transient manifest-version rejection and reconcile the expected SDL hash
+  before reporting failure. Deployment details retain the API's version hash.
+  Chain deployment help now recommends `auto`, so it follows the network's
+  current minimum amount and denomination instead of advertising a stale
+  hard-coded coin.
+
 - **Workflow failures hid paid partial state and chain updates stopped at the
   transaction**: failed deploys now report their DSEQ, provider, continuing
   escrow risk, and exact retry and explicit-close commands without performing

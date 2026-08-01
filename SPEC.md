@@ -984,7 +984,7 @@ params:
   deposit:
     type: deposit
     default: "auto"
-    description: "Initial deposit: 5usd or $5 (USD, console-api contexts), 5000000uakt (coin, keyring contexts), auto = chain minimum (keyring)"
+    description: "Initial deposit: auto (recommended chain minimum, keyring), 5usd or $5 (console-api), or an explicit coin in the network's deposit denomination (keyring)"
   bid-timeout:
     type: duration
     default: "5m"
@@ -1320,7 +1320,7 @@ The flagship workflow command. Orchestrates the full deployment lifecycle:
 | Flag               | Type     | Default         | Description                                                 |
 | ------------------ | -------- | --------------- | ----------------------------------------------------------- |
 | `--from`           | string   | context default | Account to deploy from                                      |
-| `--deposit`        | string   | `auto`          | Initial deposit, unified syntax on both rails (see §7.4): `5usd`/`$5`, `5000000uakt`, or `auto` |
+| `--deposit`        | string   | `auto`          | Initial deposit, unified syntax on both rails (see §7.4): `auto` (recommended for keyring), `5usd`/`$5` (Console), or an explicit network deposit coin |
 | `--bid-timeout`    | duration | `5m`            | Maximum time to wait for bids                               |
 | `--min-bids`       | int      | `1`             | Minimum bids before selection                               |
 | `--bid-select`     | string   | `"interactive"` | Bid selection: `interactive`, `cheapest`, `provider=<addr>` |
@@ -2480,7 +2480,7 @@ Select networks  ↑↓ move  space toggle  enter confirm
 **Value input prompt**: Free-form text or numeric input with an optional default. Used for deposit amounts, gas overrides, or custom names. Input is validated before acceptance.
 
 ```
-Initial deposit amount [5000000uakt]: _
+Initial deposit amount [auto]: _
 ```
 
 #### 3.9.2 Prompt Rendering Conventions
@@ -3132,7 +3132,8 @@ Returns paginated list of deployments with leases and escrow state.
 
 #### `GET /v1/deployments/{dseq}` -- Get Deployment
 
-Path parameter: `dseq` (deployment sequence ID). Returns deployment details with leases and escrow.
+Path parameter: `dseq` (deployment sequence ID). Returns deployment details,
+including the base64 deployment version `hash`, with leases and escrow.
 
 #### `PUT /v1/deployments/{dseq}` -- Update Deployment
 
@@ -3158,6 +3159,12 @@ Query parameter: `dseq` (required). Returns array of bids with provider details,
 | `leases`   | []object | yes      | Array of `{ dseq, gseq, oseq, provider }` |
 
 Returns deployment with created leases and escrow state.
+
+`POST /v1/leases` is not replayed after an error because it is not
+idempotent. Instead, the client reads each referenced deployment back and
+treats the operation as successful only when every exact requested
+`dseq/gseq/oseq/provider` lease is present and active. If read-back does not
+prove that state, the original POST error is returned.
 
 #### `POST /v1/deposit-deployment` -- Add Deposit
 
@@ -3196,8 +3203,8 @@ When a workflow runs in a context with `auth-method: console-api`, the workflow 
 
 | Form | Examples | `keyring` (chain rail) | `console-api` (console rail) |
 |---|---|---|---|
-| USD | `5usd`, `$5`, `5.50usd` | Error: `USD deposits require a console-api context; specify a coin amount like 5000000uakt` | Sent as USD in the Console API's `data.deposit` field (Console minimum: 0.50 USD) |
-| Coin | `5000000uakt`, `5akt` | Attached to the deployment as the coin deposit | Error: `console deposits are in USD; use e.g. 5usd` |
+| USD | `5usd`, `$5`, `5.50usd` | Error directs the user to `auto` (recommended) or an explicit coin in the network's deployment deposit denomination | Sent as USD in the Console API's `data.deposit` field (Console minimum: 0.50 USD) |
+| Coin | explicit `<amount><denom>` | Attached to the deployment; the denomination must match the active network's deployment deposit parameter | Error: `console deposits are in USD; use e.g. 5usd` |
 | Bare number | `5`, `5.50` | Error (coins require a denomination — the historical chain behavior, with cross-rail guidance) | Interpreted as USD, same as `5usd` |
 | `auto` / empty | `auto` | Chain-minimum deployment deposit, queried on chain | Error: an explicit USD deposit is required |
 
@@ -3233,6 +3240,14 @@ Use a context with auth-method: keyring for this operation.
 | 404         | Deployment not found (dseq does not exist or not owned by user).  |
 | 429         | Rate limited. Retry with backoff (safe for every method: the request was rejected before processing). |
 | 5xx         | Console API server error. Retry with backoff (max 3 attempts) for idempotent methods (GET/HEAD/PUT/DELETE) only. POST is never replayed on 5xx: the request may have been processed despite the error (e.g. a gateway 502 after a completed write), and replaying it could duplicate a deployment or a USD deposit. |
+
+The Console may transiently reject an otherwise valid deployment PUT with
+`422 manifest version validation failed`. Because PUT is idempotent, that exact
+response is retried within the same three-attempt bound. After any failed PUT,
+the client reads the deployment back and compares its base64 `hash` with the
+deterministic SDL version; a match proves success despite the failed response.
+All other 4xx responses remain terminal. A failed lease POST follows the
+read-back rule in §7.3 and is never replayed.
 
 ### 7.7 Differences from Keyring Auth
 
