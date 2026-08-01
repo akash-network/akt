@@ -234,7 +234,7 @@ wallet JWT nor an mTLS certificate and therefore works without a default
 account or keyring. Lease-, service-, manifest-, migration-, log-, event-, and
 shell-scoped chain-backed operations construct clients through
 `internal/provider.NewGatewayClient`. That boundary validates the resolved
-auth enum, account, keyring, and JWT signing-key presence before installing the
+auth enum, account, keyring, and signing-key presence before installing the
 selected JWT or mTLS identity. CLI callers perform that local preflight before
 on-chain provider URL discovery, so an RPC failure cannot hide a missing
 signing identity. `--auth-type` overrides the selected context's

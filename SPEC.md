@@ -1474,8 +1474,9 @@ All lease-, manifest-, migration-, log-, event-, and shell-scoped provider
 commands remain authenticated. Before constructing their gateway client they
 resolve `--auth-type` over `provider-defaults.auth-type` from the selected
 context and default to `jwt`. Before provider URL discovery or gateway network
-work, they MUST validate the auth enum, default account, keyring, and (for JWT)
-that the selected account exists in that keyring. Failures name the missing
+work, they MUST validate the auth enum, default account, keyring, and that the
+selected account exists in that keyring. Both JWT signing and mTLS certificate
+loading require that local signing identity. Failures name the missing
 provider signing identity and how to repair the context; they MUST NOT defer to
 a signer as raw `key with address ... not found` output.
 
