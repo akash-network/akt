@@ -2064,7 +2064,10 @@ An explicit `--node` replaces the context RPC endpoint for every query that
 performs RPC work. Local derivations such as `ibc-transfer escrow-address` and
 `module-name-to-address` reject `--node`; they also reject `--height` because
 they do not read chain state. Queries that cannot select a historical snapshot
-(`blocks`, `tx`, and `txs`) likewise reject `--height`. `block` and
+(`blocks`, `tx`, `txs`, and `gov proposer`) likewise reject `--height`. The
+proposer query is derived from the current transaction index rather than a
+height-addressable module query, so accepting a historical height would return
+the current proposer under a historical-looking invocation. `block` and
 `block-results` accept height positionally or through `--height`, but reject an
 invocation that supplies both. An explicit `--chain-id` must agree with the
 selected context even for a local derivation. File-oriented queries such as
@@ -2091,8 +2094,9 @@ Added to list-type query commands via `AddPaginationFlagsToCmd()`.
 | `--reverse`     | bool   | `false` | Reverse result order            |
 
 The requested limit is a hard upper bound on returned records. Client adapters
-must trim any upstream pagination lookahead item while preserving the response
-pagination metadata needed to request the next page.
+must trim any upstream pagination lookahead item, including IBC client-state
+lists, while preserving the response pagination metadata needed to request the
+next page.
 
 ### 3.5 Akash Resource ID Flags
 

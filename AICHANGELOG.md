@@ -4,6 +4,19 @@
 
 ### Fixed
 
+- **Two query boundaries still accepted misleading results**: `query gov
+  proposer --height` returned the current transaction-index answer under a
+  historical-looking invocation, and `query ibc client states --limit N`
+  exposed the dependency's pagination lookahead record. The proposer query now
+  refuses unsupported snapshot selection before network work, and the IBC
+  adapter enforces the requested record limit for client-state lists.
+
+- **Pretty query output ignored redirection and `NO_COLOR`**: registered query
+  formatters wrote directly to the process stdout, bypassing Cobra's selected
+  writer and terminal-aware styling boundary. Pretty output now flows through
+  the command writer and strips all ANSI styling for files, pipes, test buffers,
+  and explicit no-color sessions while retaining styling on an interactive TTY.
+
 - **SDL output selection and redirected store status were cosmetic flags**:
   `sdl init` silently emitted YAML after an explicit JSON/YAML selection,
   `sdl validate` ignored structured output entirely, and `store status` leaked

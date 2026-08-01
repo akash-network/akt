@@ -571,7 +571,9 @@ Vendored query trees pass through an akt adapter before execution. The adapter
 applies the resolved context and explicit endpoint overrides, converts upstream
 errors into normal command errors, normalizes JSON/YAML output, enforces the
 requested page boundary even when an upstream client over-collects, and removes
-duplicate sibling registrations. This keeps clean-copied and dependency-owned
+duplicate sibling registrations. Queries backed by the current transaction
+index, rather than height-addressable module state, reject historical snapshot
+selection at this boundary. This keeps clean-copied and dependency-owned
 commands under the same public CLI contract without forking their whole trees.
 
 For Console API values, the public JSON representation is canonical. YAML is
