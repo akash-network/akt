@@ -249,11 +249,18 @@ func leaseShellCmd() *cobra.Command {
   akt provider lease-shell --dseq 12345 --provider akash1... --service web -- /bin/bash
 
   # Run a single command
-  akt provider lease-shell --dseq 12345 --provider akash1... --service web -- ls -la`,
+  akt provider lease-shell --dseq 12345 --provider akash1... --service web -- ls -la
+
+  # Capture an explicit command as structured stdout and stderr
+  akt provider lease-shell --dseq 12345 --provider akash1... --service web -o json -- pwd`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			shellCtx, cancelShell := context.WithCancel(ctx)
 			defer cancelShell()
+			interactive := len(args) == 0
+			if err := output.ValidateShellOutput(cmd, interactive); err != nil {
+				return err
+			}
 
 			providerAddr, providerURL, err := resolveProvider(cmd, nil)
 			if err != nil {
@@ -283,8 +290,10 @@ func leaseShellCmd() *cobra.Command {
 				stdin = aktprovider.HoldEOF(shellCtx, os.Stdin)
 			}
 
-			err = aktprovider.RunLeaseShell(shellCtx, cl, lid, service, 0, leaseShellCommand(args),
-				stdin, cmd.OutOrStdout(), cmd.ErrOrStderr(), tty, nil)
+			err = output.RunShellOutput(cmd, interactive, tty, func(stdout, stderr io.Writer, shellTTY bool) error {
+				return aktprovider.RunLeaseShell(shellCtx, cl, lid, service, 0, leaseShellCommand(args),
+					stdin, stdout, stderr, shellTTY, nil)
+			})
 			recordProviderAction(ctx, "lease-shell", lid.Provider, lid.DSeq, err)
 
 			return err

@@ -387,7 +387,9 @@ validate that set during argument parsing, before configuration or network
 work begins. In particular, the standard `--output` values are `pretty`,
 `json`, and `yaml`; workflow commands additionally accept `jsonl`, while
 SDK-compatible key and RPC commands that advertise `text|json` accept exactly
-those values.
+those values. The accepted enum and the values rendered in `--help` are one
+contract: when an adopted flag is normalized, its help text is normalized in
+the same boundary pass.
 
 Every accepted flag must affect the operation it describes. If a leaf cannot
 apply an inherited transport, snapshot, pagination, or output flag, it rejects
@@ -1941,6 +1943,15 @@ record in JSON mode and one YAML document per record in YAML mode; pretty mode
 retains the human log/event lines. This applies equally to bounded and
 `--follow` streams.
 
+Shell is the one command-shaped stream. In pretty mode it remains an
+interactive byte stream. With `--output json` or `--output yaml`, shell requires
+an explicit command after `--`, runs it without a PTY, and emits exactly one
+object with string fields `stdout` and `stderr`. A structured interactive shell
+is refused before opening the provider connection. The same contract applies
+to `console shell` and `provider lease-shell`. If both the remote command and
+structured-output rendering fail, the returned error preserves both causes so
+callers can classify either failure with `errors.Is`.
+
 Mutation acknowledgements are structured in JSON/YAML mode. Deployment close
 emits `{dseq, state, already_closed}` and deposit emits
 `{dseq, amount_usd, status}`. Template SDL is byte-for-byte deployable YAML in
@@ -2172,6 +2183,18 @@ Without fixed fees, the effective gas price follows the normal precedence
 chain (flag > environment > context network > built-in default). A simulation
 response with a non-zero SDK code is a failed transaction and exits non-zero;
 simulation remains non-mutating and is not written to the action log.
+The active fee string is parsed before it reaches the SDK transaction factory:
+fixed fees use the integer-coin grammar and gas prices use the decimal-coin
+grammar. Invalid input is a normal error naming `--fees` or `--gas-prices`,
+never an SDK panic.
+
+`--generate-only` accepts a signer address that is not stored in the local
+keyring. The address identifies the unsigned message and does not imply a
+signing-key lookup. A signer name still resolves through the selected keyring.
+Multisign assembly accepts only a legacy amino multisig record and validates
+that each signature batch contains an entry for every transaction before
+indexing it; ordinary keys and short batches are normal input errors, never
+panics.
 
 `--generate-only -o json` emits a transaction object at the top level on every
 transaction leaf; implementations must not JSON-encode an existing transaction
@@ -2219,8 +2242,11 @@ An explicit `--node` replaces the context RPC endpoint for every query that
 performs RPC work. Local derivations such as `ibc-transfer escrow-address`,
 `module-name-to-address`, and `wasm build-address` reject `--node`; they also
 reject `--height` because they do not read chain state. Queries that cannot
-select a historical snapshot (`blocks`, `tx`, and `txs`) likewise reject
-`--height`. `block` and
+select a historical snapshot (`blocks`, `tx`, `txs`, and `gov proposer`)
+likewise reject `--height`. The proposer query is derived from the current
+transaction index rather than a height-addressable module query, so accepting a
+historical height would return the current proposer under a historical-looking
+invocation. `block` and
 `block-results` accept height positionally or through `--height`, but reject an
 invocation that supplies both. An explicit `--chain-id` must agree with the
 selected context even for a local derivation. File-oriented queries such as
@@ -2252,8 +2278,12 @@ Added to list-type query commands via `AddPaginationFlagsToCmd()`.
 | `--reverse`     | bool   | `false` | Reverse result order            |
 
 The requested limit is a hard upper bound on returned records. Client adapters
-must trim any upstream pagination lookahead item while preserving the response
-pagination metadata needed to request the next page.
+must trim any upstream pagination lookahead item, including IBC client-state
+lists, while preserving the response pagination metadata needed to request the
+next page. If a dependency's filtered-pagination callback appends records while
+the SDK marks them as excluded by `--offset` or `--page`, the adapter must also
+remove that skipped prefix before applying the limit. This includes
+`query ibc channel connections`.
 
 ### 3.5 Akash Resource ID Flags
 
@@ -4103,6 +4133,11 @@ akt query deployment 12345 -o json | jq '.deployment.state'
 ```
 
 When `--quiet` is set, stderr informational output (progress, status lines) is suppressed; only errors are emitted to stderr. When `--verbose` is set, additional operational detail is emitted to stderr.
+
+Structured collection fields are always arrays. An empty collection is encoded
+as `[]` in both JSON and YAML, never as `null`; changing output formats must not
+change the semantic data model. This applies to store exports as well as live
+query and Console results.
 
 ### 10.2 Dispatch Architecture
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -401,10 +402,17 @@ func shellCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
   akt console shell 12345 web
 
   # Run a single command (a.k.a. exec)
-  akt console shell 12345 web -- ls -la`,
+  akt console shell 12345 web -- ls -la
+
+  # Capture an explicit command as structured stdout and stderr
+  akt console shell 12345 web -o json -- pwd`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			shellCtx, cancelShell := context.WithCancel(cmd.Context())
 			defer cancelShell()
+			interactive := len(args) == 2
+			if err := output.ValidateShellOutput(cmd, interactive); err != nil {
+				return err
+			}
 
 			cl, _, err := clientFromCmd(cmd, mgrFn, true)
 			if err != nil {
@@ -424,10 +432,10 @@ func shellCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			}
 			tty := term.IsTerminal(int(os.Stdin.Fd()))
 
-			err = aktprovider.RunLeaseShell(shellCtx, gw, lid, service, 0, command,
-				aktprovider.HoldEOF(shellCtx, os.Stdin),
-				cmd.OutOrStdout(), cmd.ErrOrStderr(), tty, nil)
-			return err
+			return output.RunShellOutput(cmd, interactive, tty, func(stdout, stderr io.Writer, shellTTY bool) error {
+				return aktprovider.RunLeaseShell(shellCtx, gw, lid, service, 0, command,
+					aktprovider.HoldEOF(shellCtx, os.Stdin), stdout, stderr, shellTTY, nil)
+			})
 		},
 	}
 }

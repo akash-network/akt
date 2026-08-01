@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -67,7 +66,7 @@ func PrintTxResult(cmd *cobra.Command, cctx sdkclient.Context, resp interface{})
 		return cctx.PrintObjectLegacy(resp)
 	}
 
-	w := os.Stdout
+	w := clioutput.TerminalAwareWriter(cmd.OutOrStdout())
 
 	// Section 1: Common transaction summary.
 	renderTxSummaryWithCodec(w, cctx, txResp)

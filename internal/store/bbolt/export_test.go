@@ -110,6 +110,42 @@ func TestExportJSON(t *testing.T) {
 	assert.Equal(t, int64(18234567), env.SyncState.LastBlockHeight)
 }
 
+func TestEmptyExportCollectionsAreArraysInJSONAndYAML(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name   string
+		format store.ExportFormat
+		decode func([]byte, *map[string]any) error
+	}{
+		{
+			name:   "json",
+			format: store.FormatJSON,
+			decode: func(data []byte, out *map[string]any) error { return json.Unmarshal(data, out) },
+		},
+		{
+			name:   "yaml",
+			format: store.FormatYAML,
+			decode: func(data []byte, out *map[string]any) error { return yaml.Unmarshal(data, out) },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			require.NoError(t, s.Export(ctx, &buf, tc.format, "testctx"))
+
+			var document map[string]any
+			require.NoError(t, tc.decode(buf.Bytes(), &document))
+			for _, field := range []string{"deployments", "leases", "bids"} {
+				value, ok := document[field]
+				require.True(t, ok, "missing %s", field)
+				require.IsType(t, []any{}, value, "%s must be an array", field)
+				require.Empty(t, value)
+			}
+		})
+	}
+}
+
 func TestImportMerge(t *testing.T) {
 	ctx := context.Background()
 
