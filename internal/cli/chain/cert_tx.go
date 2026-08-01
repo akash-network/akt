@@ -251,7 +251,7 @@ func doRevokeCmd(cmd *cobra.Command, _ []string) error {
 func GetTxCertGenerateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                        "generate",
-		Short:                      "",
+		Short:                      "Generate a certificate keypair locally (no transaction)",
 		SuggestionsMinimumDistance: 2,
 		RunE:                       sdkclient.ValidateCmd,
 	}
@@ -302,7 +302,9 @@ func certToGenesisFromCmd(cmd *cobra.Command) bool {
 func GetTxCertGenerateClientCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                        "client",
-		Short:                      "",
+		Short:                      "Generate a client certificate for authenticating to provider gateways",
+		Long:                       "Writes a certificate and private key into the context's keyring. Nothing is\nbroadcast -- publish it with `akt tx cert publish client` before providers\nwill accept it.",
+		Example:                    "akt tx cert generate client --from mykey",
 		SuggestionsMinimumDistance: 2,
 		PersistentPreRunE:          certGeneratePersistentPreRunE,
 		RunE:                       doCertGenerateCmd,
@@ -316,8 +318,10 @@ func GetTxCertGenerateClientCmd() *cobra.Command {
 
 func GetTxCertGenerateServerCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:                        "server",
-		Short:                      "",
+		Use:                        "server <host> [host...]",
+		Short:                      "Generate a provider server certificate for the given hostnames",
+		Long:                       "Writes a certificate and private key covering each hostname supplied.\nNothing is broadcast.",
+		Example:                    "akt tx cert generate server provider.example.com --from mykey",
 		SuggestionsMinimumDistance: 2,
 		PersistentPreRunE:          certGeneratePersistentPreRunE,
 		RunE:                       doCertGenerateCmd,
@@ -332,7 +336,7 @@ func GetTxCertGenerateServerCmd() *cobra.Command {
 func GetTxCertPublishCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                        "publish",
-		Short:                      "",
+		Short:                      "Publish a locally generated certificate on-chain (broadcasts a transaction)",
 		SuggestionsMinimumDistance: 2,
 		RunE:                       sdkclient.ValidateCmd,
 	}
@@ -347,7 +351,9 @@ func GetTxCertPublishCmd() *cobra.Command {
 func GetTxCertPublishClientCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                        "client",
-		Short:                      "",
+		Short:                      "Publish your client certificate on-chain so providers accept your requests",
+		Long:                       "Broadcasts the certificate created by `akt tx cert generate client`. Provider\ngateways reject requests signed with an unpublished certificate.",
+		Example:                    "akt tx cert publish client --from mykey",
 		SuggestionsMinimumDistance: 2,
 		PersistentPreRunE:          certPublishPersistentPreRunE,
 		RunE:                       doPublishCmd,
@@ -362,7 +368,8 @@ func GetTxCertPublishClientCmd() *cobra.Command {
 func GetTxCertPublishServerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                        "server",
-		Short:                      "",
+		Short:                      "Publish a provider server certificate on-chain",
+		Example:                    "akt tx cert publish server --from mykey",
 		SuggestionsMinimumDistance: 2,
 		PersistentPreRunE:          certPublishPersistentPreRunE,
 		RunE:                       doPublishCmd,
@@ -429,7 +436,7 @@ func addCertToGenesis(cmd *cobra.Command, cert types.GenesisCertificate) error {
 func GetTxCertRevokeCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                        "revoke",
-		Short:                      "",
+		Short:                      "Revoke a published certificate on-chain (broadcasts a transaction)",
 		SuggestionsMinimumDistance: 2,
 		RunE:                       sdkclient.ValidateCmd,
 	}
@@ -443,7 +450,9 @@ func GetTxCertRevokeCmd() *cobra.Command {
 func GetTxCertsRevokeClientCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                        "client",
-		Short:                      "",
+		Short:                      "Revoke your published client certificate. Irreversible",
+		Long:                       "Takes effect immediately: provider sessions authenticated with this certificate\nstop working, and a new certificate must be generated and published to\nreconnect. Use --serial to choose among several published certificates.",
+		Example:                    "akt tx cert revoke client --from mykey",
 		SuggestionsMinimumDistance: 2,
 		PersistentPreRunE:          TxPersistentPreRunE,
 		RunE:                       doRevokeCmd,
@@ -459,7 +468,8 @@ func GetTxCertsRevokeClientCmd() *cobra.Command {
 func GetTxCertRevokeServerCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:                        "server",
-		Short:                      "",
+		Short:                      "Revoke a published provider server certificate. Irreversible",
+		Example:                    "akt tx cert revoke server --from mykey",
 		SuggestionsMinimumDistance: 2,
 		PersistentPreRunE:          TxPersistentPreRunE,
 		RunE:                       doRevokeCmd,

@@ -1,5 +1,17 @@
 name: update
 description: Update a deployment and send the new manifest to providers
+long: |
+  Update a deployment's SDL and send the revised manifest to every provider
+  holding a lease on it.
+
+  Changing the resource profile can close existing leases and re-open bidding;
+  changing only the image or environment usually does not.
+example: |
+    # Apply a revised SDL
+    akt update deploy.yaml 12345
+
+    # Show what would change without broadcasting
+    akt update deploy.yaml 12345 --dry-run
 version: 1
 
 params:

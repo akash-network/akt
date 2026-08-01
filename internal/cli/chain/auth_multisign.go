@@ -39,7 +39,7 @@ Read one or more signatures from one or more [signature] file, generate a multis
 multisig key [name], and attach the key name to the transaction read from [file].
 
 Example:
-$ %s tx multisign transaction.json k1k2k3 k1sig.json k2sig.json k3sig.json
+$ %s tx multi-sign transaction.json k1k2k3 k1sig.json k2sig.json k3sig.json
 
 If --signature-only flag is on, output a JSON representation
 of only the generated signature.

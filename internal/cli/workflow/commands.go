@@ -95,7 +95,8 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 	cmd := &cobra.Command{
 		Use:     use,
 		Short:   def.Description,
-		Example: fmt.Sprintf("  akt %s --help", def.Name),
+		Long:    def.Long,
+		Example: def.Example,
 		// Workflow commands run on either rail (internal/transport): chain
 		// tx broadcasting on keyring contexts or Console API calls on
 		// console-api contexts. Either capability satisfies the gate.

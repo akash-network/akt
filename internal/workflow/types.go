@@ -110,11 +110,16 @@ type StepDef struct {
 
 // WorkflowDef is the top-level workflow definition loaded from YAML.
 type WorkflowDef struct {
-	Name        string              `yaml:"name"                  json:"name"`
-	Description string              `yaml:"description,omitempty" json:"description,omitempty"`
-	Version     int                 `yaml:"version,omitempty"     json:"version,omitempty"`
-	Params      map[string]ParamDef `yaml:"params,omitempty"      json:"params,omitempty"`
-	Steps       []StepDef           `yaml:"steps"                 json:"steps"`
+	Name        string `yaml:"name"                  json:"name"`
+	Description string `yaml:"description,omitempty" json:"description,omitempty"`
+	// Long and Example carry the command's help text. They live with the
+	// definition rather than being generated, because a useful example names
+	// the workflow's own flags and cannot be derived from the name.
+	Long    string              `yaml:"long,omitempty"    json:"long,omitempty"`
+	Example string              `yaml:"example,omitempty" json:"example,omitempty"`
+	Version int                 `yaml:"version,omitempty" json:"version,omitempty"`
+	Params  map[string]ParamDef `yaml:"params,omitempty"      json:"params,omitempty"`
+	Steps   []StepDef           `yaml:"steps"                 json:"steps"`
 }
 
 // StepResult holds the outcome of executing a single step.

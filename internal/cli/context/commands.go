@@ -128,7 +128,7 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().String("network", "", "Network name to use (required)")
+	cmd.Flags().String("network", "", "Network name to use (required unless --auth-method console-api)")
 	cmd.Flags().String("keyring", "default", "Keyring name to use")
 	cmd.Flags().String("default-account", "", "Default account name")
 	cmd.Flags().String("gas", "auto", "Gas limit override")

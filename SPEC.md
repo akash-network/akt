@@ -379,7 +379,7 @@ gas-adjustment: "1.5"
 
 Implementation note: `tx` and `query` commands are clean-copied from `akash-network/chain-sdk/go/cli` into `internal/cli/chain`. Only CLI code is copied; all other chain-sdk packages are imported directly. Command flags default to the resolved akt context values unless explicitly overridden.
 
-**Help text requirement**: Every command and subcommand must populate cobra's `Example` field with at least one usage example. The example should demonstrate the most common use case with realistic argument values. Commands with multiple modes of operation (e.g., list vs get, interactive vs scripted) should include one example per mode. This ensures that `akt <command> --help` is self-contained -- users should never need to consult external documentation for basic usage.
+**Help text requirement**: Every command and subcommand must populate cobra's `Example` field with at least one usage example. The example must name a registered command and registered flags, and it must be syntactically runnable after replacing any clearly explained placeholders. It should demonstrate the most common use case with realistic argument values. Commands with multiple modes of operation (e.g., list vs get, interactive vs scripted) should include one example per mode. User-facing help must not contain internal specification references, review notes, or instructions aimed at an automated agent. This ensures that `akt <command> --help` is self-contained -- users should never need to consult external documentation for basic usage.
 
 **Input validation requirement**: A command group prints its help and exits 0
 only when it is invoked without an action. Any non-flag token that does not

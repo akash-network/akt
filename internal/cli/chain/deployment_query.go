@@ -20,13 +20,35 @@ func GetQueryDeploymentCmds() *cobra.Command {
 		Long: `Query deployments.
 
 Without arguments, lists the deployments owned by the context's default
-account. The optional [id] argument is [owner/]dseq, a bare owner address,
-or a bare state keyword (active|closed) per SPEC §3.8.
+account.
 
-The optional [state] argument narrows the result: with a partial identity it
-filters the list; when the identity pins down a single deployment it verifies
-the record instead — the command fails if the deployment is in a different
-state rather than printing it.`,
+[id] identifies what to look at, and accepts any of:
+
+  <owner>          every deployment owned by that address
+  <owner>/<dseq>   one deployment
+  <dseq>           one deployment owned by the default account
+  active | closed  every deployment of the default account in that state
+
+[state] narrows the result. With an owner or no identity it filters the
+list; when [id] names a single deployment it checks the state instead, and
+the command fails if the deployment is in a different one.`,
+		Example: `  # Deployments owned by the default account
+  akt query deployment
+
+  # ...only the active ones
+  akt query deployment active
+
+  # Every deployment owned by an address
+  akt query deployment akash1zn43lm...
+
+  # One deployment
+  akt query deployment akash1zn43lm.../25354313
+
+  # One deployment of the default account
+  akt query deployment 25354313
+
+  # Fails unless that deployment is closed
+  akt query deployment akash1zn43lm.../25354313 closed`,
 		Args:                       cobra.MaximumNArgs(2),
 		SuggestionsMinimumDistance: 2,
 		PersistentPreRunE:          QueryPersistentPreRunE,

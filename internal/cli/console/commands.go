@@ -82,7 +82,7 @@ func loginCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		Use:   "login [key]",
 		Short: "Validate a Console API key and store it for the active context",
 		Long: "Validate a Console API key against the Console API and store it as the active " +
-			"context's credential (SPEC §7.1). The key can be passed as an argument or entered " +
+			"context's credential. The key can be passed as an argument or entered " +
 			"at a hidden prompt. Keys are created at console.akash.network > Settings > API Keys.",
 		Args: cobra.MaximumNArgs(1),
 		Example: `  # Prompt for the key (input hidden)

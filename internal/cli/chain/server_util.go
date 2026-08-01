@@ -176,8 +176,8 @@ func QueryBlocksCmd() *cobra.Command {
 		Long: `Search for blocks that match the exact given events where results are paginated.
 The events query is directly passed to CometBFT's RPC BlockSearch method and must
 conform to CometBFT's query syntax.
-Please refer to each module's documentation for the full set of events to query
-for. Each module documents its respective events under 'xx_events.md'.
+Refer to the documentation of the module you are querying for the events it
+emits.
 `,
 		Example: fmt.Sprintf(
 			"$ %[1]s query blocks \"message.sender='cosmos1...' AND block.height > 7\" --page 1 --limit 30 --order_by asc",

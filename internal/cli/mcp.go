@@ -18,15 +18,15 @@ import (
 func mcpCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "mcp",
-		Short: "Start MCP server for AI assistant integration",
+		Short: "Start the Model Context Protocol server",
 		Long: `Start an MCP (Model Context Protocol) server over stdio transport.
 
-Exposes Akash Network tools for use by AI assistants. Configuration is
+Exposes Akash Network tools to any MCP-compatible client. Configuration is
 resolved from the active akt context (network, keyring, default account).
 
 By default, only read-only query tools are available. Write
 tools (on-chain transactions and provider mutations) require explicit
-opt-in via --enable-writes to prevent AI agents from sending unapproved
+opt-in via --enable-writes to prevent clients from sending unapproved
 transactions.
 
 Read-only tools cover both rails. On the chain: node status, account
@@ -43,7 +43,7 @@ Write tools, unlocked only by --enable-writes:
   console_close_deployment  close a Console-managed deployment
   console_deposit           add funds to a deployment, spending real credits`,
 		Args: cobra.NoArgs,
-		Example: `  # Read-only mode (safe for AI agents)
+		Example: `  # Read-only mode
   akt mcp
 
   # With write tools enabled
