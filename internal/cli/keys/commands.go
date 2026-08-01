@@ -30,6 +30,15 @@ type keyDetails struct {
 	PubKey  string `json:"pubkey"  yaml:"pubkey"`
 }
 
+type keyAddResult struct {
+	Name      string `json:"name"                yaml:"name"`
+	Address   string `json:"address"             yaml:"address"`
+	Type      string `json:"type"                yaml:"type"`
+	Mnemonic  string `json:"mnemonic,omitempty"  yaml:"mnemonic,omitempty"`
+	Threshold int    `json:"threshold,omitempty" yaml:"threshold,omitempty"`
+	PubKeys   int    `json:"pubkeys,omitempty"   yaml:"pubkeys,omitempty"`
+}
+
 type addressParseResult struct {
 	Format    string            `json:"format"          yaml:"format"`
 	HRP       string            `json:"hrp,omitempty"   yaml:"hrp,omitempty"`
@@ -104,7 +113,7 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 			multisigKeys, _ := cmd.Flags().GetString("multisig")
 			if multisigKeys != "" {
 				threshold, _ := cmd.Flags().GetInt("multisig-threshold")
-				return addMultisig(kr, name, multisigKeys, threshold)
+				return addMultisig(cmd, kr, name, multisigKeys, threshold)
 			}
 
 			coinType, _ := cmd.Flags().GetUint32("coin-type")
@@ -130,11 +139,11 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 					return fmt.Errorf("get address: %w", err)
 				}
 
-				fmt.Printf("- name: %s\n", record.Name)
-				fmt.Printf("  address: %s\n", addr.String())
-				fmt.Printf("  type: ledger\n")
-
-				return nil
+				return printAddedKey(cmd, keyAddResult{
+					Name:    record.Name,
+					Address: addr.String(),
+					Type:    "ledger",
+				})
 			}
 
 			recoverKey, _ := cmd.Flags().GetBool("recover")
@@ -150,7 +159,7 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 
 				mnemonic = strings.TrimSpace(string(data))
 			} else if recoverKey {
-				fmt.Print("Enter your mnemonic: ")
+				_, _ = fmt.Fprint(cmd.ErrOrStderr(), "Enter your mnemonic: ")
 
 				reader := bufio.NewReader(os.Stdin)
 				mnemonic, _ = reader.ReadString('\n')
@@ -168,7 +177,7 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 
 			interactive, _ := cmd.Flags().GetBool("interactive")
 			if interactive {
-				fmt.Print("Enter BIP39 passphrase (leave empty for none): ")
+				_, _ = fmt.Fprint(cmd.ErrOrStderr(), "Enter BIP39 passphrase (leave empty for none): ")
 
 				reader := bufio.NewReader(os.Stdin)
 				bip39Passphrase, _ = reader.ReadString('\n')
@@ -188,19 +197,16 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 			keyType, _ := cmd.Flags().GetString("key-type")
 			noBackup, _ := cmd.Flags().GetBool("no-backup")
 
-			fmt.Printf("- name: %s\n", record.Name)
-			fmt.Printf("  address: %s\n", addr.String())
-			fmt.Printf("  type: %s\n", keyType)
-
+			result := keyAddResult{
+				Name:    record.Name,
+				Address: addr.String(),
+				Type:    keyType,
+			}
 			if !noBackup && !recoverKey && source == "" {
-				fmt.Println("")
-				fmt.Println("**Important** write this mnemonic phrase in a safe place.")
-				fmt.Println("It is the only way to recover your account if you ever forget your password.")
-				fmt.Println("")
-				fmt.Println(mnemonic)
+				result.Mnemonic = mnemonic
 			}
 
-			return nil
+			return printAddedKey(cmd, result)
 		},
 	}
 
@@ -220,7 +226,7 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 	return cmd
 }
 
-func addMultisig(kr sdkkeyring.Keyring, name, keyNames string, threshold int) error {
+func addMultisig(cmd *cobra.Command, kr sdkkeyring.Keyring, name, keyNames string, threshold int) error {
 	names := strings.Split(keyNames, ",")
 	pks := make([]cryptotypes.PubKey, 0, len(names))
 
@@ -251,11 +257,36 @@ func addMultisig(kr sdkkeyring.Keyring, name, keyNames string, threshold int) er
 		return fmt.Errorf("get address: %w", err)
 	}
 
-	fmt.Printf("- name: %s\n", record.Name)
-	fmt.Printf("  address: %s\n", addr.String())
-	fmt.Printf("  type: multi\n")
-	fmt.Printf("  threshold: %d\n", threshold)
-	fmt.Printf("  pubkeys: %d\n", len(pks))
+	return printAddedKey(cmd, keyAddResult{
+		Name:      record.Name,
+		Address:   addr.String(),
+		Type:      "multi",
+		Threshold: threshold,
+		PubKeys:   len(pks),
+	})
+}
+
+func printAddedKey(cmd *cobra.Command, result keyAddResult) error {
+	format := output.FormatFromCmd(cmd)
+	if format != output.FormatTable {
+		return output.Fprint(cmd.OutOrStdout(), format, result)
+	}
+
+	w := cmd.OutOrStdout()
+	_, _ = fmt.Fprintf(w, "- name: %s\n", result.Name)
+	_, _ = fmt.Fprintf(w, "  address: %s\n", result.Address)
+	_, _ = fmt.Fprintf(w, "  type: %s\n", result.Type)
+	if result.Threshold > 0 {
+		_, _ = fmt.Fprintf(w, "  threshold: %d\n", result.Threshold)
+		_, _ = fmt.Fprintf(w, "  pubkeys: %d\n", result.PubKeys)
+	}
+	if result.Mnemonic != "" {
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w, "**Important** write this mnemonic phrase in a safe place.")
+		_, _ = fmt.Fprintln(w, "It is the only way to recover your account if you ever forget your password.")
+		_, _ = fmt.Fprintln(w)
+		_, _ = fmt.Fprintln(w, result.Mnemonic)
+	}
 
 	return nil
 }

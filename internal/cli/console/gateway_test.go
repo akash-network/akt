@@ -549,6 +549,17 @@ func TestShellRejectsStructuredInteractiveModeBeforeContextResolution(t *testing
 	}
 }
 
+func TestShellStdinOverrideDefaultsToAutomaticSelection(t *testing.T) {
+	cmd := shellCmd(func() *aktctx.Manager { return nil })
+	flag := cmd.Flags().Lookup("stdin")
+	if flag == nil {
+		t.Fatal("console shell has no --stdin override")
+	}
+	if flag.DefValue != "false" {
+		t.Fatalf("--stdin default = %q, want false force-override default", flag.DefValue)
+	}
+}
+
 func TestMatchesService(t *testing.T) {
 	tests := []struct {
 		name    string

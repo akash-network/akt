@@ -11,6 +11,7 @@ import (
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	mtypes "pkg.akt.dev/go/node/market/v1"
 	ptypes "pkg.akt.dev/go/node/provider/v1beta4"
@@ -287,11 +288,15 @@ func leaseShellCmd() *cobra.Command {
 				return fmt.Errorf("--service is required for lease-shell")
 			}
 			tty, _ := cmd.Flags().GetBool("tty")
-			attachStdin, _ := cmd.Flags().GetBool("stdin")
-			var stdin io.Reader
-			if attachStdin {
-				stdin = aktprovider.HoldEOF(shellCtx, os.Stdin)
-			}
+			stdinOverride, _ := cmd.Flags().GetBool("stdin")
+			stdin := aktprovider.SelectShellStdin(
+				shellCtx,
+				os.Stdin,
+				interactive,
+				term.IsTerminal(int(os.Stdin.Fd())),
+				cmd.Flags().Changed("stdin"),
+				stdinOverride,
+			)
 
 			err = output.RunShellOutput(cmd, interactive, tty, func(stdout, stderr io.Writer, shellTTY bool) error {
 				return aktprovider.RunLeaseShell(shellCtx, cl, lid, service, 0, leaseShellCommand(args),
@@ -306,7 +311,7 @@ func leaseShellCmd() *cobra.Command {
 	addLeaseShellFlags(cmd)
 	cmd.Flags().String("service", "", "Service name (required)")
 	cmd.Flags().BoolP("tty", "t", true, "Allocate a TTY")
-	cmd.Flags().Bool("stdin", true, "Attach stdin")
+	cmd.Flags().Bool("stdin", false, "Force stdin attachment for an explicit terminal command")
 
 	return cmd
 }

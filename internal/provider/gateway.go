@@ -168,6 +168,33 @@ func HoldEOF(ctx context.Context, reader io.Reader) io.Reader {
 	return &holdEOFReader{ctx: ctx, reader: reader}
 }
 
+// SelectShellStdin chooses whether a shell invocation advertises stdin to the
+// provider. Interactive shells and piped commands attach automatically. An
+// explicit command launched from a terminal detaches by default so a provider
+// cannot keep the completed command open waiting for terminal input.
+func SelectShellStdin(
+	ctx context.Context,
+	reader io.Reader,
+	interactive bool,
+	inputIsTerminal bool,
+	overrideSet bool,
+	overrideValue bool,
+) io.Reader {
+	if reader == nil {
+		return nil
+	}
+
+	attach := interactive || !inputIsTerminal
+	if overrideSet {
+		attach = overrideValue
+	}
+	if !attach {
+		return nil
+	}
+
+	return HoldEOF(ctx, reader)
+}
+
 type holdEOFReader struct {
 	ctx    context.Context
 	reader io.Reader

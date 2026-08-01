@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- **Final live verification exposed shell and key-output boundary failures**:
+  an explicit provider or Console shell command launched from a terminal now
+  detaches stdin by default so a completed remote process cannot hang waiting
+  for terminal input; interactive shells, pipes, and explicit `--stdin`
+  overrides remain supported. `context keys add` now honors JSON/YAML for
+  local, recovered, Ledger, and multisig keys while preserving the mnemonic
+  backup contract for newly generated keys.
+
 - **Workflow JSONL dry-runs emitted human prose**: `deploy`, `update`, and
   `close` now emit one valid JSONL `planned` record per step, with a shared run
   ID and empty error/transaction arrays, instead of silently ignoring their

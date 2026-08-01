@@ -3,6 +3,8 @@ package keys
 import (
 	"bytes"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -47,6 +49,42 @@ func runKeysCommand(t *testing.T, kr sdkkeyring.Keyring, args ...string) (string
 
 	err := cmd.Execute()
 	return out.String(), err
+}
+
+func TestKeysAddRecoveryHonorsStructuredOutput(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "mnemonic.txt")
+	if err := os.WriteFile(source, []byte("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\n"), 0o600); err != nil {
+		t.Fatalf("write mnemonic fixture: %v", err)
+	}
+
+	for _, format := range []string{"json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			kr := aktkeyring.NewInMemory(aktcodec.MakeEncodingConfig().Codec)
+			out, err := runKeysCommand(t, kr,
+				"add", "recovered", "--recover", "--source", source, "--output", format)
+			if err != nil {
+				t.Fatalf("add recovered key: %v", err)
+			}
+
+			var got map[string]any
+			if format == "json" {
+				err = json.Unmarshal([]byte(out), &got)
+			} else {
+				err = yaml.Unmarshal([]byte(out), &got)
+			}
+			if err != nil {
+				t.Fatalf("parse %s key result %q: %v", format, out, err)
+			}
+			for _, field := range []string{"name", "address", "type"} {
+				if value, ok := got[field].(string); !ok || value == "" {
+					t.Errorf("%s field %q = %#v", format, field, got[field])
+				}
+			}
+			if _, exists := got["mnemonic"]; exists {
+				t.Errorf("recovered key repeated its mnemonic: %#v", got)
+			}
+		})
+	}
 }
 
 func TestKeysShowStructuredOutput(t *testing.T) {

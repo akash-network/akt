@@ -148,6 +148,40 @@ func TestHoldEOFUntilContextDone(t *testing.T) {
 	}
 }
 
+func TestSelectShellStdin(t *testing.T) {
+	input := strings.NewReader("input")
+	tests := []struct {
+		name          string
+		interactive   bool
+		terminal      bool
+		overrideSet   bool
+		overrideValue bool
+		wantAttached  bool
+	}{
+		{name: "interactive terminal", interactive: true, terminal: true, wantAttached: true},
+		{name: "explicit terminal command", terminal: true, wantAttached: false},
+		{name: "explicit piped command", terminal: false, wantAttached: true},
+		{name: "forced terminal stdin", terminal: true, overrideSet: true, overrideValue: true, wantAttached: true},
+		{name: "detached interactive stdin", interactive: true, terminal: true, overrideSet: true, overrideValue: false, wantAttached: false},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SelectShellStdin(
+				context.Background(),
+				input,
+				tc.interactive,
+				tc.terminal,
+				tc.overrideSet,
+				tc.overrideValue,
+			)
+			if attached := got != nil; attached != tc.wantAttached {
+				t.Fatalf("stdin attached = %v, want %v", attached, tc.wantAttached)
+			}
+		})
+	}
+}
+
 type signaledEOFReader struct {
 	called chan struct{}
 }

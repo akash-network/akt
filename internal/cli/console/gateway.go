@@ -389,7 +389,7 @@ func statusCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 }
 
 func shellCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "shell <dseq> <service> [-- command...]",
 		Short: "Open a shell or run a command in a lease container",
 		Long: "Open an interactive shell (default command /bin/sh) or run an explicit command in a " +
@@ -431,13 +431,26 @@ func shellCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 			tty := term.IsTerminal(int(os.Stdin.Fd()))
+			stdinOverride, _ := cmd.Flags().GetBool("stdin")
+			stdin := aktprovider.SelectShellStdin(
+				shellCtx,
+				os.Stdin,
+				interactive,
+				tty,
+				cmd.Flags().Changed("stdin"),
+				stdinOverride,
+			)
 
 			return output.RunShellOutput(cmd, interactive, tty, func(stdout, stderr io.Writer, shellTTY bool) error {
 				return aktprovider.RunLeaseShell(shellCtx, gw, lid, service, 0, command,
-					aktprovider.HoldEOF(shellCtx, os.Stdin), stdout, stderr, shellTTY, nil)
+					stdin, stdout, stderr, shellTTY, nil)
 			})
 		},
 	}
+
+	cmd.Flags().Bool("stdin", false, "Force stdin attachment for an explicit terminal command")
+
+	return cmd
 }
 
 // --- bid screening ------------------------------------------------------------
