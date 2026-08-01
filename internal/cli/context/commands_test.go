@@ -304,9 +304,38 @@ func TestShowResolvesTheActiveContext(t *testing.T) {
 
 	runOK(t, createCmd(mgrFn), "prod", "--network", "mainnet", "--set-current")
 
-	out := captureStdout(t, func() { runOK(t, currentCmd(mgrFn)) })
-	if !strings.Contains(out, "prod") || !strings.Contains(out, "mainnet") {
-		t.Errorf("show output should name the context and its network, got %q", out)
+	cmd := currentCmd(mgrFn)
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&bytes.Buffer{})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("show: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "prod") || !strings.Contains(stdout.String(), "mainnet") {
+		t.Errorf("show output should name the context and its network, got %q", stdout.String())
+	}
+}
+
+func TestShowUsesPlainCommandWriterOutsideTTY(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+
+	m := newTestManager(t)
+	mgrFn := func() *aktctx.Manager { return m }
+	runOK(t, createCmd(mgrFn), "prod", "--network", "mainnet", "--set-current")
+
+	cmd := currentCmd(mgrFn)
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&bytes.Buffer{})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("context show: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "prod") {
+		t.Fatalf("context show did not use command writer: %q", stdout.String())
+	}
+	if strings.Contains(stdout.String(), "\x1b[") {
+		t.Fatalf("context show emitted ANSI outside a TTY: %q", stdout.String())
 	}
 }
 

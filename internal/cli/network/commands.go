@@ -232,8 +232,8 @@ func showCmd(mgr func() *aktctx.Manager) *cobra.Command {
 				return fmt.Errorf("network %q not found", args[0])
 			}
 
-			fmt.Print(pretty.RenderNetworkShow(*net, m.NetworkUsers(net.Name)))
-			return nil
+			_, err := fmt.Fprint(output.TerminalAwareWriter(cmd.OutOrStdout()), pretty.RenderNetworkShow(*net, m.NetworkUsers(net.Name)))
+			return err
 		},
 	}
 }

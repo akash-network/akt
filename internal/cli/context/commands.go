@@ -250,8 +250,8 @@ func currentCmd(mgr func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			fmt.Print(pretty.RenderContextShow(*rc))
-			return nil
+			_, err = fmt.Fprint(output.TerminalAwareWriter(cmd.OutOrStdout()), pretty.RenderContextShow(*rc))
+			return err
 		},
 	}
 }
