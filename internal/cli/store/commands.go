@@ -14,6 +14,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"pkg.akt.dev/akt/internal/cliutil"
 	"pkg.akt.dev/akt/internal/output"
 
 	"pkg.akt.dev/akt/internal/output/pretty"
@@ -223,7 +224,9 @@ func importCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 			defer func() { _ = f.Close() }()
 
 			if dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "Dry run — no changes will be made.")
+				if !cliutil.IsQuiet(cmd) {
+					fmt.Fprintln(cmd.ErrOrStderr(), "Dry run — no changes will be made.")
+				}
 				return nil
 			}
 
@@ -243,7 +246,9 @@ func importCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 				return fmt.Errorf("import: %w", err)
 			}
 
-			fmt.Fprintln(cmd.ErrOrStderr(), "Import complete.")
+			if !cliutil.IsQuiet(cmd) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "Import complete.")
+			}
 			return nil
 		},
 	}

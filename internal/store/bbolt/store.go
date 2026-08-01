@@ -120,7 +120,7 @@ func (s *BoltStore) GetDeployment(_ context.Context, owner string, dseq uint64) 
 
 // ListDeployments returns deployments matching the given filter.
 func (s *BoltStore) ListDeployments(_ context.Context, filter store.DeploymentFilter) ([]*store.DeploymentRecord, error) {
-	var results []*store.DeploymentRecord
+	results := make([]*store.DeploymentRecord, 0)
 	err := s.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketDeployments)
 		return b.ForEach(func(k, v []byte) error {
@@ -184,7 +184,7 @@ func (s *BoltStore) GetLease(_ context.Context, id store.LeaseID) (*store.LeaseR
 
 // ListLeases returns leases matching the given filter.
 func (s *BoltStore) ListLeases(_ context.Context, filter store.LeaseFilter) ([]*store.LeaseRecord, error) {
-	var results []*store.LeaseRecord
+	results := make([]*store.LeaseRecord, 0)
 	err := s.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketLeases)
 		return b.ForEach(func(k, v []byte) error {
@@ -248,7 +248,7 @@ func (s *BoltStore) GetBid(_ context.Context, id store.BidID) (*store.BidRecord,
 
 // ListBids returns bids matching the given filter.
 func (s *BoltStore) ListBids(_ context.Context, filter store.BidFilter) ([]*store.BidRecord, error) {
-	var results []*store.BidRecord
+	results := make([]*store.BidRecord, 0)
 	err := s.db.View(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketBids)
 		return b.ForEach(func(k, v []byte) error {

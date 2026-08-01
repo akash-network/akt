@@ -306,7 +306,7 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	// explanation while `akt version -i` accepted it and did nothing.
 	root.Flags().BoolP("interactive", "i", false, "Launch the TUI. Currently disabled while UX feedback is collected; set AKT_EXPERIMENTAL_TUI=1 to opt in")
 	root.PersistentFlags().CountP("verbose", "v", "Increase output verbosity (-v verbose, -vv debug)")
-	root.PersistentFlags().BoolP("quiet", "q", false, "Suppress all output except errors")
+	root.PersistentFlags().BoolP("quiet", "q", false, "Suppress informational output; keep results and errors")
 
 	// Register shell completion for the global --context flag.
 	_ = root.RegisterFlagCompletionFunc("context", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
