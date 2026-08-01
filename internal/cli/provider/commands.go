@@ -67,13 +67,16 @@ func statusCmd() *cobra.Command {
   akt provider status --provider akash1...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+			if cmd.Flags().Changed("auth-type") {
+				return fmt.Errorf("--auth-type does not apply to public provider status")
+			}
 
 			providerAddr, providerURL, err := resolveProvider(cmd, args)
 			if err != nil {
 				return err
 			}
 
-			cl, err := gatewayClientFromCmd(cmd, providerAddr, providerURL)
+			cl, err := aktprovider.NewPublicGatewayClient(ctx, providerAddr, providerURL)
 			if err != nil {
 				return err
 			}

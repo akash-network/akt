@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
@@ -495,24 +497,91 @@ func TestStatusRejectsMissingProvider(t *testing.T) {
 	}
 }
 
-// TestGatewayClientRejectsUnknownAuthType covers gatewayClientFromCmd's only
-// local failure mode. --auth-type is a persistent flag on the whole group, so
-// a typo would otherwise be discovered only when the provider rejected the
-// unsigned request.
-func TestGatewayClientRejectsUnknownAuthType(t *testing.T) {
+func TestStatusUsesPublicGatewayWithoutWallet(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Errorf("Authorization = %q, want no provider status credentials", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	root := Commands()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{
+		"status", testProviderAddr,
+		"--provider-url", srv.URL,
+	})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("walletless provider status: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("provider status requests = %d, want 1", requests)
+	}
+}
+
+func TestStatusRejectsAuthenticationFlag(t *testing.T) {
 	root := Commands()
 	root.SetOut(&bytes.Buffer{})
 	root.SetErr(&bytes.Buffer{})
 	root.SetArgs([]string{
 		"status", testProviderAddr,
 		"--provider-url", "https://gw.example",
-		"--auth-type", "bogus",
+		"--auth-type", "jwt",
 	})
 
 	if err := root.Execute(); err == nil {
-		t.Fatal("an unknown --auth-type must be rejected")
-	} else if !strings.Contains(err.Error(), "unsupported auth type") {
+		t.Fatal("--auth-type on public provider status must be rejected")
+	} else if !strings.Contains(err.Error(), "does not apply") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAuthenticatedGatewayRequiresDefaultAccountBeforeRequest(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	root := Commands()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{
+		"lease-status", "1",
+		"--provider", testProviderAddr,
+		"--provider-url", srv.URL,
+	})
+
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "configured default account") {
+		t.Fatalf("error = %v, want a configured default account remedy", err)
+	}
+	if requests != 0 {
+		t.Fatalf("protected gateway requests = %d, want failure before network access", requests)
+	}
+}
+
+func TestAuthenticatedGatewayRejectsUnknownAuthTypeBeforeIdentityChecks(t *testing.T) {
+	root := Commands()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{
+		"lease-status", "1",
+		"--provider", testProviderAddr,
+		"--provider-url", "https://gw.example",
+		"--auth-type", "bogus",
+	})
+
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "unsupported auth type") {
+		t.Fatalf("error = %v, want unsupported auth type", err)
 	}
 }
 

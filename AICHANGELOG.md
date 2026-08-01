@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- **Public provider status incorrectly required a wallet and could panic on an
+  empty keyring**: CLI and MCP status calls now use an unauthenticated public
+  gateway client, while lease- and manifest-scoped clients reject a missing
+  default account or keyring before installing a signer or making a request.
+  The inherited `--auth-type` flag is refused on public status instead of
+  being ignored.
+
 - **Structured shell error composition is lossless**: when both the remote
   command and JSON/YAML rendering fail, the returned error wraps both causes
   instead of reducing the renderer failure to uninspectable text.
