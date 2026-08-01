@@ -93,6 +93,29 @@ func TestRunShellOutputRefusesStructuredInteractiveShell(t *testing.T) {
 	}
 }
 
+func TestRunShellOutputPreservesRemoteAndRenderErrors(t *testing.T) {
+	cmd, _, _ := shellOutputCommand(t, "json")
+	runErr := errors.New("remote exit")
+	renderErr := errors.New("render failed")
+	reader, writer := io.Pipe()
+	t.Cleanup(func() { _ = writer.Close() })
+	if err := reader.CloseWithError(renderErr); err != nil {
+		t.Fatalf("close pipe reader: %v", err)
+	}
+	cmd.SetOut(writer)
+
+	err := RunShellOutput(cmd, false, false, func(io.Writer, io.Writer, bool) error {
+		return runErr
+	})
+
+	if !errors.Is(err, runErr) {
+		t.Fatalf("RunShellOutput error = %v, want remote cause %v", err, runErr)
+	}
+	if !errors.Is(err, renderErr) {
+		t.Fatalf("RunShellOutput error = %v, want renderer cause %v", err, renderErr)
+	}
+}
+
 func shellOutputCommand(t *testing.T, format string) (*cobra.Command, *bytes.Buffer, *bytes.Buffer) {
 	t.Helper()
 

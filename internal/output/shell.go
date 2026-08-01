@@ -48,7 +48,7 @@ func RunShellOutput(cmd *cobra.Command, interactive, tty bool, run ShellRunner) 
 	result := shellResult{Stdout: stdout.String(), Stderr: stderr.String()}
 	if err := FprintJSONSemantics(cmd.OutOrStdout(), format, result); err != nil {
 		if runErr != nil {
-			return fmt.Errorf("%w; render shell output: %v", runErr, err)
+			return fmt.Errorf("%w; render shell output: %w", runErr, err)
 		}
 		return fmt.Errorf("render shell output: %w", err)
 	}
