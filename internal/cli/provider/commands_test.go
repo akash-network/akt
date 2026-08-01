@@ -331,6 +331,19 @@ func TestLeaseShellDefaultsToBinSh(t *testing.T) {
 	}
 }
 
+func TestLeaseShellRejectsStructuredInteractiveModeBeforeProviderResolution(t *testing.T) {
+	cmd := leaseShellCmd()
+	cmd.Flags().String("output", "json", "")
+
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "explicit remote command") {
+		t.Fatalf("lease-shell error = %v", err)
+	}
+	if strings.Contains(err.Error(), "provider address") {
+		t.Fatalf("lease-shell reached provider resolution before refusal: %v", err)
+	}
+}
+
 func TestLeaseLogsRejectsInvalidTailBeforeGateway(t *testing.T) {
 	for _, args := range [][]string{
 		{"lease-logs", "1", "--tail=-2"},

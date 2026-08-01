@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -9,6 +10,9 @@ import (
 
 func TestTxSurfaceOmitsUnsupportedAndEmptyGroups(t *testing.T) {
 	tx := TxCmd()
+	for _, child := range tx.Commands() {
+		require.NotEmpty(t, strings.TrimSpace(child.Name()), "transaction tree must not expose separator sentinels as leaves")
+	}
 
 	require.Nil(t, directChild(tx, "crisis"), "Akash does not register the crisis message handler")
 	require.Nil(t, directChild(tx, "evidence"), "no concrete evidence transaction exists")
