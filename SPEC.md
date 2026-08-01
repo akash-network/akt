@@ -721,6 +721,7 @@ Create a new named context. A context references a network and keyring by name.
 | `--default-account`   | string | `""`        | Default account name (only with `keyring` auth)                  |
 | `--gas`               | string | `"auto"`    | Gas limit override (only with `keyring` auth)                    |
 | `--fees`              | string | `""`        | Fixed fees override (only with `keyring` auth)                   |
+| `--provider-auth-type`| string | `"jwt"`     | Provider gateway auth default: `jwt` or `mtls`                   |
 | `--set-current`       | bool   | `false`     | Set as current context after creation                            |
 
 **Examples:**
@@ -800,6 +801,7 @@ Edit context-level settings. For network-level changes (endpoints, gas-prices), 
 | `--default-account` | string | `""`    | Change default account                 |
 | `--gas`             | string | `""`    | Change gas setting                     |
 | `--fees`            | string | `""`    | Change fees setting                    |
+| `--provider-auth-type` | string | unchanged | Change provider gateway auth default: `jwt` or `mtls` |
 | `--auth-method`     | string | `""`    | Change authentication method: `keyring` or `console-api` |
 | `--console-api-url` | string | `""`    | Change Console API base URL (empty = default) |
 | `--console-api-key` | string | `""`    | Set the per-context Console API key (empty string removes it; §7.1) |
@@ -1472,9 +1474,18 @@ endpoint; explicitly passing it is refused instead of being silently ignored.
 
 All lease-, manifest-, migration-, log-, event-, and shell-scoped provider
 commands remain authenticated. Before constructing their gateway client they
-MUST fail locally with a direct remedy when no default account or keyring is
-configured; they MUST NOT defer that failure to a signer as `key with address
-not found`.
+resolve `--auth-type` over `provider-defaults.auth-type` from the selected
+context and default to `jwt`. Before provider URL discovery or gateway network
+work, they MUST validate the auth enum, default account, keyring, and that the
+selected account exists in that keyring. Both JWT signing and mTLS certificate
+loading require that local signing identity. Failures name the missing
+provider signing identity and how to repair the context; they MUST NOT defer to
+a signer as raw `key with address ... not found` output.
+
+MCP uses the same selected context auth default for protected provider tools.
+Provider status remains public; lease status, service status, and manifest
+submission use the shared authenticated gateway boundary with JWT or mTLS as
+configured.
 
 #### `akt provider lease-status [dseq]`
 
@@ -1839,19 +1850,26 @@ akt events --module market --output json
 
 #### `akt mcp`
 
-Start an MCP (Model Context Protocol) server over stdio transport for AI assistant integration. The server exposes Akash Network tools that AI assistants can invoke to query chain state, check provider status, and (with explicit permission) perform mutating operations.
+Start an MCP (Model Context Protocol) server over stdio transport. The server exposes Akash Network tools that compatible clients can invoke to query chain state, check provider status, and (with explicit permission) perform mutating operations.
 
-Configuration is resolved from the active akt context (network, keyring, default account). No additional environment variables are required beyond a configured context.
+Configuration is resolved from the active akt context (network, keyring, default account). Console tools are registered when a Console API key resolves through `--console-api-key`, `AKT_CONSOLE_API_KEY`, or the active context credential.
 
-| Flag               | Type | Default | Description                                                                       |
-| ------------------ | ---- | ------- | --------------------------------------------------------------------------------- |
-| `--enable-writes`  | bool | `false` | Enable write tools (on-chain transactions and provider mutations). Without this flag, only read-only query tools are available. |
+| Flag                | Type   | Default | Description                                                                       |
+| ------------------- | ------ | ------- | --------------------------------------------------------------------------------- |
+| `--console-api-key` | string | `""`    | Console API key for this process; overrides environment and context credentials.  |
+| `--enable-writes`   | bool   | `false` | Enable write tools (on-chain transactions and provider mutations). Without this flag, only read-only query tools are available. |
 
 **Permission model:**
 
-By default, only read-only query tools are registered. This prevents AI agents from sending unapproved transactions or performing mutating operations. The `--enable-writes` flag must be explicitly passed to enable write tools. This flag covers both on-chain transactions (which require keyring signing) and mutating provider REST API calls (e.g., submitting manifests).
+By default, only read-only query tools are registered. This prevents an MCP client from sending unapproved transactions or performing mutating operations. The `--enable-writes` flag must be explicitly passed to enable write tools. This flag covers both on-chain transactions (which require keyring signing), Console mutations, and mutating provider REST API calls (e.g., submitting manifests).
 
-**Read-only tools (always available, 21 tools):**
+The inventory is capability-driven. A chain RPC registers 19 read tools; a
+Console credential registers eight. With both configured, `tools/list`
+returns 27 read-only tools. `--enable-writes` adds four chain/provider writes
+and two Console writes, for 33 tools total. A server with only one rail exposes
+only that rail's subset.
+
+**Read-only tools (up to 27 tools):**
 
 | Tool Name                      | Description                                                                |
 | ------------------------------ | -------------------------------------------------------------------------- |
@@ -1874,8 +1892,16 @@ By default, only read-only query tools are registered. This prevents AI agents f
 | `akash_service_status`         | Service status within a lease                                              |
 | `akash_list_audited_providers` | List audited provider attributes                                           |
 | `akash_list_certificates`      | List on-chain certificates                                                 |
+| `console_list_deployments`     | List deployments belonging to the configured Console account              |
+| `console_get_deployment`       | Get one Console-managed deployment                                         |
+| `console_list_bids`            | List bids for a Console-managed deployment                                 |
+| `console_wallet_balance`       | Available, in-deployment, and total Console credits in USD                  |
+| `console_usage_history`        | Get Console spend history                                                  |
+| `console_list_providers`       | List providers in the Console catalog                                      |
+| `console_get_provider`         | Get one provider from the Console catalog                                  |
+| `console_gpu_prices`           | List current Console GPU pricing                                           |
 
-**Write tools (only with `--enable-writes`, 4 tools):**
+**Write tools (only with `--enable-writes`, up to 6 tools):**
 
 | Tool Name                      | Description                                                                |
 | ------------------------------ | -------------------------------------------------------------------------- |
@@ -1883,10 +1909,14 @@ By default, only read-only query tools are registered. This prevents AI agents f
 | `akash_create_lease`           | Create a lease from a bid (on-chain transaction)                           |
 | `akash_close_lease`            | Close an active lease (on-chain transaction)                               |
 | `akash_submit_manifest`        | Submit manifest to provider (provider REST mutation)                       |
+| `console_close_deployment`     | Close a Console-managed deployment                                         |
+| `console_deposit`              | Add USD credit to a Console-managed deployment                             |
 
-**Transport:** stdio (JSON-RPC over stdin/stdout). Designed for use with MCP-compatible AI assistants (e.g., Claude Desktop).
+**Transport:** stdio (JSON-RPC over stdin/stdout). Designed for use with any MCP-compatible client.
 
-**Client implementation:** Uses `v1beta3.LightClient` from chain-sdk for read-only mode, `v1beta3.Client` for write mode.
+**Client implementation:** Uses `v1beta3.LightClient` from chain-sdk for read-only mode, `v1beta3.Client` for write mode, and the shared authenticated provider gateway client for provider REST tools. A `provider_url` selects the endpoint; it does not disable authentication. Keyring contexts attach a wallet-signed JWT, and missing signing identity is reported before the request.
+
+**Money units:** `console_wallet_balance` returns explicit `available_usd`, `in_deployments_usd`, and `total_usd` numbers. Console's integer µACT wire values must not leak through this semantic interface.
 
 **Default account handling:** Tools that accept an `owner` parameter (e.g., `akash_list_deployments`, `akash_list_leases`) default to the context's `default-account` when the parameter is omitted. If no `default-account` is configured (e.g., a monitoring-only context), the `owner` parameter is **required** — the tool returns an error explaining that the owner must be specified explicitly when no default account is available.
 
@@ -1900,7 +1930,7 @@ coerce them to a different identifier or silently substitute a default.
 **Examples:**
 
 ```bash
-# Read-only mode (default, safe for AI agents)
+# Read-only mode (default)
 akt mcp
 
 # With write tools enabled (explicit user consent)
@@ -5321,7 +5351,7 @@ Cobra provides this feature via `Command.SuggestionsMinimumDistance` and `Comman
 | 2.9  | Store status command    | Display store info, sync state, record counts                                                                                  | Accurate reporting of store contents                                      |
 | 2.10 | Events command          | Live blockchain event streaming                                                                                                | `akt events` shows real-time events                                       |
 | 2.11 | Console API client      | `auth-method: console-api` support, API key resolved flag > env > per-context stored credential (§7.1), deployment CRUD via Console managed wallet API, `akt console` command group (§2.9) | Create, update, close deployments; list bids; create leases via Console API with the API key resolved per §7.1 |
-| 2.12 | MCP server              | `akt mcp` command with stdio JSON-RPC transport, 21 read-only tools, 4 write tools gated behind `--enable-writes`              | Read-only tools query chain state; write tools send transactions. Config resolved from active context. |
+| 2.12 | MCP server              | `akt mcp` command with stdio JSON-RPC transport, up to 27 read-only tools and 6 write tools gated behind `--enable-writes`     | Read-only tools query the configured chain and/or Console rail; write tools are opt-in. Provider calls authenticate through the shared gateway client. |
 
 ### Phase 3: TUI Mode
 

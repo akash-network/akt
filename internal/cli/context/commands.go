@@ -69,6 +69,7 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			defaultAccount, _ := cmd.Flags().GetString("default-account")
 			gas, _ := cmd.Flags().GetString("gas")
 			fees, _ := cmd.Flags().GetString("fees")
+			providerAuthType, _ := cmd.Flags().GetString("provider-auth-type")
 			authMethod, _ := cmd.Flags().GetString("auth-method")
 			consoleAPIURL, _ := cmd.Flags().GetString("console-api-url")
 			consoleAPIKey, _ := cmd.Flags().GetString("console-api-key")
@@ -90,6 +91,9 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 				DefaultAccount: defaultAccount,
 				Gas:            gas,
 				Fees:           fees,
+				ProviderDefaults: aktctx.ProviderDefaults{
+					AuthType: providerAuthType,
+				},
 			}
 
 			if err := m.CreateContext(ctx); err != nil {
@@ -129,6 +133,7 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd.Flags().String("default-account", "", "Default account name")
 	cmd.Flags().String("gas", "auto", "Gas limit override")
 	cmd.Flags().String("fees", "", "Fixed fees override")
+	cmd.Flags().String("provider-auth-type", aktctx.ProviderAuthJWT, "Provider gateway auth default: jwt or mtls")
 	cmd.Flags().String("auth-method", "", "Authentication method: keyring (default) or console-api")
 	cmd.Flags().String("console-api-url", "", "Console API base URL (empty = default; only with console-api auth)")
 	cmd.Flags().String("console-api-key", "", "Console API key stored as a per-context credential (never written to config.yaml)")
@@ -412,6 +417,11 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 					changed["fees"] = c.Fees
 				}
 
+				if cmd.Flags().Changed("provider-auth-type") {
+					c.ProviderDefaults.AuthType, _ = cmd.Flags().GetString("provider-auth-type")
+					changed["provider-auth-type"] = c.ProviderDefaults.AuthType
+				}
+
 				if cmd.Flags().Changed("auth-method") {
 					method, _ := cmd.Flags().GetString("auth-method")
 					if method != aktctx.AuthMethodKeyring && method != aktctx.AuthMethodConsoleAPI {
@@ -490,6 +500,7 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd.Flags().String("default-account", "", "Change default account")
 	cmd.Flags().String("gas", "", "Change gas setting")
 	cmd.Flags().String("fees", "", "Change fees setting")
+	cmd.Flags().String("provider-auth-type", "", "Change provider gateway auth default: jwt or mtls")
 	cmd.Flags().String("auth-method", "", "Change authentication method: keyring or console-api")
 	cmd.Flags().String("console-api-url", "", "Change Console API base URL (empty = default)")
 	cmd.Flags().String("console-api-key", "", "Set the per-context Console API key (empty string removes it)")

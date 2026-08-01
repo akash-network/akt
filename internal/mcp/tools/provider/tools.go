@@ -131,7 +131,7 @@ func ToolLeaseStatus() mcp.Tool {
 }
 
 // HandleLeaseStatus returns the handler for querying lease status.
-func HandleLeaseStatus(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
+func HandleLeaseStatus(cl v1beta3.LightClient, authType string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		providerURL, err := marshal.RequireString(req, "provider_url")
 		if err != nil {
@@ -153,7 +153,7 @@ func HandleLeaseStatus(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 			return marshal.ErrResultf("%v", err), nil
 		}
 
-		rcl, err := rest.NewClient(ctx, cl.ClientContext().GetFromAddress(), rest.WithProviderURL(providerURL))
+		rcl, err := gatewayClient(ctx, cl, providerURL, authType)
 		if err != nil {
 			return marshal.ErrResultf("failed to create provider client: %v", err), nil
 		}
@@ -204,7 +204,7 @@ func ToolServiceStatus() mcp.Tool {
 }
 
 // HandleServiceStatus returns the handler for querying service status.
-func HandleServiceStatus(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
+func HandleServiceStatus(cl v1beta3.LightClient, authType string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		providerURL, err := marshal.RequireString(req, "provider_url")
 		if err != nil {
@@ -231,7 +231,7 @@ func HandleServiceStatus(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 			return marshal.ErrResultf("%v", err), nil
 		}
 
-		rcl, err := rest.NewClient(ctx, cl.ClientContext().GetFromAddress(), rest.WithProviderURL(providerURL))
+		rcl, err := gatewayClient(ctx, cl, providerURL, authType)
 		if err != nil {
 			return marshal.ErrResultf("failed to create provider client: %v", err), nil
 		}
@@ -274,7 +274,7 @@ func ToolSubmitManifest() mcp.Tool {
 }
 
 // HandleSubmitManifest returns the handler for submitting a manifest.
-func HandleSubmitManifest(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
+func HandleSubmitManifest(cl v1beta3.LightClient, authType string) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		providerURL, err := marshal.RequireString(req, "provider_url")
 		if err != nil {
@@ -296,7 +296,7 @@ func HandleSubmitManifest(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 			return marshal.ErrResultf("invalid manifest JSON: %v", err), nil
 		}
 
-		rcl, err := rest.NewClient(ctx, cl.ClientContext().GetFromAddress(), rest.WithProviderURL(providerURL))
+		rcl, err := gatewayClient(ctx, cl, providerURL, authType)
 		if err != nil {
 			return marshal.ErrResultf("failed to create provider client: %v", err), nil
 		}
@@ -307,4 +307,15 @@ func HandleSubmitManifest(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 
 		return marshal.ToTextResult(map[string]string{"status": "manifest submitted successfully"})
 	}
+}
+
+func gatewayClient(
+	ctx context.Context,
+	cl v1beta3.LightClient,
+	providerURL string,
+	authType string,
+) (rest.Client, error) {
+	cctx := cl.ClientContext()
+	addr := cctx.GetFromAddress()
+	return aktprovider.NewGatewayClient(ctx, cctx, addr, providerURL, authType, cctx.Keyring)
 }
