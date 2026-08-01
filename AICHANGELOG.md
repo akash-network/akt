@@ -89,6 +89,28 @@
   named `textual` and leaf help omitted the fourth implemented mode. The
   boundary contract now follows the actual signer set that validation will
   enforce.
+
+- **IBC connection-channel pagination ignored offsets and pages**: the
+  dependency's filtered-pagination callback appends matching channels even
+  while the SDK marks them as skipped, so `--offset` and `--page` returned the
+  first channel again. The vendored query boundary now removes that skipped
+  prefix and enforces the requested hard limit before rendering.
+
+- **Two query boundaries still accepted misleading results**: `query gov
+  proposer --height` returned the current transaction-index answer under a
+  historical-looking invocation, and `query ibc client states --limit N`
+  exposed the dependency's pagination lookahead record. The proposer query now
+  refuses unsupported snapshot selection before network work, and the IBC
+  adapter enforces the requested record limit for client-state lists.
+
+- **Pretty output ignored redirection and `NO_COLOR`**: registered query and
+  transaction formatters, deployment group rendering, and context/network
+  detail commands wrote directly to the process stdout, bypassing Cobra's
+  selected writer and terminal-aware styling boundary. Pretty output now flows
+  through the command writer and strips all ANSI styling for files, pipes, test
+  buffers, and explicit no-color sessions while retaining styling on an
+  interactive TTY.
+
 - **SDL output selection and redirected store status were cosmetic flags**:
   `sdl init` silently emitted YAML after an explicit JSON/YAML selection,
   `sdl validate` ignored structured output entirely, and `store status` leaked
@@ -123,6 +145,10 @@
   the responsible flag. Image references use standards-based parsing so empty
   tags and malformed digests are rejected; internal errors are reserved for
   invalid built-in defaults.
+
+- **Independent command-tree contract tests used the same package helper**:
+  the input-validation walker now has a domain-specific name so the scoping
+  and executable-help branches compile and run together after merge.
 
 - **CLI groups and output flags could accept the wrong input at exit 0**:
   unknown tokens under completion, IBC, and upgrade groups printed help as a

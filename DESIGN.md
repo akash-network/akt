@@ -585,10 +585,15 @@ Query commands use a registry-based formatter system (`internal/output/pretty/`)
 **Dispatch flow:** Every query command calls `pretty.PrintQueryResult(cmd, cctx, msg)`. This function reads `--output`: if `json` or `yaml`, it delegates to `clientCtx.PrintProto()` with the appropriate Cosmos SDK output format; if `pretty` (the default), it looks up a registered `PrettyFormatter` for the message's protobuf type. If a formatter exists, it renders pretty output; otherwise, it falls back to JSON output. This means new protobuf types automatically get JSON output until a formatter is registered -- no regressions.
 
 Vendored query trees pass through an akt adapter before execution. The adapter
-applies the resolved context and explicit endpoint overrides, converts upstream
+normalizes dependency-owned pagination when a callback leaks skipped-prefix or
+lookahead records, so accepted `--offset`, `--page`, and `--limit` values retain
+their public meaning. It also applies the resolved context and explicit
+endpoint overrides, converts upstream
 errors into normal command errors, normalizes JSON/YAML output, enforces the
 requested page boundary even when an upstream client over-collects, and removes
-duplicate sibling registrations. This keeps clean-copied and dependency-owned
+duplicate sibling registrations. Queries backed by the current transaction
+index, rather than height-addressable module state, reject historical snapshot
+selection at this boundary. This keeps clean-copied and dependency-owned
 commands under the same public CLI contract without forking their whole trees.
 
 For Console API values, the public JSON representation is canonical. YAML is

@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
@@ -12,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	clioutput "pkg.akt.dev/akt/internal/output"
 	dvbeta "pkg.akt.dev/go/node/deployment/v1beta4"
 )
 
@@ -162,7 +162,7 @@ func PrintGroupsList(cmd *cobra.Command, cctx sdkclient.Context, groups dvbeta.G
 		return nil
 	}
 
-	_, err := fmt.Fprint(os.Stdout, RenderGroupsList(groups))
+	_, err := fmt.Fprint(clioutput.TerminalAwareWriter(cmd.OutOrStdout()), RenderGroupsList(groups))
 	return err
 }
 
