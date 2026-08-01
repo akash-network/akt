@@ -1934,7 +1934,9 @@ interactive byte stream. With `--output json` or `--output yaml`, shell requires
 an explicit command after `--`, runs it without a PTY, and emits exactly one
 object with string fields `stdout` and `stderr`. A structured interactive shell
 is refused before opening the provider connection. The same contract applies
-to `console shell` and `provider lease-shell`.
+to `console shell` and `provider lease-shell`. If both the remote command and
+structured-output rendering fail, the returned error preserves both causes so
+callers can classify either failure with `errors.Is`.
 
 Mutation acknowledgements are structured in JSON/YAML mode. Deployment close
 emits `{dseq, state, already_closed}` and deposit emits

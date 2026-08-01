@@ -4,6 +4,10 @@
 
 ### Fixed
 
+- **Structured shell error composition is lossless**: when both the remote
+  command and JSON/YAML rendering fail, the returned error wraps both causes
+  instead of reducing the renderer failure to uninspectable text.
+
 - **Lease shell ignored structured output and emitted arbitrary remote bytes**:
   Console and keyring-backed shell commands now share one formatting boundary.
   Pretty mode remains interactive; JSON and YAML require an explicit command,
