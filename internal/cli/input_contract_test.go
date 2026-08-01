@@ -13,7 +13,7 @@ func TestEveryCommandGroupRejectsUnknownSubcommands(t *testing.T) {
 	root := NewRootCmd(BuildInfo{Version: "test"})
 
 	var violations []string
-	walkCommands(root, func(cmd *cobra.Command) {
+	walkInputContractCommands(root, func(cmd *cobra.Command) {
 		if cmd.HasSubCommands() && !cmd.Runnable() {
 			violations = append(violations, cmd.CommandPath())
 		}
@@ -31,7 +31,7 @@ func TestEveryOutputFlagRejectsUnknownFormats(t *testing.T) {
 
 	seen := make(map[*pflag.Flag]string)
 	var violations []string
-	walkCommands(root, func(cmd *cobra.Command) {
+	walkInputContractCommands(root, func(cmd *cobra.Command) {
 		for _, flags := range []*pflag.FlagSet{cmd.LocalFlags(), cmd.PersistentFlags()} {
 			flag := flags.Lookup("output")
 			if flag == nil {
@@ -81,10 +81,10 @@ func TestOutputEnumsAreCommandSpecific(t *testing.T) {
 	}
 }
 
-func walkCommands(cmd *cobra.Command, visit func(*cobra.Command)) {
+func walkInputContractCommands(cmd *cobra.Command, visit func(*cobra.Command)) {
 	visit(cmd)
 	for _, child := range cmd.Commands() {
-		walkCommands(child, visit)
+		walkInputContractCommands(child, visit)
 	}
 }
 
