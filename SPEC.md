@@ -2133,6 +2133,18 @@ Without fixed fees, the effective gas price follows the normal precedence
 chain (flag > environment > context network > built-in default). A simulation
 response with a non-zero SDK code is a failed transaction and exits non-zero;
 simulation remains non-mutating and is not written to the action log.
+The active fee string is parsed before it reaches the SDK transaction factory:
+fixed fees use the integer-coin grammar and gas prices use the decimal-coin
+grammar. Invalid input is a normal error naming `--fees` or `--gas-prices`,
+never an SDK panic.
+
+`--generate-only` and `--dry-run` accept a signer address that is not stored in
+the local keyring. The address identifies the unsigned message or simulation;
+it does not imply a signing-key lookup. A signer name still resolves through
+the selected keyring. Multisign assembly accepts only a legacy amino multisig
+record and validates that each signature batch contains an entry for every
+transaction before indexing it; ordinary keys and short batches are normal
+input errors, never panics.
 
 **Pretty output for transaction results**: When `--output pretty` is active (the global default), transaction results are rendered in a two-section layout: a common transaction summary (hash, signer, height, gas, fee, status) followed by a message-specific detail section. See [§10.11](#1011-transaction-result-formatting) for the full specification.
 

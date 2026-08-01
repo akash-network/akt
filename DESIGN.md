@@ -655,6 +655,11 @@ error and a non-zero process status while retaining the response for
 diagnostics. Only pure construction (`--generate-only` or `--offline`) may
 carry a non-zero-shaped fixture without converting it into an execution
 failure.
+The CLI parses fee strings and validates multisig record types and batch
+cardinality before calling SDK helpers whose invalid-input behavior includes
+panics. Unsigned construction and simulation preserve a supplied signer
+address without turning that address into a keyring lookup; only signer names
+request local key material.
 
 **Section 1: Transaction Summary (common to all transactions)**
 
