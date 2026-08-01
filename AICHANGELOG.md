@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- **The built-in sandbox context targeted a retired network**: the sandbox
+  template now uses the live `sandbox-2` chain ID and the RPC, API, and gRPC
+  endpoints published by the Akash network registry, restoring context
+  switching and sandbox queries created from the built-in template.
+
 - **Final live verification exposed shell and key-output boundary failures**:
   an explicit provider or Console shell command launched from a terminal now
   detaches stdin by default so a completed remote process cannot hang waiting

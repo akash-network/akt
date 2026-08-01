@@ -305,7 +305,7 @@ func TestInteractiveSelectorsFallBackWithoutATerminal(t *testing.T) {
 
 	networks := []aktctx.Network{
 		{Name: "mainnet", ChainID: "akashnet-2"},
-		{Name: "sandbox", ChainID: "sandbox-01"},
+		{Name: "sandbox", ChainID: "sandbox-2"},
 	}
 
 	got := multiSelect(networks)
