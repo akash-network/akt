@@ -43,7 +43,7 @@ func NewEngine(registry StepRegistry, logger Logger) *Engine {
 // Run executes a workflow definition with the given parameters.
 // It returns the final run state containing all step results.
 func (e *Engine) Run(ctx context.Context, wf *WorkflowDef, account string, params map[string]any) (*RunState, error) {
-	workflowID := generateWorkflowID()
+	workflowID := GenerateWorkflowID()
 	state := NewRunState(workflowID, wf.Name, account, params)
 
 	for i, step := range wf.Steps {
@@ -133,8 +133,9 @@ func (e *Engine) executeStep(ctx context.Context, step StepDef, state *RunState)
 	return lastResult, lastErr
 }
 
-// generateWorkflowID creates a short random hex ID for correlating log entries.
-func generateWorkflowID() string {
+// GenerateWorkflowID creates a short random hex ID for correlating one run's
+// output and action-log entries.
+func GenerateWorkflowID() string {
 	b := make([]byte, 8)
 	_, _ = rand.Read(b)
 

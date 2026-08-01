@@ -368,6 +368,70 @@ func TestExecuteDryRunNeedsNoClient(t *testing.T) {
 	}
 }
 
+func TestExecuteDryRunJSONLEmitsPlannedSteps(t *testing.T) {
+	homeFn, ctxNameFn := staticFns(t.TempDir())
+	sdl := writeValidWorkflowSDL(t)
+	tests := []struct {
+		name  string
+		args  []string
+		steps []string
+	}{
+		{name: "deploy", args: []string{sdl, "--dry-run", "--output", "jsonl"}, steps: []string{"create-deployment", "wait-for-bids", "select-bid", "create-lease", "send-manifest", "display-result"}},
+		{name: "update", args: []string{sdl, "456", "--dry-run", "--output", "jsonl"}, steps: []string{"update-deployment", "send-manifest", "display-result"}},
+		{name: "close", args: []string{"456", "--dry-run", "--output", "jsonl"}, steps: []string{"close-deployment", "display-result"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := findCommand(Commands(homeFn, ctxNameFn), tc.name)
+			if cmd == nil {
+				t.Fatalf("workflow command %q not found", tc.name)
+			}
+
+			out, err := executeCommand(t, cmd, tc.args...)
+			if err != nil {
+				t.Fatalf("JSONL dry-run execute: %v\noutput:\n%s", err, out)
+			}
+			if strings.Contains(out, "Workflow:") || strings.Contains(out, "Dry run") {
+				t.Fatalf("JSONL dry-run mixed human text into stdout:\n%s", out)
+			}
+
+			lines := strings.Split(strings.TrimSpace(out), "\n")
+			if len(lines) != len(tc.steps) {
+				t.Fatalf("JSONL dry-run emitted %d lines, want %d:\n%s", len(lines), len(tc.steps), out)
+			}
+
+			var runID string
+			for i, raw := range lines {
+				var got struct {
+					Workflow string            `json:"workflow"`
+					ID       string            `json:"id"`
+					Step     string            `json:"step"`
+					Result   string            `json:"result"`
+					Errors   []string          `json:"errors"`
+					Txs      []json.RawMessage `json:"txs"`
+				}
+				if err := json.Unmarshal([]byte(raw), &got); err != nil {
+					t.Fatalf("line %d is not JSON: %v\n%s", i+1, err, raw)
+				}
+				if got.Workflow != tc.name || got.Step != tc.steps[i] || got.Result != "planned" {
+					t.Errorf("line %d = %+v, want workflow=%q step=%q result=planned", i+1, got, tc.name, tc.steps[i])
+				}
+				if got.ID == "" {
+					t.Errorf("line %d has empty run ID", i+1)
+				} else if runID == "" {
+					runID = got.ID
+				} else if got.ID != runID {
+					t.Errorf("line %d run ID = %q, want %q", i+1, got.ID, runID)
+				}
+				if got.Errors == nil || len(got.Errors) != 0 || got.Txs == nil || len(got.Txs) != 0 {
+					t.Errorf("line %d errors/txs = %#v/%#v, want empty arrays", i+1, got.Errors, got.Txs)
+				}
+			}
+		})
+	}
+}
+
 // TestExecuteKeyringContextWithoutChainClient verifies the clear
 // wallet/chain-client error when a keyring context has no chain client in
 // the command context (the "neither credential" case).

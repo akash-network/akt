@@ -201,15 +201,20 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 			out := cmd.OutOrStdout()
 			jsonl := outputFormat(cmd) == outputJSONL
 
-			// Print the execution plan, except in JSONL mode where stdout
-			// must carry only JSONL step lines.
-			if dryRun || !jsonl {
-				printPlan(out, rtDef, params)
-			}
-
 			if dryRun {
+				if jsonl {
+					return emitDryRunJSONL(out, rtDef)
+				}
+
+				printPlan(out, rtDef, params)
 				fmt.Fprintln(out, "\nDry run — no transactions broadcast.")
 				return nil
+			}
+
+			// During execution, keep stdout pure in JSONL mode; other modes
+			// retain the human plan before step results.
+			if !jsonl {
+				printPlan(out, rtDef, params)
 			}
 
 			return executeWorkflow(cmd, rtDef, params, mgrFn, ctxNameFn, jsonl, discoverErr)
@@ -651,6 +656,30 @@ func emitJSONL(out io.Writer, state *wf.RunState, recovery *workflowRecovery) {
 
 		_ = enc.Encode(line)
 	}
+}
+
+// emitDryRunJSONL renders the validated plan without executing or discovering
+// clients. Every line shares one run ID so consumers can treat it like an
+// execution stream, while "planned" distinguishes it from completed work.
+func emitDryRunJSONL(out io.Writer, def *wf.WorkflowDef) error {
+	enc := json.NewEncoder(out)
+	runID := wf.GenerateWorkflowID()
+
+	for _, step := range def.Steps {
+		line := jsonlLine{
+			Workflow: def.Name,
+			ID:       runID,
+			Step:     step.Name,
+			Result:   "planned",
+			Errors:   []string{},
+			Txs:      []jsonlTx{},
+		}
+		if err := enc.Encode(line); err != nil {
+			return fmt.Errorf("render workflow dry-run JSONL: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // outputFormat returns the effective --output value for the command,
