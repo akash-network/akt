@@ -259,8 +259,7 @@ func currentCmd(mgr func() *aktctx.Manager) *cobra.Command {
 				return output.Fprint(cmd.OutOrStdout(), f, newContextDetails(rc))
 			}
 
-			_, err = fmt.Fprint(cmd.OutOrStdout(), pretty.RenderContextShow(*rc))
-
+			_, err = fmt.Fprint(output.TerminalAwareWriter(cmd.OutOrStdout()), pretty.RenderContextShow(*rc))
 			return err
 		},
 	}

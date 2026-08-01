@@ -60,6 +60,9 @@ func ConstrainFlag(flag *pflag.Flag, def string, allowed ...string) {
 	}
 	flag.DefValue = def
 	_ = flag.Value.Set(def)
+	if flag.Name == "output" {
+		flag.Usage = fmt.Sprintf("Output format (%s)", strings.Join(allowed, "|"))
+	}
 }
 
 func (v *enumFlag) String() string { return v.value }

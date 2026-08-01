@@ -1,6 +1,7 @@
 package flags
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -46,7 +47,7 @@ func TestClientOptionsFixedFeesOverrideGasPrices(t *testing.T) {
 	if err := cmd.Flags().Set(FlagFees, "123uakt"); err != nil {
 		t.Fatal(err)
 	}
-	if err := cmd.Flags().Set(FlagGasPrices, "9uakt"); err != nil {
+	if err := cmd.Flags().Set(FlagGasPrices, "not-a-price"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -60,6 +61,30 @@ func TestClientOptionsFixedFeesOverrideGasPrices(t *testing.T) {
 	}
 	if applied.GasPrices != "" {
 		t.Errorf("fixed fees must clear gas prices, got %q", applied.GasPrices)
+	}
+}
+
+func TestClientOptionsRejectMalformedCoinFlags(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		flag string
+		want string
+	}{
+		{name: "fees", flag: FlagFees, want: "--fees"},
+		{name: "gas prices", flag: FlagGasPrices, want: "--gas-prices"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := &cobra.Command{}
+			AddTxFlagsToCmd(cmd)
+			if err := cmd.Flags().Set(tc.flag, "not-a-coin"); err != nil {
+				t.Fatal(err)
+			}
+
+			_, err := ClientOptionsFromFlags(cmd.Flags())
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("ClientOptionsFromFlags error = %v, want %s", err, tc.want)
+			}
+		})
 	}
 }
 
