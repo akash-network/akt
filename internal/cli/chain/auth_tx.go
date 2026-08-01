@@ -236,12 +236,7 @@ func multisigSign(cctx client.Context, txBuilder client.TxBuilder, txFactory tx.
 		return err
 	}
 
-	multisigkey, err := cctx.Keyring.Key(multisigName)
-	if err != nil {
-		return err
-	}
-
-	multisigPubKey, err := multisigkey.GetPubKey()
+	_, multisigPubKey, err := getMultisigRecord(cctx, multisigName)
 	if err != nil {
 		return err
 	}
@@ -272,8 +267,7 @@ func multisigSign(cctx client.Context, txBuilder client.TxBuilder, txFactory tx.
 
 // isMultisigSigner checks if the given pubkey is a signer in the multisig or in
 // any of the nested multisig signers.
-func isMultisigSigner(cctx client.Context, multisigPubKey, fromPubKey cryptotypes.PubKey) (bool, error) { //nolint unparam
-	multisigLegacyPub := multisigPubKey.(*kmultisig.LegacyAminoPubKey)
+func isMultisigSigner(cctx client.Context, multisigLegacyPub *kmultisig.LegacyAminoPubKey, fromPubKey cryptotypes.PubKey) (bool, error) { //nolint unparam
 
 	var found bool
 	for _, pubkey := range multisigLegacyPub.GetPubKeys() {
@@ -412,11 +406,7 @@ func signTx(cmd *cobra.Command, cctx client.Context, txF tx.Factory, newTx sdk.T
 		if err != nil {
 			return fmt.Errorf("error getting account from keybase: %w", err)
 		}
-		multisigkey, err := getMultisigRecord(cctx, multisigName)
-		if err != nil {
-			return err
-		}
-		multisigPubKey, err := multisigkey.GetPubKey()
+		_, multisigPubKey, err := getMultisigRecord(cctx, multisigName)
 		if err != nil {
 			return err
 		}

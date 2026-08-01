@@ -605,7 +605,7 @@ $ %s query gov proposer 1
 				version.AppName,
 			),
 		),
-		PersistentPreRunE: QueryPersistentPreRunE,
+		PersistentPreRunE: queryWithoutHeightPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)

@@ -28,6 +28,16 @@
   of base64 strings; signing and signature validation write data to stdout or
   the requested document. Proposal drafting refuses non-TTY input before
   starting its selector.
+
+- **Transaction boundary inputs could still panic or demand an unnecessary
+  key**: fee and gas-price strings are validated before the SDK factory,
+  multisign assembly rejects ordinary keys and short signature batches, and
+  unsigned generation can use a signer address absent from the keyring.
+
+- **Vendored transaction separators became unnamed actionless leaves when the
+  full PR set was assembled**: IBC client and transfer adapters remain grouped
+  together without registering sentinel commands in the executable tree.
+
 - **Unsupported and empty transaction groups looked executable**: the Akash
   app has no crisis message handler, the evidence transaction group has no
   concrete submission type, and upstream IBC channel-v2 has no packet actions.
@@ -49,6 +59,14 @@
   clear gas prices before the factory is built. Dry-run also normalizes SDK
   gas-auto into simulation-only mode so an address signer never triggers a
   key lookup, while help remains configuration- and network-free.
+
+- **Four output contracts remained inconsistent after the input sweep**:
+  `store import --quiet` still wrote success text, 43 adopted query help pages
+  advertised an obsolete output enum, empty JSON store exports used `null`
+  where YAML used `[]`, and root help claimed quiet mode suppressed result
+  data. Informational import messages now honor quiet mode, adopted enum help
+  is derived from the enforced values, store lists return stable empty arrays,
+  and global help accurately describes informational-output suppression.
 
 - **MCP numeric arguments lacked a precise boundary contract**: sequence
   identifiers are positive whole numbers and pagination values are
@@ -128,6 +146,27 @@
   boundary contract now follows the actual signer set that validation will
   enforce.
 
+- **IBC connection-channel pagination ignored offsets and pages**: the
+  dependency's filtered-pagination callback appends matching channels even
+  while the SDK marks them as skipped, so `--offset` and `--page` returned the
+  first channel again. The vendored query boundary now removes that skipped
+  prefix and enforces the requested hard limit before rendering.
+
+- **Two query boundaries still accepted misleading results**: `query gov
+  proposer --height` returned the current transaction-index answer under a
+  historical-looking invocation, and `query ibc client states --limit N`
+  exposed the dependency's pagination lookahead record. The proposer query now
+  refuses unsupported snapshot selection before network work, and the IBC
+  adapter enforces the requested record limit for client-state lists.
+
+- **Pretty output ignored redirection and `NO_COLOR`**: registered query and
+  transaction formatters, deployment group rendering, and context/network
+  detail commands wrote directly to the process stdout, bypassing Cobra's
+  selected writer and terminal-aware styling boundary. Pretty output now flows
+  through the command writer and strips all ANSI styling for files, pipes, test
+  buffers, and explicit no-color sessions while retaining styling on an
+  interactive TTY.
+
 - **SDL output selection and redirected store status were cosmetic flags**:
   `sdl init` silently emitted YAML after an explicit JSON/YAML selection,
   `sdl validate` ignored structured output entirely, and `store status` leaked
@@ -162,6 +201,10 @@
   the responsible flag. Image references use standards-based parsing so empty
   tags and malformed digests are rejected; internal errors are reserved for
   invalid built-in defaults.
+
+- **Independent command-tree contract tests used the same package helper**:
+  the input-validation walker now has a domain-specific name so the scoping
+  and executable-help branches compile and run together after merge.
 
 - **CLI groups and output flags could accept the wrong input at exit 0**:
   unknown tokens under completion, IBC, and upgrade groups printed help as a
