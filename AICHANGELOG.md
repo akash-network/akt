@@ -4,6 +4,28 @@
 
 ### Fixed
 
+- **Standalone monitor navigation was routed to an invisible TUI view**:
+  dashboard and Network sub-tab keys now reach the monitor in standalone and
+  embedded modes, full-height rendering preserves the visible help/status
+  footer, and resize events are delivered once. Provider version selection,
+  detail-view reverse navigation, and dashboard-specific help now match the
+  controls shown on screen. Governance loads the complete modern parameter
+  response through RPC instead of rendering absent legacy REST fields as
+  plausible zeros. The monitor cache now honors `--home`, context API endpoints
+  supply auxiliary REST reads, and new mainnet templates select a verified
+  WebSocket RPC first. Provider scans now verify TLS certificates by default;
+  `--insecure` remains an explicit opt-in for debugging non-standard gateways.
+  Ad-hoc RPCs now derive a same-origin REST endpoint instead of inheriting an
+  unrelated context API, and legacy built-in mainnet contexts select the
+  current WebSocket endpoint without rewriting user config. Live provider
+  version sets reconcile safely, the table applies the advertised version
+  filter, release candidates sort by their numeric suffix, and stale detail
+  responses can no longer overwrite a newer choice. Provider gRPC probes now
+  honor the same certificate-verification setting as REST probes. A standalone
+  explicit RPC no longer triggers first-run config bootstrap, Cosmos `tcp`
+  endpoints derive an HTTP REST peer, monitor cache failures reach the user,
+  and cache cleanup removes both current and legacy files or reports failure.
+
 - **Public provider status incorrectly required a wallet and could panic on an
   empty keyring**: CLI and MCP status calls now use an unauthenticated public
   gateway client, while lease- and manifest-scoped clients reject a missing

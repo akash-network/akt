@@ -42,9 +42,6 @@ import (
 	"pkg.akt.dev/go/util/pubsub"
 )
 
-// statusBarHeight is the number of lines reserved for the bottom status bar.
-const statusBarHeight = 3
-
 // chromeHeight is the number of lines consumed by the shell chrome
 // (header, nav bar + hrule, breadcrumb, plus newlines between them).
 // header=1, "\n"=1, navBar=2 (tabs + hrule), "\n"=1, breadcrumb=1, "\n"=1.
@@ -193,7 +190,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	// Non-key messages ALWAYS forwarded to monitor to keep WS/tick chains alive.
 	// This must happen BEFORE the type switch because many cases return early.
-	if _, isKey := msg.(tea.KeyPressMsg); !isKey && a.monitor != nil {
+	_, isKey := msg.(tea.KeyPressMsg)
+	_, isWindowSize := msg.(tea.WindowSizeMsg)
+	if !isKey && !isWindowSize && a.monitor != nil {
 		var topCmd tea.Cmd
 		a.monitor, topCmd = a.monitor.Update(msg)
 		cmds = append(cmds, topCmd)
@@ -217,9 +216,16 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Forward to monitor
 		if a.monitor != nil {
+			monitorHeight := msg.Height - chromeHeight
+			if a.standalone {
+				monitorHeight = msg.Height
+			}
+			if monitorHeight < 1 {
+				monitorHeight = 1
+			}
 			adjusted := tea.WindowSizeMsg{
 				Width:  msg.Width,
-				Height: msg.Height - statusBarHeight,
+				Height: monitorHeight,
 			}
 			a.monitor, _ = a.monitor.Update(adjusted)
 		}
@@ -345,14 +351,17 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return a, nil
 	}
 
-	// ── 8. Standalone mode: only Ctrl+C, rest to router ─────────────
+	// ── 8. Standalone mode: monitor owns the full input surface ─────
 	if a.standalone {
 		if kmsg, ok := msg.(tea.KeyPressMsg); ok {
+			if a.monitor != nil {
+				var monitorCmd tea.Cmd
+				a.monitor, monitorCmd = a.monitor.Update(kmsg)
+				return a, tea.Batch(append(cmds, monitorCmd)...)
+			}
 			if key.Matches(kmsg, a.keys.Quit) {
 				return a, tea.Quit
 			}
-			cmd := a.router.Update(msg)
-			return a, cmd
 		}
 		return a, tea.Batch(cmds...)
 	}
@@ -434,10 +443,9 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// When monitor is active, forward keys to it (except global keys below).
 		if a.monitorActive && a.monitor != nil {
-			// Number keys and esc switch away from monitor — handled below.
-			// All other keys go to the monitor.
+			// Monitor-local 1-3 and dashboard navigation take precedence.
+			// Shell-level 4-6 and Esc switch away below.
 			if !key.Matches(kmsg, a.keys.Command, a.keys.CommandSearch, a.keys.Help,
-				a.keys.Deployments, a.keys.Leases, a.keys.Providers,
 				a.keys.Monitor, a.keys.Governance, a.keys.Staking, a.keys.Back) {
 				var topCmd tea.Cmd
 				a.monitor, topCmd = a.monitor.Update(msg)
@@ -531,20 +539,18 @@ func (a App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 // View implements tea.Model.
 func (a App) View() tea.View {
+	// Standalone monitor mode
+	if a.standalone && a.monitor != nil {
+		view := a.monitor.View()
+		view.AltScreen = true
+		return view
+	}
+
 	contentH := a.height - chromeHeight
 	if contentH < 1 {
 		contentH = 1
 	}
 	pin := lipgloss.NewStyle().Height(contentH).MaxHeight(contentH)
-
-	// Standalone monitor mode
-	if a.standalone && a.monitor != nil {
-		monView := a.monitor.View()
-		content := pin.Render(monView.Content)
-		v := tea.NewView(content)
-		v.AltScreen = true
-		return v
-	}
 
 	// When the monitor is active, it renders its own chrome.
 	if a.monitorActive && a.monitor != nil && !a.paletteActive() {
@@ -981,7 +987,10 @@ func buildLightClient(cfg *Config) {
 func Run(cfg Config) error {
 	buildLightClient(&cfg)
 
-	model, bus, cleanup := buildMonitorModel(cfg)
+	model, bus, cleanup, err := buildMonitorModel(cfg)
+	if err != nil {
+		return err
+	}
 	if cleanup != nil {
 		defer cleanup()
 	}
@@ -997,7 +1006,7 @@ func Run(cfg Config) error {
 	}
 
 	p := tea.NewProgram(app)
-	_, err := p.Run()
+	_, err = p.Run()
 	return err
 }
 
@@ -1007,7 +1016,10 @@ func Run(cfg Config) error {
 func RunMonitor(cfg Config) error {
 	buildLightClient(&cfg)
 
-	model, bus, cleanup := buildMonitorModel(cfg)
+	model, bus, cleanup, err := buildMonitorModel(cfg)
+	if err != nil {
+		return err
+	}
 	if cleanup != nil {
 		defer cleanup()
 	}
@@ -1025,17 +1037,17 @@ func RunMonitor(cfg Config) error {
 	}
 
 	p := tea.NewProgram(app)
-	_, err := p.Run()
+	_, err = p.Run()
 	return err
 }
 
-func buildMonitorModel(cfg Config) (tea.Model, pubsub.Bus, func()) {
+func buildMonitorModel(cfg Config) (tea.Model, pubsub.Bus, func(), error) {
 	if cfg.RPCEndpoint == "" || cfg.CacheDir == "" {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 
 	if err := os.MkdirAll(cfg.CacheDir, 0o755); err != nil {
-		return nil, nil, nil
+		return nil, nil, nil, fmt.Errorf("create monitor cache directory %s: %w", cfg.CacheDir, err)
 	}
 
 	// Prefer monitor.db; fall back to legacy top.db for migration.
@@ -1049,19 +1061,19 @@ func buildMonitorModel(cfg Config) (tea.Model, pubsub.Bus, func()) {
 
 	db, err := monitorcache.OpenDB(dbPath)
 	if err != nil {
-		return nil, nil, nil
+		return nil, nil, nil, fmt.Errorf("open monitor cache %s: %w", dbPath, err)
 	}
 
 	provCache, err := monitorcache.Open(db)
 	if err != nil {
 		_ = db.Close()
-		return nil, nil, nil
+		return nil, nil, nil, fmt.Errorf("initialize monitor provider cache: %w", err)
 	}
 
 	monCache, err := monitorcache.OpenMonikerCache(db)
 	if err != nil {
 		_ = db.Close()
-		return nil, nil, nil
+		return nil, nil, nil, fmt.Errorf("initialize monitor moniker cache: %w", err)
 	}
 
 	// ── Shared event bus ────────────────────────────────────────────
@@ -1091,7 +1103,7 @@ func buildMonitorModel(cfg Config) (tea.Model, pubsub.Bus, func()) {
 		Cache:              provCache,
 		MonikerCache:       monCache,
 		InsecureSkipVerify: cfg.Insecure,
-		Embedded:           true, // always true; parent App provides the status bar
+		Embedded:           !cfg.Standalone,
 		InitialDashboard:   cfg.InitialDashboard,
 		Bus:                bus,
 	})
@@ -1107,5 +1119,5 @@ func buildMonitorModel(cfg Config) (tea.Model, pubsub.Bus, func()) {
 		_ = db.Close()
 	}
 
-	return model, bus, cleanup
+	return model, bus, cleanup, nil
 }

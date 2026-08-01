@@ -16,7 +16,9 @@ import (
 	"sync"
 	"time"
 
+	sdkcodec "github.com/cosmos/cosmos-sdk/codec"
 	querytypes "github.com/cosmos/cosmos-sdk/types/query"
+	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	"github.com/cosmos/gogoproto/proto"
 
 	bmetypes "pkg.akt.dev/go/node/bme/v1"
@@ -460,43 +462,119 @@ type ProviderVersionResponse struct {
 // CompareVersions compares two semver-like version strings
 // Returns: 1 if a > b, -1 if a < b, 0 if equal
 func CompareVersions(a, b string) int {
-	partsA := strings.Split(a, ".")
-	partsB := strings.Split(b, ".")
-
-	maxLen := len(partsA)
-	if len(partsB) > maxLen {
-		maxLen = len(partsB)
+	coreA, preA, okA := parseProviderVersion(a)
+	coreB, preB, okB := parseProviderVersion(b)
+	if !okA || !okB {
+		return strings.Compare(a, b)
 	}
 
-	for i := 0; i < maxLen; i++ {
-		var numA, numB int
-		if i < len(partsA) {
-			// Remove any non-numeric suffix (e.g., "6-rc3" -> "6")
-			numStr := strings.Split(partsA[i], "-")[0]
-			_, _ = fmt.Sscanf(numStr, "%d", &numA)
+	for i := 0; i < max(len(coreA), len(coreB)); i++ {
+		numA := 0
+		if i < len(coreA) {
+			numA = coreA[i]
 		}
-		if i < len(partsB) {
-			numStr := strings.Split(partsB[i], "-")[0]
-			_, _ = fmt.Sscanf(numStr, "%d", &numB)
+		numB := 0
+		if i < len(coreB) {
+			numB = coreB[i]
 		}
-
-		if numA > numB {
-			return 1
-		}
-		if numA < numB {
-			return -1
+		if numA != numB {
+			return compareInts(numA, numB)
 		}
 	}
 
-	// If base versions are equal, non-RC is higher than RC
-	if strings.Contains(a, "-") && !strings.Contains(b, "-") {
+	return compareProviderPrerelease(preA, preB)
+}
+
+func parseProviderVersion(value string) ([]int, string, bool) {
+	value = strings.TrimSpace(value)
+	value = strings.TrimPrefix(strings.TrimPrefix(value, "v"), "V")
+	if coreAndPre, _, found := strings.Cut(value, "+"); found {
+		value = coreAndPre
+	}
+	core, prerelease, _ := strings.Cut(value, "-")
+	parts := strings.Split(core, ".")
+	if len(parts) == 0 {
+		return nil, "", false
+	}
+
+	numbers := make([]int, len(parts))
+	for i, part := range parts {
+		if part == "" {
+			return nil, "", false
+		}
+		number, err := strconv.Atoi(part)
+		if err != nil || number < 0 {
+			return nil, "", false
+		}
+		numbers[i] = number
+	}
+	return numbers, prerelease, true
+}
+
+func compareProviderPrerelease(a, b string) int {
+	switch {
+	case a == "" && b == "":
+		return 0
+	case a == "":
+		return 1
+	case b == "":
 		return -1
 	}
-	if !strings.Contains(a, "-") && strings.Contains(b, "-") {
+
+	partsA := strings.Split(a, ".")
+	partsB := strings.Split(b, ".")
+	for i := 0; i < min(len(partsA), len(partsB)); i++ {
+		if cmp := compareProviderVersionIdentifier(partsA[i], partsB[i]); cmp != 0 {
+			return cmp
+		}
+	}
+	return compareInts(len(partsA), len(partsB))
+}
+
+func compareProviderVersionIdentifier(a, b string) int {
+	numA, errA := strconv.Atoi(a)
+	numB, errB := strconv.Atoi(b)
+	switch {
+	case errA == nil && errB == nil:
+		return compareInts(numA, numB)
+	case errA == nil:
+		return -1
+	case errB == nil:
 		return 1
 	}
 
-	return 0
+	prefixA, suffixA, hasSuffixA := trailingVersionNumber(a)
+	prefixB, suffixB, hasSuffixB := trailingVersionNumber(b)
+	if hasSuffixA && hasSuffixB && prefixA == prefixB {
+		return compareInts(suffixA, suffixB)
+	}
+	return strings.Compare(a, b)
+}
+
+func trailingVersionNumber(value string) (string, int, bool) {
+	index := len(value)
+	for index > 0 && value[index-1] >= '0' && value[index-1] <= '9' {
+		index--
+	}
+	if index == len(value) {
+		return "", 0, false
+	}
+	number, err := strconv.Atoi(value[index:])
+	if err != nil {
+		return "", 0, false
+	}
+	return value[:index], number, true
+}
+
+func compareInts(a, b int) int {
+	switch {
+	case a < b:
+		return -1
+	case a > b:
+		return 1
+	default:
+		return 0
+	}
 }
 
 // GetProviderVersions returns unique versions from providers, sorted latest first
@@ -529,14 +607,18 @@ func NewProviderHTTPClient(insecureSkipVerify bool) *http.Client {
 	return &http.Client{
 		Timeout: ProviderQueryTimeout,
 		Transport: &http.Transport{
-			TLSClientConfig: &tls.Config{
-				InsecureSkipVerify: insecureSkipVerify, //nolint:gosec
-			},
+			TLSClientConfig:     providerTLSConfig(insecureSkipVerify),
 			MaxIdleConns:        100,
 			MaxIdleConnsPerHost: 10,
 			MaxConnsPerHost:     10,
 			IdleConnTimeout:     90 * time.Second,
 		},
+	}
+}
+
+func providerTLSConfig(insecureSkipVerify bool) *tls.Config {
+	return &tls.Config{
+		InsecureSkipVerify: insecureSkipVerify, //nolint:gosec
 	}
 }
 
@@ -918,7 +1000,13 @@ func (c *Client) GetAllGovernanceParams(ctx context.Context) (*governance.AllPar
 
 	// Fetch standard module params
 	for module, endpoint := range governance.StandardModuleEndpoints {
-		rawJSON, err := c.GetModuleParams(ctx, module, endpoint)
+		var rawJSON json.RawMessage
+		var err error
+		if module == "gov" {
+			rawJSON, err = c.getGovernanceParams(ctx)
+		} else {
+			rawJSON, err = c.GetModuleParams(ctx, module, endpoint)
+		}
 		if err != nil {
 			// Log but continue with other modules
 			allParams.Modules[module] = &governance.ModuleParams{
@@ -978,4 +1066,24 @@ func (c *Client) GetAllGovernanceParams(ctx context.Context) (*governance.AllPar
 	}
 
 	return allParams, nil
+}
+
+func (c *Client) getGovernanceParams(ctx context.Context) (json.RawMessage, error) {
+	var response govv1.QueryParamsResponse
+	request := govv1.QueryParamsRequest{}
+	if err := c.abciQuery(
+		ctx,
+		"/cosmos.gov.v1.Query/Params",
+		&request,
+		&response,
+	); err != nil {
+		return nil, fmt.Errorf("fetch governance params: %w", err)
+	}
+
+	rawJSON, err := sdkcodec.ProtoMarshalJSON(&response, nil)
+	if err != nil {
+		return nil, fmt.Errorf("encode governance params: %w", err)
+	}
+
+	return json.RawMessage(rawJSON), nil
 }

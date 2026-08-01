@@ -9,6 +9,7 @@ func NetworkTemplates() map[string]Network {
 			ChainID: "akashnet-2",
 			Endpoints: Endpoints{
 				RPC: []string{
+					"https://rpc.akt.dev:443/rpc",
 					"https://rpc.akashnet.net:443",
 					"https://rpc-akash.ecostake.com:443",
 				},

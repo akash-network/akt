@@ -43,6 +43,8 @@ func TestCreateNetworkFromTemplate(t *testing.T) {
 
 	if len(net.Endpoints.RPC) < 1 {
 		t.Error("expected at least one RPC endpoint")
+	} else if got := net.Endpoints.RPC[0]; got != "https://rpc.akt.dev:443/rpc" {
+		t.Errorf("primary mainnet RPC = %q, want the WebSocket-capable monitor endpoint", got)
 	}
 }
 

@@ -139,7 +139,14 @@ func RenderView(ctx ViewContext) string {
 
 	// Help & status — full width (skipped when the parent TUI provides its own status bar)
 	if !ctx.Embedded {
-		b.WriteString(renderStatusBar(ctx.Endpoint, ctx.ActiveTab, ctx.Providers.Detail.Showing, ctx.WSConnected, w))
+		b.WriteString(renderStatusBar(
+			ctx.Endpoint,
+			ctx.HubTab,
+			ctx.ActiveTab,
+			ctx.Providers.Detail.Showing,
+			ctx.WSConnected,
+			w,
+		))
 	}
 
 	return b.String()
@@ -1347,15 +1354,33 @@ func formatGPUDisplay(gpuStr string, hasGPU bool) string {
 }
 
 // renderStatusBar renders the bottom status bar
-func renderStatusBar(endpoint string, activeTab Tab, _ bool, wsConnected bool, width int) string {
+func renderStatusBar(
+	endpoint string,
+	hubTab HubTab,
+	activeTab Tab,
+	providerDetail bool,
+	wsConnected bool,
+	width int,
+) string {
 	var helpText string
-	switch activeTab {
-	case TabValidators:
-		helpText = "q: quit | r: refresh | Tab/1-3: switch tabs | j/k: scroll"
-	case TabGovernance:
-		helpText = "q: quit | r: refresh params | Tab/1-3: switch tabs"
+	switch hubTab {
+	case HubProvider:
+		if providerDetail {
+			helpText = "q: quit | Tab/Shift-Tab: dashboard | Esc: provider list | j/k: scroll"
+		} else {
+			helpText = "q: quit | Tab/Shift-Tab: dashboard | r: refresh | h/l: version | j/k: select | Enter: details"
+		}
+	case HubOracleBME:
+		helpText = "q: quit | Tab/Shift-Tab: dashboard"
 	default:
-		helpText = "q: quit | Tab/1-3: switch | j/k: select | Enter: expand | Esc: collapse"
+		switch activeTab {
+		case TabValidators:
+			helpText = "q: quit | Tab/Shift-Tab: dashboard | 1-3: network view | j/k: scroll | Enter: details"
+		case TabGovernance:
+			helpText = "q: quit | Tab/Shift-Tab: dashboard | 1-3: network view | r: refresh | j/k: module | h/l: scroll"
+		default:
+			helpText = "q: quit | Tab/Shift-Tab: dashboard | 1-3: network view | j/k: select | Enter: expand | Esc: collapse"
+		}
 	}
 	help := helpStyle.Width(width).Render(helpText)
 

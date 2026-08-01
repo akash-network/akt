@@ -128,12 +128,14 @@ func (si StatusInfo) TabHelpText() string {
 // Model represents the application state
 type Model struct {
 	// Core dependencies
-	client       *rpc.Client
-	rpcClient    *rpc.RPCProviderClient
-	httpClient   *http.Client
-	cache        cache.ProviderStore
-	monikerCache *cache.MonikerCache
-	embedded     bool // when true, q sends BackMsg instead of tea.Quit
+	client     *rpc.Client
+	rpcClient  *rpc.RPCProviderClient
+	httpClient *http.Client
+	// insecureSkipVerify applies uniformly to provider REST and gRPC probes.
+	insecureSkipVerify bool
+	cache              cache.ProviderStore
+	monikerCache       *cache.MonikerCache
+	embedded           bool // when true, q sends BackMsg instead of tea.Quit
 
 	// Consensus state
 	state        *consensus.State
@@ -184,6 +186,9 @@ type Model struct {
 	providers ProviderList
 	loader    ProviderLoader
 	detail    ProviderDetail
+	// detailRequestID correlates async provider detail results with the most
+	// recent selection, including repeated requests to the same provider.
+	detailRequestID uint64
 
 	// Governance state
 	governanceParams *governance.AllParams
@@ -259,8 +264,10 @@ type (
 
 	// providerDetailMsg is sent when provider detail fetch completes
 	providerDetailMsg struct {
-		nodes []rpc.ProviderNodeWithGPU
-		err   error
+		hostURI   string
+		requestID uint64
+		nodes     []rpc.ProviderNodeWithGPU
+		err       error
 	}
 
 	// governanceParamsMsg is sent when governance params fetch completes
@@ -330,6 +337,7 @@ func NewModel(cfg ModelConfig) Model {
 		client:             cfg.Client,
 		rpcClient:          cfg.RPCClient,
 		httpClient:         rpc.NewProviderHTTPClient(cfg.InsecureSkipVerify),
+		insecureSkipVerify: cfg.InsecureSkipVerify,
 		cache:              cfg.Cache,
 		monikerCache:       cfg.MonikerCache,
 		embedded:           cfg.Embedded,
@@ -532,7 +540,7 @@ func (m Model) checkProvider(owner string) tea.Cmd {
 		}
 
 		// Try gRPC first for full GPU info, fall back to REST
-		nodes, err := rpc.QueryProviderStatusGRPC(ctx, p.HostURI)
+		nodes, err := rpc.QueryProviderStatusGRPC(ctx, p.HostURI, m.insecureSkipVerify)
 		if err != nil {
 			// Fall back to REST (no GPU model info)
 			status, restErr := rpc.QueryProviderStatus(ctx, m.httpClient, p.HostURI)
@@ -814,12 +822,7 @@ func (m *Model) rebuildProviderList() {
 
 	m.providers.Items = items
 	m.providers.Versions = rpc.GetProviderVersions(items)
-
-	// Update selected version if needed
-	if m.providers.Version == "" && len(m.providers.Versions) > 0 {
-		m.providers.Version = m.providers.Versions[0]
-		m.providers.VersionIdx = 0
-	}
+	m.reconcileProviderVersionSelection()
 
 	m.rebuildProviderTableRows()
 }
@@ -846,7 +849,7 @@ func (m *Model) sortProviders() {
 
 // rebuildProviderTableRows rebuilds the provider table rows from current data.
 func (m *Model) rebuildProviderTableRows() {
-	filtered := filterNonLocalProviders(m.providers.Items)
+	filtered := m.getFilteredProviders()
 	rows := make([]table.Row, len(filtered))
 	for i, p := range filtered {
 		country := p.Country
@@ -1373,7 +1376,9 @@ func (m *Model) handleKeyMsg(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, cmd
 	case "left", "h":
-		if m.hubTab == HubNetwork && m.activeTab == TabOverview && m.expandedBlock >= 0 {
+		if m.hubTab == HubProvider {
+			m.selectPreviousVersion()
+		} else if m.hubTab == HubNetwork && m.activeTab == TabOverview && m.expandedBlock >= 0 {
 			m.expandedBlock = -1
 			m.expandedScroll = 0
 			m.expandedValidators = nil
@@ -1387,7 +1392,9 @@ func (m *Model) handleKeyMsg(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case "right", "l":
-		if m.hubTab == HubNetwork && m.activeTab == TabGovernance {
+		if m.hubTab == HubProvider {
+			m.selectNextVersion()
+		} else if m.hubTab == HubNetwork && m.activeTab == TabGovernance {
 			m.govParamView.SetYOffset(m.govParamView.YOffset() + 1)
 		}
 	case "enter":
@@ -1436,7 +1443,7 @@ func (m *Model) handleDetailViewKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.nodeTable.SetCursor(0)
 	case "up", "k", "down", "j", "home", "g", "end", "G":
 		m.nodeTable, _ = m.nodeTable.Update(msg)
-	case "1", "2", "3", "4", "tab":
+	case "tab", "shift+tab":
 		// Exit detail view and switch tabs
 		m.detail.Showing = false
 		m.detail.Nodes = nil
@@ -1456,7 +1463,18 @@ func (m *Model) resetScrollForTab() {
 }
 
 func (m *Model) getFilteredProviders() []rpc.Provider {
-	return filterNonLocalProviders(m.providers.Items)
+	providers := filterNonLocalProviders(m.providers.Items)
+	if m.providers.Version == "" {
+		return providers
+	}
+
+	filtered := make([]rpc.Provider, 0, len(providers))
+	for _, provider := range providers {
+		if provider.AkashVersion == m.providers.Version {
+			filtered = append(filtered, provider)
+		}
+	}
+	return filtered
 }
 
 func (m *Model) toggleBlockExpansion() {
@@ -1507,6 +1525,7 @@ func (m *Model) selectPreviousVersion() {
 	if len(m.providers.Versions) == 0 {
 		return
 	}
+	m.reconcileProviderVersionSelection()
 	m.providers.VersionIdx--
 	if m.providers.VersionIdx < 0 {
 		m.providers.VersionIdx = len(m.providers.Versions) - 1
@@ -1521,6 +1540,7 @@ func (m *Model) selectNextVersion() {
 	if len(m.providers.Versions) == 0 {
 		return
 	}
+	m.reconcileProviderVersionSelection()
 	m.providers.VersionIdx = (m.providers.VersionIdx + 1) % len(m.providers.Versions)
 	m.providers.Version = m.providers.Versions[m.providers.VersionIdx]
 	m.providerTable.SetCursor(0)
@@ -1541,22 +1561,27 @@ func (m *Model) enterProviderDetail() (tea.Model, tea.Cmd) {
 	m.detail.Error = nil
 	m.detail.Nodes = nil
 	m.detail.Showing = true
+	m.detailRequestID++
 
-	return m, m.fetchProviderDetail(provider.HostURI)
+	return m, m.fetchProviderDetail(provider.HostURI, m.detailRequestID)
 }
 
-func (m *Model) fetchProviderDetail(hostURI string) tea.Cmd {
+func (m *Model) fetchProviderDetail(hostURI string, requestID uint64) tea.Cmd {
 	return func() tea.Msg {
 		ctx := context.Background()
-		nodes, err := rpc.QueryProviderStatusGRPC(ctx, hostURI)
+		nodes, err := rpc.QueryProviderStatusGRPC(ctx, hostURI, m.insecureSkipVerify)
 		if err != nil {
-			return providerDetailMsg{err: err}
+			return providerDetailMsg{hostURI: hostURI, requestID: requestID, err: err}
 		}
-		return providerDetailMsg{nodes: nodes}
+		return providerDetailMsg{hostURI: hostURI, requestID: requestID, nodes: nodes}
 	}
 }
 
 func (m *Model) handleProviderDetailMsg(msg providerDetailMsg) (tea.Model, tea.Cmd) {
+	if !m.detail.Showing || m.detail.Provider == nil ||
+		m.detail.Provider.HostURI != msg.hostURI || m.detailRequestID != msg.requestID {
+		return m, nil
+	}
 	m.detail.Loading = false
 	if msg.err != nil {
 		m.detail.Error = msg.err
@@ -1565,6 +1590,24 @@ func (m *Model) handleProviderDetailMsg(msg providerDetailMsg) (tea.Model, tea.C
 		m.rebuildNodeTableRows()
 	}
 	return m, nil
+}
+
+func (m *Model) reconcileProviderVersionSelection() {
+	if len(m.providers.Versions) == 0 {
+		m.providers.Version = ""
+		m.providers.VersionIdx = 0
+		return
+	}
+
+	for index, version := range m.providers.Versions {
+		if version == m.providers.Version {
+			m.providers.VersionIdx = index
+			return
+		}
+	}
+
+	m.providers.Version = m.providers.Versions[0]
+	m.providers.VersionIdx = 0
 }
 
 func (m *Model) handleGovernanceParamsMsg(msg governanceParamsMsg) (tea.Model, tea.Cmd) {

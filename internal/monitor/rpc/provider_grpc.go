@@ -2,8 +2,8 @@ package rpc
 
 import (
 	"context"
-	"crypto/tls"
 	"fmt"
+	"net"
 	"net/url"
 	"time"
 
@@ -48,15 +48,17 @@ type ProviderNodeWithGPU struct {
 // QueryProviderStatusGRPC queries a provider's status via gRPC to get full GPU information.
 // The hostURI should be the provider's base URI (e.g., "https://provider.example.com:8443").
 // This function will convert it to the gRPC endpoint (port 8444).
-func QueryProviderStatusGRPC(ctx context.Context, hostURI string) ([]ProviderNodeWithGPU, error) {
+func QueryProviderStatusGRPC(
+	ctx context.Context,
+	hostURI string,
+	insecureSkipVerify bool,
+) ([]ProviderNodeWithGPU, error) {
 	grpcHost, err := convertToGRPCEndpoint(hostURI)
 	if err != nil {
 		return nil, fmt.Errorf("invalid host URI: %w", err)
 	}
 
-	creds := credentials.NewTLS(&tls.Config{
-		InsecureSkipVerify: true, //nolint:gosec
-	})
+	creds := credentials.NewTLS(providerTLSConfig(insecureSkipVerify))
 
 	ctx, cancel := context.WithTimeout(ctx, GRPCQueryTimeout)
 	defer cancel()
@@ -90,7 +92,7 @@ func convertToGRPCEndpoint(hostURI string) (string, error) {
 		return "", fmt.Errorf("no hostname in URI: %s", hostURI)
 	}
 
-	return fmt.Sprintf("%s:%s", host, GRPCProviderPort), nil
+	return net.JoinHostPort(host, GRPCProviderPort), nil
 }
 
 // extractNodesWithGPU extracts node information including GPU details from provider status.
