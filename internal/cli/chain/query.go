@@ -10,6 +10,7 @@ import (
 
 	"pkg.akt.dev/akt/internal/capability"
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"pkg.akt.dev/akt/internal/cliutil"
 	aclient "pkg.akt.dev/go/node/client/discovery"
 )
 
@@ -38,6 +39,11 @@ func QueryPersistentPreRunE(cmd *cobra.Command, _ []string) error {
 		cmd.SetContext(ctx)
 	}
 
+	// -v answers "which endpoint did this actually talk to", the first thing
+	// worth knowing when a query returns something unexpected. Until now the
+	// flag was accepted on every command and produced nothing anywhere.
+	cliutil.Verbosef(cmd, "querying %s (chain %s)", cctx.NodeURI, cctx.ChainID)
+
 	return nil
 }
 
@@ -46,6 +52,7 @@ func QueryCmd() *cobra.Command {
 		Use:     "query",
 		Aliases: []string{"q"},
 		Short:   "Querying subcommands",
+		RunE:    ValidateCmd,
 		// Capability gating: chain queries require a chain RPC endpoint.
 		Annotations: map[string]string{capability.AnnotationKey: string(capability.ChainQuery)},
 	}
@@ -59,10 +66,8 @@ func QueryCmd() *cobra.Command {
 		GetQueryFeegrantCmd(),
 		GetQueryMintCmd(),
 		GetQueryParamsCmd(),
-		cflags.LineBreak,
-		ibccore.AppModuleBasic{}.GetQueryCmd(),
-		ibctransfer.AppModuleBasic{}.GetQueryCmd(),
-		cflags.LineBreak,
+		adoptVendoredQueryCmd(ibccore.AppModuleBasic{}.GetQueryCmd()),
+		adoptVendoredQueryCmd(ibctransfer.AppModuleBasic{}.GetQueryCmd()),
 		QueryBlockCmd(),
 		QueryBlocksCmd(),
 		QueryBlockResultsCmd(),
@@ -71,7 +76,6 @@ func QueryCmd() *cobra.Command {
 		GetQueryGovCmd(),
 		GetQuerySlashingCmd(),
 		GetQueryStakingCmd(),
-		cflags.LineBreak,
 		GetQueryAuditCmd(),
 		GetQueryCertCmd(),
 		GetQueryDeploymentCmds(),

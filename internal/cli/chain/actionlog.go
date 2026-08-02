@@ -69,7 +69,7 @@ func (t *loggingTxClient) failedTxError(resp interface{}, err error) error {
 		return err
 	}
 
-	if t.cctx.GenerateOnly || t.cctx.Simulate || t.cctx.Offline {
+	if t.cctx.GenerateOnly || t.cctx.Offline {
 		return nil
 	}
 

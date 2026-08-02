@@ -3,20 +3,25 @@
 package provider
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
+	"io"
 	"os"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	mtypes "pkg.akt.dev/go/node/market/v1"
+	ptypes "pkg.akt.dev/go/node/provider/v1beta4"
 	rest "pkg.akt.dev/go/provider/client"
 	"pkg.akt.dev/go/sdl"
 
 	"pkg.akt.dev/akt/internal/capability"
+	chaincli "pkg.akt.dev/akt/internal/cli/chain"
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"pkg.akt.dev/akt/internal/output"
 	aktprovider "pkg.akt.dev/akt/internal/provider"
 )
 
@@ -24,6 +29,7 @@ import (
 func Commands() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "provider",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Provider gateway operations",
 		Long:  "Interact with Akash provider gateway APIs: query status, manage leases, send manifests, and more.",
 		// Capability gating: gateway discovery and wallet auth need chain access.
@@ -62,20 +68,23 @@ func statusCmd() *cobra.Command {
   akt provider status --provider akash1...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+			if cmd.Flags().Changed("auth-type") {
+				return fmt.Errorf("--auth-type does not apply to public provider status")
+			}
 
 			providerAddr, providerURL, err := resolveProvider(cmd, args)
 			if err != nil {
 				return err
 			}
 
-			cl, err := gatewayClientFromCmd(cmd, providerAddr, providerURL)
+			cl, err := aktprovider.NewPublicGatewayClient(ctx, providerAddr, providerURL)
 			if err != nil {
 				return err
 			}
 
 			status, err := cl.Status(ctx)
 			if err != nil {
-				return fmt.Errorf("query provider status: %w", err)
+				return aktprovider.GatewayError("query provider status", err)
 			}
 
 			return printJSON(cmd, status)
@@ -94,12 +103,12 @@ func leaseStatusCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
-			providerAddr, providerURL, err := resolveProvider(cmd, nil)
+			providerAddr, providerURL, err := resolveAuthenticatedProvider(cmd, nil)
 			if err != nil {
 				return err
 			}
 
-			cl, err := gatewayClientFromCmd(cmd, providerAddr, providerURL)
+			cl, err := gatewayClientFromCmd(cmd, providerURL)
 			if err != nil {
 				return err
 			}
@@ -111,7 +120,7 @@ func leaseStatusCmd() *cobra.Command {
 
 			status, err := cl.LeaseStatus(ctx, lid)
 			if err != nil {
-				return fmt.Errorf("query lease status: %w", err)
+				return aktprovider.GatewayError("query lease status", err)
 			}
 
 			return printJSON(cmd, status)
@@ -139,13 +148,19 @@ func leaseLogsCmd() *cobra.Command {
   akt provider lease-logs 12345 --provider akash1... --tail 100`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+			follow, _ := cmd.Flags().GetBool("follow")
+			service, _ := cmd.Flags().GetString("service")
+			tail, _ := cmd.Flags().GetInt64("tail")
+			if err := aktprovider.ValidateLogTail(follow, tail); err != nil {
+				return err
+			}
 
-			providerAddr, providerURL, err := resolveProvider(cmd, nil)
+			providerAddr, providerURL, err := resolveAuthenticatedProvider(cmd, nil)
 			if err != nil {
 				return err
 			}
 
-			cl, err := gatewayClientFromCmd(cmd, providerAddr, providerURL)
+			cl, err := gatewayClientFromCmd(cmd, providerURL)
 			if err != nil {
 				return err
 			}
@@ -155,34 +170,16 @@ func leaseLogsCmd() *cobra.Command {
 				return err
 			}
 
-			follow, _ := cmd.Flags().GetBool("follow")
-			service, _ := cmd.Flags().GetString("service")
-			tail, _ := cmd.Flags().GetInt64("tail")
+			if err := aktprovider.CheckLease(ctx, cl, lid); err != nil {
+				return err
+			}
 
 			logs, err := cl.LeaseLogs(ctx, lid, service, follow, tail)
 			if err != nil {
-				return fmt.Errorf("stream lease logs: %w", err)
+				return aktprovider.GatewayError("stream lease logs", err)
 			}
 
-			for {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case msg, ok := <-logs.Stream:
-					if !ok {
-						return nil
-					}
-					fmt.Fprintf(cmd.OutOrStdout(), "[%s] %s\n", msg.Name, msg.Message)
-				case reason, ok := <-logs.OnClose:
-					if !ok {
-						return nil
-					}
-					if reason != "" {
-						return fmt.Errorf("log stream closed: %s", reason)
-					}
-					return nil
-				}
-			}
+			return consumeLeaseLogs(ctx, cmd, logs, service, follow, tail)
 		},
 	}
 
@@ -207,13 +204,14 @@ func leaseEventsCmd() *cobra.Command {
   akt provider lease-events 12345 --provider akash1... --follow`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+			follow, _ := cmd.Flags().GetBool("follow")
 
-			providerAddr, providerURL, err := resolveProvider(cmd, nil)
+			providerAddr, providerURL, err := resolveAuthenticatedProvider(cmd, nil)
 			if err != nil {
 				return err
 			}
 
-			cl, err := gatewayClientFromCmd(cmd, providerAddr, providerURL)
+			cl, err := gatewayClientFromCmd(cmd, providerURL)
 			if err != nil {
 				return err
 			}
@@ -223,33 +221,16 @@ func leaseEventsCmd() *cobra.Command {
 				return err
 			}
 
-			follow, _ := cmd.Flags().GetBool("follow")
+			if err := aktprovider.CheckLease(ctx, cl, lid); err != nil {
+				return err
+			}
 
 			events, err := cl.LeaseEvents(ctx, lid, "", follow)
 			if err != nil {
-				return fmt.Errorf("stream lease events: %w", err)
+				return aktprovider.GatewayError("stream lease events", err)
 			}
 
-			for {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case evt, ok := <-events.Stream:
-					if !ok {
-						return nil
-					}
-					fmt.Fprintf(cmd.OutOrStdout(), "%s [%s/%s] %s: %s\n",
-						evt.Type, evt.Object.Kind, evt.Object.Name, evt.Reason, evt.Note)
-				case reason, ok := <-events.OnClose:
-					if !ok {
-						return nil
-					}
-					if reason != "" {
-						return fmt.Errorf("event stream closed: %s", reason)
-					}
-					return nil
-				}
-			}
+			return consumeLeaseEvents(ctx, cmd, events, follow)
 		},
 	}
 
@@ -261,24 +242,36 @@ func leaseEventsCmd() *cobra.Command {
 
 func leaseShellCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "lease-shell -- [command]",
+		Use:   "lease-shell [-- command...]",
 		Short: "Open interactive shell",
-		Long:  "Open an interactive shell session to a container in a lease.",
-		Args:  cobra.MinimumNArgs(1),
-		Example: `  # Open a bash shell
+		Long:  "Open an interactive shell session to a container in a lease. The remote command defaults to /bin/sh.",
+		Args:  cobra.ArbitraryArgs,
+		Example: `  # Open the default /bin/sh shell
+  akt provider lease-shell --dseq 12345 --provider akash1... --service web
+
+  # Open a bash shell
   akt provider lease-shell --dseq 12345 --provider akash1... --service web -- /bin/bash
 
   # Run a single command
-  akt provider lease-shell --dseq 12345 --provider akash1... --service web -- ls -la`,
+  akt provider lease-shell --dseq 12345 --provider akash1... --service web -- ls -la
+
+  # Capture an explicit command as structured stdout and stderr
+  akt provider lease-shell --dseq 12345 --provider akash1... --service web -o json -- pwd`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+			shellCtx, cancelShell := context.WithCancel(ctx)
+			defer cancelShell()
+			interactive := len(args) == 0
+			if err := output.ValidateShellOutput(cmd, interactive); err != nil {
+				return err
+			}
 
-			providerAddr, providerURL, err := resolveProvider(cmd, nil)
+			providerAddr, providerURL, err := resolveAuthenticatedProvider(cmd, nil)
 			if err != nil {
 				return err
 			}
 
-			cl, err := gatewayClientFromCmd(cmd, providerAddr, providerURL)
+			cl, err := gatewayClientFromCmd(cmd, providerURL)
 			if err != nil {
 				return err
 			}
@@ -294,11 +287,21 @@ func leaseShellCmd() *cobra.Command {
 			if service == "" {
 				return fmt.Errorf("--service is required for lease-shell")
 			}
-
 			tty, _ := cmd.Flags().GetBool("tty")
+			stdinOverride, _ := cmd.Flags().GetBool("stdin")
+			stdin := aktprovider.SelectShellStdin(
+				shellCtx,
+				os.Stdin,
+				interactive,
+				term.IsTerminal(int(os.Stdin.Fd())),
+				cmd.Flags().Changed("stdin"),
+				stdinOverride,
+			)
 
-			err = cl.LeaseShell(ctx, lid, service, 0, args,
-				os.Stdin, os.Stdout, os.Stderr, tty, nil)
+			err = output.RunShellOutput(cmd, interactive, tty, func(stdout, stderr io.Writer, shellTTY bool) error {
+				return aktprovider.RunLeaseShell(shellCtx, cl, lid, service, 0, leaseShellCommand(args),
+					stdin, stdout, stderr, shellTTY, nil)
+			})
 			recordProviderAction(ctx, "lease-shell", lid.Provider, lid.DSeq, err)
 
 			return err
@@ -308,6 +311,7 @@ func leaseShellCmd() *cobra.Command {
 	addLeaseShellFlags(cmd)
 	cmd.Flags().String("service", "", "Service name (required)")
 	cmd.Flags().BoolP("tty", "t", true, "Allocate a TTY")
+	cmd.Flags().Bool("stdin", false, "Force stdin attachment for an explicit terminal command")
 
 	return cmd
 }
@@ -323,12 +327,12 @@ func sendManifestCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
-			providerAddr, providerURL, err := resolveProvider(cmd, nil)
+			providerAddr, providerURL, err := resolveAuthenticatedProvider(cmd, nil)
 			if err != nil {
 				return err
 			}
 
-			cl, err := gatewayClientFromCmd(cmd, providerAddr, providerURL)
+			cl, err := gatewayClientFromCmd(cmd, providerURL)
 			if err != nil {
 				return err
 			}
@@ -351,7 +355,7 @@ func sendManifestCmd() *cobra.Command {
 			err = cl.SubmitManifest(ctx, dseq, mani)
 			recordProviderAction(ctx, "send-manifest", providerAddr.String(), dseq, err)
 			if err != nil {
-				return fmt.Errorf("submit manifest: %w", err)
+				return aktprovider.GatewayError("submit manifest", err)
 			}
 
 			fmt.Fprintln(cmd.OutOrStdout(), "Manifest submitted successfully.")
@@ -375,12 +379,12 @@ func getManifestCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
-			providerAddr, providerURL, err := resolveProvider(cmd, nil)
+			providerAddr, providerURL, err := resolveAuthenticatedProvider(cmd, nil)
 			if err != nil {
 				return err
 			}
 
-			cl, err := gatewayClientFromCmd(cmd, providerAddr, providerURL)
+			cl, err := gatewayClientFromCmd(cmd, providerURL)
 			if err != nil {
 				return err
 			}
@@ -392,7 +396,7 @@ func getManifestCmd() *cobra.Command {
 
 			mani, err := cl.GetManifest(ctx, lid)
 			if err != nil {
-				return fmt.Errorf("get manifest: %w", err)
+				return aktprovider.GatewayError("get manifest", err)
 			}
 
 			return printJSON(cmd, mani)
@@ -415,12 +419,12 @@ func migrateHostnamesCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 
-			providerAddr, providerURL, err := resolveProvider(cmd, nil)
+			providerAddr, providerURL, err := resolveAuthenticatedProvider(cmd, nil)
 			if err != nil {
 				return err
 			}
 
-			cl, err := gatewayClientFromCmd(cmd, providerAddr, providerURL)
+			cl, err := gatewayClientFromCmd(cmd, providerURL)
 			if err != nil {
 				return err
 			}
@@ -439,7 +443,7 @@ func migrateHostnamesCmd() *cobra.Command {
 			err = cl.MigrateHostnames(ctx, hostnames, dseq, gseq)
 			recordProviderAction(ctx, "migrate-hostnames", providerAddr.String(), dseq, err)
 			if err != nil {
-				return fmt.Errorf("migrate hostnames: %w", err)
+				return aktprovider.GatewayError("migrate hostnames", err)
 			}
 
 			fmt.Fprintln(cmd.OutOrStdout(), "Hostnames migrated successfully.")
@@ -465,12 +469,12 @@ func migrateEndpointsCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 
-			providerAddr, providerURL, err := resolveProvider(cmd, nil)
+			providerAddr, providerURL, err := resolveAuthenticatedProvider(cmd, nil)
 			if err != nil {
 				return err
 			}
 
-			cl, err := gatewayClientFromCmd(cmd, providerAddr, providerURL)
+			cl, err := gatewayClientFromCmd(cmd, providerURL)
 			if err != nil {
 				return err
 			}
@@ -489,7 +493,7 @@ func migrateEndpointsCmd() *cobra.Command {
 			err = cl.MigrateEndpoints(ctx, endpoints, dseq, gseq)
 			recordProviderAction(ctx, "migrate-endpoints", providerAddr.String(), dseq, err)
 			if err != nil {
-				return fmt.Errorf("migrate endpoints: %w", err)
+				return aktprovider.GatewayError("migrate endpoints", err)
 			}
 
 			fmt.Fprintln(cmd.OutOrStdout(), "Endpoints migrated successfully.")
@@ -559,12 +563,67 @@ func leaseIDFromFlags(cmd *cobra.Command, args []string, provider sdk.AccAddress
 	}, nil
 }
 
-// resolveProvider resolves the provider address and URL. If a positional arg is
-// given it is used as the provider address; otherwise --provider is required.
-// The provider URL is queried from chain via the provider's on-chain HostURI.
-// For now, we use the address directly as the URL placeholder — the actual
-// on-chain query will be added when the query client is wired in.
+// resolveProvider resolves the provider address and its on-chain HostURI. An
+// explicit --provider-url remains an override for diagnostics and private
+// gateways.
 func resolveProvider(cmd *cobra.Command, args []string) (sdk.AccAddress, string, error) {
+	return resolveProviderWithLookup(cmd, args, providerHostURILookup(cmd))
+}
+
+func providerHostURILookup(cmd *cobra.Command) func(context.Context, string) (string, error) {
+	return func(ctx context.Context, owner string) (string, error) {
+		cctx, err := providerQueryContext(cmd)
+		if err != nil {
+			return "", err
+		}
+
+		res, err := ptypes.NewQueryClient(cctx).Provider(ctx, &ptypes.QueryProviderRequest{Owner: owner})
+		if err != nil {
+			return "", fmt.Errorf("query provider %s: %w", owner, err)
+		}
+
+		return res.Provider.HostURI, nil
+	}
+}
+
+func resolveAuthenticatedProvider(cmd *cobra.Command, args []string) (sdk.AccAddress, string, error) {
+	return resolveProviderWithLookupAndPreflight(
+		cmd,
+		args,
+		providerHostURILookup(cmd),
+		func() error {
+			_, _, _, err := gatewayAuthenticationFromCmd(cmd)
+			return err
+		},
+	)
+}
+
+func providerQueryContext(cmd *cobra.Command) (sdkclient.Context, error) {
+	cctx, err := chaincli.GetClientQueryContext(cmd)
+	if err != nil {
+		return sdkclient.Context{}, fmt.Errorf("initialize provider query client: %w", err)
+	}
+	if err := chaincli.SetCmdClientContext(cmd, cctx); err != nil {
+		return sdkclient.Context{}, fmt.Errorf("store provider query client: %w", err)
+	}
+
+	return cctx, nil
+}
+
+func resolveProviderWithLookup(
+	cmd *cobra.Command,
+	args []string,
+	lookup func(context.Context, string) (string, error),
+) (sdk.AccAddress, string, error) {
+	return resolveProviderWithLookupAndPreflight(cmd, args, lookup, nil)
+}
+
+func resolveProviderWithLookupAndPreflight(
+	cmd *cobra.Command,
+	args []string,
+	lookup func(context.Context, string) (string, error),
+	preflight func() error,
+) (sdk.AccAddress, string, error) {
 	var addrStr string
 
 	if len(args) > 0 {
@@ -581,40 +640,136 @@ func resolveProvider(cmd *cobra.Command, args []string) (sdk.AccAddress, string,
 	if err != nil {
 		return nil, "", fmt.Errorf("invalid provider address %q: %w", addrStr, err)
 	}
+	if preflight != nil {
+		if err := preflight(); err != nil {
+			return nil, "", err
+		}
+	}
 
-	// Query the provider's on-chain record for HostURI.
-	// For now, use the --provider-url flag if available, or require it.
 	providerURL, _ := cmd.Flags().GetString("provider-url")
+	if providerURL != "" {
+		return addr, providerURL, nil
+	}
+
+	providerURL, err = lookup(cmd.Context(), addr.String())
+	if err != nil {
+		return nil, "", err
+	}
 	if providerURL == "" {
-		// TODO: query on-chain provider record for HostURI when query client is wired in.
-		return nil, "", fmt.Errorf("--provider-url is required (on-chain provider URL lookup not yet implemented)")
+		return nil, "", fmt.Errorf("provider %s has no host URI on chain", addr)
 	}
 
 	return addr, providerURL, nil
 }
 
 // gatewayClientFromCmd creates a provider gateway client from the command context.
-func gatewayClientFromCmd(cmd *cobra.Command, providerAddr sdk.AccAddress, providerURL string) (rest.Client, error) {
-	cctx := sdkclient.GetClientContextFromCmd(cmd)
-	authType, _ := cmd.Flags().GetString("auth-type")
+func gatewayClientFromCmd(cmd *cobra.Command, providerURL string) (rest.Client, error) {
+	cctx, accountAddr, authType, err := gatewayAuthenticationFromCmd(cmd)
+	if err != nil {
+		return nil, err
+	}
+	if authType == "mtls" {
+		cctx, err = providerQueryContext(cmd)
+		if err != nil {
+			return nil, err
+		}
+		accountAddr = cctx.GetFromAddress()
+	}
 
 	return aktprovider.NewGatewayClient(
 		cmd.Context(),
 		cctx,
-		cctx.GetFromAddress(),
+		accountAddr,
 		providerURL,
 		authType,
 		cctx.Keyring,
 	)
 }
 
-// printJSON marshals v to indented JSON and writes it to the command's output.
+func gatewayAuthenticationFromCmd(cmd *cobra.Command) (sdkclient.Context, sdk.AccAddress, string, error) {
+	cctx := sdkclient.GetClientContextFromCmd(cmd)
+	authType, _ := cmd.Flags().GetString("auth-type")
+	addr := cctx.GetFromAddress()
+	if err := aktprovider.ValidateGatewayAuthentication(addr, authType, cctx.Keyring); err != nil {
+		return sdkclient.Context{}, nil, "", err
+	}
+	return cctx, addr, authType, nil
+}
+
+// printJSON keeps JSON as the default provider representation while honoring
+// an explicit YAML selection with the provider's JSON field semantics.
 func printJSON(cmd *cobra.Command, v interface{}) error {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
+	format := output.FormatFromCmd(cmd)
+	if format != output.FormatYAML {
+		format = output.FormatJSON
+	}
+
+	if err := output.FprintJSONSemantics(cmd.OutOrStdout(), format, v); err != nil {
 		return fmt.Errorf("marshal output: %w", err)
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout(), string(data))
 	return nil
+}
+
+func consumeLeaseLogs(
+	ctx context.Context,
+	cmd *cobra.Command,
+	logs *rest.ServiceLogs,
+	service string,
+	follow bool,
+	tail int64,
+) error {
+	buffered := tail >= 0
+	var tailRecords []rest.ServiceLogMessage
+
+	streamErr := aktprovider.ConsumeStream(ctx, "log", logs.Stream, logs.OnClose, follow,
+		func(msg rest.ServiceLogMessage) error {
+			if !aktprovider.MatchesService(msg.Name, service) {
+				return nil
+			}
+			if buffered {
+				tailRecords = aktprovider.RetainTail(tailRecords, msg, tail)
+				return nil
+			}
+			return printProviderLog(cmd, msg)
+		})
+
+	for _, msg := range tailRecords {
+		if err := printProviderLog(cmd, msg); err != nil {
+			return err
+		}
+	}
+
+	return streamErr
+}
+
+func consumeLeaseEvents(
+	ctx context.Context,
+	cmd *cobra.Command,
+	events *rest.LeaseKubeEvents,
+	follow bool,
+) error {
+	return aktprovider.ConsumeStream(ctx, "event", events.Stream, events.OnClose, follow,
+		func(event rest.LeaseEvent) error {
+			return printProviderEvent(cmd, event)
+		})
+}
+
+func printProviderLog(cmd *cobra.Command, msg rest.ServiceLogMessage) error {
+	return output.PrintStreamRecord(cmd, msg, fmt.Sprintf("[%s] %s", msg.Name, msg.Message))
+}
+
+func printProviderEvent(cmd *cobra.Command, event rest.LeaseEvent) error {
+	pretty := fmt.Sprintf("%s [%s/%s] %s: %s",
+		event.Type, event.Object.Kind, event.Object.Name, event.Reason, event.Note)
+
+	return output.PrintStreamRecord(cmd, event, pretty)
+}
+
+func leaseShellCommand(args []string) []string {
+	if len(args) == 0 {
+		return []string{"/bin/sh"}
+	}
+
+	return args
 }

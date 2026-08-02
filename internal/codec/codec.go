@@ -18,6 +18,7 @@ import (
 	crisistypes "github.com/cosmos/cosmos-sdk/x/crisis/types"
 	distrtypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
 	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
+	govv1beta1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1beta1"
 	minttypes "github.com/cosmos/cosmos-sdk/x/mint/types"
 	paramstypes "github.com/cosmos/cosmos-sdk/x/params/types/proposal"
 	slashingtypes "github.com/cosmos/cosmos-sdk/x/slashing/types"
@@ -63,6 +64,12 @@ func MakeEncodingConfig() sdkutil.EncodingConfig {
 	minttypes.RegisterInterfaces(encCfg.InterfaceRegistry)
 	distrtypes.RegisterInterfaces(encCfg.InterfaceRegistry)
 	govv1.RegisterInterfaces(encCfg.InterfaceRegistry)
+	// Proposals predating gov v1 are still returned by the chain as
+	// v1beta1 content (TextProposal and friends). Without this the registry
+	// cannot resolve them, and `query gov proposals -o json` failed outright
+	// while the pretty renderer worked -- the only machine-readable path to
+	// the proposal list was broken.
+	govv1beta1.RegisterInterfaces(encCfg.InterfaceRegistry)
 	paramstypes.RegisterInterfaces(encCfg.InterfaceRegistry)
 	constypes.RegisterInterfaces(encCfg.InterfaceRegistry)
 	crisistypes.RegisterInterfaces(encCfg.InterfaceRegistry)

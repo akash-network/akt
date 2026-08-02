@@ -12,6 +12,8 @@ import (
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	cmcli "github.com/cometbft/cometbft/libs/cli"
+
+	"pkg.akt.dev/akt/internal/output"
 )
 
 const (
@@ -349,14 +351,14 @@ func AddQueryFlagsToCmd(cmd *cobra.Command) {
 	cmd.Flags().String(FlagGRPC, "", "the gRPC endpoint to use for this chain")
 	cmd.Flags().Bool(FlagGRPCInsecure, false, "allow gRPC over insecure channels, if not TLS the server must use TLS")
 	cmd.Flags().Int64(FlagHeight, 0, "Use a specific height to query state at (this can error if the node is pruning state)")
-	cmd.Flags().StringP(FlagOutput, "o", OutputPretty, "Output format (pretty|json|yaml)")
+	cmd.Flags().VarP(output.NewFormatFlag(OutputPretty), FlagOutput, "o", "Output format (pretty|json|yaml)")
 }
 
 // AddTxFlagsToCmd adds common flags to a module tx command.
 func AddTxFlagsToCmd(cmd *cobra.Command) {
 	f := cmd.Flags()
 
-	f.StringP(FlagOutput, "o", OutputPretty, "Output format (pretty|json|yaml)")
+	f.VarP(output.NewFormatFlag(OutputPretty), FlagOutput, "o", "Output format (pretty|json|yaml)")
 	f.String(FlagFrom, "", "Name or address of private key with which to sign")
 	f.Uint64P(FlagAccountNumber, "a", 0, "The account number of the signing account (offline mode only)")
 	f.Uint64P(FlagSequence, "s", 0, "The sequence number of the signing account (offline mode only)")
@@ -366,12 +368,12 @@ func AddTxFlagsToCmd(cmd *cobra.Command) {
 	f.String(FlagNode, "tcp://localhost:26657", "<host>:<port> to tendermint rpc interface for this chain")
 	f.Bool(FlagUseLedger, false, "Use a connected Ledger device")
 	f.Float64(FlagGasAdjustment, DefaultGasAdjustment, "adjustment factor to be multiplied against the estimate returned by the tx simulation; if the gas limit is set manually this flag is ignored ")
-	f.StringP(FlagBroadcastMode, "b", BroadcastSync, "Transaction broadcasting mode (sync|async)")
+	f.VarP(output.NewEnumFlag(BroadcastSync, BroadcastSync, BroadcastAsync, BroadcastBlock), FlagBroadcastMode, "b", "Transaction broadcasting mode (sync|async|block)")
 	f.Bool(FlagDryRun, false, "ignore the --gas flag and perform a simulation of a transaction, but don't broadcast it (when enabled, the local Keybase is not accessible)")
 	f.Bool(FlagGenerateOnly, false, "Build an unsigned transaction and write it to STDOUT (when enabled, the local Keybase only accessed when providing a key name)")
 	f.Bool(FlagOffline, false, "Offline mode (does not allow any online functionality)")
 	f.BoolP(FlagSkipConfirmation, "y", false, "Skip tx broadcasting prompt confirmation")
-	f.String(FlagSignMode, SignModeDirect, "Choose sign mode (direct|amino-json|direct-aux), this is an advanced feature")
+	f.Var(output.NewEnumFlag(SignModeDirect, SignModeDirect, SignModeLegacyAminoJSON, SignModeDirectAux, SignModeEIP191), FlagSignMode, "Choose sign mode (direct|amino-json|direct-aux|eip-191), this is an advanced feature")
 	f.Uint64(FlagTimeoutHeight, 0, "DEPRECATED: Please use --timeout-duration instead. Set a block timeout height to prevent the tx from being committed past a certain height")
 	f.Duration(TimeoutDuration, 0, "TimeoutDuration is the duration the transaction will be considered valid in the mempool. The transaction's unordered nonce will be set to the time of transaction creation + the duration value passed. If the transaction is still in the mempool, and the block time has passed the time of submission + TimeoutTimestamp, the transaction will be rejected.")
 	f.Bool(FlagUnordered, false, "Enable unordered transaction delivery; must be used in conjunction with --timeout-duration")

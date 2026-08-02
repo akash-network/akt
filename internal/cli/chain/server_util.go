@@ -29,12 +29,14 @@ import (
 	"github.com/cosmos/cosmos-sdk/version"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"pkg.akt.dev/akt/internal/cliutil"
 )
 
 // ServerCmds add server commands
 func ServerCmds(rootCmd *cobra.Command, defaultNodeHome string, appCreator types.AppCreator, appExport types.AppExporter, addStartFlags types.ModuleInitFlags) {
 	cometCmd := &cobra.Command{
 		Use:     "comet",
+		RunE:    ValidateCmd,
 		Aliases: []string{"cometbft", "tendermint"},
 		Short:   "CometBFT subcommands",
 	}
@@ -174,14 +176,15 @@ func QueryBlocksCmd() *cobra.Command {
 		Long: `Search for blocks that match the exact given events where results are paginated.
 The events query is directly passed to CometBFT's RPC BlockSearch method and must
 conform to CometBFT's query syntax.
-Please refer to each module's documentation for the full set of events to query
-for. Each module documents its respective events under 'xx_events.md'.
+Refer to the documentation of the module you are querying for the events it
+emits.
 `,
 		Example: fmt.Sprintf(
 			"$ %[1]s query blocks \"message.sender='cosmos1...' AND block.height > 7\" --page 1 --limit 30 --order_by asc",
 			version.AppName,
 		),
-		Args: cobra.MaximumNArgs(1),
+		Args:    cobra.MaximumNArgs(1),
+		PreRunE: directQueryWithoutHeightPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cctx, err := GetClientQueryContext(cmd)
 			if err != nil {
@@ -233,7 +236,8 @@ $ %s query block --%s=%s <hash>
 `,
 			version.AppName, cflags.FlagType, cflags.TypeHeight,
 			version.AppName, cflags.FlagType, cflags.TypeHash)),
-		Args: cobra.MaximumNArgs(1),
+		Args:    cobra.MaximumNArgs(1),
+		PreRunE: directQueryHeightPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cctx, err := GetClientQueryContext(cmd)
 			if err != nil {
@@ -258,13 +262,22 @@ $ %s query block --%s=%s <hash>
 					heightStr = args[0]
 				}
 
-				if heightStr == "" {
-					cmd.Println("Falling back to latest block height:")
+				switch {
+				case heightStr == "" && cctx.Height != 0:
+					// --height is the documented way to pin a query to a block.
+					// It was parsed into the client context and then ignored
+					// here, so `query block --height N` answered with the latest
+					// block at exit 0 -- every conclusion drawn from it about
+					// historical state was about the wrong point in time.
+					height = cctx.Height
+				case heightStr == "":
 					height, err = rpc.GetChainHeight(cctx)
 					if err != nil {
 						return fmt.Errorf("failed to get chain height: %w", err)
 					}
-				} else {
+
+					cliutil.Statusf(cmd, "no height given; using latest block %d", height)
+				default:
 					height, err = strconv.ParseInt(heightStr, 10, 64)
 					if err != nil {
 						return fmt.Errorf("failed to parse block height: %w", err)
@@ -315,10 +328,11 @@ $ %s query block --%s=%s <hash>
 // QueryBlockResultsCmd implements the default command for a BlockResults query.
 func QueryBlockResultsCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "block-results [height]",
-		Short: "Query for a committed block's results by height",
-		Long:  "Query for a specific committed block's results using the CometBFT RPC `block_results` method",
-		Args:  cobra.RangeArgs(0, 1),
+		Use:     "block-results [height]",
+		Short:   "Query for a committed block's results by height",
+		Long:    "Query for a specific committed block's results using the CometBFT RPC `block_results` method",
+		Args:    cobra.RangeArgs(0, 1),
+		PreRunE: directQueryHeightPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cctx, err := GetClientQueryContext(cmd)
 			if err != nil {
@@ -332,17 +346,23 @@ func QueryBlockResultsCmd() *cobra.Command {
 
 			// optional height
 			var height int64
-			if len(args) > 0 {
+
+			switch {
+			case len(args) > 0:
 				height, err = strconv.ParseInt(args[0], 10, 64)
 				if err != nil {
 					return err
 				}
-			} else {
-				cmd.Println("Falling back to latest block height:")
+			case cctx.Height != 0:
+				// See QueryBlockCmd: --height was read and then dropped here.
+				height = cctx.Height
+			default:
 				height, err = rpc.GetChainHeight(cctx)
 				if err != nil {
 					return fmt.Errorf("failed to get chain height: %w", err)
 				}
+
+				cliutil.Statusf(cmd, "no height given; using latest block %d", height)
 			}
 
 			blockRes, err := node.BlockResults(context.Background(), &height)

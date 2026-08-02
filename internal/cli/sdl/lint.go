@@ -1,8 +1,11 @@
 package sdl
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"strings"
+
+	"github.com/distribution/reference"
 
 	manifest "pkg.akt.dev/go/manifest/v2beta3"
 	dtypes "pkg.akt.dev/go/node/deployment/v1beta4"
@@ -41,20 +44,31 @@ func checkImageTag(service, image string) *Issue {
 		return nil // a missing image is the schema validator's problem
 	}
 
-	if strings.Contains(image, "@sha256:") {
-		return nil // digest-pinned is reproducible
+	named, err := reference.ParseNormalizedNamed(image)
+	if err != nil {
+		return invalidImageReferenceIssue(service, image, err)
 	}
 
-	tag, ok := imageTag(image)
+	if digested, ok := named.(reference.Digested); ok {
+		digest := digested.Digest()
+		if digest.Algorithm().String() != "sha256" || len(digest.Encoded()) != sha256.Size*2 {
+			return invalidImageReferenceIssue(service, image,
+				fmt.Errorf("digest must use sha256 with %d hexadecimal characters", sha256.Size*2))
+		}
 
-	switch {
-	case !ok:
+		return nil
+	}
+
+	tagged, ok := named.(reference.Tagged)
+	if !ok {
 		return &Issue{
 			Path:    fmt.Sprintf("services/%s/image", service),
 			Message: fmt.Sprintf("image %q has no tag; pin an explicit version for reproducible deployments", image),
 			Hint:    fmt.Sprintf("use %q instead of an untagged image", image+":<version>"),
 		}
-	case tag == "latest":
+	}
+
+	if tagged.Tag() == "latest" {
 		return &Issue{
 			Path:    fmt.Sprintf("services/%s/image", service),
 			Message: fmt.Sprintf("image %q uses \":latest\", which is not reproducible", image),
@@ -65,18 +79,12 @@ func checkImageTag(service, image string) *Issue {
 	return nil
 }
 
-// imageTag extracts an image tag, ignoring a `host:port/` registry prefix.
-// ok is false when the image has no tag.
-func imageTag(image string) (tag string, ok bool) {
-	lastColon := strings.LastIndex(image, ":")
-	lastSlash := strings.LastIndex(image, "/")
-
-	// A colon before the last slash belongs to a registry host:port, not a tag.
-	if lastColon == -1 || lastColon < lastSlash {
-		return "", false
+func invalidImageReferenceIssue(service, image string, err error) *Issue {
+	return &Issue{
+		Path:    fmt.Sprintf("services/%s/image", service),
+		Message: fmt.Sprintf("image %q is not a valid container image reference: %v", image, err),
+		Hint:    `use a tagged image such as "nginx:1.27" or a valid sha256 digest`,
 	}
-
-	return image[lastColon+1:], true
 }
 
 // lintPricing checks placement pricing denoms. This deliberately softens the

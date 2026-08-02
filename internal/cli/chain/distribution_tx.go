@@ -55,15 +55,22 @@ func newSplitAndApply(
 	msgs []sdk.Msg,
 	chunkSize int,
 	opts ...cclient.BroadcastOption,
-) error {
+) ([]interface{}, error) {
+	if len(msgs) == 0 {
+		return nil, fmt.Errorf("cannot construct transaction: no messages to submit")
+	}
+
 	if chunkSize == 0 {
-		if _, err := genOrBroadcastFn(ctx, msgs, opts...); err != nil {
-			return err
+		resp, err := genOrBroadcastFn(ctx, msgs, opts...)
+		if err != nil {
+			return nil, err
 		}
+		return []interface{}{resp}, nil
 	}
 
 	// split messages into slices of length chunkSize
 	totalMessages := len(msgs)
+	responses := make([]interface{}, 0, (totalMessages+chunkSize-1)/chunkSize)
 	for i := 0; i < len(msgs); i += chunkSize {
 		sliceEnd := i + chunkSize
 		if sliceEnd > totalMessages {
@@ -71,13 +78,14 @@ func newSplitAndApply(
 		}
 
 		msgChunk := msgs[i:sliceEnd]
-		_, err := genOrBroadcastFn(ctx, msgChunk, opts...)
+		resp, err := genOrBroadcastFn(ctx, msgChunk, opts...)
 		if err != nil {
-			return err
+			return nil, err
 		}
+		responses = append(responses, resp)
 	}
 
-	return nil
+	return responses, nil
 }
 
 // GetTxDistributionWithdrawRewardsCmd returns a CLI command handler for creating a MsgWithdrawDelegatorReward transaction.
@@ -194,7 +202,12 @@ $ %[1]s tx distribution withdraw-all-rewards --from mykey
 			}
 			chunkSize, _ := cmd.Flags().GetInt(FlagMaxMessagesPerTx)
 
-			return newSplitAndApply(ctx, cl.Tx().BroadcastMsgs, msgs, chunkSize)
+			responses, err := newSplitAndApply(ctx, cl.Tx().BroadcastMsgs, msgs, chunkSize)
+			if err != nil {
+				return err
+			}
+
+			return pretty.PrintTxResults(cmd, cl.ClientContext(), responses)
 		},
 	}
 
@@ -303,9 +316,10 @@ $ %s tx distribution fund-community-pool 100uatom --from mykey
 // a MsgDepositValidatorRewardsPool transaction.
 func GetTxDistributionDepositValidatorRewardsPoolCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "fund-validator-rewards-pool [val_addr] [amount]",
-		Args:  cobra.ExactArgs(2),
-		Short: "Fund the validator rewards pool with the specified amount",
+		Use:               "fund-validator-rewards-pool [val_addr] [amount]",
+		Args:              cobra.ExactArgs(2),
+		Short:             "Fund the validator rewards pool with the specified amount",
+		PersistentPreRunE: TxPersistentPreRunE,
 		Example: fmt.Sprintf(
 			"%s tx distribution fund-validator-rewards-pool cosmosvaloper1x20lytyf6zkcrv5edpkfkn8sz578qg5sqfyqnp 100uatom --from mykey",
 			version.AppName,

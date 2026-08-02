@@ -6,6 +6,7 @@ package console
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -26,9 +27,11 @@ func ToolListDeployments() mcp.Tool {
 		mcp.WithDescription("List the Console-managed deployments belonging to the configured API key."),
 		mcp.WithNumber("skip",
 			mcp.Description("Number of deployments to skip, for paging. Defaults to 0."),
+			marshal.NonNegativeInteger(),
 		),
 		mcp.WithNumber("limit",
 			mcp.Description(fmt.Sprintf("Maximum deployments to return. Defaults to %d, capped at %d.", defaultListLimit, maxListLimit)),
+			marshal.NonNegativeInteger(),
 		),
 	)
 }
@@ -37,13 +40,24 @@ func ToolListDeployments() mcp.Tool {
 func HandleListDeployments(cl *console.Client) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 		skip := 0
-		if v, ok := marshal.OptionalUint64(req, "skip"); ok {
+		if v, ok, err := marshal.OptionalUint64(req, "skip"); err != nil {
+			return marshal.ErrResult(err.Error()), nil
+		} else if ok {
+			if v > uint64(^uint(0)>>1) {
+				return marshal.ErrResult("parameter skip is out of range for this platform"), nil
+			}
 			skip = int(v)
 		}
 
 		limit := defaultListLimit
-		if v, ok := marshal.OptionalUint64(req, "limit"); ok && v > 0 {
-			limit = int(v)
+		if v, ok, err := marshal.OptionalUint64(req, "limit"); err != nil {
+			return marshal.ErrResult(err.Error()), nil
+		} else if ok && v > 0 {
+			if v > maxListLimit {
+				limit = maxListLimit
+			} else {
+				limit = int(v)
+			}
 		}
 		// An assistant asking for everything should not be able to turn one
 		// tool call into an unbounded page request.
@@ -114,6 +128,16 @@ func HandleListBids(cl *console.Client) mcpserver.ToolHandlerFunc {
 			return marshal.ErrResultf("failed to fetch bids for %s: %v", dseq, err), nil
 		}
 
+		// An empty list is only worth waiting on if the deployment exists.
+		// Returning [] for a dseq that does not exist, next to a description
+		// saying bids take a few seconds to arrive, tells an assistant to poll
+		// forever.
+		if len(bids) == 0 {
+			if _, err := cl.GetDeployment(ctx, dseq); err != nil {
+				return marshal.ErrResultf("no bids for %s: %v", dseq, err), nil
+			}
+		}
+
 		return marshal.ToTextResult(bids)
 	}
 }
@@ -122,7 +146,7 @@ func HandleListBids(cl *console.Client) mcpserver.ToolHandlerFunc {
 func ToolWalletBalance() mcp.Tool {
 	return mcp.NewTool(
 		"console_wallet_balance",
-		mcp.WithDescription("Get the balance of the Console-managed wallet: available credits, total, and any amount held in escrow by open deployments."),
+		mcp.WithDescription("Get the Console-managed wallet's available, in-deployment, and total balances in USD."),
 	)
 }
 
@@ -134,7 +158,15 @@ func HandleWalletBalance(cl *console.Client) mcpserver.ToolHandlerFunc {
 			return marshal.ErrResultf("failed to get wallet balance: %v", err), nil
 		}
 
-		return marshal.ToTextResult(resp)
+		return marshal.ToTextResult(struct {
+			AvailableUSD     float64 `json:"available_usd"`
+			InDeploymentsUSD float64 `json:"in_deployments_usd"`
+			TotalUSD         float64 `json:"total_usd"`
+		}{
+			AvailableUSD:     resp.BalanceUSD(),
+			InDeploymentsUSD: resp.DeploymentsUSD(),
+			TotalUSD:         resp.TotalUSD(),
+		})
 	}
 }
 
@@ -155,9 +187,33 @@ func ToolUsageHistory() mcp.Tool {
 // HandleUsageHistory returns the handler for console_usage_history.
 func HandleUsageHistory(cl *console.Client) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		// The address is resolved server-side from the API key, so it is not
-		// exposed as a tool argument.
-		resp, err := cl.GetUsageHistory(ctx, "",
+		// The endpoint needs the managed wallet's on-chain address; it is not
+		// derived from the API key, and sending an empty one is rejected. Look
+		// it up the same way `akt console usage` does rather than making the
+		// caller supply an address they have no way to know.
+		user, err := cl.GetUser(ctx)
+		if err != nil {
+			return marshal.ErrResultf("get user: %v", err), nil
+		}
+
+		wallets, err := cl.ListWallets(ctx, user.ID)
+		if err != nil {
+			return marshal.ErrResultf("list wallets: %v", err), nil
+		}
+
+		address := ""
+		for _, w := range wallets {
+			if w.Address != "" {
+				address = w.Address
+				break
+			}
+		}
+
+		if address == "" {
+			return marshal.ErrResult("no managed wallet with an on-chain address was found"), nil
+		}
+
+		resp, err := cl.GetUsageHistory(ctx, address,
 			marshal.OptionalString(req, "start_date"),
 			marshal.OptionalString(req, "end_date"),
 		)
@@ -175,7 +231,18 @@ func ToolListProviders() mcp.Tool {
 		"console_list_providers",
 		mcp.WithDescription("List providers known to Console, with their capacity and pricing."),
 		mcp.WithString("scope",
-			mcp.Description("Optional listing scope, e.g. 'active'. Omit for the default set."),
+			// The only values the API accepts. The schema used to suggest
+			// 'active', which it rejects with a 400 on every call, so an
+			// assistant following the documentation failed on its first try.
+			mcp.Enum("all", "trial"),
+			mcp.Description("Optional listing scope. Omit for the default set."),
+		),
+		mcp.WithString("addresses",
+			mcp.Description("Optional comma-separated provider bech32 addresses to restrict the listing to."),
+		),
+		mcp.WithNumber("limit",
+			mcp.Description(fmt.Sprintf("Maximum providers to return. Defaults to %d, capped at %d.", defaultListLimit, maxListLimit)),
+			marshal.NonNegativeInteger(),
 		),
 	)
 }
@@ -183,9 +250,41 @@ func ToolListProviders() mcp.Tool {
 // HandleListProviders returns the handler for console_list_providers.
 func HandleListProviders(cl *console.Client) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		resp, err := cl.ListProviders(ctx, marshal.OptionalString(req, "scope"), nil)
+		var addresses []string
+		if raw := marshal.OptionalString(req, "addresses"); raw != "" {
+			for _, a := range strings.Split(raw, ",") {
+				if a = strings.TrimSpace(a); a != "" {
+					addresses = append(addresses, a)
+				}
+			}
+		}
+
+		resp, err := cl.ListProviders(ctx, marshal.OptionalString(req, "scope"), addresses)
 		if err != nil {
 			return marshal.ErrResultf("failed to list providers: %v", err), nil
+		}
+
+		// The endpoint has no server-side paging, and the full catalogue is
+		// ~1800 providers -- half a megabyte, enough to evict the conversation
+		// that asked for it. console_list_deployments already caps itself for
+		// this reason; the same reasoning applies here and was not carried
+		// over. Truncation is reported so a short list is never mistaken for
+		// the whole catalogue.
+		limit := defaultListLimit
+		if v, ok, err := marshal.OptionalUint64(req, "limit"); err != nil {
+			return marshal.ErrResult(err.Error()), nil
+		} else if ok && v > 0 {
+			limit = int(min(v, uint64(maxListLimit)))
+		}
+
+		if len(resp) > limit {
+			return marshal.ToTextResult(map[string]any{
+				"providers": resp[:limit],
+				"truncated": true,
+				"returned":  limit,
+				"total":     len(resp),
+				"note":      "raise `limit` or filter with `addresses` to see more",
+			})
 		}
 
 		return marshal.ToTextResult(resp)

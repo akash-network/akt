@@ -38,6 +38,7 @@ func GetTxEvidenceCmd(childCmds []*cobra.Command) *cobra.Command {
 func SubmitEvidenceCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "submit",
+		RunE:  ValidateCmd,
 		Short: "Submit arbitrary evidence of misbehavior",
 	}
 

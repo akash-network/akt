@@ -58,6 +58,7 @@ networks:
     chain-id: akashnet-2
     endpoints:
       rpc:
+        - https://rpc.akt.dev:443/rpc
         - https://rpc.akashnet.net:443
         - https://rpc-akash.ecostake.com:443
       api:
@@ -81,14 +82,14 @@ networks:
     gas-adjustment: "1.5"
 
   - name: sandbox
-    chain-id: sandbox-01
+    chain-id: sandbox-2
     endpoints:
       rpc:
-        - https://rpc.sandbox-01.aksh.pw:443
+        - https://rpc.sandbox-2.aksh.pw:443
       api:
-        - https://api.sandbox-01.aksh.pw:443
+        - https://api.sandbox-2.aksh.pw:443
       grpc:
-        - grpc.sandbox-01.aksh.pw:443
+        - grpc.sandbox-2.aksh.pw:9090
     gas-prices: "0.025uakt"
     gas-adjustment: "1.5"
 
@@ -287,7 +288,7 @@ All environment variables use the `AKT_` prefix. When set, they override the cor
 | `AKT_HOME`            | Home directory (overrides XDG default)                  | `/path/to/.akt`                |
 | `AKT_CONTEXT`         | Active context name (overrides `current-context`)       | `prod`                         |
 | `AKT_CHAIN_ID`        | `networks[*].chain-id` (via context's network)          | `akashnet-2`                   |
-| `AKT_NODE`            | `networks[*].endpoints.rpc[0]` (via context's network)  | `https://rpc.akashnet.net:443` |
+| `AKT_NODE`            | `networks[*].endpoints.rpc[0]` (via context's network)  | `https://rpc.akt.dev:443/rpc` |
 | `AKT_GRPC_ADDR`       | `networks[*].endpoints.grpc[0]` (via context's network) | `grpc.akashnet.net:443`        |
 | `AKT_FROM`            | `contexts[*].default-account`                           | `alice`                        |
 | `AKT_KEYRING_BACKEND` | `keyrings[*].backend` (via context's keyring)           | `os`                           |
@@ -310,6 +311,7 @@ name: mainnet
 chain-id: akashnet-2
 endpoints:
   rpc:
+    - https://rpc.akt.dev:443/rpc
     - https://rpc.akashnet.net:443
     - https://rpc-akash.ecostake.com:443
   api:
@@ -339,14 +341,14 @@ gas-adjustment: "1.5"
 **Template: `sandbox`**
 ```yaml
 name: sandbox
-chain-id: sandbox-01
+chain-id: sandbox-2
 endpoints:
   rpc:
-    - https://rpc.sandbox-01.aksh.pw:443
+    - https://rpc.sandbox-2.aksh.pw:443
   api:
-    - https://api.sandbox-01.aksh.pw:443
+    - https://api.sandbox-2.aksh.pw:443
   grpc:
-    - grpc.sandbox-01.aksh.pw:443
+    - grpc.sandbox-2.aksh.pw:9090
 gas-prices: "0.025uakt"
 gas-adjustment: "1.5"
 ```
@@ -377,7 +379,45 @@ gas-adjustment: "1.5"
 
 Implementation note: `tx` and `query` commands are clean-copied from `akash-network/chain-sdk/go/cli` into `internal/cli/chain`. Only CLI code is copied; all other chain-sdk packages are imported directly. Command flags default to the resolved akt context values unless explicitly overridden.
 
-**Help text requirement**: Every command and subcommand must populate cobra's `Example` field with at least one usage example. The example should demonstrate the most common use case with realistic argument values. Commands with multiple modes of operation (e.g., list vs get, interactive vs scripted) should include one example per mode. This ensures that `akt <command> --help` is self-contained -- users should never need to consult external documentation for basic usage.
+**Help text requirement**: Every command and subcommand must populate cobra's `Example` field with at least one usage example. The example must name a registered command and registered flags, and it must be syntactically runnable after replacing any clearly explained placeholders. It should demonstrate the most common use case with realistic argument values. Commands with multiple modes of operation (e.g., list vs get, interactive vs scripted) should include one example per mode. User-facing help must not contain internal specification references, review notes, or instructions aimed at an automated agent. This ensures that `akt <command> --help` is self-contained -- users should never need to consult external documentation for basic usage.
+
+**Input validation requirement**: A command group prints its help and exits 0
+only when it is invoked without an action. Any non-flag token that does not
+name a child command is an unknown-command error and exits non-zero, including
+for vendored Cosmos SDK and IBC groups. Flags with a documented set of values
+validate that set during argument parsing, before configuration or network
+work begins. In particular, the standard `--output` values are `pretty`,
+`json`, and `yaml`; workflow commands additionally accept `jsonl`, while
+SDK-compatible key and RPC commands that advertise `text|json` accept exactly
+those values. The accepted enum and the values rendered in `--help` are one
+contract: when an adopted flag is normalized, its help text is normalized in
+the same boundary pass.
+
+Every accepted flag must affect the operation it describes. If a leaf cannot
+apply an inherited transport, snapshot, pagination, or output flag, it rejects
+that flag before configuration or network work rather than accepting and
+ignoring it. When a positional value and a flag both target the same field,
+supplying both is a usage error unless that command explicitly documents a
+different precedence rule.
+Each selectable command path is unique; dependency-owned trees are deduplicated
+when they are adopted into the assembled command tree.
+
+The global `--context` flag selects every context-owned resource touched by an
+invocation. This includes `context show`, `context log`, Console API key login
+and logout, keyring selection, stores, and action logs; no leaf may fall back to
+`current-context` after the root selected an override. Account resolution uses
+the same precedence chain: `--from` > `AKT_FROM` > the selected context's
+`default-account`.
+
+`--dry-run` suppresses state changes and client discovery, not input
+validation. Workflow commands validate required parameters and their declared
+types before printing a plan. Built-in deployment workflows additionally parse
+the SDL and validate deposit syntax, positive sequence identifiers, bid
+timeouts, bid selectors, output mode, and transaction chain identity. Invalid
+input produces a non-zero usage error and no plan. In `--output jsonl` mode, a
+valid dry-run emits one JSON object per planned step with `result:"planned"`,
+empty `errors` and `txs` arrays, and one generated run ID shared by every line;
+it emits no human plan text.
 
 ### 2.0 Root Command Behavior (`akt` with no subcommand)
 
@@ -385,6 +425,12 @@ When `akt` is invoked with no subcommand, the following flow determines what hap
 
 1. **No config exists** (first run): The bootstrap wizard runs (§1.11, `internal/bootstrap/wizard.go`). It prompts the user to select networks, select a keyring backend (`os`, `file`, or `test`; default: `os`), and configure an initial context. It then offers optional Akash Console onboarding: the user may enter a Console API key (validated best-effort against `/v1/user/me`, stored as the initial context's per-context credential per §7.1) and choose whether deployments for that context should be routed through Console (`auth-method: console-api`). Both prompts default to "no" and are skipped entirely in non-interactive runs. The wizard runs only when stdin is a terminal: in headless environments it declines to bootstrap (no network fetch, no config written) and prints guidance to create a config via `akt context network create` / `akt context create`; the root command then continues to step 2 without a config. After bootstrap completes, the root command continues to step 2.
 > **TUI shell status (2026-07): DISABLED pending UX feedback.** Bare `akt` prints the help text and `--interactive`/`-i` reports that the TUI is disabled. The launch path remains compiled behind `AKT_EXPERIMENTAL_TUI=1` for feedback sessions, and `akt monitor` (§2.6) is unaffected. Steps 2–5 below describe the behavior that resumes when the TUI is re-enabled.
+
+The root help introduction describes `akt` as the unified Akash Network CLI.
+It names the major jobs available from the command tree: chain queries and
+transactions, deployments through either payment rail, provider gateway
+operations, context and key management, and network monitoring. It MUST NOT
+describe workload deployment as though it were the CLI's only purpose.
 
 2. **Config exists, `defaults.interactive` is `true` (default), and a TTY is attached**: The interactive TUI application launches (§8).
 3. **Config exists, `defaults.interactive` is `false`**: Print the help text (equivalent to `akt --help`). The user has opted out of TUI mode and must use explicit subcommands.
@@ -496,8 +542,6 @@ akt
 │   ├── upgrade
 │   │   ├── software-upgrade <name>
 │   │   └── cancel-software-upgrade
-│   ├── crisis
-│   │   └── invariant-broken <module> <invariant>
 │   ├── wasm
 │   │   ├── store <wasm-file>
 │   │   ├── instantiate <code-id> <init-args>
@@ -662,6 +706,14 @@ akt
 └── completion                           # Shell completion scripts
 ```
 
+Only executable transaction actions appear in this tree. The Akash app does
+not register the Cosmos SDK `MsgVerifyInvariant` handler, so `tx crisis` is not
+mounted. Evidence submission remains query-only until at least one concrete
+evidence transaction type exists. IBC channel-v2 queries are available, but its
+empty upstream transaction group is omitted until upstream supplies a packet
+action. Unknown invocations of these omitted paths follow the normal usage-error
+contract; they never print group help at exit 0 or reach gas simulation.
+
 ### 2.2 Context Commands
 
 #### `akt context create <name>`
@@ -678,6 +730,7 @@ Create a new named context. A context references a network and keyring by name.
 | `--default-account`   | string | `""`        | Default account name (only with `keyring` auth)                  |
 | `--gas`               | string | `"auto"`    | Gas limit override (only with `keyring` auth)                    |
 | `--fees`              | string | `""`        | Fixed fees override (only with `keyring` auth)                   |
+| `--provider-auth-type`| string | `"jwt"`     | Provider gateway auth default: `jwt` or `mtls`                   |
 | `--set-current`       | bool   | `false`     | Set as current context after creation                            |
 
 **Examples:**
@@ -720,13 +773,17 @@ $ akt context list
 #### `akt context show`
 
 Print the current context name and full details (resolved network, keyring, store path, action log path, and all effective settings).
+An explicit global `--context <name>` selects the context to show. Structured
+output includes the fully resolved network and keyring, effective gas/provider
+settings, capability booleans, `store_path`, and `action_log_path`; it never
+includes the Console API key.
 
 ```bash
 $ akt context show
 Context:         prod
 Network:         mainnet
   Chain ID:      akashnet-2
-  RPC:           https://rpc.akashnet.net:443 (+1 backup)
+  RPC:           https://rpc.akt.dev:443/rpc (+2 backup)
   API:           https://api.akashnet.net:443 (+1 backup)
   gRPC:          grpc.akashnet.net:443
   Gas Prices:    0.025uakt
@@ -753,10 +810,17 @@ Edit context-level settings. For network-level changes (endpoints, gas-prices), 
 | `--default-account` | string | `""`    | Change default account                 |
 | `--gas`             | string | `""`    | Change gas setting                     |
 | `--fees`            | string | `""`    | Change fees setting                    |
+| `--provider-auth-type` | string | unchanged | Change provider gateway auth default: `jwt` or `mtls` |
 | `--auth-method`     | string | `""`    | Change authentication method: `keyring` or `console-api` |
 | `--console-api-url` | string | `""`    | Change Console API base URL (empty = default) |
 | `--console-api-key` | string | `""`    | Set the per-context Console API key (empty string removes it; §7.1) |
 | `--fork-network`    | bool   | `false` | Force fork when editing network fields |
+| `--rpc`             | []string | unchanged | Replace the selected network's RPC endpoints |
+| `--api`             | []string | unchanged | Replace the selected network's REST endpoints |
+| `--grpc`            | []string | unchanged | Replace the selected network's gRPC endpoints |
+| `--gas-prices`      | string | unchanged | Change the selected network's gas prices |
+| `--gas-adjustment`  | string | unchanged | Change the selected network's gas adjustment |
+| `--yes`             | bool   | `false` | Edit a shared parent network without prompting |
 
 ```bash
 # Change default account
@@ -768,6 +832,14 @@ akt context edit staging --network sandbox
 # Edit the network's RPC (prompts: edit parent or fork?)
 akt context edit prod --rpc https://my-private-rpc:443
 ```
+
+`--fork-network` is valid only with at least one network-level field and cannot
+be combined with `--network`. It atomically creates
+`<source-network>-<context>`, applies the requested network edits to that copy,
+and switches only the named context to it. If the generated name already
+exists, the command refuses rather than overwriting it. Without
+`--fork-network`, editing a network used by multiple contexts prompts in a TTY;
+`--yes` or a non-TTY invocation chooses the documented edit-parent default.
 
 #### `akt context delete <name>`
 
@@ -857,9 +929,9 @@ List all networks and which contexts reference each.
 ```bash
 $ akt context network list
   NAME              CHAIN-ID       RPC                          USED BY
-  mainnet           akashnet-2     rpc.akashnet.net:443         prod, monitoring
+  mainnet           akashnet-2     rpc.akt.dev:443/rpc          prod, monitoring
   testnet           testnet-02     rpc.testnet-02.aksh.pw:443   staging
-  sandbox           sandbox-01     rpc.sandbox-01.aksh.pw:443
+  sandbox           sandbox-2      rpc.sandbox-2.aksh.pw:443
   mainnet-custom    akashnet-2     my-private-rpc:443           (none)
 ```
 
@@ -868,6 +940,16 @@ $ akt context network list
 Show full network details.
 
 ### 2.2.2 Keys Commands
+
+#### `akt context keys add <name>`
+
+Create, recover, or register a key. Pretty output retains the human backup
+warning and mnemonic for a newly generated local key. JSON and YAML emit one
+object with `name`, `address`, and `type`; multisig results also include
+`threshold` and `pubkeys`, and a newly generated local key includes `mnemonic`
+unless `--no-backup` was selected. Recovered keys never repeat their input
+mnemonic. The selected output format applies equally to local, Ledger, and
+multisig keys.
 
 #### `akt context keys show <name|address>`
 
@@ -883,6 +965,17 @@ akt context keys show test1
 akt context keys show test1 --address
 akt context keys show test1 -a
 ```
+
+With `--output json|yaml`, the full form emits an object with `name`, `type`,
+`address`, and `pubkey`. The `--address` form emits a quoted scalar in machine
+formats and the unchanged raw address in pretty output.
+
+#### `akt context keys parse <hex-or-bech32>`
+
+Parse an address and render its canonical uppercase hex form plus full bech32
+forms for the `akash`, `cosmos`, and `osmo` prefixes. JSON/YAML output contains
+`format`, optional `hrp`, `hex`, and an `addresses` object; pretty output keeps
+the aligned human-readable form.
 
 ### 2.3 Workflow Engine
 
@@ -910,19 +1003,19 @@ version: 1
 
 params:
   sdl-file:
-    type: file
+    type: sdl
     required: true
     description: Path to SDL deployment file
   deposit:
-    type: string
+    type: deposit
     default: "auto"
-    description: "Initial deposit: 5usd or $5 (USD, console-api contexts), 5000000uakt (coin, keyring contexts), auto = chain minimum (keyring)"
+    description: "Initial deposit: auto (recommended chain minimum, keyring), 5usd or $5 (console-api), or an explicit coin in the network's deposit denomination (keyring)"
   bid-timeout:
     type: duration
     default: "5m"
     description: Maximum time to wait for bids
   bid-select:
-    type: string
+    type: bid-selection
     default: "interactive"
     description: "Bid selection: interactive, cheapest, provider=<addr>"
 
@@ -979,6 +1072,22 @@ steps:
       Deployment active!
         DSEQ: {{ (index .Steps "create-deployment").dseq }}
 ```
+
+Workflow parameter types are boundary contracts, not display hints:
+
+| Type | Validation before plan or execution |
+|------|-------------------------------------|
+| `string` | Value is passed through; `required` rejects an empty value |
+| `int` | Base-10 integer; a required sequence value must be greater than zero |
+| `bool` | Cobra boolean parsing |
+| `duration` | Positive Go duration such as `30s` or `5m` |
+| `file` | Required path exists and is readable |
+| `sdl` | File is readable and parses as a valid SDL document |
+| `deposit` | Unified deposit grammar from §7.4 |
+| `bid-selection` | `interactive`, `cheapest`, or `provider=<full-address>` |
+
+Validation runs before dry-run prints its plan. User-defined workflows receive
+the same validation from their declared parameter types.
 
 #### 2.3.3 Step Types
 
@@ -1050,16 +1159,16 @@ Steps can also define `retry` with `max` attempts and `delay` between retries.
 
 When a workflow aborts due to a step failure, the user may be left with partial on-chain state (e.g., a deployment was created but no lease was established, consuming escrow). The workflow engine handles this as follows:
 
-1. **Abort message includes partial state summary**: When a workflow aborts, the error output lists all successfully completed steps and their results (e.g., "Deployment created with DSEQ 12345"). This gives the user the information needed to clean up manually.
+1. **Abort message includes partial state summary**: When a deploy workflow aborts after `create-deployment` succeeds, both the human output and the returned command error identify the DSEQ and provider, when known. They also warn that escrow may continue to be consumed while the deployment or lease remains open. This gives the user the information needed to recover even when stdout was redirected or suppressed.
 
 2. **Recovery suggestions**: The abort message includes actionable suggestions based on which step failed:
    - Failed after `create-deployment`: Suggest `akt close <dseq>` to close the orphaned deployment and reclaim the escrow deposit.
-   - Failed after `create-lease` but before `send-manifest`: Suggest `akt provider send-manifest <sdl-file> --dseq <dseq>` to retry manifest submission.
-   - Failed during `send-manifest`: Suggest retrying with `akt provider send-manifest` directly.
+   - Failed after `create-lease` but before `send-manifest`: Suggest `akt provider send-manifest <sdl-file> --dseq <dseq> --provider <provider>` to retry manifest submission.
+   - Failed during `send-manifest`: Suggest the same complete retry command, including the SDL path, DSEQ, and provider.
 
-3. **JSONL mode**: In JSONL mode, the error line includes a `"recovery"` field with the suggested command:
+3. **JSONL mode**: In JSONL mode, the failed step includes `"dseq"`, `"provider"`, `"recovery"`, and `"cleanup"` fields when known. The recovery and cleanup values are complete copy-pasteable commands:
    ```jsonl
-   {"workflow":"deploy","id":"wf_abc123","step":"send-manifest","result":"error","errors":["provider gateway timeout"],"txs":[],"recovery":"akt provider send-manifest deploy.yaml --dseq 12345"}
+   {"workflow":"deploy","id":"wf_abc123","step":"send-manifest","result":"error","errors":["provider gateway timeout"],"txs":[],"dseq":12345,"provider":"akash1provider...","recovery":"akt provider send-manifest deploy.yaml --dseq 12345 --provider akash1provider...","cleanup":"akt close 12345"}
    ```
 
 4. **No automatic rollback**: The workflow engine does not automatically roll back completed steps. On-chain transactions are irreversible. The user must explicitly close deployments or leases they no longer want.
@@ -1070,11 +1179,14 @@ When a workflow aborts due to a step failure, the user may be left with partial 
 
 | Type       | Description                       | Flag type      |
 |------------|-----------------------------------|----------------|
-| `string`   | Plain string                      | `--name value` |
-| `int`      | Integer                           | `--name 5`     |
-| `bool`     | Boolean                           | `--name`       |
-| `duration` | Go duration string                | `--name 5m`    |
-| `file`     | File path (positional if first)   | positional arg |
+| `string`        | Plain string                         | `--name value` |
+| `int`           | Integer                              | `--name 5`     |
+| `bool`          | Boolean                              | `--name`       |
+| `duration`      | Positive Go duration                 | `--name 5m`    |
+| `file`          | Readable file path (positional first)| positional arg |
+| `sdl`           | Parsed SDL file (positional first)   | positional arg |
+| `deposit`       | Unified §7.4 deposit                 | `--deposit 5usd` |
+| `bid-selection` | Interactive/cheapest/provider mode   | `--bid-select cheapest` |
 
 #### 2.3.8 Execution Modes
 
@@ -1112,7 +1224,7 @@ On error:
 | `workflow` | string   | Workflow name (e.g., `deploy`, `update`, `close`)               |
 | `id`       | string   | Unique workflow run ID (generated at start, same for all steps) |
 | `step`     | string   | Step name from the workflow definition                          |
-| `result`   | string   | `completed`, `error`, or `skipped` (step skipped by its on-error policy) |
+| `result`   | string   | `planned` (dry-run), `completed`, `error`, or `skipped` (step skipped by its on-error policy) |
 | `errors`   | []string | Array of error messages (empty when `result` is `completed`)    |
 | `txs`      | []object | Array of raw transaction results (empty for non-tx steps)       |
 
@@ -1147,7 +1259,7 @@ version: 1
 
 params:
   sdl-file:
-    type: file
+    type: sdl
     required: true
     description: Path to updated SDL deployment file
   dseq:
@@ -1164,6 +1276,17 @@ steps:
       dseq: "{{ .Params.dseq }}"
     on-error: abort
 
+  - name: send-manifest
+    type: provider
+    action: send-manifest-to-active-leases
+    params:
+      dseq: "{{ .Params.dseq }}"
+      sdl: "{{ index .Params \"sdl-file\" }}"
+    retry:
+      max: 3
+      delay: "5s"
+    on-error: abort
+
   - name: display-result
     type: output
     template: |
@@ -1171,7 +1294,13 @@ steps:
         DSEQ: {{ .Params.dseq }}
 ```
 
-Manifest re-send to providers with active leases (a `foreach` over `market.leases` running `provider`/`send-manifest` sub-steps) is planned for when the engine gains the `foreach` step type; until then, keyring users re-send manifests with `akt provider send-manifest` after an update, and console-api contexts get manifest handling from the Console API automatically.
+On the chain rail, `send-manifest-to-active-leases` queries every page of active
+leases for the owner and DSEQ, de-duplicates and sorts provider addresses, and
+attempts manifest submission to all of them. A provider failure does not stop
+delivery attempts to the remaining providers, but the step fails unless every
+provider accepts the update. No active leases is a successful no-op. The
+operation is safe to retry. Console API contexts omit the provider step because
+`PUT /v1/deployments/{dseq}` handles manifest delivery internally.
 
 **Close workflow definition:**
 
@@ -1216,7 +1345,7 @@ The flagship workflow command. Orchestrates the full deployment lifecycle:
 | Flag               | Type     | Default         | Description                                                 |
 | ------------------ | -------- | --------------- | ----------------------------------------------------------- |
 | `--from`           | string   | context default | Account to deploy from                                      |
-| `--deposit`        | string   | `auto`          | Initial deposit, unified syntax on both rails (see §7.4): `5usd`/`$5`, `5000000uakt`, or `auto` |
+| `--deposit`        | string   | `auto`          | Initial deposit, unified syntax on both rails (see §7.4): `auto` (recommended for keyring), `5usd`/`$5` (Console), or an explicit network deposit coin |
 | `--bid-timeout`    | duration | `5m`            | Maximum time to wait for bids                               |
 | `--min-bids`       | int      | `1`             | Minimum bids before selection                               |
 | `--bid-select`     | string   | `"interactive"` | Bid selection: `interactive`, `cheapest`, `provider=<addr>` |
@@ -1360,12 +1489,39 @@ $ akt close --dseq 12345 --yes -o jsonl
 
 #### `akt provider status [provider-addr]`
 
-Query provider status. If `provider-addr` is omitted, uses the provider from the active lease context.
+Query provider status. Supply the provider address positionally or with
+`--provider`. The gateway URL is resolved from that provider's on-chain
+`host_uri`; `--provider-url` is an explicit override for diagnostics and
+private gateways. A provider with no on-chain host URI is refused before a
+gateway request is attempted.
 
-| Flag          | Type   | Default         | Description              |
-| ------------- | ------ | --------------- | ------------------------ |
-| `--provider`  | string | `""`            | Provider address         |
-| `--auth-type` | string | context default | Auth type: `jwt`, `mtls` |
+Provider `/status` is a public gateway endpoint. This command MUST NOT load a
+default account, open a keyring, mint a JWT, or load an mTLS certificate. It is
+valid from a monitoring-only context with chain-query access and no wallet.
+The provider address is still required because it identifies the gateway and,
+unless `--provider-url` is supplied, selects the on-chain `host_uri`. The
+provider group's inherited `--auth-type` flag does not apply to this public
+endpoint; explicitly passing it is refused instead of being silently ignored.
+
+| Flag             | Type   | Default         | Description                                      |
+| ---------------- | ------ | --------------- | ------------------------------------------------ |
+| `--provider`     | string | `""`            | Provider address; alternative to positional form |
+| `--provider-url` | string | on-chain record | Explicit provider gateway URL override           |
+
+All lease-, manifest-, migration-, log-, event-, and shell-scoped provider
+commands remain authenticated. Before constructing their gateway client they
+resolve `--auth-type` over `provider-defaults.auth-type` from the selected
+context and default to `jwt`. Before provider URL discovery or gateway network
+work, they MUST validate the auth enum, default account, keyring, and that the
+selected account exists in that keyring. Both JWT signing and mTLS certificate
+loading require that local signing identity. Failures name the missing
+provider signing identity and how to repair the context; they MUST NOT defer to
+a signer as raw `key with address ... not found` output.
+
+MCP uses the same selected context auth default for protected provider tools.
+Provider status remains public; lease status, service status, and manifest
+submission use the shared authenticated gateway boundary with JWT or mTLS as
+configured.
 
 #### `akt provider lease-status [dseq]`
 
@@ -1396,6 +1552,11 @@ Stream container logs from a lease. The positional `dseq` supplies the deploymen
 | `--tail`      | int64  | `-1`            | Lines from end (-1 = all) |
 | `--auth-type` | string | context default | Auth type                 |
 
+`--tail` is exact for a bounded read. Values below `-1` are invalid, and
+`--tail` with `--follow` is refused because an endless stream has no final
+tail. Service and tail filtering are enforced by `akt` after receipt because
+older provider gateways may ignore those query parameters.
+
 #### `akt provider lease-events [dseq]`
 
 Stream Kubernetes events from a lease. The positional `dseq` behaves as in `lease-logs` (`--dseq` — **disabled pending feedback**, positional only, 2026-07).
@@ -1415,10 +1576,18 @@ Open an interactive shell into a running container.
 | `--from`      | string | context default | Owner account       |
 | `--service`   | string | required        | Service name        |
 | `--tty`       | bool   | `true`          | Allocate a TTY      |
-| `--stdin`     | bool   | `true`          | Attach stdin        |
+| `--stdin`     | bool   | `false`         | Force stdin attachment for an explicit terminal command |
 | `--auth-type` | string | context default | Auth type           |
 
 Remaining arguments after `--` are passed as the shell command. Default: `/bin/sh`.
+Interactive shells and explicit commands receiving piped input attach stdin
+automatically. An explicit command launched from a terminal leaves stdin
+detached so its remote exit can complete; `--stdin` opts back into attachment,
+and `--stdin=false` explicitly detaches piped input.
+EOF on attached stdin is not a command failure: `akt` waits for the provider's
+remote exit result and returns that result. This prevents a successful
+non-interactive command from printing its output and then exiting non-zero
+solely because local stdin was already closed.
 
 ```bash
 akt provider lease-shell --dseq 12345 --provider akash1prov... --service web -- /bin/bash
@@ -1455,6 +1624,17 @@ Migrate hostnames from one deployment to another on the same provider.
 #### `akt provider migrate-endpoints`
 
 Same pattern as `migrate-hostnames` but for IP endpoints.
+
+**Provider gateway output and stream contract:** provider status, lease
+status, and manifest reads emit JSON by default; `--output json` and
+`--output yaml` preserve the same field names and scalar types. Log and event
+streams emit human lines by default, one compact object per line in JSON mode,
+and one YAML document per record in YAML mode. Before opening a log, event, or
+shell stream, `akt` checks lease status so a missing lease is a non-zero gateway
+error instead of a successful empty stream. An EOF closes a bounded one-shot
+stream successfully after its records are written; the same EOF is an error
+under `--follow`. Non-success gateway responses include both the HTTP status
+and the provider's trimmed response body when one is available.
 
 ### 2.5 Store Commands
 
@@ -1510,7 +1690,7 @@ Hub-based real-time monitoring tool for network state, provider fleet health, or
 
 | Hub Tab | Dashboard | Content |
 |---------|-----------|---------|
-| **Network** (default) | Consensus, validators, governance | [§8.3.8](#838-consensus-monitor-view-from-aktop), [§8.3.9](#839-validator-voting-view-from-aktop), [§8.3.11](#8311-governance-parameters-view-from-aktop) |
+| **Network** (default) | Consensus, validators, governance proposals, governance parameters | [§8.3.8](#838-consensus-monitor-view-from-aktop), [§8.3.9](#839-validator-voting-view-from-aktop), [§8.3.11](#8311-governance-monitor-views) |
 | **Provider** | Fleet health, versions, resources | [§8.3.10](#8310-provider-fleet-monitor-view) |
 | **Oracle/BME** | Prices, health, vault state, mint status, ledger | [§8.3.12](#8312-oraclebme-monitor-view) |
 
@@ -1520,11 +1700,21 @@ Each dashboard is also directly accessible via its CLI subcommand. When launched
 
 **Endpoint resolution** (first match wins, shared by all subcommands):
 
-1. Positional argument: `akt monitor https://rpc.akashnet.net:443`
-2. `--rpc` flag: `akt monitor --rpc https://rpc.akashnet.net:443`
+1. Positional argument: `akt monitor https://rpc.akt.dev:443/rpc`
+2. `--rpc` flag: `akt monitor --rpc https://rpc.akt.dev:443/rpc`
 3. Active context RPC endpoint (from `context → network → endpoints.rpc[0]`)
 
 If no endpoint can be resolved, the command exits with an error.
+
+Built-in network templates place a WebSocket-capable RPC first because that is
+the endpoint a flagless monitor launch selects. Ordinary HTTP-only RPCs may
+remain later in the network's failover list for query commands, but MUST NOT be
+the primary endpoint of a built-in template advertised for monitor use.
+
+The monitor connects to `{rpc-endpoint}/websocket`. Help examples use
+`https://rpc.akt.dev:443/rpc`, whose CometBFT WebSocket service is part of the
+documented endpoint. An HTTP-only RPC gateway may still serve ordinary query
+commands, but it is not a valid monitor example.
 
 **Shared flags** (apply to `akt monitor` and all subcommands):
 
@@ -1532,8 +1722,31 @@ If no endpoint can be resolved, the command exits with an error.
 | ----------------- | ------ | --------------- | -------------------------------------------------------- |
 | `--rpc`           | string | context default | RPC endpoint (WebSocket-capable)                         |
 | `--rest`          | string | auto-derived    | REST API endpoint (for governance/oracle/BME queries). Default: derived from the context's `endpoints.api[0]`. If no API endpoint is configured, falls back to the RPC host on port 1317 (standard Cosmos REST port). |
-| `--insecure`      | bool   | `false`         | Skip TLS certificate verification                        |
+| `--insecure`      | bool   | `false`         | Skip TLS certificate verification for REST and gRPC provider probes |
 | `--clean-cache`   | bool   | `false`         | Clear the local cache before start                       |
+
+An explicit `--rest` always wins. Without it, a context API endpoint is used
+only when the selected RPC is one of that same context network's configured RPC
+endpoints. For an ad-hoc positional or `--rpc` override, the REST endpoint is
+derived from that RPC: a terminal `/rpc` path becomes `/rest`; otherwise the
+same hostname uses the standard Cosmos REST port 1317. WebSocket and Cosmos
+`tcp` schemes are converted to their HTTP equivalents for REST requests. The
+monitor MUST NOT combine an overridden RPC with an unrelated active-context
+API. Its cache is always `<resolved --home>/cache`; an explicit `--home` MUST
+govern the monitor just as it governs contexts, keyrings, stores, and action
+logs.
+
+For implicit context resolution only, a primary endpoint that exactly matches
+a retired HTTP-only endpoint from an older built-in template is replaced at
+runtime by that template's current WebSocket-capable primary. This compatibility
+selection does not rewrite the context. Positional and `--rpc` endpoints are
+explicit user choices and are never substituted.
+
+An explicit positional or `--rpc` endpoint MUST work with no config file and
+MUST NOT trigger first-run bootstrap. Monitor cache directory creation/open
+errors are fatal startup errors. `--clean-cache` removes both `monitor.db` and
+the legacy `top.db`; a failed deletion is reported and the monitor does not
+claim the cache was cleared.
 
 **Hub navigation:**
 
@@ -1541,7 +1754,22 @@ If no endpoint can be resolved, the command exits with an error.
 |-----|--------|
 | `Tab` | Switch to next dashboard (Network → Provider → Oracle/BME → Network) |
 | `Shift-Tab` | Switch to previous dashboard |
-| `1`/`2`/`3` | Switch sub-tab within the active dashboard (Network only) |
+| `1`/`2`/`3`/`4` | Switch sub-tab within the active dashboard (Network only) |
+
+These keys belong to the monitor whenever its view is active. In standalone
+mode, keypresses are delivered directly to the monitor model; the inactive TUI
+resource router MUST NOT receive them. When the monitor is embedded in the
+experimental TUI shell, `Tab`, `Shift-Tab`, and `1`/`2`/`3`/`4` still take
+precedence over shell-level navigation. `Esc`/Back returns to the shell in
+embedded mode. In standalone mode, `q` and Ctrl-C save monitor cache state and
+quit.
+
+The standalone view uses the full terminal height and renders its own bottom
+help and RPC status lines. Help distinguishes dashboard navigation
+(`Tab`/`Shift-Tab`) from Network sub-tab selection (`1`/`2`/`3`/`4`); it MUST NOT
+describe both controls as one ambiguous "switch tabs" action.
+An embedded monitor receives exactly the height remaining after the shell's
+chrome; the parent MUST NOT size it for one height and clip it to another.
 
 **Standalone operation**: `akt monitor` (and all subcommands) requires only an RPC endpoint. It does not require a keyring, default account, or chain-id. A monitoring-only context (with no `default-account`) or a bare `--rpc` flag is sufficient, making it usable by anyone observing the network.
 
@@ -1549,13 +1777,31 @@ If no endpoint can be resolved, the command exits with an error.
 
 Launches directly into the Network dashboard. This is the replacement for the former `akt top` command.
 
-The Network dashboard has three sub-tabs:
+The Network dashboard has four sub-tabs:
 
 | Key | Tab              | Description                                                                | Spec reference |
 | --- | ---------------- | -------------------------------------------------------------------------- | -------------- |
 | `1` | **Overview**     | Consensus state (height, round, step, elapsed, proposer), vote progress bars (prevote/precommit with power fractions), validator vote grid (`●`/`○`) | [§8.3.8](#838-consensus-monitor-view-from-aktop) |
 | `2` | **Validators**   | Scrollable validator list with moniker, voting power, prevote/precommit status, block signing history bar, proposer indicator | [§8.3.9](#839-validator-voting-view-from-aktop) |
-| `3` | **Governance**   | Module-by-module governance parameter browser with pretty-printed JSON | [§8.3.11](#8311-governance-parameters-view-from-aktop) |
+| `3` | **Governance**   | Recent proposals with status, voting deadline, and vote tallies | [§8.3.11](#8311-governance-monitor-views) |
+| `4` | **Parameters**   | Module-by-module governance parameter browser | [§8.3.11](#8311-governance-monitor-views) |
+
+The Governance view queries the most recent proposals from
+`/cosmos.gov.v1.Query/Proposals` through the selected RPC endpoint, newest
+first. It remains useful when no proposal is active by showing recent completed
+proposals. For a proposal in the voting period, the monitor also calls
+`/cosmos.gov.v1.Query/TallyResult` and displays the current tally; completed
+proposals display their final tally. The view renders through the same
+`RenderProposalList` function as `akt query gov proposals`, scrolls with `j/k`,
+and refreshes with `r`.
+
+The Parameters view obtains the complete modern governance parameter object
+from `/cosmos.gov.v1.Query/Params` through the monitor's selected RPC endpoint
+and renders it with the same pretty renderer as `akt query gov params`. It MUST
+NOT treat one legacy v1beta1 REST subtype (`voting`, `deposit`, or `tallying`)
+as the combined response: doing so turns the other live values into plausible
+zeros. Voting period, deposit, quorum, threshold, veto, expedited, and burn
+fields shown by monitor therefore match the single-shot CLI query.
 
 #### `akt monitor provider [rpc-endpoint]`
 
@@ -1566,9 +1812,30 @@ Launches directly into the Provider dashboard. Displays real-time provider fleet
 - **Provider list**: Scrollable table with URL, version, CPU, memory, GPU, location. Filtered by selected version.
 - **Provider detail**: Enter on a provider shows node-level breakdown with CPU, memory, GPU model + count.
 
+Provider health and detail probes verify certificates on both REST and gRPC
+paths by default. `--insecure` is the single explicit opt-out for both paths.
+
+Every provider-list rebuild reconciles the selected version by value against
+the newly sorted version set. If the version disappeared, selection falls back
+to the first available version; if no versions remain, selection is cleared.
+The selected index MUST therefore remain in bounds while live scan results add
+or remove versions. Table rows and Enter-to-detail mapping use the same selected
+version filter.
+
+Provider detail fetches are correlated by provider identity. A response is
+applied only while the matching provider remains the active detail target;
+responses from a provider the user left or superseded are discarded.
+
 Data sources: on-chain provider list (ABCI query), per-provider health (gRPC port 8444 preferred, REST `/status` + `/version` fallback), active leases (REST, for priority scheduling).
 
 Cache: smart scheduling (online: 1m, recently offline: 5m, long-term offline: 6h), priority queue, max 10 concurrent checks, chain re-sync every 10m.
+
+The provider pipeline starts with the monitor itself, even when another
+dashboard is initially visible. It loads cached providers immediately,
+reconciles the full on-chain provider list at startup, dispatches due health
+checks, re-syncs the chain every 10 minutes, and saves the cache every 30
+seconds. `r` performs an immediate reconciliation without replacing those
+periodic schedules.
 
 #### `akt monitor oracle [rpc-endpoint]` / `akt monitor bme [rpc-endpoint]`
 
@@ -1633,19 +1900,26 @@ akt events --module market --output json
 
 #### `akt mcp`
 
-Start an MCP (Model Context Protocol) server over stdio transport for AI assistant integration. The server exposes Akash Network tools that AI assistants can invoke to query chain state, check provider status, and (with explicit permission) perform mutating operations.
+Start an MCP (Model Context Protocol) server over stdio transport. The server exposes Akash Network tools that compatible clients can invoke to query chain state, check provider status, and (with explicit permission) perform mutating operations.
 
-Configuration is resolved from the active akt context (network, keyring, default account). No additional environment variables are required beyond a configured context.
+Configuration is resolved from the active akt context (network, keyring, default account). Console tools are registered when a Console API key resolves through `--console-api-key`, `AKT_CONSOLE_API_KEY`, or the active context credential.
 
-| Flag               | Type | Default | Description                                                                       |
-| ------------------ | ---- | ------- | --------------------------------------------------------------------------------- |
-| `--enable-writes`  | bool | `false` | Enable write tools (on-chain transactions and provider mutations). Without this flag, only read-only query tools are available. |
+| Flag                | Type   | Default | Description                                                                       |
+| ------------------- | ------ | ------- | --------------------------------------------------------------------------------- |
+| `--console-api-key` | string | `""`    | Console API key for this process; overrides environment and context credentials.  |
+| `--enable-writes`   | bool   | `false` | Enable write tools (on-chain transactions and provider mutations). Without this flag, only read-only query tools are available. |
 
 **Permission model:**
 
-By default, only read-only query tools are registered. This prevents AI agents from sending unapproved transactions or performing mutating operations. The `--enable-writes` flag must be explicitly passed to enable write tools. This flag covers both on-chain transactions (which require keyring signing) and mutating provider REST API calls (e.g., submitting manifests).
+By default, only read-only query tools are registered. This prevents an MCP client from sending unapproved transactions or performing mutating operations. The `--enable-writes` flag must be explicitly passed to enable write tools. This flag covers both on-chain transactions (which require keyring signing), Console mutations, and mutating provider REST API calls (e.g., submitting manifests).
 
-**Read-only tools (always available, 21 tools):**
+The inventory is capability-driven. A chain RPC registers 19 read tools; a
+Console credential registers eight. With both configured, `tools/list`
+returns 27 read-only tools. `--enable-writes` adds four chain/provider writes
+and two Console writes, for 33 tools total. A server with only one rail exposes
+only that rail's subset.
+
+**Read-only tools (up to 27 tools):**
 
 | Tool Name                      | Description                                                                |
 | ------------------------------ | -------------------------------------------------------------------------- |
@@ -1668,8 +1942,16 @@ By default, only read-only query tools are registered. This prevents AI agents f
 | `akash_service_status`         | Service status within a lease                                              |
 | `akash_list_audited_providers` | List audited provider attributes                                           |
 | `akash_list_certificates`      | List on-chain certificates                                                 |
+| `console_list_deployments`     | List deployments belonging to the configured Console account              |
+| `console_get_deployment`       | Get one Console-managed deployment                                         |
+| `console_list_bids`            | List bids for a Console-managed deployment                                 |
+| `console_wallet_balance`       | Available, in-deployment, and total Console credits in USD                  |
+| `console_usage_history`        | Get Console spend history                                                  |
+| `console_list_providers`       | List providers in the Console catalog                                      |
+| `console_get_provider`         | Get one provider from the Console catalog                                  |
+| `console_gpu_prices`           | List current Console GPU pricing                                           |
 
-**Write tools (only with `--enable-writes`, 4 tools):**
+**Write tools (only with `--enable-writes`, up to 6 tools):**
 
 | Tool Name                      | Description                                                                |
 | ------------------------------ | -------------------------------------------------------------------------- |
@@ -1677,17 +1959,34 @@ By default, only read-only query tools are registered. This prevents AI agents f
 | `akash_create_lease`           | Create a lease from a bid (on-chain transaction)                           |
 | `akash_close_lease`            | Close an active lease (on-chain transaction)                               |
 | `akash_submit_manifest`        | Submit manifest to provider (provider REST mutation)                       |
+| `console_close_deployment`     | Close a Console-managed deployment                                         |
+| `console_deposit`              | Add USD credit to a Console-managed deployment                             |
 
-**Transport:** stdio (JSON-RPC over stdin/stdout). Designed for use with MCP-compatible AI assistants (e.g., Claude Desktop).
+**Transport:** stdio (JSON-RPC over stdin/stdout). Designed for use with any MCP-compatible client.
 
-**Client implementation:** Uses `v1beta3.LightClient` from chain-sdk for read-only mode, `v1beta3.Client` for write mode.
+SIGINT and SIGTERM cancel the stdio server context, stop the blocked input
+loop, allow in-flight tool workers to return, and exit cleanly without printing
+`context canceled`. Closing stdin remains a normal clean shutdown. The request
+contexts passed to tool handlers retain command-level cancellation while also
+observing these process signals.
+
+**Client implementation:** Uses `v1beta3.LightClient` from chain-sdk for read-only mode, `v1beta3.Client` for write mode, and the shared authenticated provider gateway client for provider REST tools. A `provider_url` selects the endpoint; it does not disable authentication. Keyring contexts attach a wallet-signed JWT, and missing signing identity is reported before the request.
+
+**Money units:** `console_wallet_balance` returns explicit `available_usd`, `in_deployments_usd`, and `total_usd` numbers. Console's integer µACT wire values must not leak through this semantic interface.
 
 **Default account handling:** Tools that accept an `owner` parameter (e.g., `akash_list_deployments`, `akash_list_leases`) default to the context's `default-account` when the parameter is omitted. If no `default-account` is configured (e.g., a monitoring-only context), the `owner` parameter is **required** — the tool returns an error explaining that the owner must be specified explicitly when no default account is available.
+
+**Numeric argument contract:** Sequence identifiers (`dseq`, `gseq`, and
+`oseq`) are positive whole numbers. Pagination values (`skip` and `limit`) are
+non-negative whole numbers; zero retains the documented default behavior.
+Their tool schemas declare these bounds and integer steps. The server rejects
+negative, fractional, non-finite, and out-of-range values before a handler can
+coerce them to a different identifier or silently substitute a default.
 
 **Examples:**
 
 ```bash
-# Read-only mode (default, safe for AI agents)
+# Read-only mode (default)
 akt mcp
 
 # With write tools enabled (explicit user consent)
@@ -1788,16 +2087,46 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 **Provider gateway (live lease operations):**
 
 Managed (Console-API) contexts reach provider gateways directly, without a wallet or local key: each command resolves the deployment's first active lease via the Console API, looks up the provider's `hostUri`, and mints a scoped JWT via `POST /v1/create-jwt-token` that the gateway accepts as `Authorization: Bearer`. One-shot calls use a 300 s token; streaming/interactive modes (`--follow`, `--watch`, `shell`) use 3600 s. Without an active lease the commands fail listing the states of the leases that do exist.
+Log, event, and shell calls request their operation scope plus `status` because
+the shared gateway boundary verifies the lease before opening a stream.
 
 | Command                                            | Flags                                       | Description                                                                                        |
 | -------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------- |
-| `akt console logs <dseq> [service]`                | `--follow`, `--tail N`, `--service` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Stream container logs from the lease's provider (JWT scope `logs`).                           |
-| `akt console events <dseq>`                        | `--follow`                                  | Stream Kubernetes events from the lease's provider (JWT scope `events`).                            |
+| `akt console logs <dseq> [service]`                | `--follow`, `--tail N`, `--service` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Stream container logs from the lease's provider (JWT scopes `logs,status`).                    |
+| `akt console events <dseq>`                        | `--follow`                                  | Stream Kubernetes events from the lease's provider (JWT scopes `events,status`).                     |
 | `akt console status <dseq>`                        | `--watch`, `--interval` (5s)                | Live lease status from the provider gateway (JWT scope `status`); with `--watch`, snapshots are re-printed each interval until interrupted. `deployment get` remains the Console-API view. |
-| `akt console shell <dseq> <service> [-- command...]` |                                           | Interactive shell in a lease container, default `/bin/sh`; exec is the same operation with an explicit command (JWT scope `shell`). TTY auto-detected. |
+| `akt console shell <dseq> <service> [-- command...]` | `--stdin`                                 | Interactive shell in a lease container, default `/bin/sh`; exec is the same operation with an explicit command (JWT scopes `shell,status`). TTY auto-detected; terminal stdin is detached from explicit commands unless `--stdin` is supplied. |
 | `akt console screen <sdl-file>`                    |                                             | Client-side bid screening: derive resources from the SDL and list the providers able to run it (public endpoint, no key needed). |
 
-Per the positional-primary convention (§3.8), every console command takes its primary value(s) positionally; the equivalent flags remain as overrides and a positional value wins when both are given. (2026-07: the flag twins marked *disabled pending feedback* above are commented out in code for the positional-only UX trial — the positional form is the only way while the trial runs; the original flag definitions are preserved in `FEEDBACK(2026-07)` comments for restoration.) Output is indented JSON; USD values are rendered as `$X.XX`. State-changing calls are recorded in the context's action log as `type=console` entries (§5.6). No command ever prints a Console API key, except the one-time secret from `apikey create`.
+Per the positional-primary convention (§3.8), every console command takes its primary value(s) positionally; the equivalent flags remain as overrides and a positional value wins when both are given. (2026-07: the flag twins marked *disabled pending feedback* above are commented out in code for the positional-only UX trial — the positional form is the only way while the trial runs; the original flag definitions are preserved in `FEEDBACK(2026-07)` comments for restoration.) Default structured reads are indented JSON, while human acknowledgements and streams use the command-specific pretty forms described below; USD values render as `$X.XX` in human output. State-changing calls are recorded in the context's action log as `type=console` entries (§5.6). No command ever prints a Console API key, except the one-time secret from `apikey create`.
+
+**Console output contract:** the API's JSON field names and value types are the
+canonical structured representation. `--output json` emits that representation;
+`--output yaml` is a semantic translation of the same JSON tree, preserving raw
+embedded objects, strings, and integer precision. Default human output remains
+command-specific. Streaming gateway commands emit one compact JSON object per
+record in JSON mode and one YAML document per record in YAML mode; pretty mode
+retains the human log/event lines. This applies equally to bounded and
+`--follow` streams.
+
+Shell is the one command-shaped stream. In pretty mode it remains an
+interactive byte stream. With `--output json` or `--output yaml`, shell requires
+an explicit command after `--`, runs it without a PTY, and emits exactly one
+object with string fields `stdout` and `stderr`. A structured interactive shell
+is refused before opening the provider connection. The same contract applies
+to `console shell` and `provider lease-shell`. Interactive shells and commands
+with piped input attach stdin automatically. Explicit commands launched from a
+terminal leave it detached unless `--stdin` is supplied, so the provider can
+deliver the remote exit result without waiting indefinitely for terminal
+input. If both the remote command and
+structured-output rendering fail, the returned error preserves both causes so
+callers can classify either failure with `errors.Is`.
+
+Mutation acknowledgements are structured in JSON/YAML mode. Deployment close
+emits `{dseq, state, already_closed}` and deposit emits
+`{dseq, amount_usd, status}`. Template SDL is byte-for-byte deployable YAML in
+default/pretty mode; JSON/YAML mode wraps the exact source text as `{sdl: ...}`
+so comments and ordering are not lost.
 
 ---
 
@@ -1843,12 +2172,17 @@ List the built-in SDL scaffolds (alias: `akt sdl templates`, matching the refere
 
 #### `akt sdl init <scaffold>`
 
-Generate SDL YAML on stdout, pipeable into `akt sdl validate -` or redirected to a file for `akt deploy`. The output is self-checked against the validator before printing. Flags are generation parameters with per-scaffold defaults — not positional-argument twins — so the zero-flag invocation always produces a deployable SDL. An int flag left unset keeps its per-scaffold default; an explicitly set value is range-checked up front, so out-of-range input (including an explicit `0`) is a usage error (exit 2), never an internal generation error. Pricing defaults to a 10000 uact/block ceiling (100000 for `gpu`) so bids arrive.
+Generate SDL YAML on stdout, pipeable into `akt sdl validate -` or redirected to a file for `akt deploy`. The output is self-checked against the validator before printing. Flags are generation parameters with per-scaffold defaults — not positional-argument twins — so the zero-flag invocation always produces a deployable SDL. Every explicitly set generation parameter is checked with the same parser and lint rules as `akt sdl validate` before stdout is written. A value that would make the generated SDL invalid exits 2, names the changed flag(s) and validation reason, and emits no SDL. The post-generation self-check reports an internal invariant failure only when a built-in scaffold with its defaults is invalid. Pricing defaults to a 10000 uact/block ceiling (100000 for `gpu`) so bids arrive.
+
+This command is a raw-document generator: stdout is always the deployable YAML
+document. An explicitly supplied `--output`/`-o` is rejected as a usage error,
+including `-o yaml`, rather than being ignored or wrapping the document. The
+default output setting in configuration does not alter the generated document.
 
 | Flag          | Type        | Description                                              |
 | ------------- | ----------- | --------------------------------------------------------- |
 | `--name`      | string      | Service name (default per scaffold: `web` / `app`)        |
-| `--image`     | string      | Container image; must be tagged, e.g. `nginx:1.27`        |
+| `--image`     | string      | Container image pinned to a non-latest tag or valid SHA-256 digest, e.g. `nginx:1.27` or `nginx@sha256:<64-hex>` |
 | `--port`      | int         | Container port, 1-65535 (default 80; 8080 for `gpu`)      |
 | `--as`        | int         | External port, 1-65535 (default 80)                       |
 | `--cpu`       | string      | CPU units, e.g. `0.5` or `500m`                           |
@@ -1868,6 +2202,20 @@ Validate an SDL offline (`-` reads stdin). Parsing and schema/relational validat
 - **Pricing denom**: `uact` passes; `uakt` produces a **warning**, not an error — a deliberate deviation from the reference, which hard-rejects `uakt` because it only serves the managed Console API. akt serves both rails: `uakt` is valid on-chain, but console-api (managed) contexts price in `uact`. Any other denom is an error, matching the reference.
 
 Exit `0` when valid, printing a summary (`valid: N service(s), M group(s), K warning(s)`) plus any warnings; exit `1` when invalid, listing every parse/lint error.
+
+With `--output json` or `--output yaml`, the command writes one structured result
+to stdout with the following stable shape, then preserves the same exit-status
+contract. `errors` and `warnings` are arrays (empty rather than null); each issue
+contains `path`, `message`, and an optional `hint`. Human-readable issue lines
+are not mixed into structured stdout.
+
+```yaml
+valid: true
+services: 1
+groups: 1
+errors: []
+warnings: []
+```
 
 ```bash
 # Generate, self-check, and validate
@@ -1967,7 +2315,7 @@ Added to all `tx` commands via `AddTxFlagsToCmd()`.
 | `--gas-adjustment`   |       | string   | context default or `"1.5"`  | Gas estimation multiplier                                     |
 | `--fees`             |       | string   | `""`                        | Fixed fees (overrides gas-prices)                             |
 | `--broadcast-mode`   | `-b`  | string   | `"sync"`                    | `sync`, `async`, or `block`                                   |
-| `--sign-mode`        |       | string   | `""`                        | Signing mode: `direct`, `amino-json`, `direct-aux`, `textual` |
+| `--sign-mode`        |       | string   | `"direct"`                  | Signing mode: `direct`, `amino-json`, `direct-aux`, `eip-191` |
 | `--keyring-backend`  |       | string   | context default             | Keyring backend override                                      |
 | `--keyring-dir`      |       | string   | context default             | Keyring directory override                                    |
 | `--note`             |       | string   | `""`                        | Transaction memo/note                                         |
@@ -1983,6 +2331,59 @@ Added to all `tx` commands via `AddTxFlagsToCmd()`.
 | `--yes`              | `-y`  | bool     | `false`                     | Skip confirmation prompts                                     |
 | `--ledger`           |       | bool     | `false`                     | Use Ledger hardware wallet                                    |
 | `--unordered`        |       | bool     | `false`                     | Unordered transaction                                         |
+
+`--sign-mode` and `--broadcast-mode` are closed enums: values outside their
+advertised sets are usage errors. For online construction, simulation, and
+broadcast, an explicit `--chain-id` must agree with the selected context.
+`--offline` may use a different explicit chain ID because it performs no
+context-node work. These checks run before generate-only or workflow dry-run
+output is emitted.
+
+Every executable transaction leaf, including subtrees adopted from Cosmos SDK
+and IBC modules, runs the same akt transaction preflight before its handler.
+The preflight resolves codecs, signer, chain identity, and the RPC endpoint
+from the selected context; `--node` remains the only per-invocation endpoint
+override. Account lookup, gas simulation, and broadcast must therefore reach
+that resolved endpoint and must never fall back to an SDK localhost default.
+A missing transaction client is a normal CLI error, never a panic.
+
+When `--fees` is non-empty it is authoritative: both configured and explicit
+`--gas-prices` values are cleared before the transaction factory is built.
+Without fixed fees, the effective gas price follows the normal precedence
+chain (flag > environment > context network > built-in default). A simulation
+response with a non-zero SDK code is a failed transaction and exits non-zero;
+simulation remains non-mutating and is not written to the action log.
+The active fee string is parsed before it reaches the SDK transaction factory:
+fixed fees use the integer-coin grammar and gas prices use the decimal-coin
+grammar. Invalid input is a normal error naming `--fees` or `--gas-prices`,
+never an SDK panic.
+
+`--generate-only` accepts a signer address that is not stored in the local
+keyring. The address identifies the unsigned message and does not imply a
+signing-key lookup. A signer name still resolves through the selected keyring.
+Multisign assembly accepts only a legacy amino multisig record and validates
+that each signature batch contains an entry for every transaction before
+indexing it; ordinary keys and short batches are normal input errors, never
+panics.
+
+`--generate-only -o json` emits a transaction object at the top level on every
+transaction leaf; implementations must not JSON-encode an existing transaction
+byte payload as a base64 string. Signing commands write the signed transaction
+or signature-only payload to stdout unless `--output-document` is supplied.
+Prompts, progress, and validation diagnostics remain on stderr.
+
+Commands whose purpose is an interactive editor or selector must check for a
+TTY before starting terminal rendering. In a non-interactive invocation they
+fail promptly with a message naming the TTY requirement; `--yes` skips
+confirmations but cannot invent answers to value-selection prompts.
+
+For batched multi-message transactions, a batch size of zero means unlimited:
+the complete message set is submitted to the construction/simulation/broadcast
+function exactly once. It must not be used as a loop increment. An empty
+message set is a clear no-transaction error, never a successful command with
+empty output. When an explicit positive batch size produces multiple
+transactions, JSON and YAML output contain one top-level array; pretty output
+renders each transaction in order.
 
 **Pretty output for transaction results**: When `--output pretty` is active (the global default), transaction results are rendered in a two-section layout: a common transaction summary (hash, signer, height, gas, fee, status) followed by a message-specific detail section. See [§10.11](#1011-transaction-result-formatting) for the full specification.
 
@@ -2007,6 +2408,32 @@ Added to all `query` commands via `AddQueryFlagsToCmd()`.
 | `--grpc-insecure` | bool   | `false`         | Use insecure gRPC connection                |
 | `--height`        | int64  | `0`             | Query at specific block height (0 = latest) |
 
+An explicit `--node` replaces the context RPC endpoint for every query that
+performs RPC work. Local derivations such as `ibc-transfer escrow-address`,
+`module-name-to-address`, and `wasm build-address` reject `--node`; they also
+reject `--height` because they do not read chain state. Queries that cannot
+select a historical snapshot (`blocks`, `tx`, `txs`, and `gov proposer`)
+likewise reject `--height`. The proposer query is derived from the current
+transaction index rather than a height-addressable module query, so accepting a
+historical height would return the current proposer under a historical-looking
+invocation. `block` and
+`block-results` accept height positionally or through `--height`, but reject an
+invocation that supplies both. An explicit `--chain-id` must agree with the
+selected context even for a local derivation. File-oriented queries such as
+`wasm code`, whose primary result is written to a named file, reject structured
+stdout formats they cannot represent.
+
+`wasm build-address` interprets its salt positional as hexadecimal by default.
+`--ascii`, `--hex`, and `--b64` select one mutually exclusive input encoding.
+The selected representation is decoded exactly once into salt bytes before
+address derivation. Pretty output is the raw bech32 address; JSON and YAML are
+structured string scalars.
+At verbosity level one or higher, every query pre-run writes its selected RPC
+endpoint and chain ID to stderr before network work begins. Dependency-owned
+query trees and direct CometBFT query leaves follow the same diagnostic path.
+Purely local derivations identify themselves as local and report the selected
+chain ID instead of claiming that they contacted an endpoint.
+
 ### 3.4 Pagination Flags
 
 Added to list-type query commands via `AddPaginationFlagsToCmd()`.
@@ -2019,6 +2446,14 @@ Added to list-type query commands via `AddPaginationFlagsToCmd()`.
 | `--page-key`    | string | `""`    | Pagination key for next page    |
 | `--count-total` | bool   | `false` | Include total count in response |
 | `--reverse`     | bool   | `false` | Reverse result order            |
+
+The requested limit is a hard upper bound on returned records. Client adapters
+must trim any upstream pagination lookahead item, including IBC client-state
+lists, while preserving the response pagination metadata needed to request the
+next page. If a dependency's filtered-pagination callback appends records while
+the SDK marks them as excluded by `--offset` or `--page`, the adapter must also
+remove that skipped prefix before applying the limit. This includes
+`query ibc channel connections`.
 
 ### 3.5 Akash Resource ID Flags
 
@@ -2121,6 +2556,12 @@ State keywords are only recognized as the sole/first component of the filter arg
 | `oseq`           | 0 in list context (no filter); 1 when needed for a unique get                |
 | Trailing address | Empty — no filter on the trailing identity component                         |
 
+Every owner-scoped list, including `query cert`, must resolve an omitted
+leading address from the active context before sending a request. If the
+context has no default account, the command refuses locally and explains that
+an owner address or `default-account` is required. An empty owner is never sent
+to the chain query service because it means network-wide scope.
+
 #### 3.8.5 Per-Command Filter Scope
 
 | Command                  | Max filter depth                               | `--by` support |
@@ -2214,7 +2655,7 @@ Select networks  ↑↓ move  space toggle  enter confirm
 
     [x]  mainnet             akashnet-2        [3 rpc, 2 api, 1 grpc]
     [x]  testnet             testnet-02        [1 rpc, 1 api, 1 grpc]
-    [x]  sandbox             sandbox-01        [1 rpc, 1 api, 1 grpc]
+    [x]  sandbox             sandbox-2         [1 rpc, 1 api, 1 grpc]
 
   q quit
 ```
@@ -2222,7 +2663,7 @@ Select networks  ↑↓ move  space toggle  enter confirm
 **Value input prompt**: Free-form text or numeric input with an optional default. Used for deposit amounts, gas overrides, or custom names. Input is validated before acceptance.
 
 ```
-Initial deposit amount [5000000uakt]: _
+Initial deposit amount [auto]: _
 ```
 
 #### 3.9.2 Prompt Rendering Conventions
@@ -2833,6 +3274,10 @@ All Console API requests require the `x-api-key` header. The API key is resolved
 - Because the credential lives in the context's data directory, `akt context rename` moves it and `akt context delete` removes it (unless `--keep-data`).
 - The credential is written via `akt context create --console-api-key ...` or `akt context edit --console-api-key ...`; passing an empty string via `akt context edit --console-api-key ""` removes it.
 - Different contexts hold independent keys; Console calls always use the active context's key (subject to the flag/env overrides above).
+- `akt --context <name> console login` and `console logout` write or remove the
+  named context's credential even when `current-context` names another context.
+  JSON/YAML acknowledgements contain only the username (for login), context
+  name, and authentication state; they never contain the key.
 
 API keys are created at [console.akash.network](https://console.akash.network) > Settings > API Keys.
 
@@ -2870,7 +3315,8 @@ Returns paginated list of deployments with leases and escrow state.
 
 #### `GET /v1/deployments/{dseq}` -- Get Deployment
 
-Path parameter: `dseq` (deployment sequence ID). Returns deployment details with leases and escrow.
+Path parameter: `dseq` (deployment sequence ID). Returns deployment details,
+including the base64 deployment version `hash`, with leases and escrow.
 
 #### `PUT /v1/deployments/{dseq}` -- Update Deployment
 
@@ -2896,6 +3342,12 @@ Query parameter: `dseq` (required). Returns array of bids with provider details,
 | `leases`   | []object | yes      | Array of `{ dseq, gseq, oseq, provider }` |
 
 Returns deployment with created leases and escrow state.
+
+`POST /v1/leases` is not replayed after an error because it is not
+idempotent. Instead, the client reads each referenced deployment back and
+treats the operation as successful only when every exact requested
+`dseq/gseq/oseq/provider` lease is present and active. If read-back does not
+prove that state, the original POST error is returned.
 
 #### `POST /v1/deposit-deployment` -- Add Deposit
 
@@ -2934,8 +3386,8 @@ When a workflow runs in a context with `auth-method: console-api`, the workflow 
 
 | Form | Examples | `keyring` (chain rail) | `console-api` (console rail) |
 |---|---|---|---|
-| USD | `5usd`, `$5`, `5.50usd` | Error: `USD deposits require a console-api context; specify a coin amount like 5000000uakt` | Sent as USD in the Console API's `data.deposit` field (Console minimum: 0.50 USD) |
-| Coin | `5000000uakt`, `5akt` | Attached to the deployment as the coin deposit | Error: `console deposits are in USD; use e.g. 5usd` |
+| USD | `5usd`, `$5`, `5.50usd` | Error directs the user to `auto` (recommended) or an explicit coin in the network's deployment deposit denomination | Sent as USD in the Console API's `data.deposit` field (Console minimum: 0.50 USD) |
+| Coin | explicit `<amount><denom>` | Attached to the deployment; the denomination must match the active network's deployment deposit parameter | Error: `console deposits are in USD; use e.g. 5usd` |
 | Bare number | `5`, `5.50` | Error (coins require a denomination — the historical chain behavior, with cross-rail guidance) | Interpreted as USD, same as `5usd` |
 | `auto` / empty | `auto` | Chain-minimum deployment deposit, queried on chain | Error: an explicit USD deposit is required |
 
@@ -2971,6 +3423,14 @@ Use a context with auth-method: keyring for this operation.
 | 404         | Deployment not found (dseq does not exist or not owned by user).  |
 | 429         | Rate limited. Retry with backoff (safe for every method: the request was rejected before processing). |
 | 5xx         | Console API server error. Retry with backoff (max 3 attempts) for idempotent methods (GET/HEAD/PUT/DELETE) only. POST is never replayed on 5xx: the request may have been processed despite the error (e.g. a gateway 502 after a completed write), and replaying it could duplicate a deployment or a USD deposit. |
+
+The Console may transiently reject an otherwise valid deployment PUT with
+`422 manifest version validation failed`. Because PUT is idempotent, that exact
+response is retried within the same three-attempt bound. After any failed PUT,
+the client reads the deployment back and compares its base64 `hash` with the
+deterministic SDL version; a match proves success despite the failed response.
+All other 4xx responses remain terminal. A failed lease POST follows the
+read-back rule in §7.3 and is never replayed.
 
 ### 7.7 Differences from Keyring Auth
 
@@ -3069,8 +3529,8 @@ Lines with no content are omitted — the status bar shrinks to 1 or 2 lines whe
 
 Status bar example (3-line, on monitor view):
 ```
-<1> Overview  <2> Validators  <3> Governance  <j/k> Scroll  <r> Refresh
-RPC: rpc.akashnet.net:443  WS: connected
+<1> Overview  <2> Validators  <3> Governance  <4> Parameters  <j/k> Scroll  <r> Refresh
+RPC: rpc.akt.dev:443/rpc  WS: connected
 <:> Command  <Esc> Back  <Ctrl+c> Quit
 ```
 
@@ -3358,9 +3818,20 @@ Real-time monitoring of all Akash providers -- version distribution, resource ut
 
 **Components:** bubbles/progress (scan progress bar), bubbles/table (provider list, node detail table), custom (version dot chart).
 
-#### 8.3.11 Governance Parameters View (from aktop)
+#### 8.3.11 Governance Monitor Views
 
-Module-by-module governance parameter browsing. The right pane renders pretty-formatted key-value output (same `Render*Params()` functions as CLI `--output pretty`) instead of raw JSON. This follows the Pretty/TUI visual parity rule (§10.8).
+**Governance proposals (key 3).** The proposal view shows the 20 most recent
+proposals plus any proposal currently in deposit or voting period, de-duplicated
+by ID and sorted newest first. Columns are ID, title, status, yes, no, abstain,
+veto, and voting end. Tally columns show percentages of votes cast; a proposal
+with no tally yet shows `-`. The monitor populates voting-period proposals from
+the live tally query before calling the shared `RenderProposalList()` renderer.
+`j/k` scroll and `r` refreshes immediately.
+
+**Governance parameters (key 4).** Module-by-module governance parameter
+browsing. The right pane renders pretty-formatted key-value output (the same
+`Render*Params()` functions as CLI `--output pretty`) instead of raw JSON. This
+follows the Pretty/TUI visual parity rule (§10.8).
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -3411,7 +3882,7 @@ Module-by-module governance parameter browsing. The right pane renders pretty-fo
 
 "CLI `Render*Params()`" means the module has a registered `PrettyFormatter` for `akt query <module> params`. "TUI-only" modules are displayed in the TUI governance tab via `RenderModuleParamsFromJSON()` but don't have a standalone CLI query command in akt (their params are queried via the generic Cosmos SDK params subspace).
 
-**Refresh interval**: 5 minutes.
+**Refresh intervals**: proposals every 30 seconds; parameters every 5 minutes.
 
 **Components:** bubbles/list (module selector), bubbles/viewport (parameter display).
 
@@ -3576,7 +4047,7 @@ Transaction actions (close, update, delegate, vote, etc.) show a confirmation di
 | `Tab`         | Cycle between monitor dashboards (in monitor view) or panes (in split view) |
 | `Shift-Tab`   | Cycle to previous monitor dashboard     |
 
-**Note:** When the monitor view (4) is active, `1`/`2`/`3` switch sub-tabs within the Network dashboard instead of navigating to global views. All other number keys retain their global behavior.
+**Note:** When the monitor view (4) is active, `1`/`2`/`3`/`4` switch sub-tabs within the Network dashboard instead of navigating to global views. All other number keys retain their global behavior.
 
 **List Navigation**:
 | Key         | Action                             |
@@ -3696,7 +4167,8 @@ App (root model)
 │   │   ├── NetworkDashboard   (from aktop: consensus, validators, governance)
 │   │   │   ├── ConsensusView    (bubbles/progress for vote bars, custom vote grid)
 │   │   │   ├── ValidatorView    (bubbles/table, custom signing history bar)
-│   │   │   └── GovernanceView   (bubbles/list for modules, bubbles/viewport for params)
+│   │   │   ├── GovernanceView   (shared proposal renderer in a bubbles/viewport)
+│   │   │   └── ParametersView   (bubbles/list for modules, bubbles/viewport for params)
 │   │   ├── ProviderDashboard  (from aktop: provider fleet health)
 │   │   │   ├── ScanProgress     (bubbles/progress)
 │   │   │   ├── VersionDist      (custom dot visualization)
@@ -3830,7 +4302,10 @@ Query commands use a **registry-based pretty output system** (`internal/output/p
 | `json`            | Machine-readable JSON (compact, no colors, no formatting) |
 | `yaml`            | Machine-readable YAML (no colors, no formatting) |
 
-When `--output pretty` (the default), output is styled using **lipgloss**. Colors are disabled automatically when stdout is not a TTY or when the `NO_COLOR` environment variable is set.
+When `--output pretty` (the default), output is styled using **lipgloss**. At the
+final write boundary, all ANSI styling (color, bold, underline, and related
+sequences) is removed when stdout is not a TTY or when the `NO_COLOR`
+environment variable is present, even when its value is empty.
 
 ### 10.1.1 Stream Separation (stdout vs stderr)
 
@@ -3855,6 +4330,11 @@ akt query deployment 12345 -o json | jq '.deployment.state'
 ```
 
 When `--quiet` is set, stderr informational output (progress, status lines) is suppressed; only errors are emitted to stderr. When `--verbose` is set, additional operational detail is emitted to stderr.
+
+Structured collection fields are always arrays. An empty collection is encoded
+as `[]` in both JSON and YAML, never as `null`; changing output formats must not
+change the semantic data model. This applies to store exports as well as live
+query and Console results.
 
 ### 10.2 Dispatch Architecture
 
@@ -4078,9 +4558,12 @@ Addresses are **always displayed in full**. Never truncated or shortened by defa
 | Column | Source | Format |
 |--------|--------|--------|
 | ID | `Proposal.Id` | Bold |
-| TITLE | `Proposal.Title` | Full text |
+| TITLE | `Proposal.Title` | Up to 40 characters, with `...` when truncated |
 | STATUS | `Proposal.Status` | Color-coded |
-| SUBMIT TIME | `Proposal.SubmitTime` | ISO date |
+| YES | `Proposal.FinalTallyResult.YesCount` | Percentage of votes cast, or `-` when no tally exists |
+| NO | `Proposal.FinalTallyResult.NoCount` | Percentage of votes cast, or `-` when no tally exists |
+| ABSTAIN | `Proposal.FinalTallyResult.AbstainCount` | Percentage of votes cast, or `-` when no tally exists |
+| VETO | `Proposal.FinalTallyResult.NoWithVetoCount` | Percentage of votes cast, or `-` when no tally exists |
 | VOTING END | `Proposal.VotingEndTime` | ISO date |
 
 **Single proposal** (detail): Sections for Proposal (ID, title, status, type, description), Timeline (submit, deposit end, voting start, voting end), and Tally (yes/no/abstain/no_with_veto with percentages).
@@ -4927,7 +5410,7 @@ Cobra provides this feature via `Command.SuggestionsMinimumDistance` and `Comman
 | 1.6  | Keyring integration   | Shared multi-keyring support, keys visible to all contexts using the keyring                                                                                                                | Keys can be created, listed, and used for signing; adding key to shared keyring visible in all contexts |
 | 1.7  | Action log            | Append-only JSONL action log per context, log reading/filtering                                                                                                                             | All mutating actions (tx, workflow, provider, context, console) logged per §5.6 — read-only queries are not recorded by default; `akt context log` shows entries newest-first; log rotation works |
 | 1.8  | Chain client          | Full and light client with multi-endpoint failover                                                                                                                                          | Successful tx broadcast and query with automatic failover when primary endpoint is down                 |
-| 1.9  | Transaction commands  | All `tx` module commands (bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, slashing, vesting, upgrade, crisis, IBC) | Each command matches the behavioral output of the current `akash` binary                                |
+| 1.9  | Transaction commands  | All executable `tx` module commands (bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, slashing, vesting, upgrade, IBC); dependency stubs and messages not registered by the Akash app are omitted | Each advertised command constructs a supported action; empty or unsupported groups are absent |
 | 1.10 | Query commands        | All `query` module commands                                                                                                                                                                 | Each command matches the behavioral output of the current `akash` binary                                |
 | 1.10a | Resource filter parsing | `internal/filter/` package implementing the `/`-separated positional filter argument (§3.8) for Akash query commands: deployment, market (order/bid/lease), cert, audit, escrow. Smart type detection (bech32 vs uint), `--by provider` mode, get-vs-list heuristic. | `akt query deployment 12345`, `akt query market lease akash1.../12345/1/1/akash1prov...`, and all §3.8.6 examples work correctly |
 | 1.11 | Key commands          | All `keys` subcommands                                                                                                                                                                      | Full key lifecycle works (create, export, import, delete, show, list)                                   |
@@ -4958,7 +5441,7 @@ Cobra provides this feature via `Command.SuggestionsMinimumDistance` and `Comman
 | 2.9  | Store status command    | Display store info, sync state, record counts                                                                                  | Accurate reporting of store contents                                      |
 | 2.10 | Events command          | Live blockchain event streaming                                                                                                | `akt events` shows real-time events                                       |
 | 2.11 | Console API client      | `auth-method: console-api` support, API key resolved flag > env > per-context stored credential (§7.1), deployment CRUD via Console managed wallet API, `akt console` command group (§2.9) | Create, update, close deployments; list bids; create leases via Console API with the API key resolved per §7.1 |
-| 2.12 | MCP server              | `akt mcp` command with stdio JSON-RPC transport, 21 read-only tools, 4 write tools gated behind `--enable-writes`              | Read-only tools query chain state; write tools send transactions. Config resolved from active context. |
+| 2.12 | MCP server              | `akt mcp` command with stdio JSON-RPC transport, up to 27 read-only tools and 6 write tools gated behind `--enable-writes`     | Read-only tools query the configured chain and/or Console rail; write tools are opt-in. Provider calls authenticate through the shared gateway client. EOF and process signals stop the server cleanly. |
 
 ### Phase 3: TUI Mode
 
@@ -4979,7 +5462,7 @@ Cobra provides this feature via `Command.SuggestionsMinimumDistance` and `Comman
 | 3.7  | Providers view                      | List + detail views                                                                                                                       | User can browse providers and their attributes                                                    |
 | 3.8  | Log viewer                          | Streaming viewport with service filter and search                                                                                         | Logs stream in real-time, search works                                                            |
 | 3.9  | Monitor hub (`akt monitor`)         | Hub-based monitoring with Tab/Shift-Tab navigation between Network, Provider, and Oracle/BME dashboards. Subcommands: `monitor network`, `monitor provider`, `monitor oracle`/`monitor bme`. | Hub launches, Tab/Shift-Tab cycles dashboards, subcommands open correct dashboard |
-| 3.10 | Network dashboard (from aktop)      | Consensus state (height/round/step, vote progress bars, vote grid), validator voting view (scrollable list, moniker resolution, signing history), governance params   | Consensus updates via WebSocket, validator monikers resolved and cached, governance params for all 12 modules |
+| 3.10 | Network dashboard (from aktop)      | Consensus state (height/round/step, vote progress bars, vote grid), validator voting view (scrollable list, moniker resolution, signing history), recent governance proposals with tallies, governance params | Consensus updates via WebSocket, validator monikers resolved and cached, active proposal tallies refresh, governance params for all 12 modules |
 | 3.11 | Provider dashboard (from aktop)     | Version distribution visualization, provider health scanning with priority scheduling, per-provider detail with node-level CPU/memory/GPU | Providers scanned with smart scheduling, version distribution accurate, GPU models shown via gRPC |
 | 3.12 | Provider cache                      | Smart-scheduled provider cache with disk persistence                                                                                      | Cache persists across sessions, scheduling intervals respected (1m/5m/6h)                         |
 | 3.13 | Oracle/BME dashboard                | Combined oracle prices (TWAP, median, health) and BME state (mint status, vault, ledger). REST-based polling + real-time bus events.        | Oracle prices and BME state displayed, color-coded, amounts formatted correctly                    |
@@ -5005,7 +5488,7 @@ Cobra provides this feature via `Command.SuggestionsMinimumDistance` and `Comman
 | 4.3  | Plugin management        | install, list, remove commands                     | Full plugin lifecycle works                        |
 | 4.4  | Plugin manifest          | Optional plugin.yaml parsing                       | Manifest info shown in `akt plugin list` and help  |
 | 4.5  | Certificates view (TUI)  | List and detail for certificates                   | Certificate management in TUI                      |
-| 4.6  | Governance view (TUI)    | Proposals with voting actions                      | User can browse proposals and vote from TUI        |
+| 4.6  | Governance actions (TUI) | Voting and deposit actions for the read-only proposal view | User can vote and deposit from TUI after confirmation |
 | 4.7  | Validators view (TUI)    | Validator list with delegation actions             | User can delegate/undelegate from TUI              |
 | 4.8  | Escrow view (TUI)        | Escrow account list and detail                     | Escrow state visible in TUI                        |
 | 4.9  | Wasm view (TUI)          | Contract list, info, state queries                 | Wasm contract browsing in TUI                      |

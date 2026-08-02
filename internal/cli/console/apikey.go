@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
 	aktctx "pkg.akt.dev/akt/internal/context"
@@ -12,6 +13,7 @@ import (
 func apikeyCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "apikey",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Manage Console API keys",
 	}
 
@@ -132,6 +134,7 @@ var defaultJWTScope = []string{"status", "logs", "events", "shell", "send-manife
 func jwtCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "jwt",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Mint provider-scoped JWTs",
 	}
 

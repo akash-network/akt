@@ -1,24 +1,46 @@
 name: deploy
 description: Create a deployment, wait for bids, select provider, create lease, send manifest
+long: |
+  Create a deployment, wait for provider bids, select one, open the lease, and
+  send the manifest to the winning provider.
+
+  Prints the deployment sequence number (dseq) on success. Every later command
+  that acts on this deployment takes that dseq.
+
+  Runs on whichever rail the active context uses: a keyring context signs and
+  broadcasts the transactions locally, a console-api context routes them through
+  the Console managed wallet.
+example: |
+    # Deploy and choose a bid interactively
+    akt deploy deploy.yaml
+
+    # Non-interactive: take the cheapest bid
+    akt deploy deploy.yaml --bid-select cheapest --yes
+
+    # Pin to a known provider
+    akt deploy deploy.yaml --bid-select provider=akash1...
+
+    # Show what would happen without broadcasting
+    akt deploy deploy.yaml --dry-run
 version: 1
 
 params:
   sdl-file:
-    type: file
+    type: sdl
     required: true
     description: Path to SDL deployment file
   deposit:
-    type: string
+    type: deposit
     default: "auto"
-    description: "Initial deposit: 5usd or $5 (USD, console-api contexts), 5000000uakt (coin, keyring contexts), auto = chain minimum (keyring)"
+    description: "Initial deposit: auto (recommended chain minimum, keyring), 5usd or $5 (console-api), or an explicit coin in the network's deposit denomination (keyring)"
   bid-timeout:
     type: duration
     default: "5m"
     description: Maximum time to wait for bids
   bid-select:
-    type: string
+    type: bid-selection
     default: "interactive"
-    description: "Bid selection: interactive, cheapest, provider=<addr>"
+    description: "Bid selection: interactive, cheapest, provider=<full-address>"
 
 steps:
   - name: create-deployment

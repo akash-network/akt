@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
 	aktctx "pkg.akt.dev/akt/internal/context"
@@ -15,6 +16,7 @@ import (
 func Commands(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "network",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Manage network definitions",
 		Long:  "Networks define chain connectivity (chain-id, endpoints, gas-prices). They are shared resources that can be referenced by multiple contexts.",
 	}
@@ -230,8 +232,15 @@ func showCmd(mgr func() *aktctx.Manager) *cobra.Command {
 				return fmt.Errorf("network %q not found", args[0])
 			}
 
-			fmt.Print(pretty.RenderNetworkShow(*net, m.NetworkUsers(net.Name)))
-			return nil
+			if f := output.FormatFromCmd(cmd); f != output.FormatTable {
+				return output.Fprint(cmd.OutOrStdout(), f, struct {
+					Network any      `json:"network" yaml:"network"`
+					UsedBy  []string `json:"usedBy"  yaml:"usedBy"`
+				}{net, m.NetworkUsers(net.Name)})
+			}
+
+			_, err := fmt.Fprint(output.TerminalAwareWriter(cmd.OutOrStdout()), pretty.RenderNetworkShow(*net, m.NetworkUsers(net.Name)))
+			return err
 		},
 	}
 }

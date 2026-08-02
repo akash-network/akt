@@ -200,6 +200,13 @@ func TestCommandFromDefDeploy(t *testing.T) {
 			t.Fatalf("deploy command missing --%s flag", flag)
 		}
 	}
+	depositHelp := cmd.Flags().Lookup("deposit").Usage
+	if !strings.Contains(depositHelp, "auto (recommended") {
+		t.Errorf("--deposit help %q does not recommend the network-derived default", depositHelp)
+	}
+	if strings.Contains(depositHelp, "uakt") {
+		t.Errorf("--deposit help %q advertises a network-specific denomination", depositHelp)
+	}
 }
 
 // TestUserWorkflowOverridesBuiltin verifies that a user workflow with the
@@ -361,6 +368,70 @@ func TestExecuteDryRunNeedsNoClient(t *testing.T) {
 	}
 }
 
+func TestExecuteDryRunJSONLEmitsPlannedSteps(t *testing.T) {
+	homeFn, ctxNameFn := staticFns(t.TempDir())
+	sdl := writeValidWorkflowSDL(t)
+	tests := []struct {
+		name  string
+		args  []string
+		steps []string
+	}{
+		{name: "deploy", args: []string{sdl, "--dry-run", "--output", "jsonl"}, steps: []string{"create-deployment", "wait-for-bids", "select-bid", "create-lease", "send-manifest", "display-result"}},
+		{name: "update", args: []string{sdl, "456", "--dry-run", "--output", "jsonl"}, steps: []string{"update-deployment", "send-manifest", "display-result"}},
+		{name: "close", args: []string{"456", "--dry-run", "--output", "jsonl"}, steps: []string{"close-deployment", "display-result"}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := findCommand(Commands(homeFn, ctxNameFn), tc.name)
+			if cmd == nil {
+				t.Fatalf("workflow command %q not found", tc.name)
+			}
+
+			out, err := executeCommand(t, cmd, tc.args...)
+			if err != nil {
+				t.Fatalf("JSONL dry-run execute: %v\noutput:\n%s", err, out)
+			}
+			if strings.Contains(out, "Workflow:") || strings.Contains(out, "Dry run") {
+				t.Fatalf("JSONL dry-run mixed human text into stdout:\n%s", out)
+			}
+
+			lines := strings.Split(strings.TrimSpace(out), "\n")
+			if len(lines) != len(tc.steps) {
+				t.Fatalf("JSONL dry-run emitted %d lines, want %d:\n%s", len(lines), len(tc.steps), out)
+			}
+
+			var runID string
+			for i, raw := range lines {
+				var got struct {
+					Workflow string            `json:"workflow"`
+					ID       string            `json:"id"`
+					Step     string            `json:"step"`
+					Result   string            `json:"result"`
+					Errors   []string          `json:"errors"`
+					Txs      []json.RawMessage `json:"txs"`
+				}
+				if err := json.Unmarshal([]byte(raw), &got); err != nil {
+					t.Fatalf("line %d is not JSON: %v\n%s", i+1, err, raw)
+				}
+				if got.Workflow != tc.name || got.Step != tc.steps[i] || got.Result != "planned" {
+					t.Errorf("line %d = %+v, want workflow=%q step=%q result=planned", i+1, got, tc.name, tc.steps[i])
+				}
+				if got.ID == "" {
+					t.Errorf("line %d has empty run ID", i+1)
+				} else if runID == "" {
+					runID = got.ID
+				} else if got.ID != runID {
+					t.Errorf("line %d run ID = %q, want %q", i+1, got.ID, runID)
+				}
+				if got.Errors == nil || len(got.Errors) != 0 || got.Txs == nil || len(got.Txs) != 0 {
+					t.Errorf("line %d errors/txs = %#v/%#v, want empty arrays", i+1, got.Errors, got.Txs)
+				}
+			}
+		})
+	}
+}
+
 // TestExecuteKeyringContextWithoutChainClient verifies the clear
 // wallet/chain-client error when a keyring context has no chain client in
 // the command context (the "neither credential" case).
@@ -428,10 +499,7 @@ func TestExecuteConsoleDeployEndToEnd(t *testing.T) {
 		t.Fatalf("UpdateContext: %v", err)
 	}
 
-	sdlPath := filepath.Join(t.TempDir(), "app.yaml")
-	if err := os.WriteFile(sdlPath, []byte("services:\n  web:\n    image: nginx\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
+	sdlPath := writeValidWorkflowSDL(t)
 
 	cmds := CommandsWithManager(
 		func() string { return home },
@@ -577,5 +645,254 @@ func TestExecuteWithoutManager(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no configuration loaded") {
 		t.Errorf("error %q does not mention missing configuration", err.Error())
+	}
+}
+
+func TestBuiltinWorkflowParamTypesMatchPreflightContracts(t *testing.T) {
+	deploy := loadBuiltin(t, "deploy")
+	for name, want := range map[string]string{
+		"sdl-file":   "sdl",
+		"deposit":    "deposit",
+		"bid-select": "bid-selection",
+	} {
+		if got := string(deploy.Params[name].Type); got != want {
+			t.Errorf("deploy param %q type = %q, want %q", name, got, want)
+		}
+	}
+
+	update := loadBuiltin(t, "update")
+	if got := string(update.Params["sdl-file"].Type); got != "sdl" {
+		t.Errorf("update param %q type = %q, want %q", "sdl-file", got, "sdl")
+	}
+}
+
+func TestBuiltinUpdateSendsManifestBeforeReportingSuccess(t *testing.T) {
+	update := loadBuiltin(t, "update")
+	if len(update.Steps) != 3 {
+		t.Fatalf("update steps = %+v, want update, manifest delivery, display", update.Steps)
+	}
+
+	manifest := update.Steps[1]
+	if manifest.Name != "send-manifest" || manifest.Type != wf.StepProvider || manifest.Action != "send-manifest-to-active-leases" {
+		t.Fatalf("update manifest step = %+v", manifest)
+	}
+	if manifest.Retry == nil || manifest.Retry.Max != 3 || manifest.Retry.Delay != "5s" {
+		t.Errorf("update manifest retry = %+v, want 3 attempts at 5s", manifest.Retry)
+	}
+	if update.Steps[2].Type != wf.StepOutput {
+		t.Errorf("success output must follow manifest delivery: %+v", update.Steps)
+	}
+}
+
+func TestExecuteConsoleUpdateUsesConsoleManifestHandling(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(aktctx.EnvConsoleAPIKey, "secret-key")
+
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPut || r.URL.Path != "/v1/deployments/4242" {
+			t.Errorf("unexpected console request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"owner":"o","dseq":"4242"},"state":"active"},"leases":[]}}`))
+	}))
+	t.Cleanup(srv.Close)
+
+	m := newTestManager(t, home, "console", aktctx.AuthMethodConsoleAPI)
+	if err := m.UpdateContext("console", func(c *aktctx.Context) error {
+		c.ConsoleAPIURL = srv.URL
+		return nil
+	}); err != nil {
+		t.Fatalf("UpdateContext: %v", err)
+	}
+
+	cmd := findCommand(CommandsWithManager(
+		func() string { return home },
+		func() string { return "console" },
+		func() *aktctx.Manager { return m },
+	), "update")
+	if cmd == nil {
+		t.Fatal("CommandsWithManager() did not surface update")
+	}
+
+	out, err := executeCommand(t, cmd, writeValidWorkflowSDL(t), "4242")
+	if err != nil {
+		t.Fatalf("update execute: %v\noutput:\n%s", err, out)
+	}
+	if requests != 1 {
+		t.Errorf("Console requests = %d, want one update request", requests)
+	}
+	for _, want := range []string{
+		"skipping step \"send-manifest\" (manifest submission handled by Console)",
+		"update-deployment", "display-result", "completed successfully",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output does not contain %q:\n%s", want, out)
+		}
+	}
+}
+
+func writeValidWorkflowSDL(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "deploy.yaml")
+	data := `---
+version: "2.0"
+services:
+  web:
+    image: nginx:1.27
+    expose:
+      - port: 80
+        to:
+          - global: true
+profiles:
+  compute:
+    web:
+      resources:
+        cpu:
+          units: "100m"
+        memory:
+          size: "128Mi"
+        storage:
+          size: "1Gi"
+  placement:
+    westcoast:
+      pricing:
+        web:
+          denom: uakt
+          amount: 50
+deployment:
+  web:
+    westcoast:
+      profile: web
+      count: 1
+`
+	if err := os.WriteFile(path, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	return path
+}
+
+func TestWorkflowDryRunValidatesInputsBeforePrintingPlan(t *testing.T) {
+	homeFn, ctxNameFn := staticFns(t.TempDir())
+	validSDL := writeValidWorkflowSDL(t)
+	invalidSDL := filepath.Join(t.TempDir(), "invalid.yaml")
+	if err := os.WriteFile(invalidSDL, []byte("services: [not-an-sdl"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	tests := []struct {
+		name    string
+		command string
+		args    []string
+		wantErr string
+	}{
+		{name: "missing required dseq", command: "close", args: []string{"--dry-run"}, wantErr: "dseq"},
+		{name: "zero dseq", command: "close", args: []string{"--dry-run", "0"}, wantErr: "greater than zero"},
+		{name: "negative dseq", command: "close", args: []string{"--dry-run", "--dseq=-1"}, wantErr: "greater than zero"},
+		{name: "conflicting dseq forms", command: "close", args: []string{"--dry-run", "1", "--dseq", "2"}, wantErr: "both positionally"},
+		{name: "missing SDL file", command: "deploy", args: []string{"--dry-run", filepath.Join(t.TempDir(), "missing.yaml")}, wantErr: "sdl-file"},
+		{name: "invalid SDL", command: "deploy", args: []string{"--dry-run", invalidSDL}, wantErr: "invalid SDL"},
+		{name: "invalid deposit", command: "deploy", args: []string{"--dry-run", validSDL, "--deposit", "five-ish"}, wantErr: "invalid deposit"},
+		{name: "zero duration", command: "deploy", args: []string{"--dry-run", validSDL, "--bid-timeout", "0s"}, wantErr: "greater than zero"},
+		{name: "invalid duration", command: "deploy", args: []string{"--dry-run", validSDL, "--bid-timeout", "eventually"}, wantErr: "invalid duration"},
+		{name: "invalid bid mode", command: "deploy", args: []string{"--dry-run", validSDL, "--bid-select", "random"}, wantErr: "bid selection"},
+		{name: "invalid provider address", command: "deploy", args: []string{"--dry-run", validSDL, "--bid-select", "provider=short"}, wantErr: "provider address"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := findCommand(Commands(homeFn, ctxNameFn), tc.command)
+			if cmd == nil {
+				t.Fatalf("workflow command %q not found", tc.command)
+			}
+
+			out, err := executeCommand(t, cmd, tc.args...)
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("error = %v, want text %q\noutput:\n%s", err, tc.wantErr, out)
+			}
+			if strings.Contains(out, "Workflow:") || strings.Contains(out, "Dry run") {
+				t.Fatalf("invalid input printed a plan:\n%s", out)
+			}
+		})
+	}
+}
+
+func TestWorkflowDryRunAcceptsTypedInputs(t *testing.T) {
+	homeFn, ctxNameFn := staticFns(t.TempDir())
+	cmd := findCommand(Commands(homeFn, ctxNameFn), "deploy")
+	if cmd == nil {
+		t.Fatal("deploy command not found")
+	}
+
+	out, err := executeCommand(
+		t,
+		cmd,
+		"--dry-run",
+		writeValidWorkflowSDL(t),
+		"--deposit", "$5",
+		"--bid-timeout", "30s",
+		"--bid-select", "provider=akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx",
+	)
+	if err != nil {
+		t.Fatalf("valid dry run: %v\noutput:\n%s", err, out)
+	}
+	if !strings.Contains(out, "Workflow: deploy") || !strings.Contains(out, "Dry run") {
+		t.Fatalf("valid dry run did not print its plan:\n%s", out)
+	}
+}
+
+func TestUserWorkflowParamsUseTheSameTypedValidation(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "missing.txt")
+	tests := []struct {
+		name   string
+		def    *wf.WorkflowDef
+		params map[string]any
+		want   string
+	}{
+		{
+			name: "required string",
+			def: &wf.WorkflowDef{Params: map[string]wf.ParamDef{
+				"label": {Type: wf.ParamString, Required: true},
+			}},
+			params: map[string]any{"label": ""},
+			want:   "required",
+		},
+		{
+			name: "readable file",
+			def: &wf.WorkflowDef{Params: map[string]wf.ParamDef{
+				"input": {Type: wf.ParamFile},
+			}},
+			params: map[string]any{"input": missing},
+			want:   "read file",
+		},
+		{
+			name: "declared type",
+			def: &wf.WorkflowDef{Params: map[string]wf.ParamDef{
+				"enabled": {Type: wf.ParamBool},
+			}},
+			params: map[string]any{"enabled": "yes"},
+			want:   "boolean",
+		},
+		{
+			name: "unsupported type",
+			def: &wf.WorkflowDef{Params: map[string]wf.ParamDef{
+				"mystery": {Type: wf.ParamType("guess")},
+			}},
+			params: map[string]any{"mystery": "value"},
+			want:   "unsupported type",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateWorkflowParams(tc.def, tc.params)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("error = %v, want text %q", err, tc.want)
+			}
+		})
 	}
 }

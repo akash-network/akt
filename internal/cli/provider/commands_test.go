@@ -2,14 +2,19 @@ package provider
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
 
 	"pkg.akt.dev/akt/internal/capability"
+	rest "pkg.akt.dev/go/provider/client"
 )
 
 // newProviderCmd builds a throwaway command carrying the persistent flags the
@@ -80,16 +85,57 @@ func TestResolveProviderRejectsInvalidBech32(t *testing.T) {
 	}
 }
 
-// TestResolveProviderRequiresURL pins the current limitation: on-chain HostURI
-// lookup is not implemented, so --provider-url is mandatory. If that lookup is
-// ever wired in, this test is the reminder to revisit the contract.
-func TestResolveProviderRequiresURL(t *testing.T) {
+func TestResolveProviderQueriesHostURI(t *testing.T) {
 	cmd := newProviderCmd(t, "--provider", testProviderAddr)
 
-	if _, _, err := resolveProvider(cmd, nil); err == nil {
-		t.Fatal("a missing --provider-url must be rejected")
-	} else if !strings.Contains(err.Error(), "--provider-url") {
-		t.Errorf("error should name --provider-url, got %q", err)
+	called := false
+	addr, url, err := resolveProviderWithLookup(cmd, nil, func(_ context.Context, owner string) (string, error) {
+		called = true
+		if owner != testProviderAddr {
+			t.Errorf("lookup owner = %q, want %q", owner, testProviderAddr)
+		}
+		return "https://on-chain.example.com:8443", nil
+	})
+	if err != nil {
+		t.Fatalf("resolveProviderWithLookup: %v", err)
+	}
+	if !called {
+		t.Fatal("provider address did not trigger an on-chain host URI lookup")
+	}
+	if addr.String() != testProviderAddr || url != "https://on-chain.example.com:8443" {
+		t.Errorf("resolveProviderWithLookup = (%s, %q)", addr, url)
+	}
+}
+
+func TestResolveProviderURLOverrideSkipsLookup(t *testing.T) {
+	cmd := newProviderCmd(t,
+		"--provider", testProviderAddr,
+		"--provider-url", "https://override.example.com:8443",
+	)
+
+	_, url, err := resolveProviderWithLookup(cmd, nil, func(context.Context, string) (string, error) {
+		t.Fatal("explicit --provider-url must skip on-chain lookup")
+		return "", nil
+	})
+	if err != nil {
+		t.Fatalf("resolveProviderWithLookup: %v", err)
+	}
+	if url != "https://override.example.com:8443" {
+		t.Errorf("url = %q, want explicit override", url)
+	}
+}
+
+func TestResolveProviderRejectsEmptyOnChainHostURI(t *testing.T) {
+	cmd := newProviderCmd(t, "--provider", testProviderAddr)
+
+	_, _, err := resolveProviderWithLookup(cmd, nil, func(context.Context, string) (string, error) {
+		return "", nil
+	})
+	if err == nil {
+		t.Fatal("an empty on-chain host URI must be rejected")
+	}
+	if !strings.Contains(err.Error(), "has no host URI on chain") {
+		t.Errorf("error should identify the empty provider record, got %q", err)
 	}
 }
 
@@ -245,6 +291,125 @@ func TestPrintJSON(t *testing.T) {
 	}
 }
 
+func TestPrintJSONHonorsYAML(t *testing.T) {
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.Flags().String("output", "yaml", "")
+	cmd.SetOut(&buf)
+
+	value := struct {
+		HostURI string `json:"host_uri"`
+		Leases  int    `json:"leases"`
+	}{HostURI: "https://provider.example.com:8443", Leases: 2}
+
+	if err := printJSON(cmd, value); err != nil {
+		t.Fatalf("printJSON: %v", err)
+	}
+	if strings.HasPrefix(strings.TrimSpace(buf.String()), "{") {
+		t.Fatalf("YAML output is still JSON: %q", buf.String())
+	}
+
+	var got map[string]any
+	if err := yaml.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("decode YAML: %v", err)
+	}
+	if got["host_uri"] != value.HostURI || got["leases"] != value.Leases {
+		t.Errorf("YAML output = %#v, want JSON field names and scalar types", got)
+	}
+}
+
+func TestLeaseShellDefaultsToBinSh(t *testing.T) {
+	cmd := leaseShellCmd()
+	if err := cmd.Args(cmd, nil); err != nil {
+		t.Fatalf("lease-shell without a command must be accepted: %v", err)
+	}
+
+	got := leaseShellCommand(nil)
+	if len(got) != 1 || got[0] != "/bin/sh" {
+		t.Fatalf("default shell command = %#v, want [/bin/sh]", got)
+	}
+	if !strings.Contains(cmd.Long, "/bin/sh") || !strings.Contains(cmd.Example, "--service web\n") {
+		t.Fatalf("lease-shell help does not explain the commandless default: long=%q example=%q", cmd.Long, cmd.Example)
+	}
+}
+
+func TestLeaseShellRejectsStructuredInteractiveModeBeforeProviderResolution(t *testing.T) {
+	cmd := leaseShellCmd()
+	cmd.Flags().String("output", "json", "")
+
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "explicit remote command") {
+		t.Fatalf("lease-shell error = %v", err)
+	}
+	if strings.Contains(err.Error(), "provider address") {
+		t.Fatalf("lease-shell reached provider resolution before refusal: %v", err)
+	}
+}
+
+func TestLeaseLogsRejectsInvalidTailBeforeGateway(t *testing.T) {
+	for _, args := range [][]string{
+		{"lease-logs", "1", "--tail=-2"},
+		{"lease-logs", "1", "--tail=5", "--follow"},
+	} {
+		root := Commands()
+		root.SetOut(&bytes.Buffer{})
+		root.SetErr(&bytes.Buffer{})
+		root.SetArgs(args)
+
+		err := root.Execute()
+		if err == nil || !strings.Contains(err.Error(), "--tail") {
+			t.Fatalf("%v error = %v, want local --tail refusal", args, err)
+		}
+		if strings.Contains(err.Error(), "provider address") {
+			t.Fatalf("%v reached provider resolution before validating --tail: %v", args, err)
+		}
+	}
+}
+
+func TestConsumeLeaseLogsHonorsServiceTailAndOneShotEOF(t *testing.T) {
+	stream := make(chan rest.ServiceLogMessage, 3)
+	stream <- rest.ServiceLogMessage{Name: "web-a", Message: "first"}
+	stream <- rest.ServiceLogMessage{Name: "worker-a", Message: "ignore"}
+	stream <- rest.ServiceLogMessage{Name: "web-b", Message: "last"}
+	close(stream)
+
+	onClose := make(chan string, 1)
+	onClose <- "unexpected EOF"
+	close(onClose)
+
+	var buf bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.SetOut(&buf)
+
+	err := consumeLeaseLogs(context.Background(), cmd, &rest.ServiceLogs{
+		Stream: stream, OnClose: onClose,
+	}, "web", false, 1)
+	if err != nil {
+		t.Fatalf("consumeLeaseLogs: %v", err)
+	}
+	if got, want := buf.String(), "[web-b] last\n"; got != want {
+		t.Fatalf("logs = %q, want %q", got, want)
+	}
+}
+
+func TestConsumeLeaseEventsTreatsFollowEOFAsFailure(t *testing.T) {
+	stream := make(chan rest.LeaseEvent)
+	close(stream)
+	onClose := make(chan string, 1)
+	onClose <- "unexpected EOF"
+	close(onClose)
+
+	cmd := &cobra.Command{}
+	cmd.SetOut(&bytes.Buffer{})
+
+	err := consumeLeaseEvents(context.Background(), cmd, &rest.LeaseKubeEvents{
+		Stream: stream, OnClose: onClose,
+	}, true)
+	if err == nil || !strings.Contains(err.Error(), "event stream closed") {
+		t.Fatalf("follow EOF error = %v, want interrupted event stream", err)
+	}
+}
+
 // TestCommandsGatedOnProviderCapability pins the capability annotation. The
 // gating layer reads it to dim/hide the group when the context has no RPC
 // endpoint; losing the annotation silently re-exposes commands that cannot
@@ -332,40 +497,110 @@ func TestStatusRejectsMissingProvider(t *testing.T) {
 	}
 }
 
-// TestStatusRejectsMissingProviderURL proves the second guard fires too, so a
-// user who supplies only an address gets the actionable message instead of a
-// dial error against an empty URL.
-func TestStatusRejectsMissingProviderURL(t *testing.T) {
+func TestStatusUsesPublicGatewayWithoutWallet(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if got := r.Header.Get("Authorization"); got != "" {
+			t.Errorf("Authorization = %q, want no provider status credentials", got)
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
 	root := Commands()
 	root.SetOut(&bytes.Buffer{})
 	root.SetErr(&bytes.Buffer{})
-	root.SetArgs([]string{"status", testProviderAddr})
+	root.SetArgs([]string{
+		"status", testProviderAddr,
+		"--provider-url", srv.URL,
+	})
 
-	if err := root.Execute(); err == nil {
-		t.Fatal("status without --provider-url must fail")
-	} else if !strings.Contains(err.Error(), "--provider-url is required") {
-		t.Errorf("unexpected error: %v", err)
+	if err := root.Execute(); err != nil {
+		t.Fatalf("walletless provider status: %v", err)
+	}
+	if requests != 1 {
+		t.Fatalf("provider status requests = %d, want 1", requests)
 	}
 }
 
-// TestGatewayClientRejectsUnknownAuthType covers gatewayClientFromCmd's only
-// local failure mode. --auth-type is a persistent flag on the whole group, so
-// a typo would otherwise be discovered only when the provider rejected the
-// unsigned request.
-func TestGatewayClientRejectsUnknownAuthType(t *testing.T) {
+func TestStatusRejectsAuthenticationFlag(t *testing.T) {
 	root := Commands()
 	root.SetOut(&bytes.Buffer{})
 	root.SetErr(&bytes.Buffer{})
 	root.SetArgs([]string{
 		"status", testProviderAddr,
 		"--provider-url", "https://gw.example",
-		"--auth-type", "bogus",
+		"--auth-type", "jwt",
 	})
 
 	if err := root.Execute(); err == nil {
-		t.Fatal("an unknown --auth-type must be rejected")
-	} else if !strings.Contains(err.Error(), "unsupported auth type") {
+		t.Fatal("--auth-type on public provider status must be rejected")
+	} else if !strings.Contains(err.Error(), "does not apply") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestAuthenticatedGatewayRequiresDefaultAccountBeforeRequest(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	root := Commands()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{
+		"lease-status", "1",
+		"--provider", testProviderAddr,
+		"--provider-url", srv.URL,
+	})
+
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "configured default account") {
+		t.Fatalf("error = %v, want a configured default account remedy", err)
+	}
+	if requests != 0 {
+		t.Fatalf("protected gateway requests = %d, want failure before network access", requests)
+	}
+}
+
+func TestAuthenticatedGatewayPreflightRunsBeforeProviderLookup(t *testing.T) {
+	root := Commands()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{
+		"lease-status", "1",
+		"--provider", testProviderAddr,
+	})
+
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "configured default account") {
+		t.Fatalf("error = %v, want local signing identity before provider lookup", err)
+	}
+	if strings.Contains(err.Error(), "initialize provider query client") ||
+		strings.Contains(err.Error(), "query provider") {
+		t.Fatalf("provider discovery hid authentication preflight: %v", err)
+	}
+}
+
+func TestAuthenticatedGatewayRejectsUnknownAuthTypeBeforeIdentityChecks(t *testing.T) {
+	root := Commands()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{
+		"lease-status", "1",
+		"--provider", testProviderAddr,
+		"--provider-url", "https://gw.example",
+		"--auth-type", "bogus",
+	})
+
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "unsupported auth type") {
+		t.Fatalf("error = %v, want unsupported auth type", err)
 	}
 }
 

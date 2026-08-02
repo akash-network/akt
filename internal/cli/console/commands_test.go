@@ -8,10 +8,13 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 
+	"gopkg.in/yaml.v3"
 	aktctx "pkg.akt.dev/akt/internal/context"
+	"pkg.akt.dev/akt/internal/output"
 )
 
 // newTestManager builds a Manager on a temp home with a "mainnet" network
@@ -52,6 +55,8 @@ func execConsole(t *testing.T, m *aktctx.Manager, srvURL string, args ...string)
 	t.Setenv(aktctx.EnvConsoleAPIKey, "")
 
 	cmd := Commands(func() *aktctx.Manager { return m })
+	cmd.PersistentFlags().VarP(output.NewFormatFlag("pretty"), "output", "o", "Output format: pretty, json, yaml")
+	cmd.PersistentFlags().String("context", "", "Active context name")
 
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
@@ -65,6 +70,47 @@ func execConsole(t *testing.T, m *aktctx.Manager, srvURL string, args ...string)
 	err := cmd.Execute()
 
 	return buf.String(), err
+}
+
+func decodeStructuredOutput(t *testing.T, format, raw string) any {
+	t.Helper()
+
+	var value any
+	switch format {
+	case "json":
+		if err := json.Unmarshal([]byte(raw), &value); err != nil {
+			t.Fatalf("decode JSON output %q: %v", raw, err)
+		}
+	case "yaml":
+		if err := yaml.Unmarshal([]byte(raw), &value); err != nil {
+			t.Fatalf("decode YAML output %q: %v", raw, err)
+		}
+		// Normalize YAML's native scalar types through JSON so callers can
+		// compare the semantic tree with the JSON output.
+		normalized, err := json.Marshal(value)
+		if err != nil {
+			t.Fatalf("normalize YAML output: %v", err)
+		}
+		if err := json.Unmarshal(normalized, &value); err != nil {
+			t.Fatalf("decode normalized YAML output: %v", err)
+		}
+	default:
+		t.Fatalf("unsupported structured output format %q", format)
+	}
+
+	return value
+}
+
+func decodeStructuredMap(t *testing.T, format, raw string) map[string]any {
+	t.Helper()
+
+	value := decodeStructuredOutput(t, format, raw)
+	object, ok := value.(map[string]any)
+	if !ok {
+		t.Fatalf("%s output = %#v, want an object", format, value)
+	}
+
+	return object
 }
 
 func writeJSON(t *testing.T, w http.ResponseWriter, body string) {
@@ -131,6 +177,116 @@ func TestLoginRejectsInvalidKey(t *testing.T) {
 	}
 }
 
+func TestLoginAndLogoutHonorContextOverride(t *testing.T) {
+	m := newTestManager(t)
+	if err := m.CreateContext(aktctx.Context{
+		Name:    "staging",
+		Network: aktctx.Network{Name: "mainnet"},
+	}); err != nil {
+		t.Fatalf("CreateContext: %v", err)
+	}
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "prod-key"); err != nil {
+		t.Fatalf("set prod key: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("x-api-key"); got != "staging-key" {
+			t.Errorf("x-api-key = %q, want staging-key", got)
+		}
+		writeJSON(t, w, userBody)
+	}))
+	defer srv.Close()
+
+	out, err := execConsole(t, m, srv.URL,
+		"--context", "staging", "login", "staging-key", "--output", "json")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	ack := decodeStructuredMap(t, "json", out)
+	authenticated, ok := ack["authenticated"].(bool)
+	if ack["context"] != "staging" || !ok || !authenticated || ack["username"] != "max" {
+		t.Errorf("login acknowledgement = %#v", ack)
+	}
+	if strings.Contains(out, "staging-key") {
+		t.Fatal("login acknowledgement leaked the API key")
+	}
+	if got, _ := aktctx.StoredConsoleAPIKey(m.Root(), "staging"); got != "staging-key" {
+		t.Errorf("staging key = %q", got)
+	}
+	if got, _ := aktctx.StoredConsoleAPIKey(m.Root(), "prod"); got != "prod-key" {
+		t.Errorf("prod key changed to %q", got)
+	}
+
+	out, err = execConsole(t, m, "",
+		"--context", "staging", "logout", "--output", "yaml")
+	if err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	ack = decodeStructuredMap(t, "yaml", out)
+	authenticated, ok = ack["authenticated"].(bool)
+	if ack["context"] != "staging" || !ok || authenticated {
+		t.Errorf("logout acknowledgement = %#v", ack)
+	}
+	if got, _ := aktctx.StoredConsoleAPIKey(m.Root(), "staging"); got != "" {
+		t.Errorf("staging key after logout = %q", got)
+	}
+	if got, _ := aktctx.StoredConsoleAPIKey(m.Root(), "prod"); got != "prod-key" {
+		t.Errorf("prod key changed to %q", got)
+	}
+}
+
+func TestLoginAndLogoutHonorAKTContext(t *testing.T) {
+	m := newTestManager(t)
+	if err := m.CreateContext(aktctx.Context{
+		Name:    "staging",
+		Network: aktctx.Network{Name: "mainnet"},
+	}); err != nil {
+		t.Fatalf("CreateContext: %v", err)
+	}
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "prod-key"); err != nil {
+		t.Fatalf("set prod key: %v", err)
+	}
+	t.Setenv("AKT_CONTEXT", "staging")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("x-api-key"); got != "staging-key" {
+			t.Errorf("x-api-key = %q, want staging-key", got)
+		}
+		writeJSON(t, w, userBody)
+	}))
+	defer srv.Close()
+
+	out, err := execConsole(t, m, srv.URL, "login", "staging-key", "--output", "json")
+	if err != nil {
+		t.Fatalf("login: %v", err)
+	}
+	ack := decodeStructuredMap(t, "json", out)
+	if ack["context"] != "staging" {
+		t.Errorf("login acknowledgement = %#v", ack)
+	}
+	if got, _ := aktctx.StoredConsoleAPIKey(m.Root(), "staging"); got != "staging-key" {
+		t.Errorf("staging key = %q", got)
+	}
+	if got, _ := aktctx.StoredConsoleAPIKey(m.Root(), "prod"); got != "prod-key" {
+		t.Errorf("prod key changed to %q", got)
+	}
+
+	out, err = execConsole(t, m, "", "logout", "--output", "yaml")
+	if err != nil {
+		t.Fatalf("logout: %v", err)
+	}
+	ack = decodeStructuredMap(t, "yaml", out)
+	if ack["context"] != "staging" {
+		t.Errorf("logout acknowledgement = %#v", ack)
+	}
+	if got, _ := aktctx.StoredConsoleAPIKey(m.Root(), "staging"); got != "" {
+		t.Errorf("staging key after logout = %q", got)
+	}
+	if got, _ := aktctx.StoredConsoleAPIKey(m.Root(), "prod"); got != "prod-key" {
+		t.Errorf("prod key changed to %q", got)
+	}
+}
+
 func TestWhoamiPrintsUsername(t *testing.T) {
 	m := newTestManager(t)
 	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
@@ -183,6 +339,52 @@ func TestDeploymentListSendsAPIKey(t *testing.T) {
 	}
 	if !strings.Contains(out, `"deployments"`) {
 		t.Errorf("output should include the deployment list, got %q", out)
+	}
+}
+
+func TestDeploymentGetYAMLPreservesJSONSemantics(t *testing.T) {
+	m := newTestManager(t)
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
+		t.Fatalf("SetConsoleAPIKey: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/deployments/42" {
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		writeJSON(t, w, `{"data":{"deployment":{"id":{"owner":"akash1owner","dseq":"42"},"state":"active","created_at":"27957328"},"leases":[{"id":{"owner":"akash1owner","dseq":"42","gseq":1,"oseq":1,"provider":"akash1provider"},"state":"active","status":{"services":{"web":{"name":"web","available":1,"total":1}},"forwarded_ports":{"web":[{"host":"example.test","port":80}]},"ips":null}}],"escrow_account":{"balance":{"denom":"uakt","amount":"900719925474099312345"}}}}`)
+	}))
+	defer srv.Close()
+
+	jsonOut, err := execConsole(t, m, srv.URL, "deployment", "get", "42", "-o", "json")
+	if err != nil {
+		t.Fatalf("deployment get JSON: %v", err)
+	}
+	yamlOut, err := execConsole(t, m, srv.URL, "deployment", "get", "42", "-o", "yaml")
+	if err != nil {
+		t.Fatalf("deployment get YAML: %v", err)
+	}
+
+	jsonValue := decodeStructuredOutput(t, "json", jsonOut)
+	yamlValue := decodeStructuredOutput(t, "yaml", yamlOut)
+	if !reflect.DeepEqual(yamlValue, jsonValue) {
+		t.Fatalf("YAML changed the JSON data model\nJSON: %#v\nYAML: %#v\nraw YAML:\n%s", jsonValue, yamlValue, yamlOut)
+	}
+
+	root, ok := yamlValue.(map[string]any)
+	if !ok {
+		t.Fatalf("YAML output = %#v, want an object", yamlValue)
+	}
+	deployment := root["deployment"].(map[string]any)
+	if got := deployment["created_at"]; got != "27957328" {
+		t.Errorf("created_at = %#v, want the JSON string %q", got, "27957328")
+	}
+	if _, exists := deployment["createdat"]; exists {
+		t.Error("YAML output must use the JSON field name created_at, not createdat")
+	}
+	services := root["leases"].([]any)[0].(map[string]any)["status"].(map[string]any)["services"]
+	if _, ok := services.(map[string]any); !ok {
+		t.Fatalf("services = %#v, want the JSON object", services)
 	}
 }
 
@@ -256,6 +458,20 @@ func TestTemplateSDLPrintsRawSDL(t *testing.T) {
 
 	if out != rawSDL {
 		t.Errorf("template sdl output = %q, want the raw SDL %q", out, rawSDL)
+	}
+
+	for _, format := range []string{"json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			out, err := execConsole(t, m, srv.URL, "template", "sdl", "tpl-1", "-o", format)
+			if err != nil {
+				t.Fatalf("template sdl -o %s: %v", format, err)
+			}
+
+			value := decodeStructuredMap(t, format, out)
+			if got := value["sdl"]; got != rawSDL {
+				t.Errorf("structured SDL = %#v, want exact source %q", got, rawSDL)
+			}
+		})
 	}
 }
 

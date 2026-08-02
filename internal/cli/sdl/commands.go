@@ -4,13 +4,16 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"text/tabwriter"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
 	"pkg.akt.dev/akt/internal/cliutil"
+	"pkg.akt.dev/akt/internal/output"
 )
 
 // Commands returns the `akt sdl` command group. The group is transport-
@@ -20,6 +23,7 @@ import (
 func Commands() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sdl",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Author and validate deployment SDLs",
 		Long: `Generate SDL manifests from built-in scaffolds and validate them offline.
 
@@ -47,6 +51,21 @@ func scaffoldsCmd() *cobra.Command {
 		Args:    cobra.NoArgs,
 		Example: `  akt sdl scaffolds`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if f := output.FormatFromCmd(cmd); f != output.FormatTable {
+				type row struct {
+					Name        string   `json:"name"        yaml:"name"`
+					Description string   `json:"description" yaml:"description"`
+					Flags       []string `json:"flags"       yaml:"flags"`
+				}
+
+				rows := make([]row, 0, len(Scaffolds()))
+				for _, sc := range Scaffolds() {
+					rows = append(rows, row{sc.Name, sc.Description, sc.Params})
+				}
+
+				return output.Print(f, rows)
+			}
+
 			w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 0, 2, ' ', 0)
 
 			fmt.Fprintln(w, "NAME\tDESCRIPTION\tFLAGS")
@@ -97,6 +116,13 @@ self-checked against "akt sdl validate" before it is printed.`,
 					Suggestion: fmt.Sprintf("Available scaffolds: %s (see \"akt sdl scaffolds\").", strings.Join(ScaffoldNames(), ", ")),
 				}
 			}
+			if err := rejectExplicitOutput(cmd); err != nil {
+				return err
+			}
+
+			if err := rejectInapplicableFlags(cmd, sc); err != nil {
+				return err
+			}
 
 			opts, err := optionsFromFlags(cmd)
 			if err != nil {
@@ -108,15 +134,8 @@ self-checked against "akt sdl validate" before it is printed.`,
 				return fmt.Errorf("marshal SDL: %w", err)
 			}
 
-			// Safety net: a scaffold must never emit an SDL that its own
-			// validator rejects.
-			if res := Validate(out); !res.Valid {
-				msgs := make([]string, len(res.Errors))
-				for i, e := range res.Errors {
-					msgs[i] = e.Message
-				}
-
-				return fmt.Errorf("internal error: generated SDL failed validation: %s", strings.Join(msgs, "; "))
+			if err := validateGeneratedSDL(cmd, sc, out); err != nil {
+				return err
 			}
 
 			_, err = cmd.OutOrStdout().Write(out)
@@ -133,7 +152,7 @@ self-checked against "akt sdl validate" before it is printed.`,
 	// explicit 0 — is a usage error, never an internal one.
 	fl := cmd.Flags()
 	fl.String("name", "", "Service name (default per scaffold)")
-	fl.String("image", "", "Container image; must be tagged, e.g. nginx:1.27")
+	fl.String("image", "", "Container image pinned by tag or sha256 digest, e.g. nginx:1.27")
 	fl.Int("port", 0, "Container port to expose, 1-65535 (default per scaffold)")
 	fl.Int("as", 0, "External port, 1-65535 (default per scaffold)")
 	fl.String("cpu", "", "CPU units, e.g. 0.5 or 500m")
@@ -148,13 +167,99 @@ self-checked against "akt sdl validate" before it is printed.`,
 	return cmd
 }
 
+func rejectExplicitOutput(cmd *cobra.Command) error {
+	flag := cmd.Flags().Lookup("output")
+	if flag == nil || !flag.Changed {
+		return nil
+	}
+
+	format, _ := cmd.Flags().GetString("output")
+
+	return &cliutil.CLIError{
+		Code:       cliutil.ExitUsage,
+		Message:    fmt.Sprintf("--output %s is not supported by %q", format, cmd.CommandPath()),
+		Context:    "generating a deployment document",
+		Suggestion: "Remove --output; this command always writes raw SDL YAML.",
+	}
+}
+
+// validateGeneratedSDL is the final boundary between scaffold parameters and
+// generated output. Validation failures caused by explicit parameters are
+// usage errors; a scaffold that fails without overrides is a broken built-in
+// invariant and remains an internal error.
+func validateGeneratedSDL(cmd *cobra.Command, sc *Scaffold, out []byte) error {
+	res := Validate(out)
+	if res.Valid {
+		return nil
+	}
+
+	changed := changedScaffoldFlags(cmd, sc)
+	if len(changed) == 0 {
+		return generatedSDLInvariantError(sc, res)
+	}
+
+	defaultOut, err := Marshal(sc.Build(Options{}))
+	if err != nil {
+		return fmt.Errorf("internal error: marshal default %q scaffold: %w", sc.Name, err)
+	}
+
+	if defaultRes := Validate(defaultOut); !defaultRes.Valid {
+		return generatedSDLInvariantError(sc, defaultRes)
+	}
+
+	return &cliutil.CLIError{
+		Code:       cliutil.ExitUsage,
+		Message:    fmt.Sprintf("invalid scaffold input for %s", strings.Join(changed, ", ")),
+		Cause:      fmt.Errorf("%s", formatValidationIssues(res.Errors)),
+		Context:    fmt.Sprintf("generating scaffold %q", sc.Name),
+		Suggestion: validationSuggestion(res.Errors),
+	}
+}
+
+func generatedSDLInvariantError(sc *Scaffold, res Result) error {
+	return fmt.Errorf("internal error: scaffold %q default output failed validation: %s",
+		sc.Name, formatValidationIssues(res.Errors))
+}
+
+func formatValidationIssues(issues []Issue) string {
+	msgs := make([]string, len(issues))
+	for i, issue := range issues {
+		msgs[i] = fmt.Sprintf("%s: %s", issue.Path, issue.Message)
+	}
+
+	return strings.Join(msgs, "; ")
+}
+
+func validationSuggestion(issues []Issue) string {
+	for _, issue := range issues {
+		if issue.Hint != "" {
+			return issue.Hint
+		}
+	}
+
+	return "Correct the flagged values and run the command again."
+}
+
+func changedScaffoldFlags(cmd *cobra.Command, sc *Scaffold) []string {
+	changed := make([]string, 0, len(sc.Params))
+	for _, param := range sc.Params {
+		if cmd.Flags().Changed(strings.TrimPrefix(param, "--")) {
+			changed = append(changed, param)
+		}
+	}
+
+	sort.Strings(changed)
+
+	return changed
+}
+
 func validateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "validate <file>",
 		Short: "Validate an SDL offline (use - for stdin)",
 		Long: `Parse and validate an SDL document without touching the network, using
 the same parser as "akt deploy" and the chain tx commands, then apply
-best-practice lint rules (pinned image tags, pricing denoms).
+best-practice lint rules (pinned image references, pricing denoms).
 
 Exits 0 when the SDL is valid (warnings allowed) and 1 when it is not.`,
 		Args: cobra.ExactArgs(1),
@@ -170,6 +275,19 @@ Exits 0 when the SDL is valid (warnings allowed) and 1 when it is not.`,
 			}
 
 			res := Validate(data)
+			format := output.FormatFromCmd(cmd)
+			if format == output.FormatJSON || format == output.FormatYAML {
+				res = normalizeStructuredResult(res)
+				if err := output.Fprint(cmd.OutOrStdout(), format, res); err != nil {
+					return fmt.Errorf("write validation result: %w", err)
+				}
+
+				if res.Valid {
+					return nil
+				}
+
+				return validationFailedError(name, res)
+			}
 
 			if res.Valid {
 				out := cmd.OutOrStdout()
@@ -185,13 +303,28 @@ Exits 0 when the SDL is valid (warnings allowed) and 1 when it is not.`,
 			printIssues(errOut, "error", res.Errors)
 			printIssues(errOut, "warning", res.Warnings)
 
-			return &cliutil.CLIError{
-				Code:       cliutil.ExitGeneral,
-				Message:    fmt.Sprintf("SDL validation failed with %d error(s)", len(res.Errors)),
-				Context:    fmt.Sprintf("validating %s", name),
-				Suggestion: "Fix the errors above and re-run \"akt sdl validate\".",
-			}
+			return validationFailedError(name, res)
 		},
+	}
+}
+
+func normalizeStructuredResult(res Result) Result {
+	if res.Errors == nil {
+		res.Errors = []Issue{}
+	}
+	if res.Warnings == nil {
+		res.Warnings = []Issue{}
+	}
+
+	return res
+}
+
+func validationFailedError(name string, res Result) error {
+	return &cliutil.CLIError{
+		Code:       cliutil.ExitGeneral,
+		Message:    fmt.Sprintf("SDL validation failed with %d error(s)", len(res.Errors)),
+		Context:    fmt.Sprintf("validating %s", name),
+		Suggestion: "Fix the errors above and re-run \"akt sdl validate\".",
 	}
 }
 
@@ -300,4 +433,63 @@ func intFlag(fl *pflag.FlagSet, name string, minVal, maxVal int) (*int, error) {
 	}
 
 	return &v, nil
+}
+
+// rejectInapplicableFlags fails when the user set a flag the chosen scaffold
+// does not implement.
+//
+// Every scaffold declares the flags it honours, and `akt sdl scaffolds` prints
+// them, but nothing checked the two against each other -- so
+// `akt sdl init web --gpu 4` silently produced a CPU-only SDL that deploys and
+// bills perfectly well while the user believes they provisioned a GPU. The
+// generated file contains the string "gpu" zero times.
+func rejectInapplicableFlags(cmd *cobra.Command, sc *Scaffold) error {
+	applicable := make(map[string]struct{}, len(sc.Params))
+	for _, p := range sc.Params {
+		applicable[strings.TrimPrefix(p, "--")] = struct{}{}
+	}
+
+	var offenders []string
+
+	cmd.Flags().Visit(func(f *pflag.Flag) {
+		// Visit reports only flags the user actually set. Globals such as
+		// --output are not scaffold parameters and are never offenders.
+		if _, ok := applicable[f.Name]; ok {
+			return
+		}
+
+		if _, scaffoldParam := allScaffoldParams()[f.Name]; !scaffoldParam {
+			return
+		}
+
+		offenders = append(offenders, "--"+f.Name)
+	})
+
+	if len(offenders) == 0 {
+		return nil
+	}
+
+	sort.Strings(offenders)
+
+	return &cliutil.CLIError{
+		Code: cliutil.ExitUsage,
+		Message: fmt.Sprintf("scaffold %q does not use %s",
+			sc.Name, strings.Join(offenders, ", ")),
+		Suggestion: fmt.Sprintf("%q accepts: %s (see \"akt sdl scaffolds\").",
+			sc.Name, strings.Join(sc.Params, " ")),
+	}
+}
+
+// allScaffoldParams is the union of every scaffold's parameters, used to tell a
+// scaffold parameter apart from a global flag.
+func allScaffoldParams() map[string]struct{} {
+	all := map[string]struct{}{}
+
+	for i := range scaffoldRegistry {
+		for _, p := range scaffoldRegistry[i].Params {
+			all[strings.TrimPrefix(p, "--")] = struct{}{}
+		}
+	}
+
+	return all
 }

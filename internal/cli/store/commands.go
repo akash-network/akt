@@ -8,8 +8,11 @@ import (
 	"path/filepath"
 	"time"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
+	"pkg.akt.dev/akt/internal/cliutil"
+	"pkg.akt.dev/akt/internal/output"
 	"pkg.akt.dev/akt/internal/output/pretty"
 	sstore "pkg.akt.dev/akt/internal/store"
 	"pkg.akt.dev/akt/internal/store/bbolt"
@@ -19,6 +22,7 @@ import (
 func Commands(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "store",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Manage the local deployment store",
 		Long:  "View store status, export records, and import from backups.",
 	}
@@ -50,6 +54,7 @@ func openStore(homeFn func() string, ctxNameFn func() string) (sstore.Store, err
 func statusCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
+		Args:  cobra.NoArgs,
 		Short: "Display local store information",
 		Example: `  # Show store status for the current context
   akt store status`,
@@ -81,7 +86,16 @@ func statusCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 				dbSize = fi.Size()
 			}
 
-			out := cmd.OutOrStdout()
+			if f := output.FormatFromCmd(cmd); f != output.FormatTable {
+				return output.Fprint(cmd.OutOrStdout(), f, struct {
+					Context       string `json:"context"       yaml:"context"`
+					StorePath     string `json:"storePath"     yaml:"storePath"`
+					DatabaseBytes int64  `json:"databaseBytes" yaml:"databaseBytes"`
+					SchemaVersion uint64 `json:"schemaVersion" yaml:"schemaVersion"`
+				}{ctxName, p, dbSize, s.SchemaVersion()})
+			}
+
+			out := output.TerminalAwareWriter(cmd.OutOrStdout())
 
 			fmt.Fprintln(out, pretty.Section("Store"))
 			pretty.KV(out, "Context", ctxName)
@@ -118,6 +132,7 @@ func exportCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "export",
+		Args:  cobra.NoArgs,
 		Short: "Export the local store to YAML or JSON",
 		Example: `  # Export to stdout as YAML
   akt store export
@@ -147,7 +162,7 @@ func exportCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 				w = os.Stdout
 			}
 
-			return s.Export(cmd.Context(), w, format)
+			return s.Export(cmd.Context(), w, format, ctxNameFn())
 		},
 	}
 
@@ -183,7 +198,9 @@ func importCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 			defer func() { _ = f.Close() }()
 
 			if dryRun {
-				fmt.Fprintln(cmd.ErrOrStderr(), "Dry run — no changes will be made.")
+				if !cliutil.IsQuiet(cmd) {
+					fmt.Fprintln(cmd.ErrOrStderr(), "Dry run — no changes will be made.")
+				}
 				return nil
 			}
 
@@ -203,7 +220,9 @@ func importCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 				return fmt.Errorf("import: %w", err)
 			}
 
-			fmt.Fprintln(cmd.ErrOrStderr(), "Import complete.")
+			if !cliutil.IsQuiet(cmd) {
+				fmt.Fprintln(cmd.ErrOrStderr(), "Import complete.")
+			}
 			return nil
 		},
 	}

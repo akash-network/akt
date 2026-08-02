@@ -6,7 +6,6 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"google.golang.org/protobuf/types/known/anypb"
 
 	errorsmod "cosmossdk.io/errors"
@@ -40,7 +39,7 @@ Read one or more signatures from one or more [signature] file, generate a multis
 multisig key [name], and attach the key name to the transaction read from [file].
 
 Example:
-$ %s tx multisign transaction.json k1k2k3 k1sig.json k2sig.json k3sig.json
+$ %s tx multi-sign transaction.json k1k2k3 k1sig.json k2sig.json k3sig.json
 
 If --signature-only flag is on, output a JSON representation
 of only the generated signature.
@@ -99,11 +98,7 @@ func makeMultiSignCmd() func(cmd *cobra.Command, args []string) (err error) {
 			return err
 		}
 
-		k, err := getMultisigRecord(cctx, args[1])
-		if err != nil {
-			return err
-		}
-		pubKey, err := k.GetPubKey()
+		k, multisigPub, err := getMultisigRecord(cctx, args[1])
 		if err != nil {
 			return err
 		}
@@ -119,7 +114,6 @@ func makeMultiSignCmd() func(cmd *cobra.Command, args []string) (err error) {
 		if err != nil {
 			return err
 		}
-		multisigPub := pubKey.(*kmultisig.LegacyAminoPubKey)
 		multisigSig := multisig.NewMultisig(len(multisigPub.PubKeys))
 		if !cctx.Offline {
 			accnum, seq, err := cctx.AccountRetriever.GetAccountNumberSequence(cctx, addr)
@@ -269,7 +263,7 @@ func makeBatchMultisignCmd() func(cmd *cobra.Command, args []string) error {
 			return err
 		}
 
-		k, err := getMultisigRecord(cctx, args[1])
+		k, multisigPub, err := getMultisigRecord(cctx, args[1])
 		if err != nil {
 			return err
 		}
@@ -307,16 +301,12 @@ func makeBatchMultisignCmd() func(cmd *cobra.Command, args []string) error {
 		defer closeFunc()
 		cctx.WithOutput(cmd.OutOrStdout())
 
+		noAutoIncrement := batchNoAutoIncrement(cmd)
 		for i := 0; scanner.Scan(); i++ {
 			txBldr, err := txCfg.WrapTxBuilder(scanner.Tx())
 			if err != nil {
 				return err
 			}
-			pubKey, err := k.GetPubKey()
-			if err != nil {
-				return err
-			}
-			multisigPub := pubKey.(*kmultisig.LegacyAminoPubKey)
 			multisigSig := multisig.NewMultisig(len(multisigPub.PubKeys))
 
 			anyPk, err := codectypes.NewAnyWithValue(multisigPub)
@@ -327,7 +317,7 @@ func makeBatchMultisignCmd() func(cmd *cobra.Command, args []string) error {
 				ChainID:       txFactory.ChainID(),
 				AccountNumber: txFactory.AccountNumber(),
 				Sequence:      txFactory.Sequence(),
-				Address:       sdk.AccAddress(pubKey.Address()).String(),
+				Address:       sdk.AccAddress(multisigPub.Address()).String(),
 				PubKey: &anypb.Any{
 					TypeUrl: anyPk.TypeUrl,
 					Value:   anyPk.Value,
@@ -341,14 +331,18 @@ func makeBatchMultisignCmd() func(cmd *cobra.Command, args []string) error {
 			}
 			txData := adaptableTx.GetSigningTxData()
 
-			for _, sig := range signatureBatch {
-				err = signing.VerifySignature(cmd.Context(), sig[i].PubKey, txSignerData, sig[i].Data,
+			for batchIndex, signatures := range signatureBatch {
+				sig, err := signatureForTransaction(signatures, i, args[batchIndex+2])
+				if err != nil {
+					return err
+				}
+				err = signing.VerifySignature(cmd.Context(), sig.PubKey, txSignerData, sig.Data,
 					txCfg.SignModeHandler(), txData)
 				if err != nil {
-					return fmt.Errorf("couldn't verify signature: %w %v", err, sig)
+					return fmt.Errorf("couldn't verify signature: %w %v", err, signatures)
 				}
 
-				if err := multisig.AddSignatureV2(multisigSig, sig[i], multisigPub.GetPubKeys()); err != nil {
+				if err := multisig.AddSignatureV2(multisigSig, sig, multisigPub.GetPubKeys()); err != nil {
 					return err
 				}
 			}
@@ -376,7 +370,7 @@ func makeBatchMultisignCmd() func(cmd *cobra.Command, args []string) error {
 				return err
 			}
 
-			if viper.GetBool(cflags.FlagNoAutoIncrement) {
+			if noAutoIncrement {
 				continue
 			}
 			sequence := txFactory.Sequence() + 1
@@ -385,6 +379,24 @@ func makeBatchMultisignCmd() func(cmd *cobra.Command, args []string) error {
 
 		return scanner.UnmarshalErr()
 	}
+}
+
+func batchNoAutoIncrement(cmd *cobra.Command) bool {
+	value, _ := cmd.Flags().GetBool(cflags.FlagNoAutoIncrement)
+	return value
+}
+
+func signatureForTransaction(signatures []signingtypes.SignatureV2, txIndex int, source string) (signingtypes.SignatureV2, error) {
+	if txIndex >= len(signatures) {
+		return signingtypes.SignatureV2{}, fmt.Errorf(
+			"signature file %q contains %d signatures; transaction %d has no corresponding signature",
+			source,
+			len(signatures),
+			txIndex+1,
+		)
+	}
+
+	return signatures[txIndex], nil
 }
 
 func unmarshalSignatureJSON(cctx client.Context, filename string) (sigs []signingtypes.SignatureV2, err error) {
@@ -415,12 +427,21 @@ func readSignaturesFromFile(ctx client.Context, filename string) (sigs []signing
 	return sigs, nil
 }
 
-func getMultisigRecord(cctx client.Context, name string) (*keyring.Record, error) {
+func getMultisigRecord(cctx client.Context, name string) (*keyring.Record, *kmultisig.LegacyAminoPubKey, error) {
 	kb := cctx.Keyring
 	multisigRecord, err := kb.Key(name)
 	if err != nil {
-		return nil, errorsmod.Wrap(err, "error getting keybase multisig account")
+		return nil, nil, errorsmod.Wrap(err, "error getting keybase multisig account")
 	}
 
-	return multisigRecord, nil
+	pubKey, err := multisigRecord.GetPubKey()
+	if err != nil {
+		return nil, nil, errorsmod.Wrapf(err, "read multisig key %q", name)
+	}
+	multisigPub, ok := pubKey.(*kmultisig.LegacyAminoPubKey)
+	if !ok {
+		return nil, nil, fmt.Errorf("key %q is %T; expected a legacy amino multisig key", name, pubKey)
+	}
+
+	return multisigRecord, multisigPub, nil
 }

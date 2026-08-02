@@ -2,16 +2,63 @@ package console_test
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"pkg.akt.dev/akt/internal/console"
+	"pkg.akt.dev/go/sdl"
 )
+
+const validUpdateSDL = `version: "2.0"
+services:
+  web:
+    image: nginx:1.27-alpine
+    expose:
+      - port: 80
+        as: 80
+        to:
+          - global: true
+profiles:
+  compute:
+    web:
+      resources:
+        cpu:
+          units: 0.5
+        memory:
+          size: 512Mi
+        storage:
+          size: 512Mi
+  placement:
+    dcloud:
+      pricing:
+        web:
+          denom: uact
+          amount: 10000
+deployment:
+  web:
+    dcloud:
+      profile: web
+      count: 1
+`
+
+func versionHash(t *testing.T, rawSDL string) string {
+	t.Helper()
+
+	doc, err := sdl.Read([]byte(rawSDL))
+	require.NoError(t, err)
+
+	version, err := doc.Version()
+	require.NoError(t, err)
+
+	return base64.StdEncoding.EncodeToString(version)
+}
 
 func TestCreateDeployment(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -73,7 +120,7 @@ func TestGetDeployment(t *testing.T) {
 		assert.Equal(t, "/v1/deployments/777", r.URL.Path)
 
 		_, _ = w.Write([]byte(`{"data":{
-			"deployment":{"id":{"owner":"akash1x","dseq":"777"},"state":"active"},
+			"deployment":{"id":{"owner":"akash1x","dseq":"777"},"state":"active","hash":"version-hash"},
 			"leases":[{
 				"id":{"owner":"akash1x","dseq":"777","gseq":1,"oseq":1,"provider":"akash1p"},
 				"state":"active",
@@ -89,6 +136,7 @@ func TestGetDeployment(t *testing.T) {
 	resp, err := c.GetDeployment(context.Background(), "777")
 	require.NoError(t, err)
 	assert.Equal(t, "777", resp.Deployment.ID.DSeq.String())
+	assert.Equal(t, "version-hash", resp.Deployment.Hash)
 	require.Len(t, resp.Leases, 1)
 
 	lease := resp.Leases[0]
@@ -116,6 +164,61 @@ func TestUpdateDeployment(t *testing.T) {
 	resp, err := c.UpdateDeployment(context.Background(), "555", "new-sdl")
 	require.NoError(t, err)
 	assert.Equal(t, "555", resp.Deployment.ID.DSeq.String())
+}
+
+func TestUpdateDeploymentReconcilesFailedResponseByVersionHash(t *testing.T) {
+	expectedHash := versionHash(t, validUpdateSDL)
+	var puts atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			puts.Add(1)
+			w.WriteHeader(http.StatusUnprocessableEntity)
+			_, _ = w.Write([]byte(`{"message":"manifest version validation failed"}`))
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"555"},"state":"active","hash":"` + expectedHash + `"}}}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	resp, err := console.New(srv.URL, "test-key").UpdateDeployment(
+		context.Background(), "555", validUpdateSDL,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, expectedHash, resp.Deployment.Hash)
+	assert.Equal(t, int32(1), puts.Load(), "a proven update must not be replayed")
+}
+
+func TestUpdateDeploymentRetriesTransientManifestValidation(t *testing.T) {
+	var puts atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPut:
+			if puts.Add(1) == 1 {
+				w.WriteHeader(http.StatusUnprocessableEntity)
+				_, _ = w.Write([]byte(`{"message":"manifest version validation failed"}`))
+				return
+			}
+
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"555"},"state":"active","hash":"new-hash"}}}`))
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"555"},"state":"active","hash":"old-hash"}}}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	resp, err := console.New(srv.URL, "test-key").UpdateDeployment(
+		context.Background(), "555", validUpdateSDL,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "new-hash", resp.Deployment.Hash)
+	assert.Equal(t, int32(2), puts.Load())
 }
 
 func TestCloseDeployment(t *testing.T) {
@@ -257,6 +360,65 @@ func TestCreateLeaseBodyNotEnveloped(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, resp.Leases, 1)
 	assert.Equal(t, "active", resp.Leases[0].State)
+}
+
+func TestCreateLeaseReconcilesFailedResponseWithoutReplayingPost(t *testing.T) {
+	var posts atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			posts.Add(1)
+			w.WriteHeader(http.StatusNotFound)
+		case http.MethodGet:
+			assert.Equal(t, "/v1/deployments/888", r.URL.Path)
+			_, _ = w.Write([]byte(`{"data":{
+				"deployment":{"id":{"owner":"akash1x","dseq":"888"},"state":"active"},
+				"leases":[{"id":{"owner":"akash1x","dseq":"888","gseq":1,"oseq":1,"provider":"akash1p"},"state":"active"}]
+			}}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	resp, err := console.New(srv.URL, "test-key").CreateLease(
+		context.Background(), "manifest-json", []console.LeaseRequest{
+			{DSeq: "888", GSeq: 1, OSeq: 1, Provider: "akash1p"},
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, resp.Leases, 1)
+	assert.Equal(t, "active", resp.Leases[0].State)
+	assert.Equal(t, int32(1), posts.Load(), "the non-idempotent POST must not be replayed")
+}
+
+func TestCreateLeaseKeepsOriginalErrorWhenReadBackDoesNotMatch(t *testing.T) {
+	var posts atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			posts.Add(1)
+			w.WriteHeader(http.StatusNotFound)
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"data":{
+				"deployment":{"id":{"owner":"akash1x","dseq":"888"},"state":"open"},
+				"leases":[]
+			}}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	_, err := console.New(srv.URL, "test-key").CreateLease(
+		context.Background(), "manifest-json", []console.LeaseRequest{
+			{DSeq: "888", GSeq: 1, OSeq: 1, Provider: "akash1p"},
+		},
+	)
+	require.ErrorIs(t, err, console.ErrNotFound)
+	assert.Equal(t, int32(1), posts.Load())
 }
 
 func TestGetDeploymentSettings(t *testing.T) {

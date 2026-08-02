@@ -2,6 +2,7 @@ package pretty
 
 import (
 	"bytes"
+	"encoding/json"
 	"sync"
 	"testing"
 
@@ -11,6 +12,7 @@ import (
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 
 	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
@@ -19,6 +21,49 @@ import (
 	dv1beta "pkg.akt.dev/go/node/deployment/v1beta4"
 	dtypes "pkg.akt.dev/go/node/types/deposit/v1"
 )
+
+func TestPrintTxResultWritesEncodedTransactionBytesAsJSONObject(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().String("output", "json", "")
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	payload := []byte(`{"body":{"messages":[]},"auth_info":{"fee":{"amount":[]}}}`)
+	if err := PrintTxResult(cmd, sdkclient.Context{}, payload); err != nil {
+		t.Fatalf("PrintTxResult: %v", err)
+	}
+
+	var decoded map[string]any
+	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode generated transaction: %v\n%s", err, out.String())
+	}
+	if _, ok := decoded["body"]; !ok {
+		t.Fatalf("top-level JSON is not a transaction object: %#v", decoded)
+	}
+}
+
+func TestPrintTxResultsWritesOneJSONArray(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().String("output", "json", "")
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	responses := []interface{}{
+		[]byte(`{"body":{"memo":"first"}}`),
+		[]byte(`{"body":{"memo":"second"}}`),
+	}
+	if err := PrintTxResults(cmd, sdkclient.Context{}, responses); err != nil {
+		t.Fatalf("PrintTxResults: %v", err)
+	}
+
+	var decoded []map[string]any
+	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+		t.Fatalf("decode transaction array: %v\n%s", err, out.String())
+	}
+	if len(decoded) != 2 {
+		t.Fatalf("transaction count = %d, want 2", len(decoded))
+	}
+}
 
 var registerOnce sync.Once
 

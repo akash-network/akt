@@ -2,6 +2,7 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/charmbracelet/x/exp/golden"
@@ -323,17 +324,17 @@ func TestRenderGovernanceTab(t *testing.T) {
 	}{
 		"Loading": {
 			ctx: func() ViewContext {
-				ctx := newTestViewContext(withHubTab(HubNetwork), withTab(TabGovernance))
+				ctx := newTestViewContext(withHubTab(HubNetwork), withTab(TabParameters))
 				ctx.GovernanceParams = nil
 				return ctx
 			}(),
 		},
 		"WithParams": {
-			ctx: newTestViewContext(withHubTab(HubNetwork), withTab(TabGovernance), withGovernanceParams()),
+			ctx: newTestViewContext(withHubTab(HubNetwork), withTab(TabParameters), withGovernanceParams()),
 		},
 		"ScrolledToBottom": {
 			ctx: func() ViewContext {
-				ctx := newTestViewContext(withHubTab(HubNetwork), withTab(TabGovernance), withGovernanceParams())
+				ctx := newTestViewContext(withHubTab(HubNetwork), withTab(TabParameters), withGovernanceParams())
 				ctx.GovModuleHeight = 8 // simulate small terminal: only 8 rows for the list
 				ctx.GovModuleIdx = 11   // last module (crisis)
 				ctx.GovModuleScroll = 5 // scrolled so items 5..11 + indicator visible
@@ -343,7 +344,7 @@ func TestRenderGovernanceTab(t *testing.T) {
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			golden.RequireEqual(t, renderGovernanceTab(tc.ctx))
+			golden.RequireEqual(t, renderParametersTab(tc.ctx))
 		})
 	}
 }
@@ -404,19 +405,50 @@ func TestRenderBMEPanel(t *testing.T) {
 
 func TestRenderStatusBar(t *testing.T) {
 	tests := map[string]struct {
+		hub         HubTab
 		tab         Tab
+		detail      bool
 		wsConnected bool
 	}{
-		"Overview":    {TabOverview, true},
-		"Validators":  {TabValidators, true},
-		"Governance":  {TabGovernance, true},
-		"WSConnected": {TabOverview, true},
-		"HTTPOnly":    {TabOverview, false},
+		"Overview":       {HubNetwork, TabOverview, false, true},
+		"Validators":     {HubNetwork, TabValidators, false, true},
+		"Governance":     {HubNetwork, TabGovernance, false, true},
+		"Provider":       {HubProvider, TabOverview, false, true},
+		"ProviderDetail": {HubProvider, TabOverview, true, true},
+		"OracleBME":      {HubOracleBME, TabOverview, false, true},
+		"WSConnected":    {HubNetwork, TabOverview, false, true},
+		"HTTPOnly":       {HubNetwork, TabOverview, false, false},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
-			golden.RequireEqual(t, renderStatusBar("https://rpc.akashnet.net:443", tc.tab, false, tc.wsConnected, testWidth))
+			golden.RequireEqual(t, renderStatusBar(
+				"https://rpc.akashnet.net:443",
+				tc.hub,
+				tc.tab,
+				tc.detail,
+				tc.wsConnected,
+				testWidth,
+			))
 		})
+	}
+}
+
+func TestRenderStatusBarDistinguishesDashboardAndNetworkNavigation(t *testing.T) {
+	got := renderStatusBar(
+		"https://rpc.akashnet.net:443",
+		HubNetwork,
+		TabOverview,
+		false,
+		true,
+		testWidth,
+	)
+	for _, want := range []string{"Tab/Shift-Tab", "1-4"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("status bar missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "Tab/1-4") {
+		t.Errorf("status bar conflates dashboard and sub-tab navigation:\n%s", got)
 	}
 }
 

@@ -4,6 +4,341 @@
 
 ### Fixed
 
+- **Root help described deployment as the whole CLI**: the introduction now
+  presents akt as the unified interface for chain queries and transactions,
+  deployments on either payment rail, provider operations, context and key
+  management, and network monitoring.
+
+- **Monitor governance showed parameters but no proposals**: the Network
+  dashboard now separates recent governance proposals from module parameters.
+  Proposal rows include current tallies during voting and final tallies after
+  completion, rendered through the same formatter as the query command.
+
+- **Ctrl-C left the MCP stdio server blocked on stdin**: MCP now preserves
+  command cancellation while attaching SIGINT and SIGTERM to the actual stdio
+  loop, then treats an intentional cancellation as a clean shutdown.
+
+- **The built-in sandbox context targeted a retired network**: the sandbox
+  template now uses the live `sandbox-2` chain ID and the RPC, API, and gRPC
+  endpoints published by the Akash network registry, restoring context
+  switching and sandbox queries created from the built-in template.
+
+- **Final live verification exposed shell and key-output boundary failures**:
+  an explicit provider or Console shell command launched from a terminal now
+  detaches stdin by default so a completed remote process cannot hang waiting
+  for terminal input; interactive shells, pipes, and explicit `--stdin`
+  overrides remain supported. `context keys add` now honors JSON/YAML for
+  local, recovered, Ledger, and multisig keys while preserving the mnemonic
+  backup contract for newly generated keys.
+
+- **Workflow JSONL dry-runs emitted human prose**: `deploy`, `update`, and
+  `close` now emit one valid JSONL `planned` record per step, with a shared run
+  ID and empty error/transaction arrays, instead of silently ignoring their
+  advertised output mode.
+
+- **Console mutation responses could contradict the resulting chain state**:
+  lease creation now reads the deployment back after a failed response and
+  reports success only when every exact requested lease is active, without
+  replaying the non-idempotent POST. Deployment updates retry the Console's
+  transient manifest-version rejection and reconcile the expected SDL hash
+  before reporting failure. Deployment details retain the API's version hash.
+  Chain deployment help now recommends `auto`, so it follows the network's
+  current minimum amount and denomination instead of advertising a stale
+  hard-coded coin.
+
+- **Workflow failures hid paid partial state and chain updates stopped at the
+  transaction**: failed deploys now report their DSEQ, provider, continuing
+  escrow risk, and exact retry and explicit-close commands without performing
+  destructive cleanup automatically. Chain-backed updates deliver the revised
+  manifest to every active lease provider, attempt all providers before
+  failing, and remain safely retryable; Console-backed updates continue to use
+  the Console API's manifest handling.
+
+- **Standalone monitor navigation was routed to an invisible TUI view**:
+  dashboard and Network sub-tab keys now reach the monitor in standalone and
+  embedded modes, full-height rendering preserves the visible help/status
+  footer, and resize events are delivered once. Provider version selection,
+  detail-view reverse navigation, and dashboard-specific help now match the
+  controls shown on screen. Governance loads the complete modern parameter
+  response through RPC instead of rendering absent legacy REST fields as
+  plausible zeros. The monitor cache now honors `--home`, context API endpoints
+  supply auxiliary REST reads, and new mainnet templates select a verified
+  WebSocket RPC first. Provider scans now verify TLS certificates by default;
+  `--insecure` remains an explicit opt-in for debugging non-standard gateways.
+  Ad-hoc RPCs now derive a same-origin REST endpoint instead of inheriting an
+  unrelated context API, and legacy built-in mainnet contexts select the
+  current WebSocket endpoint without rewriting user config. Live provider
+  version sets reconcile safely, the table applies the advertised version
+  filter, release candidates sort by their numeric suffix, and stale detail
+  responses can no longer overwrite a newer choice. Provider gRPC probes now
+  honor the same certificate-verification setting as REST probes. A standalone
+  explicit RPC no longer triggers first-run config bootstrap, Cosmos `tcp`
+  endpoints derive an HTTP REST peer, monitor cache failures reach the user,
+  and cache cleanup removes both current and legacy files or reports failure.
+
+- **Public provider status incorrectly required a wallet and could panic on an
+  empty keyring**: CLI and MCP status calls now use an unauthenticated public
+  gateway client. Protected CLI and MCP operations resolve the context's
+  `jwt`/`mtls` default, then reject an invalid auth type, missing account,
+  missing keyring, or absent signing key before provider discovery or
+  gateway I/O. The inherited `--auth-type` flag is refused on public status
+  instead of being ignored.
+
+- **Monitor provider loading and WebSocket discovery were underspecified**:
+  provider cache loading, on-chain reconciliation, health checks, periodic
+  resync, and cache persistence now form one startup-owned pipeline independent
+  of the visible dashboard. Monitor help examples use a verified
+  WebSocket-capable RPC endpoint instead of an HTTP-only public gateway.
+
+- **Structured shell error composition is lossless**: when both the remote
+  command and JSON/YAML rendering fail, the returned error wraps both causes
+  instead of reducing the renderer failure to uninspectable text.
+
+- **Lease shell ignored structured output and emitted arbitrary remote bytes**:
+  Console and keyring-backed shell commands now share one formatting boundary.
+  Pretty mode remains interactive; JSON and YAML require an explicit command,
+  disable PTY allocation, and return separate `stdout` and `stderr` fields.
+
+- **Provider gateway commands disagreed across discovery, output, and
+  streaming paths**: provider addresses now resolve their on-chain host URI,
+  YAML preserves the JSON data model, and missing leases fail before log,
+  event, or shell streams are opened. Bounded logs enforce service and exact
+  tail filters, one-shot EOF completes cleanly, follow EOF remains an error,
+  shell defaults to `/bin/sh`, and closed local stdin no longer overrides a
+  successful remote result. Gateway failures retain response bodies when the
+  provider supplies one, and both keyring and Console rails use the same
+  boundary helpers.
+
+- **Provider gateway behavior was underspecified across authentication rails**:
+  provider addresses now resolve through their on-chain host URI unless an
+  explicit URL overrides it; gateway streams verify the lease, apply log
+  filters locally, and distinguish normal completion from interrupted follow
+  mode. Structured output, shell stdin completion, and detailed gateway error
+  contracts are defined once for both chain-backed and Console-backed calls.
+
+- **`query wasm build-address` decoded salt twice**: the command now
+  normalizes the selected hex, ASCII, or base64 representation to one canonical
+  hex value before the derivation decodes it. A `00` salt works, every encoding
+  selector derives the same address for the same bytes, the pure computation
+  uses the local query boundary, and JSON/YAML return string scalars.
+
+- **Wasm predictable-address input was underspecified**: `build-address` is a
+  local derivation whose default salt encoding is hexadecimal; its three
+  explicit encoding selectors are mutually exclusive and decode to salt bytes
+  exactly once. Structured formats render the result as a string scalar.
+
+- **Offline transaction utility contracts are now explicit**: construction
+  emits one real JSON object, signing data goes to stdout or its requested
+  document, zero means one unlimited message batch, and interactive proposal
+  drafting refuses a missing TTY before terminal rendering. This documents the
+  remediation behavior before implementation.
+
+- **Offline transaction utilities hung or corrupted their data stream**:
+  unlimited reward withdrawal now invokes one complete batch instead of a
+  zero-step loop and refuses an empty message set instead of succeeding with
+  no output; generated transaction bytes render as transaction objects instead
+  of base64 strings; signing and signature validation write data to stdout or
+  the requested document. Proposal drafting refuses non-TTY input before
+  starting its selector.
+
+- **Transaction boundary inputs could still panic or demand an unnecessary
+  key**: fee and gas-price strings are validated before the SDK factory,
+  multisign assembly rejects ordinary keys and short signature batches, and
+  unsigned generation can use a signer address absent from the keyring.
+
+- **Vendored transaction separators became unnamed actionless leaves when the
+  full PR set was assembled**: IBC client and transfer adapters remain grouped
+  together without registering sentinel commands in the executable tree.
+
+- **Unsupported and empty transaction groups looked executable**: the Akash
+  app has no crisis message handler, the evidence transaction group has no
+  concrete submission type, and upstream IBC channel-v2 has no packet actions.
+  These groups are now omitted instead of appearing as a doomed transaction or
+  successful help-only leaf.
+
+- **Transaction execution-boundary behavior is now explicit**: every local or
+  dependency-owned transaction leaf must initialize from the selected context
+  before message construction or account lookup, fixed fees override all gas
+  price sources, and non-zero simulation codes are command failures without
+  becoming action-log entries. This documents the remediation contract before
+  implementation.
+
+- **Transaction leaves bypassed context setup and fee/failure semantics**:
+  five local leaves no longer panic before construction; adopted IBC and
+  upgrade handlers plus signature validation retain the selected RPC client;
+  failed simulations return an error without logging a mutation. Transaction
+  defaults now honor flag, environment, and context precedence, and fixed fees
+  clear gas prices before the factory is built. Dry-run also normalizes SDK
+  gas-auto into simulation-only mode so an address signer never triggers a
+  key lookup, while help remains configuration- and network-free.
+
+- **Four output contracts remained inconsistent after the input sweep**:
+  `store import --quiet` still wrote success text, 43 adopted query help pages
+  advertised an obsolete output enum, empty JSON store exports used `null`
+  where YAML used `[]`, and root help claimed quiet mode suppressed result
+  data. Informational import messages now honor quiet mode, adopted enum help
+  is derived from the enforced values, store lists return stable empty arrays,
+  and global help accurately describes informational-output suppression.
+
+- **MCP numeric arguments lacked a precise boundary contract**: sequence
+  identifiers are positive whole numbers and pagination values are
+  non-negative whole numbers. Tool schemas expose those constraints, and the
+  server refuses fractional, negative, non-finite, and out-of-range values
+  instead of coercing them or silently applying defaults.
+
+- **Remediation changes violated the repository's lint rules**: network
+  cloning no longer shadows Go's built-in `copy`, and Console acknowledgement
+  tests assert decoded booleans without redundant literals.
+
+- **Key detail and address parsing commands ignored machine output**:
+  `context keys show` and `context keys parse` now render canonical JSON and
+  YAML values through the selected command writer. Address-only output stays
+  raw in pretty mode and becomes a quoted scalar in machine formats.
+
+- **Workflow dry-runs planned invalid invocations**: generated workflow
+  commands now enforce required and typed parameters before printing a plan,
+  including readable and valid SDL files, unified deposit syntax, positive
+  sequence IDs and durations, and complete bid selectors. Wait and prompt
+  steps reject invalid resolved values instead of silently substituting
+  defaults.
+
+- **Transaction identity and signer overrides were resolved too late**:
+  online transaction construction now rejects a chain ID that disagrees with
+  the selected context before flags can overwrite that identity; explicit
+  offline construction remains portable. `--from` and `AKT_FROM` are applied
+  before the SDK client context is built, with flag, environment, then context
+  default precedence.
+
+- **Transaction mode typos crossed the CLI boundary**: all assembled
+  `--sign-mode` and `--broadcast-mode` flags now enforce their advertised
+  enums, including dependency-owned commands, and help names `eip-191` and
+  `block` everywhere those flags appear.
+
+- **Certificate and batch-multisign flags leaked across sibling commands**:
+  certificate generation, publication, and revocation now read every option
+  from the executing leaf. Batch multisign likewise reads
+  `--no-auto-increment` locally instead of an unbound package-global Viper
+  key.
+
+- **Transaction mode defaults and accepted values disagreed across help and
+  execution**: the transaction contract now names `direct` as the sign-mode
+  default and defines both sign and broadcast modes as closed enums, including
+  the supported `eip-191` and `block` values.
+
+- **Context-owned commands could split one invocation across two contexts**:
+  `context show`, `context log`, and Console login/logout fell back to
+  `current-context` after the root had accepted `--context`. They now share
+  the selected-context rule for both the flag and `AKT_CONTEXT`; root keyring
+  and action-log setup use that same target. Console auth emits redacted
+  structured acknowledgements, and structured context details include
+  resolved network, keyring, capabilities, store, and action-log paths.
+
+- **`context edit --fork-network` was an accepted no-op**: context edit now
+  exposes the documented network fields, validates that a fork has an edit to
+  apply, and performs context plus parent/fork changes in one copy-on-write
+  config save. A private `<network>-<context>` fork leaves every sibling
+  context on the original network; rejected edits no longer mutate manager
+  state before returning an error.
+
+- **`context log --type` accepted values it could never match**: the filter is
+  now validated against the six documented action types before opening a log,
+  and an explicit context is resolved before its path is accessed.
+
+- **Remaining invocation-boundary behavior was underspecified**: DESIGN and
+  SPEC now define one selected context for context details, logs, and Console
+  credential mutations; flag/environment account precedence; transaction
+  chain and sign-mode validation; real network forking; structured key output;
+  and typed workflow preflight that runs before dry-run plans. These contracts
+  make the outstanding full-surface reproductions executable before their code
+  changes are applied.
+
+- **The transaction sign-mode table named an unsupported mode**: the client
+  implements `direct`, `amino-json`, `direct-aux`, and `eip-191`, while SPEC
+  named `textual` and leaf help omitted the fourth implemented mode. The
+  boundary contract now follows the actual signer set that validation will
+  enforce.
+
+- **IBC connection-channel pagination ignored offsets and pages**: the
+  dependency's filtered-pagination callback appends matching channels even
+  while the SDK marks them as skipped, so `--offset` and `--page` returned the
+  first channel again. The vendored query boundary now removes that skipped
+  prefix and enforces the requested hard limit before rendering.
+
+- **Two query boundaries still accepted misleading results**: `query gov
+  proposer --height` returned the current transaction-index answer under a
+  historical-looking invocation, and `query ibc client states --limit N`
+  exposed the dependency's pagination lookahead record. The proposer query now
+  refuses unsupported snapshot selection before network work, and the IBC
+  adapter enforces the requested record limit for client-state lists.
+
+- **Pretty output ignored redirection and `NO_COLOR`**: registered query and
+  transaction formatters, deployment group rendering, and context/network
+  detail commands wrote directly to the process stdout, bypassing Cobra's
+  selected writer and terminal-aware styling boundary. Pretty output now flows
+  through the command writer and strips all ANSI styling for files, pipes, test
+  buffers, and explicit no-color sessions while retaining styling on an
+  interactive TTY.
+
+- **SDL output selection and redirected store status were cosmetic flags**:
+  `sdl init` silently emitted YAML after an explicit JSON/YAML selection,
+  `sdl validate` ignored structured output entirely, and `store status` leaked
+  ANSI styling into redirects and `NO_COLOR` output. Raw SDL generation now
+  refuses explicit format selection, validation has stable JSON/YAML results,
+  and the store pretty writer strips styling outside an interactive terminal.
+
+- **Alternate query pre-runs skipped verbose diagnostics**: dependency-owned
+  IBC commands, direct CometBFT block queries, and local derivations now honor
+  `-v` consistently. Network queries report the selected endpoint and chain on
+  stderr; local queries identify their local execution and selected chain.
+
+- **Vendored and local query leaves could bypass core CLI guarantees**:
+  explicit node and height overrides were ignored by several leaves, two IBC
+  parameter queries panicked on transport errors, IBC YAML emitted JSON, two
+  paginated calls returned a lookahead item, local scalar results were invalid
+  JSON, and one IBC path was registered twice. The query boundary now defines
+  endpoint/snapshot refusal rules, safe vendored error handling, normalized
+  structured output, hard pagination limits, and unique selectable paths.
+
+- **Console structured output reflected Go transport internals**: YAML changed
+  JSON field names and turned raw strings/objects into integer arrays, while
+  logs, deployment close/deposit, and template SDL ignored the selected format.
+  Console JSON is now the canonical data model for YAML conversion, gateway
+  streams have record-oriented JSONL/YAML output, mutations have explicit
+  acknowledgement schemas, and template SDL preserves its exact source in a
+  structured wrapper.
+
+- **Invalid SDL scaffold values were reported as internal failures**: every
+  explicit generation parameter now follows the same parser and lint contract
+  as `sdl validate`, exits as a usage error without partial stdout, and names
+  the responsible flag. Image references use standards-based parsing so empty
+  tags and malformed digests are rejected; internal errors are reserved for
+  invalid built-in defaults.
+
+- **Independent command-tree contract tests used the same package helper**:
+  the input-validation walker now has a domain-specific name so the scoping
+  and executable-help branches compile and run together after merge.
+
+- **CLI groups and output flags could accept the wrong input at exit 0**:
+  unknown tokens under completion, IBC, and upgrade groups printed help as a
+  successful command, while leaf-local `--output` strings bypassed the root
+  enum and mapped misspellings such as `josn` to pretty output. Group
+  validation is now applied to the assembled command tree, and every output
+  flag validates its command-specific enum before configuration or network
+  work. Bare certificate lists now follow the same owner-scoping contract as
+  deployments and market resources: they use the context default account or
+  refuse locally instead of querying every certificate on the network. The
+  localnet query and deployment lifecycle coverage now supplies its validator
+  address explicitly so CI exercises that scoped contract.
+- **MCP provider tools reached authenticated gateway endpoints anonymously**:
+  lease status, service status, and manifest submission now use the shared
+  authenticated provider gateway client. Public provider status remains
+  walletless. The MCP inventory documentation now matches the
+  capability-driven 27 read / 33 total maximum.
+
+- **`console_wallet_balance` returned µACT while describing Console credits**: the MCP result now exposes `available_usd`, `in_deployments_usd`, and `total_usd`, derived from the Console balance helpers, so a `$17.94` balance cannot be mistaken for `17,940,000` dollars.
+
+- **Help examples could be missing, stale, or aimed at internal reviewers**: the command help contract now requires every command to provide a syntactically valid example that names registered commands and flags, explains its placeholders, and contains no internal specification or agent instructions. A command-tree regression test enforces the contract so dependency-provided commands cannot silently reintroduce broken help.
+
 - **`akt q staking params`/`pool` could panic on a sparse response**: proto3 omits zero-valued fields, so an unset `LegacyDec`/`Int` unmarshals with a nil inner `big.Int` and any arithmetic on it panics — `FormatPercentDec` and `FormatDecAsAKT` did exactly that. Two independent reviewers hit it. Formatting now goes through `DecOrZero`/`IntOrZero`, so an omitted field renders as `0` instead of crashing the command. 3 regression tests.
 
 - **A failed config write reported success**: `SaveConfig` deferred `f.Close()` on the file it had just created, discarding the flush error — a full disk or I/O failure while writing `config.yaml` returned nil. The store's YAML export had the same bug (a truncated export reported success). Both now close explicitly and return the error.

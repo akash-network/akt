@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
 	ibctransfer "github.com/cosmos/ibc-go/v10/modules/apps/transfer"
@@ -14,7 +15,13 @@ import (
 	aclient "pkg.akt.dev/go/node/client/discovery"
 )
 
-func TxPersistentPreRunE(cmd *cobra.Command, _ []string) error {
+func TxPersistentPreRunE(cmd *cobra.Command, args []string) error {
+	for _, arg := range args {
+		if arg == "--help" || arg == "-h" {
+			return nil
+		}
+	}
+
 	ctx := cmd.Context()
 
 	if cmd.Flags().Changed(cflags.FlagNode) {
@@ -25,6 +32,12 @@ func TxPersistentPreRunE(cmd *cobra.Command, _ []string) error {
 
 	cctx, err := GetClientTxContext(cmd)
 	if err != nil {
+		return err
+	}
+	// Persist the fully resolved context for SDK-owned handlers that call the
+	// Cosmos client package directly. Without this, their second flag read sees
+	// a nil RPC client and recreates it from the SDK localhost default.
+	if err := SetCmdClientContext(cmd, cctx); err != nil {
 		return err
 	}
 
@@ -42,7 +55,7 @@ func TxPersistentPreRunE(cmd *cobra.Command, _ []string) error {
 			return err
 		}
 
-		cl, err := aclient.DiscoverClient(ctx, cctx, opts...)
+		cl, err := aclient.DiscoverClient(ctx, clientContextForTxClient(cctx), opts...)
 		if err != nil {
 			return err
 		}
@@ -58,9 +71,22 @@ func TxPersistentPreRunE(cmd *cobra.Command, _ []string) error {
 	return nil
 }
 
+// clientContextForTxClient prevents the downstream transaction client from
+// interpreting an already parsed address as a key name. Unsigned construction
+// needs the address for messages but does not sign.
+func clientContextForTxClient(cctx sdkclient.Context) sdkclient.Context {
+	addressOnly := cctx.FromName == "" && len(cctx.FromAddress) != 0
+	if addressOnly && cctx.GenerateOnly {
+		return cctx.WithFrom("")
+	}
+
+	return cctx
+}
+
 func TxCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "tx",
+		RunE:  ValidateCmd,
 		Short: "Transactions subcommands",
 		// Capability gating: broadcasting requires a chain RPC endpoint.
 		Annotations: map[string]string{capability.AnnotationKey: string(capability.ChainTx)},
@@ -69,10 +95,8 @@ func TxCmd() *cobra.Command {
 	cmd.AddCommand(
 		GetTxAuthzCmd(),
 		GetTxBankCmd(),
-		GetTxCrisisCmd(),
 		getTxDistributionCmd(),
 		GetTxEscrowCmd(),
-		GetTxEvidenceCmd([]*cobra.Command{}),
 		GetTxFeegrantCmd(),
 		GetSignCommand(),
 		GetSignBatchCommand(),
@@ -82,10 +106,8 @@ func TxCmd() *cobra.Command {
 		GetEncodeCommand(),
 		GetDecodeCommand(),
 		GetTxVestingCmd(),
-		cflags.LineBreak,
-		ibccore.AppModuleBasic{}.GetTxCmd(),
-		ibctransfer.AppModuleBasic{}.GetTxCmd(),
-		cflags.LineBreak,
+		adoptVendoredTxCmd(withoutEmptyVendoredGroup(ibccore.AppModuleBasic{}.GetTxCmd(), "channelv2")),
+		adoptVendoredTxCmd(ibctransfer.AppModuleBasic{}.GetTxCmd()),
 		GetTxAuditCmd(),
 		GetTxCertCmd(),
 		GetTxDeploymentCmds(),
@@ -98,7 +120,7 @@ func TxCmd() *cobra.Command {
 		),
 		GetTxSlashingCmd(),
 		GetTxStakingCmd(),
-		GetTxUpgradeCmd(),
+		adoptVendoredTxCmd(GetTxUpgradeCmd()),
 		GetTxWasmCmd(),
 		GetTxOracleCmd(),
 		GetTxBMECmd(),

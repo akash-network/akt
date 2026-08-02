@@ -3,6 +3,7 @@ package workflow
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -64,7 +65,7 @@ func TestEmitJSONLShape(t *testing.T) {
 	state.SetStepResult("boom", &wf.StepResult{Name: "boom", Status: "failed", Error: "out of gas"})
 
 	var buf bytes.Buffer
-	emitJSONL(&buf, state)
+	emitJSONL(&buf, state, nil)
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	if len(lines) != 3 {
@@ -124,10 +125,133 @@ func TestEmitJSONLSkipsMissingResults(t *testing.T) {
 	state.SetStepResult("ghost", nil)
 
 	var buf bytes.Buffer
-	emitJSONL(&buf, state)
+	emitJSONL(&buf, state, nil)
 
 	if strings.TrimSpace(buf.String()) != "" {
 		t.Errorf("a nil step result must emit nothing, got %q", buf.String())
+	}
+}
+
+func TestDeployRecoveryAdviceSurfacesPaidPartialState(t *testing.T) {
+	state := wf.NewRunState("run-1", "deploy", "akash1owner", map[string]any{
+		"sdl-file": "/tmp/my deployment.yaml",
+	})
+	state.SetStepResult("create-deployment", &wf.StepResult{
+		Name:   "create-deployment",
+		Status: "success",
+		Output: map[string]any{"dseq": "4242"},
+	})
+	state.SetStepResult("select-bid", &wf.StepResult{
+		Name:   "select-bid",
+		Status: "success",
+		Output: map[string]any{"provider": "akash1provider"},
+	})
+	state.SetStepResult("create-lease", &wf.StepResult{
+		Name:   "create-lease",
+		Status: "success",
+		Output: map[string]any{"dseq": "4242", "provider": "akash1provider"},
+	})
+	state.SetStepResult("send-manifest", &wf.StepResult{
+		Name:   "send-manifest",
+		Status: "failed",
+		Error:  "gateway timeout",
+	})
+
+	advice := deployRecoveryAdvice(state, errors.New("send manifest failed"))
+	if advice == nil {
+		t.Fatal("deploy failure after create-deployment returned no recovery advice")
+	}
+	if advice.DSeq != 4242 || advice.Provider != "akash1provider" {
+		t.Fatalf("partial state = %+v, want dseq 4242 and provider", advice)
+	}
+	if advice.Recovery != "akt provider send-manifest '/tmp/my deployment.yaml' --dseq 4242 --provider akash1provider" {
+		t.Errorf("recovery command = %q", advice.Recovery)
+	}
+	if advice.Cleanup != "akt close 4242" {
+		t.Errorf("cleanup command = %q", advice.Cleanup)
+	}
+
+	var human bytes.Buffer
+	printResults(&human, state, errors.New("send manifest failed"), advice)
+	for _, want := range []string{
+		"Partial deployment state",
+		"DSEQ: 4242",
+		"Provider: akash1provider",
+		"escrow may continue to be consumed",
+		advice.Recovery,
+		advice.Cleanup,
+	} {
+		if !strings.Contains(human.String(), want) {
+			t.Errorf("human failure output missing %q:\n%s", want, human.String())
+		}
+	}
+
+	err := workflowFailureError("deploy", errors.New("send manifest failed"), advice)
+	for _, want := range []string{"DSEQ 4242", "akash1provider", "escrow may continue", advice.Recovery, advice.Cleanup} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("returned error missing %q: %v", want, err)
+		}
+	}
+}
+
+func TestDeployRecoveryAdviceJSONLFields(t *testing.T) {
+	state := wf.NewRunState("run-1", "deploy", "akash1owner", map[string]any{"sdl-file": "deploy.yaml"})
+	state.SetStepResult("create-deployment", &wf.StepResult{
+		Name:   "create-deployment",
+		Status: "success",
+		Output: map[string]any{"dseq": float64(77)},
+	})
+	state.SetStepResult("send-manifest", &wf.StepResult{Name: "send-manifest", Status: "failed", Error: "refused"})
+
+	advice := deployRecoveryAdvice(state, errors.New("refused"))
+	var buf bytes.Buffer
+	emitJSONL(&buf, state, advice)
+
+	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
+	if len(lines) != 2 {
+		t.Fatalf("JSONL lines = %d, want 2:\n%s", len(lines), buf.String())
+	}
+
+	var failed struct {
+		Result   string `json:"result"`
+		DSeq     uint64 `json:"dseq"`
+		Provider string `json:"provider"`
+		Recovery string `json:"recovery"`
+		Cleanup  string `json:"cleanup"`
+	}
+	if err := json.Unmarshal([]byte(lines[1]), &failed); err != nil {
+		t.Fatalf("decode failed JSONL line: %v", err)
+	}
+	if failed.Result != "error" || failed.DSeq != 77 || failed.Provider != "" {
+		t.Errorf("failed JSONL identity = %+v", failed)
+	}
+	if failed.Recovery != "" || failed.Cleanup != "akt close 77" {
+		t.Errorf("failed JSONL recovery = %+v", failed)
+	}
+}
+
+func TestDeployRecoveryAdviceRequiresCompletedCreate(t *testing.T) {
+	state := wf.NewRunState("run-1", "deploy", "akash1owner", map[string]any{"sdl-file": "deploy.yaml"})
+	state.SetStepResult("create-deployment", &wf.StepResult{Name: "create-deployment", Status: "failed"})
+
+	if got := deployRecoveryAdvice(state, errors.New("broadcast refused")); got != nil {
+		t.Fatalf("failed create has no paid partial state, got %+v", got)
+	}
+
+	state.Workflow = "update"
+	state.Steps["create-deployment"] = &wf.StepResult{
+		Name:   "create-deployment",
+		Status: "success",
+		Output: map[string]any{"dseq": "42"},
+	}
+	if got := deployRecoveryAdvice(state, errors.New("update failed")); got != nil {
+		t.Fatalf("non-deploy workflow got deploy recovery advice: %+v", got)
+	}
+}
+
+func TestShellQuoteKeepsRecoveryCommandsCopyPasteable(t *testing.T) {
+	if got, want := shellQuote("/tmp/operator's deployment.yaml"), `'/tmp/operator'"'"'s deployment.yaml'`; got != want {
+		t.Errorf("shellQuote = %q, want %q", got, want)
 	}
 }
 

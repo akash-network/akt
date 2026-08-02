@@ -31,8 +31,19 @@ func GetTxEscrowCmd() *cobra.Command {
 
 func GetTxEscrowDeposit() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "deposit [deployment] [amount]",
-		Short:             "deposit funds to escrow account",
+		Use:   "deposit deployment <amount> --dseq <dseq>",
+		Short: "Add funds to a deployment's escrow account",
+		Long: `Add funds to a deployment's escrow account.
+
+The first argument is the escrow scope and must be the literal word
+"deployment" -- it is the only scope this command supports. The deployment
+itself is chosen with --dseq.
+
+Deposited funds are locked in escrow and drawn down per block by the
+deployment's leases. Whatever is left is returned when the deployment is
+closed.`,
+		Example: `  # Add 5 AKT to deployment 12345
+  akt tx escrow deposit deployment 5000000uakt --dseq 12345 --from mykey`,
 		Args:              cobra.ExactArgs(2),
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {

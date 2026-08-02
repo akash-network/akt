@@ -1,12 +1,17 @@
 package pretty
 
 import (
+	"bytes"
 	"testing"
 
 	"cosmossdk.io/math"
 	"github.com/charmbracelet/x/exp/golden"
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/require"
 
+	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	dv1 "pkg.akt.dev/go/node/deployment/v1"
 	dvbeta "pkg.akt.dev/go/node/deployment/v1beta4"
 	eidv1 "pkg.akt.dev/go/node/escrow/id/v1"
@@ -185,4 +190,18 @@ func TestRenderGroupsList(t *testing.T) {
 			golden.RequireEqual(t, RenderGroupsList(tc.groups))
 		})
 	}
+}
+
+func TestPrintGroupsListUsesPlainCommandWriterOutsideTTY(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+
+	cmd := &cobra.Command{Use: "group"}
+	cflags.AddQueryFlagsToCmd(cmd)
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+
+	groups := dvbeta.Groups{makeGroup("akash1qwerty", 100, 1, "web", dvbeta.GroupOpen)}
+	require.NoError(t, PrintGroupsList(cmd, sdkclient.Context{}, groups))
+	require.Contains(t, stdout.String(), "Group 1")
+	require.NotContains(t, stdout.String(), "\x1b[")
 }

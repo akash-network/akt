@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -104,7 +105,35 @@ func ReadQueryCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) (sdkc
 		cctx = cctx.WithUseLedger(useLedger)
 	}
 
+	if err := validateQueryChainID(cctx, flagSet); err != nil {
+		return cctx, err
+	}
+
 	return ReadPersistentCommandFlags(cctx, flagSet)
+}
+
+// validateQueryChainID applies the query-only chain identity contract without
+// constructing a transport. Local derivations use it even though they do not
+// need the rest of a client query context.
+func validateQueryChainID(cctx sdkclient.Context, flagSet *pflag.FlagSet) error {
+	// --chain-id names a chain, but a query's endpoint comes from the active
+	// context. The flag cannot retarget the endpoint, so the honest outcomes are
+	// to agree with the context or to say so.
+	//
+	// Queries only. A tx may legitimately name another chain while building an
+	// unsigned or offline payload, and that path does not come through here.
+	if flagSet.Lookup(cflags.FlagChainID) == nil || !flagSet.Changed(cflags.FlagChainID) {
+		return nil
+	}
+
+	chainID, _ := flagSet.GetString(cflags.FlagChainID)
+	if chainID != "" && cctx.ChainID != "" && chainID != cctx.ChainID {
+		return fmt.Errorf(
+			"--chain-id %q does not match the active context's chain %q; switch context with --context, or point at another node with --node",
+			chainID, cctx.ChainID)
+	}
+
+	return nil
 }
 
 func GetRPCURIFromContext(ctx context.Context) string {
@@ -154,6 +183,7 @@ func ReadPersistentCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) 
 
 	if cctx.ChainID == "" || flagSet.Changed(cflags.FlagChainID) {
 		chainID, _ := flagSet.GetString(cflags.FlagChainID)
+
 		cctx = cctx.WithChainID(chainID)
 	}
 
@@ -169,12 +199,24 @@ func ReadPersistentCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) 
 		}
 	}
 
-	if cctx.Client == nil {
-		rpcURI := GetRPCURIFromContext(cctx.CmdContext)
-
-		// Fall back to the --node flag when the context does not provide an RPC URI.
-		if rpcURI == "" && flagSet.Lookup(cflags.FlagNode) != nil {
+	nodeChanged := flagSet.Lookup(cflags.FlagNode) != nil && flagSet.Changed(cflags.FlagNode)
+	if cctx.Client == nil || nodeChanged {
+		var rpcURI string
+		if nodeChanged {
+			// An explicit invocation override always wins over the endpoint stored
+			// in the active context, including when a client was already built.
 			rpcURI, _ = flagSet.GetString(cflags.FlagNode)
+			if strings.TrimSpace(rpcURI) == "" {
+				return cctx, fmt.Errorf("--%s cannot be empty", cflags.FlagNode)
+			}
+		} else {
+			rpcURI = GetRPCURIFromContext(cctx.CmdContext)
+
+			// Fall back to the command default when the context does not provide
+			// an RPC URI.
+			if rpcURI == "" && flagSet.Lookup(cflags.FlagNode) != nil {
+				rpcURI, _ = flagSet.GetString(cflags.FlagNode)
+			}
 		}
 
 		if rpcURI != "" {
@@ -224,6 +266,10 @@ func ReadPersistentCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) 
 // - client.Context field pre-populated & flag not set: uses pre-populated value
 // - client.Context field pre-populated & flag set: uses set flag value
 func ReadTxCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) (sdkclient.Context, error) {
+	if err := validateTxInvocation(cctx, flagSet); err != nil {
+		return cctx, err
+	}
+
 	cctx, err := ReadPersistentCommandFlags(cctx, flagSet)
 	if err != nil {
 		return cctx, err
@@ -285,8 +331,12 @@ func ReadTxCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) (sdkclie
 		}
 	}
 
-	if cctx.From == "" || flagSet.Changed(cflags.FlagFrom) {
-		from, _ := flagSet.GetString(cflags.FlagFrom)
+	fromUnresolved := cctx.From != "" && cctx.FromName == "" && len(cctx.FromAddress) == 0
+	if cctx.From == "" || fromUnresolved || flagSet.Changed(cflags.FlagFrom) {
+		from := cctx.From
+		if flagSet.Changed(cflags.FlagFrom) || from == "" {
+			from, _ = flagSet.GetString(cflags.FlagFrom)
+		}
 		fromAddr, fromName, keyType, err := sdkclient.GetFromFields(cctx, cctx.Keyring, from)
 		if err != nil {
 			return cctx, err
@@ -322,4 +372,39 @@ func ReadTxCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) (sdkclie
 	}
 
 	return cctx, nil
+}
+
+// validateTxInvocation checks transaction identity before common flag parsing
+// can overwrite the selected context's chain ID. Online construction,
+// simulation, and broadcast stay on the context's chain; an explicitly
+// offline invocation may construct a payload for another chain.
+func validateTxInvocation(cctx sdkclient.Context, flagSet *pflag.FlagSet) error {
+	chainFlag := flagSet.Lookup(cflags.FlagChainID)
+	if chainFlag == nil || !chainFlag.Changed {
+		return nil
+	}
+
+	chainID, _ := flagSet.GetString(cflags.FlagChainID)
+	if strings.TrimSpace(chainID) == "" {
+		return fmt.Errorf("--%s cannot be empty", cflags.FlagChainID)
+	}
+
+	offline := false
+	if offlineFlag := flagSet.Lookup(cflags.FlagOffline); offlineFlag != nil && offlineFlag.Changed {
+		offline, _ = flagSet.GetBool(cflags.FlagOffline)
+	}
+	if !offline && cctx.ChainID != "" && chainID != cctx.ChainID {
+		return fmt.Errorf(
+			"--chain-id %q does not match the active context's chain %q; switch context with --context, or use --offline to construct for another chain",
+			chainID, cctx.ChainID)
+	}
+
+	return nil
+}
+
+// ValidateTxInvocation checks the assembled command against the selected SDK
+// client context. The root calls it before leaf hooks so dependency-owned tx
+// commands and workflow dry-runs receive the same identity guard.
+func ValidateTxInvocation(cmd *cobra.Command) error {
+	return validateTxInvocation(GetClientContextFromCmd(cmd), cmd.Flags())
 }

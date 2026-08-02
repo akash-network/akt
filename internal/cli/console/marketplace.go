@@ -4,9 +4,11 @@ import (
 	"fmt"
 	"strings"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
 	aktctx "pkg.akt.dev/akt/internal/context"
+	"pkg.akt.dev/akt/internal/output"
 )
 
 // Public catalog commands. None of these require a Console API key; a key is
@@ -15,6 +17,7 @@ import (
 func providerCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "provider",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Browse the Console provider catalog (no API key required)",
 	}
 
@@ -137,6 +140,7 @@ func gpuCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 func templateCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "template",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Browse deployment templates (no API key required)",
 	}
 
@@ -183,7 +187,9 @@ func templateCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	sdl := &cobra.Command{
 		Use:   "sdl <id>",
 		Short: "Print a template's raw SDL to stdout (for piping)",
-		Args:  cobra.ExactArgs(1),
+		Long: "Print a template's raw SDL for direct redirection in the default output mode. " +
+			"JSON and YAML output wrap the exact source in an object under the sdl field.",
+		Args: cobra.ExactArgs(1),
 		Example: `  # Write a template's SDL to a file, then deploy it
   akt console template sdl hello-world > deploy.yaml
   akt console deployment create deploy.yaml 5`,
@@ -200,6 +206,12 @@ func templateCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 			if tmpl.Deploy == "" {
 				return fmt.Errorf("template %s has no deploy SDL", args[0])
+			}
+
+			if format := output.FormatFromCmd(cmd); format != output.FormatTable {
+				return printJSON(cmd, struct {
+					SDL string `json:"sdl"`
+				}{tmpl.Deploy})
 			}
 
 			out := tmpl.Deploy

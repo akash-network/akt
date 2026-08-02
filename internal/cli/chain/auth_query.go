@@ -61,7 +61,7 @@ func GetQueryAuthParamsCmd() *cobra.Command {
 		Args:  cobra.NoArgs,
 		Long: strings.TrimSpace(`Query the current auth parameters:
 
-$ <appd> query auth params
+$ akt query auth params
 `),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -160,6 +160,7 @@ func GetQueryAuthAccountAddressByIDCmd() *cobra.Command {
 func GetQueryAuthAccountsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "accounts",
+		Args:              cobra.NoArgs,
 		Short:             "Query all the accounts",
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -190,6 +191,7 @@ func GetQueryAuthAccountsCmd() *cobra.Command {
 func GetQueryAuthModuleAccountsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "module-accounts",
+		Args:              cobra.NoArgs,
 		Short:             "Query all module accounts",
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -249,16 +251,15 @@ func GetQueryAuthTxsByEventsCmd() *cobra.Command {
 		Long: strings.TrimSpace(
 			fmt.Sprintf(`
 Search for transactions that match the exact given events where results are paginated.
-Each event takes the form of '%s'. Please refer
-to each module's documentation for the full set of events to query for. Each module
-documents its respective events under 'xx_events.md'.
+Each event takes the form of '%s'. Refer to the
+documentation of the module you are querying for the events it emits.
 
 Example:
 $ %[2]s query txs 'message.sender=akash1...&message.action=withdraw_delegator_reward' --page 1 --limit 30
 `, eventFormat, version.AppName),
 		),
 		Args:              cobra.MaximumNArgs(1),
-		PersistentPreRunE: QueryPersistentPreRunE,
+		PersistentPreRunE: queryWithoutHeightPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)
@@ -339,7 +340,7 @@ $ %s query tx --%s=%s <sig1_base64>,<sig2_base64...>
 			version.AppName, cflags.FlagType, typeAccSeq,
 			version.AppName, cflags.FlagType, typeSig)),
 		Args:              cobra.ExactArgs(1),
-		PersistentPreRunE: QueryPersistentPreRunE,
+		PersistentPreRunE: queryWithoutHeightPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)

@@ -9,6 +9,7 @@ func NetworkTemplates() map[string]Network {
 			ChainID: "akashnet-2",
 			Endpoints: Endpoints{
 				RPC: []string{
+					"https://rpc.akt.dev:443/rpc",
 					"https://rpc.akashnet.net:443",
 					"https://rpc-akash.ecostake.com:443",
 				},
@@ -42,16 +43,16 @@ func NetworkTemplates() map[string]Network {
 		},
 		"sandbox": {
 			Name:    "sandbox",
-			ChainID: "sandbox-01",
+			ChainID: "sandbox-2",
 			Endpoints: Endpoints{
 				RPC: []string{
-					"https://rpc.sandbox-01.aksh.pw:443",
+					"https://rpc.sandbox-2.aksh.pw:443",
 				},
 				API: []string{
-					"https://api.sandbox-01.aksh.pw:443",
+					"https://api.sandbox-2.aksh.pw:443",
 				},
 				GRPC: []string{
-					"grpc.sandbox-01.aksh.pw:443",
+					"grpc.sandbox-2.aksh.pw:9090",
 				},
 			},
 			GasPrices:     "0.025uakt",

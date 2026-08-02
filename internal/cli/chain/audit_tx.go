@@ -35,6 +35,7 @@ func GetTxAuditCmd() *cobra.Command {
 func GetTxAuditAttributesCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "attr",
+		RunE:  ValidateCmd,
 		Short: "Manage provider attributes",
 	}
 

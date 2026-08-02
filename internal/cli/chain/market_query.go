@@ -42,8 +42,12 @@ func GetQueryMarketOrderCmd() *cobra.Command {
 		Short: "Query orders",
 		Long: `Query orders.
 
-The optional [id] argument is [owner/]dseq[/gseq[/oseq]], a bare owner
-address, or a bare state keyword (open|active|closed) per SPEC §3.8.
+[id] identifies what to look at, and accepts any of:
+
+  <owner>                        every order for that address
+  <owner>/<dseq>[/gseq[/oseq]]   narrows to a deployment, group, or order
+  <dseq>[/gseq[/oseq]]           the same, owned by the default account
+  open | active | closed         every order of the default account in that state
 
 The optional [state] argument narrows the result: with a partial identity it
 filters the list; when the identity pins down a single order it verifies the
@@ -98,7 +102,10 @@ rather than printing it.`,
 			}
 
 			// Default owner fallback when no arg and no --owner flag.
-			if ofilters.Owner == "" && defaultOwner != "" {
+			if ofilters.Owner == "" {
+				if defaultOwner == "" {
+					return requireOwnerScope("order filter")
+				}
 				ofilters.Owner = defaultOwner
 			}
 
@@ -160,9 +167,15 @@ func GetQueryMarketBidCmd() *cobra.Command {
 		Short: "Query bids",
 		Long: `Query bids.
 
-The optional [id] argument is [owner/]dseq[/gseq[/oseq[/provider]]] (with
---by provider: [provider/]dseq[/gseq[/oseq[/owner]]]), a bare address, or a
-bare state keyword (open|active|lost|closed) per SPEC §3.8.
+[id] identifies what to look at, and accepts any of:
+
+  <owner>                                  every bid for that address
+  <owner>/<dseq>[/gseq[/oseq[/provider]]]  narrows to a deployment, group, order, or bid
+  <dseq>[/gseq[/oseq[/provider]]]          the same, owned by the default account
+  open | active | lost | closed            every bid of the default account in that state
+
+With --by provider the leading address is the provider instead of the owner,
+and the trailing one is the owner.
 
 The optional [state] argument narrows the result: with a partial identity it
 filters the list; when the identity pins down a single bid it verifies the
@@ -181,7 +194,11 @@ than printing it.`,
 
 			defaultOwner := cl.ClientContext().GetFromAddress().String()
 			byProvider, _ := cmd.Flags().GetString("by")
-			isByProvider := byProvider == "provider"
+
+			isByProvider, err := parseByPerspective(byProvider)
+			if err != nil {
+				return err
+			}
 
 			if len(args) > 0 {
 				af, err := cflags.BidFiltersFromArg(args[0], defaultOwner, isByProvider)
@@ -222,7 +239,14 @@ than printing it.`,
 			}
 
 			// Default owner fallback when no arg and no --owner flag (owner mode only).
-			if !isByProvider && bfilters.Owner == "" && defaultOwner != "" {
+			if isByProvider {
+				if bfilters.Provider == "" {
+					return requireProviderScope("bid filter")
+				}
+			} else if bfilters.Owner == "" {
+				if defaultOwner == "" {
+					return requireOwnerScope("bid filter")
+				}
 				bfilters.Owner = defaultOwner
 			}
 
@@ -286,9 +310,15 @@ func GetQueryMarketLeaseCmd() *cobra.Command {
 		Short: "Query leases",
 		Long: `Query leases.
 
-The optional [id] argument is [owner/]dseq[/gseq[/oseq[/provider]]] (with
---by provider: [provider/]dseq[/gseq[/oseq[/owner]]]), a bare address, or a
-bare state keyword (active|insufficient_funds|closed) per SPEC §3.8.
+[id] identifies what to look at, and accepts any of:
+
+  <owner>                                  every lease for that address
+  <owner>/<dseq>[/gseq[/oseq[/provider]]]  narrows to a deployment, group, order, or lease
+  <dseq>[/gseq[/oseq[/provider]]]          the same, owned by the default account
+  active | insufficient_funds | closed     every lease of the default account in that state
+
+With --by provider the leading address is the provider instead of the owner,
+and the trailing one is the owner.
 
 The optional [state] argument narrows the result: with a partial identity it
 filters the list; when the identity pins down a single lease it verifies the
@@ -307,7 +337,11 @@ rather than printing it.`,
 
 			defaultOwner := cl.ClientContext().GetFromAddress().String()
 			byProvider, _ := cmd.Flags().GetString("by")
-			isByProvider := byProvider == "provider"
+
+			isByProvider, err := parseByPerspective(byProvider)
+			if err != nil {
+				return err
+			}
 
 			if len(args) > 0 {
 				af, err := cflags.LeaseFiltersFromArg(args[0], defaultOwner, isByProvider)
@@ -348,7 +382,14 @@ rather than printing it.`,
 			}
 
 			// Default owner fallback when no arg and no --owner flag (owner mode only).
-			if !isByProvider && lfilters.Owner == "" && defaultOwner != "" {
+			if isByProvider {
+				if lfilters.Provider == "" {
+					return requireProviderScope("lease filter")
+				}
+			} else if lfilters.Owner == "" {
+				if defaultOwner == "" {
+					return requireOwnerScope("lease filter")
+				}
 				lfilters.Owner = defaultOwner
 			}
 
@@ -404,6 +445,7 @@ rather than printing it.`,
 func GetQueryMarketParamsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "params",
+		Args:              cobra.NoArgs,
 		Short:             "Query the current market parameters",
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, _ []string) error {

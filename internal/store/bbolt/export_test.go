@@ -71,7 +71,7 @@ func TestExportYAML(t *testing.T) {
 	seedStore(t, s)
 
 	var buf bytes.Buffer
-	err := s.Export(context.Background(), &buf, store.FormatYAML)
+	err := s.Export(context.Background(), &buf, store.FormatYAML, "testctx")
 	require.NoError(t, err)
 
 	out := buf.String()
@@ -91,7 +91,7 @@ func TestExportJSON(t *testing.T) {
 	seedStore(t, s)
 
 	var buf bytes.Buffer
-	err := s.Export(context.Background(), &buf, store.FormatJSON)
+	err := s.Export(context.Background(), &buf, store.FormatJSON, "testctx")
 	require.NoError(t, err)
 
 	out := buf.Bytes()
@@ -110,6 +110,42 @@ func TestExportJSON(t *testing.T) {
 	assert.Equal(t, int64(18234567), env.SyncState.LastBlockHeight)
 }
 
+func TestEmptyExportCollectionsAreArraysInJSONAndYAML(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	for _, tc := range []struct {
+		name   string
+		format store.ExportFormat
+		decode func([]byte, *map[string]any) error
+	}{
+		{
+			name:   "json",
+			format: store.FormatJSON,
+			decode: func(data []byte, out *map[string]any) error { return json.Unmarshal(data, out) },
+		},
+		{
+			name:   "yaml",
+			format: store.FormatYAML,
+			decode: func(data []byte, out *map[string]any) error { return yaml.Unmarshal(data, out) },
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			require.NoError(t, s.Export(ctx, &buf, tc.format, "testctx"))
+
+			var document map[string]any
+			require.NoError(t, tc.decode(buf.Bytes(), &document))
+			for _, field := range []string{"deployments", "leases", "bids"} {
+				value, ok := document[field]
+				require.True(t, ok, "missing %s", field)
+				require.IsType(t, []any{}, value, "%s must be an array", field)
+				require.Empty(t, value)
+			}
+		})
+	}
+}
+
 func TestImportMerge(t *testing.T) {
 	ctx := context.Background()
 
@@ -123,7 +159,7 @@ func TestImportMerge(t *testing.T) {
 
 	// Export store A.
 	var buf bytes.Buffer
-	require.NoError(t, storeA.Export(ctx, &buf, store.FormatJSON))
+	require.NoError(t, storeA.Export(ctx, &buf, store.FormatJSON, "testctx"))
 
 	// Store B: has deployment dseq=2.
 	storeB := openTestStore(t)
@@ -194,7 +230,7 @@ func TestRoundTripYAML(t *testing.T) {
 	seedStore(t, s1)
 
 	var export1 bytes.Buffer
-	require.NoError(t, s1.Export(ctx, &export1, store.FormatYAML))
+	require.NoError(t, s1.Export(ctx, &export1, store.FormatYAML, "testctx"))
 
 	// Import into store 2.
 	s2 := openTestStore(t)
@@ -202,7 +238,7 @@ func TestRoundTripYAML(t *testing.T) {
 
 	// Export from store 2.
 	var export2 bytes.Buffer
-	require.NoError(t, s2.Export(ctx, &export2, store.FormatYAML))
+	require.NoError(t, s2.Export(ctx, &export2, store.FormatYAML, "testctx"))
 
 	// Parse both exports and compare data (ignoring exported_at timestamp).
 	var env1, env2 ExportEnvelope
@@ -225,7 +261,7 @@ func TestRoundTripJSON(t *testing.T) {
 	seedStore(t, s1)
 
 	var export1 bytes.Buffer
-	require.NoError(t, s1.Export(ctx, &export1, store.FormatJSON))
+	require.NoError(t, s1.Export(ctx, &export1, store.FormatJSON, "testctx"))
 
 	// Import into store 2.
 	s2 := openTestStore(t)
@@ -233,7 +269,7 @@ func TestRoundTripJSON(t *testing.T) {
 
 	// Export from store 2.
 	var export2 bytes.Buffer
-	require.NoError(t, s2.Export(ctx, &export2, store.FormatJSON))
+	require.NoError(t, s2.Export(ctx, &export2, store.FormatJSON, "testctx"))
 
 	// Parse both and compare data (ignoring exported_at).
 	var env1, env2 ExportEnvelope
@@ -256,7 +292,7 @@ func TestImportEmptyStore(t *testing.T) {
 	seedStore(t, src)
 
 	var buf bytes.Buffer
-	require.NoError(t, src.Export(ctx, &buf, store.FormatJSON))
+	require.NoError(t, src.Export(ctx, &buf, store.FormatJSON, "testctx"))
 
 	// Import into a fresh empty store.
 	dst := openTestStore(t)

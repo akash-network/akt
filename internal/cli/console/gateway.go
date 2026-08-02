@@ -1,8 +1,10 @@
 package console
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"strconv"
 	"strings"
@@ -24,6 +26,8 @@ import (
 
 	"pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
+	"pkg.akt.dev/akt/internal/output"
+	aktprovider "pkg.akt.dev/akt/internal/provider"
 )
 
 // JWT lifetimes for Console-minted provider gateway tokens, in seconds.
@@ -93,30 +97,6 @@ func gatewayForDeployment(cmd *cobra.Command, cl *console.Client, dseq string, t
 	return gw, lid, nil
 }
 
-// streamCloseErr converts a closed stream's reason into an error, or nil when
-// the close is simply the end of the output.
-//
-// A provider ends a one-shot (non-follow) stream by closing the connection
-// once it has sent everything rather than by sending a close frame, which the
-// websocket layer surfaces as "unexpected EOF". Reporting that as a failure
-// exits non-zero after every line has already been printed, so
-// `akt console logs <dseq> && next` never runs next despite the fetch having
-// completely succeeded.
-//
-// In follow mode the user asked for an open-ended stream, so an EOF really did
-// cut it short and is still reported.
-func streamCloseErr(kind, reason string, follow bool) error {
-	if reason == "" {
-		return nil
-	}
-
-	if !follow && strings.Contains(strings.ToLower(reason), "eof") {
-		return nil
-	}
-
-	return fmt.Errorf("%s stream closed: %s", kind, reason)
-}
-
 // activeLease returns the deployment's first active lease, or an error that
 // names the states of the leases that do exist.
 func activeLease(detail *console.DeploymentDetail, dseq string) (*console.Lease, error) {
@@ -166,7 +146,8 @@ func logsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		Short: "Stream container logs from the lease's provider",
 		Long: "Stream container logs for a Console-managed deployment directly from the provider " +
 			"gateway. The provider is resolved from the deployment's active lease and access is " +
-			"authorized by a short-lived Console-minted JWT — no wallet or local key is involved.",
+			"authorized by a short-lived Console-minted JWT. JSON output is one compact object " +
+			"per line; YAML output is one document per record.",
 		Args: cobra.RangeArgs(1, 2),
 		Example: `  # All services
   akt console logs 12345
@@ -186,6 +167,9 @@ func logsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 			follow, _ := cmd.Flags().GetBool("follow")
 			tail, _ := cmd.Flags().GetInt64("tail")
+			if err := aktprovider.ValidateLogTail(follow, tail); err != nil {
+				return err
+			}
 			// FEEDBACK(2026-07): --service disabled for the positional-only
 			// UX trial; the positional [service] argument is the only
 			// source. Restore by uncommenting if users ask for the flag form
@@ -201,14 +185,17 @@ func logsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				ttl = gatewayJWTTTLStream
 			}
 
-			gw, lid, err := gatewayForDeployment(cmd, cl, args[0], ttl, []string{"logs"})
+			gw, lid, err := gatewayForDeployment(cmd, cl, args[0], ttl, []string{"logs", "status"})
 			if err != nil {
+				return err
+			}
+			if err := aktprovider.CheckLease(ctx, gw, lid); err != nil {
 				return err
 			}
 
 			logs, err := gw.LeaseLogs(ctx, lid, service, follow, tail)
 			if err != nil {
-				return fmt.Errorf("stream lease logs: %w", err)
+				return aktprovider.GatewayError("stream lease logs", err)
 			}
 
 			// Neither filter survives the round trip, so both are applied
@@ -222,56 +209,41 @@ func logsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			// Buffering only happens for a bounded one-shot read; --follow
 			// streams as before, since "last N lines of an endless stream"
 			// has no meaning and buffering it would hang.
-			buffered := !follow && tail > 0
-			var tailBuf []string
+			buffered := tail >= 0
+			var tailBuf []providerLogMsg
 
-			emit := func(msg providerLogMsg) {
-				if !matchesService(msg.Name, service) {
-					return
-				}
-
-				line := fmt.Sprintf("[%s] %s", msg.Name, msg.Message)
-				if buffered {
-					tailBuf = append(tailBuf, line)
-					if int64(len(tailBuf)) > tail {
-						tailBuf = tailBuf[len(tailBuf)-int(tail):]
-					}
-
-					return
-				}
-
-				fmt.Fprintln(cmd.OutOrStdout(), line)
-			}
-
-			flush := func() {
-				for _, line := range tailBuf {
-					fmt.Fprintln(cmd.OutOrStdout(), line)
-				}
-			}
-
-			for {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case msg, ok := <-logs.Stream:
-					if !ok {
-						flush()
-						return nil
-					}
-					emit(providerLogMsg{Name: msg.Name, Message: msg.Message})
-				case reason, ok := <-logs.OnClose:
-					if !ok {
-						flush()
-						return nil
-					}
-					if err := streamCloseErr("log", reason, follow); err != nil {
-						return err
-					}
-					flush()
-
+			emit := func(msg providerLogMsg) error {
+				if !aktprovider.MatchesService(msg.Name, service) {
 					return nil
 				}
+
+				if buffered {
+					tailBuf = aktprovider.RetainTail(tailBuf, msg, tail)
+					return nil
+				}
+
+				return output.PrintStreamRecord(cmd, msg, fmt.Sprintf("[%s] %s", msg.Name, msg.Message))
 			}
+
+			flush := func() error {
+				for _, msg := range tailBuf {
+					if err := output.PrintStreamRecord(cmd, msg, fmt.Sprintf("[%s] %s", msg.Name, msg.Message)); err != nil {
+						return err
+					}
+				}
+
+				return nil
+			}
+
+			streamErr := aktprovider.ConsumeStream(ctx, "log", logs.Stream, logs.OnClose, follow,
+				func(msg rest.ServiceLogMessage) error {
+					return emit(providerLogMsg{Name: msg.Name, Message: msg.Message})
+				})
+			if err := flush(); err != nil {
+				return err
+			}
+
+			return streamErr
 		},
 	}
 
@@ -290,7 +262,8 @@ func eventsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		Use:   "events <dseq>",
 		Short: "Stream Kubernetes events from the lease's provider",
 		Long: "Stream Kubernetes events for a Console-managed deployment directly from the provider " +
-			"gateway, authorized by a short-lived Console-minted JWT (no wallet involved).",
+			"gateway, authorized by a short-lived Console-minted JWT. JSON output is one compact " +
+			"object per line; YAML output is one document per record.",
 		Args: cobra.ExactArgs(1),
 		Example: `  # Recent events
   akt console events 12345
@@ -312,33 +285,23 @@ func eventsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				ttl = gatewayJWTTTLStream
 			}
 
-			gw, lid, err := gatewayForDeployment(cmd, cl, args[0], ttl, []string{"events"})
+			gw, lid, err := gatewayForDeployment(cmd, cl, args[0], ttl, []string{"events", "status"})
 			if err != nil {
+				return err
+			}
+			if err := aktprovider.CheckLease(ctx, gw, lid); err != nil {
 				return err
 			}
 
 			events, err := gw.LeaseEvents(ctx, lid, "", follow)
 			if err != nil {
-				return fmt.Errorf("stream lease events: %w", err)
+				return aktprovider.GatewayError("stream lease events", err)
 			}
 
-			for {
-				select {
-				case <-ctx.Done():
-					return ctx.Err()
-				case evt, ok := <-events.Stream:
-					if !ok {
-						return nil
-					}
-					fmt.Fprintf(cmd.OutOrStdout(), "%s [%s/%s] %s: %s\n",
-						evt.Type, evt.Object.Kind, evt.Object.Name, evt.Reason, evt.Note)
-				case reason, ok := <-events.OnClose:
-					if !ok {
-						return nil
-					}
-					return streamCloseErr("event", reason, follow)
-				}
-			}
+			return aktprovider.ConsumeStream(ctx, "event", events.Stream, events.OnClose, follow,
+				func(event rest.LeaseEvent) error {
+					return printLeaseEvent(cmd, event)
+				})
 		},
 	}
 
@@ -391,7 +354,7 @@ func statusCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 			status, err := gw.LeaseStatus(ctx, lid)
 			if err != nil {
-				return fmt.Errorf("query lease status: %w", err)
+				return aktprovider.GatewayError("query lease status", err)
 			}
 			if err := printJSON(cmd, status); err != nil {
 				return err
@@ -410,7 +373,7 @@ func statusCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 				status, err := gw.LeaseStatus(ctx, lid)
 				if err != nil {
-					return fmt.Errorf("query lease status: %w", err)
+					return aktprovider.GatewayError("query lease status", err)
 				}
 				if err := printJSON(cmd, status); err != nil {
 					return err
@@ -426,7 +389,7 @@ func statusCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 }
 
 func shellCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "shell <dseq> <service> [-- command...]",
 		Short: "Open a shell or run a command in a lease container",
 		Long: "Open an interactive shell (default command /bin/sh) or run an explicit command in a " +
@@ -439,8 +402,18 @@ func shellCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
   akt console shell 12345 web
 
   # Run a single command (a.k.a. exec)
-  akt console shell 12345 web -- ls -la`,
+  akt console shell 12345 web -- ls -la
+
+  # Capture an explicit command as structured stdout and stderr
+  akt console shell 12345 web -o json -- pwd`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			shellCtx, cancelShell := context.WithCancel(cmd.Context())
+			defer cancelShell()
+			interactive := len(args) == 2
+			if err := output.ValidateShellOutput(cmd, interactive); err != nil {
+				return err
+			}
+
 			cl, _, err := clientFromCmd(cmd, mgrFn, true)
 			if err != nil {
 				return err
@@ -453,17 +426,31 @@ func shellCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				command = []string{"/bin/sh"}
 			}
 
-			gw, lid, err := gatewayForDeployment(cmd, cl, dseq, gatewayJWTTTLStream, []string{"shell"})
+			gw, lid, err := gatewayForDeployment(cmd, cl, dseq, gatewayJWTTTLStream, []string{"shell", "status"})
 			if err != nil {
 				return err
 			}
-
 			tty := term.IsTerminal(int(os.Stdin.Fd()))
+			stdinOverride, _ := cmd.Flags().GetBool("stdin")
+			stdin := aktprovider.SelectShellStdin(
+				shellCtx,
+				os.Stdin,
+				interactive,
+				tty,
+				cmd.Flags().Changed("stdin"),
+				stdinOverride,
+			)
 
-			return gw.LeaseShell(cmd.Context(), lid, service, 0, command,
-				os.Stdin, os.Stdout, os.Stderr, tty, nil)
+			return output.RunShellOutput(cmd, interactive, tty, func(stdout, stderr io.Writer, shellTTY bool) error {
+				return aktprovider.RunLeaseShell(shellCtx, gw, lid, service, 0, command,
+					stdin, stdout, stderr, shellTTY, nil)
+			})
 		},
 	}
+
+	cmd.Flags().Bool("stdin", false, "Force stdin attachment for an explicit terminal command")
+
+	return cmd
 }
 
 // --- bid screening ------------------------------------------------------------
@@ -638,21 +625,13 @@ func screeningAttrs(attrs attrv1.Attributes) []console.Attribute {
 // providerLogMsg is the shape the log stream yields, narrowed to the fields
 // the CLI prints so the filtering helpers can be tested without a provider.
 type providerLogMsg struct {
-	Name    string
-	Message string
+	Name    string `json:"name"`
+	Message string `json:"message"`
 }
 
-// matchesService reports whether a log line from pod `name` belongs to
-// `service`. An empty service matches everything.
-//
-// The provider returns pod names ("web-5cfc6c7b4b-4cl7z"), not service names,
-// so an exact comparison would drop every line. Kubernetes builds those names
-// as <service>-<replicaset>-<pod>, hence the prefix match on "<service>-";
-// the bare equality covers a pod named exactly for its service.
-func matchesService(name, service string) bool {
-	if service == "" {
-		return true
-	}
+func printLeaseEvent(cmd *cobra.Command, event rest.LeaseEvent) error {
+	pretty := fmt.Sprintf("%s [%s/%s] %s: %s",
+		event.Type, event.Object.Kind, event.Object.Name, event.Reason, event.Note)
 
-	return name == service || strings.HasPrefix(name, service+"-")
+	return output.PrintStreamRecord(cmd, event, pretty)
 }

@@ -508,6 +508,10 @@ func GetTxGovDraftProposalCmd() *cobra.Command {
 		Short:        "Generate a draft proposal json file. The generated proposal json contains only one message (skeleton).",
 		SilenceUsage: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := requireDraftProposalTTY(cmd); err != nil {
+				return err
+			}
+
 			cctx, err := client.GetClientTxContext(cmd)
 			if err != nil {
 				return err
@@ -588,13 +592,22 @@ func GetTxGovDraftProposalCmd() *cobra.Command {
 	return cmd
 }
 
+func requireDraftProposalTTY(cmd *cobra.Command) error {
+	input, ok := cmd.InOrStdin().(interface{ Fd() uintptr })
+	if !ok || !term.IsTerminal(int(input.Fd())) {
+		return fmt.Errorf("draft-proposal requires an interactive terminal on stdin")
+	}
+	return nil
+}
+
 // GetTxGovCancelProposalCmd implements submitting a cancel proposal transaction command.
 func GetTxGovCancelProposalCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "cancel-proposal [proposal-id]",
-		Short:   "Cancel governance proposal before the voting period ends. Must be signed by the proposal creator.",
-		Args:    cobra.ExactArgs(1),
-		Example: fmt.Sprintf(`$ %s tx gov cancel-proposal 1 --from mykey`, version.AppName),
+		Use:               "cancel-proposal [proposal-id]",
+		Short:             "Cancel governance proposal before the voting period ends. Must be signed by the proposal creator.",
+		Args:              cobra.ExactArgs(1),
+		Example:           fmt.Sprintf(`$ %s tx gov cancel-proposal 1 --from mykey`, version.AppName),
+		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustClientFromContext(ctx)
@@ -781,7 +794,7 @@ func GetTxGovWasmProposalInstantiateContract2Cmd() *cobra.Command {
 func GetTxGovWasmProposalStoreAndInstantiateContractCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use: "store-instantiate [wasm file] [json_encoded_init_args] --authority [address] --label [text] --title [text] --summary [text]" +
-			"--unpin-code [unpin_code,optional] --source [source,optional] --builder [builder,optional] --code-hash [code_hash,optional] --admin [address,optional] --amount [coins,optional]",
+			"--unpin-code [unpin_code,optional] --code-source-url [url,optional] --builder [builder,optional] --code-hash [code_hash,optional] --admin [address,optional] --amount [coins,optional]",
 		Short: "Submit a store and instantiate wasm contract proposal",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {

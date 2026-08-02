@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 
@@ -78,6 +80,89 @@ func Fprint(w io.Writer, format Format, data any) error {
 		return fmt.Errorf("table format requires a specific printer; use PrintTable instead")
 	default:
 		return fmt.Errorf("unknown output format %q", format)
+	}
+}
+
+// FprintJSONSemantics formats JSON-backed data without letting YAML reflection
+// change its field names or scalar types. It is opt-in for callers whose data
+// model is defined by JSON tags and json.Marshaler implementations, such as the
+// Console API. Generic Fprint keeps its existing YAML-tag behavior.
+func FprintJSONSemantics(w io.Writer, format Format, data any) error {
+	if format != FormatYAML {
+		return Fprint(w, format, data)
+	}
+
+	payload, err := json.Marshal(data)
+	if err != nil {
+		return err
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return err
+	}
+
+	root, err := jsonValueYAMLNode(value)
+	if err != nil {
+		return err
+	}
+
+	document := &yaml.Node{
+		Kind:    yaml.DocumentNode,
+		Content: []*yaml.Node{root},
+	}
+
+	return writeYAML(w, document, 2)
+}
+
+func jsonValueYAMLNode(value any) (*yaml.Node, error) {
+	switch value := value.(type) {
+	case nil:
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!null", Value: "null"}, nil
+	case bool:
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!bool", Value: strconv.FormatBool(value)}, nil
+	case string:
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: value}, nil
+	case json.Number:
+		tag := "!!int"
+		if strings.ContainsAny(value.String(), ".eE") {
+			tag = "!!float"
+		}
+		return &yaml.Node{Kind: yaml.ScalarNode, Tag: tag, Value: value.String()}, nil
+	case []any:
+		node := &yaml.Node{Kind: yaml.SequenceNode, Tag: "!!seq"}
+		for _, item := range value {
+			child, err := jsonValueYAMLNode(item)
+			if err != nil {
+				return nil, err
+			}
+			node.Content = append(node.Content, child)
+		}
+		return node, nil
+	case map[string]any:
+		keys := make([]string, 0, len(value))
+		for key := range value {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+
+		node := &yaml.Node{Kind: yaml.MappingNode, Tag: "!!map"}
+		for _, key := range keys {
+			child, err := jsonValueYAMLNode(value[key])
+			if err != nil {
+				return nil, err
+			}
+			node.Content = append(node.Content,
+				&yaml.Node{Kind: yaml.ScalarNode, Tag: "!!str", Value: key},
+				child,
+			)
+		}
+		return node, nil
+	default:
+		return nil, fmt.Errorf("unsupported decoded JSON value %T", value)
 	}
 }
 

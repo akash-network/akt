@@ -1,16 +1,25 @@
 package console
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v3"
+	rest "pkg.akt.dev/go/provider/client"
+
 	aktctx "pkg.akt.dev/akt/internal/context"
+	"pkg.akt.dev/akt/internal/output"
+	aktprovider "pkg.akt.dev/akt/internal/provider"
 )
 
 // testProviderAddr is a checksummed akash bech32 address (the sdkutil import
@@ -155,10 +164,9 @@ func TestStatusWatchPollsUntilError(t *testing.T) {
 
 // TestLogsResolvesGatewayAndScopes covers the resolution path for `logs`: the
 // Console lookups happen and a logs-scoped JWT is minted with a TTL matching
-// the follow mode. The websocket streaming loop itself is shared library code
-// and needs a TLS gateway, so it is not exercised here; the mocked hostUri is
-// plain http, which the library rejects at dial time with a scheme error —
-// proof the command got as far as opening the stream.
+// the follow mode. The mocked hostUri does not resolve, so the lease-status
+// preflight fails after resolution and proves the command refuses to open a
+// websocket until the provider recognizes the lease.
 func TestLogsResolvesGatewayAndScopes(t *testing.T) {
 	m := newTestManager(t)
 	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
@@ -171,17 +179,17 @@ func TestLogsResolvesGatewayAndScopes(t *testing.T) {
 
 	// One-shot: short token.
 	_, err := execConsole(t, m, consoleSrv.URL, "logs", "777", "web")
-	if err == nil || !strings.Contains(err.Error(), "invalid uri scheme") {
-		t.Fatalf("logs against an http hostUri should fail at the websocket dial, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "query lease status") {
+		t.Fatalf("logs should fail at the lease-status preflight, got %v", err)
 	}
-	if jwt.TTL != 300 || len(jwt.Scope) != 1 || jwt.Scope[0] != "logs" {
-		t.Errorf("one-shot logs jwt = ttl %d scope %v, want ttl 300 scope [logs]", jwt.TTL, jwt.Scope)
+	if jwt.TTL != 300 || strings.Join(jwt.Scope, ",") != "logs,status" {
+		t.Errorf("one-shot logs jwt = ttl %d scope %v, want ttl 300 scope [logs status]", jwt.TTL, jwt.Scope)
 	}
 
 	// Follow: long-lived token.
 	_, err = execConsole(t, m, consoleSrv.URL, "logs", "777", "web", "--follow")
-	if err == nil || !strings.Contains(err.Error(), "invalid uri scheme") {
-		t.Fatalf("logs --follow against an http hostUri should fail at the websocket dial, got %v", err)
+	if err == nil || !strings.Contains(err.Error(), "query lease status") {
+		t.Fatalf("logs --follow should fail at the lease-status preflight, got %v", err)
 	}
 	if jwt.TTL != 3600 {
 		t.Errorf("follow logs jwt ttl = %d, want 3600", jwt.TTL)
@@ -382,7 +390,7 @@ func TestStreamCloseErr(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := streamCloseErr("log", tc.reason, tc.follow)
+			err := aktprovider.StreamCloseError("log", tc.reason, tc.follow)
 			if tc.wantErr && err == nil {
 				t.Fatalf("reason %q follow=%v: expected an error, got nil", tc.reason, tc.follow)
 			}
@@ -390,6 +398,165 @@ func TestStreamCloseErr(t *testing.T) {
 				t.Fatalf("reason %q follow=%v: expected nil, got %v", tc.reason, tc.follow, err)
 			}
 		})
+	}
+}
+
+func TestPrintStreamRecordFormats(t *testing.T) {
+	records := []providerLogMsg{
+		{Name: "web-abc-123", Message: "first line"},
+		{Name: "worker-def-456", Message: "second line"},
+	}
+
+	t.Run("pretty", func(t *testing.T) {
+		cmd, buf := streamOutputCommand(t, "pretty")
+		for _, record := range records {
+			if err := output.PrintStreamRecord(cmd, record, fmt.Sprintf("[%s] %s", record.Name, record.Message)); err != nil {
+				t.Fatalf("print stream record: %v", err)
+			}
+		}
+		if got, want := buf.String(), "[web-abc-123] first line\n[worker-def-456] second line\n"; got != want {
+			t.Errorf("pretty stream = %q, want %q", got, want)
+		}
+	})
+
+	t.Run("jsonl", func(t *testing.T) {
+		cmd, buf := streamOutputCommand(t, "json")
+		for _, record := range records {
+			if err := output.PrintStreamRecord(cmd, record, "unused"); err != nil {
+				t.Fatalf("print stream record: %v", err)
+			}
+		}
+
+		lines := strings.Split(strings.TrimSuffix(buf.String(), "\n"), "\n")
+		if len(lines) != len(records) {
+			t.Fatalf("JSON stream has %d lines, want %d: %q", len(lines), len(records), buf.String())
+		}
+		for i, line := range lines {
+			var got providerLogMsg
+			if err := json.Unmarshal([]byte(line), &got); err != nil {
+				t.Fatalf("decode JSONL record %d %q: %v", i, line, err)
+			}
+			if got != records[i] {
+				t.Errorf("JSONL record %d = %#v, want %#v", i, got, records[i])
+			}
+		}
+	})
+
+	t.Run("yaml documents", func(t *testing.T) {
+		cmd, buf := streamOutputCommand(t, "yaml")
+		for _, record := range records {
+			if err := output.PrintStreamRecord(cmd, record, "unused"); err != nil {
+				t.Fatalf("print stream record: %v", err)
+			}
+		}
+
+		if got := strings.Count(buf.String(), "---\n"); got != len(records) {
+			t.Fatalf("YAML stream has %d document markers, want %d: %q", got, len(records), buf.String())
+		}
+		decoder := yaml.NewDecoder(strings.NewReader(buf.String()))
+		for i, want := range records {
+			var got providerLogMsg
+			if err := decoder.Decode(&got); err != nil {
+				t.Fatalf("decode YAML record %d: %v", i, err)
+			}
+			if got != want {
+				t.Errorf("YAML record %d = %#v, want %#v", i, got, want)
+			}
+		}
+	})
+}
+
+func TestRetainTailLogRecords(t *testing.T) {
+	var records []providerLogMsg
+	for _, record := range []providerLogMsg{
+		{Name: "web-a", Message: "first"},
+		{Name: "web-b", Message: "second"},
+		{Name: "web-c", Message: "third"},
+	} {
+		records = aktprovider.RetainTail(records, record, 2)
+	}
+
+	want := []providerLogMsg{
+		{Name: "web-b", Message: "second"},
+		{Name: "web-c", Message: "third"},
+	}
+	if !reflect.DeepEqual(records, want) {
+		t.Errorf("retained tail = %#v, want %#v", records, want)
+	}
+}
+
+func TestPrintLeaseEventStructured(t *testing.T) {
+	event := rest.LeaseEvent{
+		Type:   "Normal",
+		Reason: "Started",
+		Note:   "container started",
+		Object: rest.LeaseEventObject{Kind: "Pod", Namespace: "lease", Name: "web-abc-123"},
+	}
+
+	cmd, buf := streamOutputCommand(t, "pretty")
+	if err := printLeaseEvent(cmd, event); err != nil {
+		t.Fatalf("print pretty lease event: %v", err)
+	}
+	if got, want := buf.String(), "Normal [Pod/web-abc-123] Started: container started\n"; got != want {
+		t.Errorf("pretty event = %q, want %q", got, want)
+	}
+
+	for _, format := range []string{"json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			cmd, buf := streamOutputCommand(t, format)
+			if err := printLeaseEvent(cmd, event); err != nil {
+				t.Fatalf("print lease event: %v", err)
+			}
+
+			got := decodeStructuredMap(t, format, buf.String())
+			if got["type"] != "Normal" || got["reason"] != "Started" || got["note"] != "container started" {
+				t.Errorf("event output = %#v, want the provider event fields", got)
+			}
+			object, ok := got["object"].(map[string]any)
+			if !ok || object["kind"] != "Pod" || object["name"] != "web-abc-123" {
+				t.Errorf("event object = %#v, want Pod/web-abc-123", got["object"])
+			}
+		})
+	}
+}
+
+func streamOutputCommand(t *testing.T, format string) (*cobra.Command, *bytes.Buffer) {
+	t.Helper()
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String("output", format, "")
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+
+	return cmd, &buf
+}
+
+func TestShellRejectsStructuredInteractiveModeBeforeContextResolution(t *testing.T) {
+	resolved := false
+	cmd := shellCmd(func() *aktctx.Manager {
+		resolved = true
+		return nil
+	})
+	cmd.Flags().String("output", "json", "")
+	cmd.SetArgs([]string{"12345", "web"})
+
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "explicit remote command") {
+		t.Fatalf("shell error = %v", err)
+	}
+	if resolved {
+		t.Fatal("structured interactive shell resolved context before refusal")
+	}
+}
+
+func TestShellStdinOverrideDefaultsToAutomaticSelection(t *testing.T) {
+	cmd := shellCmd(func() *aktctx.Manager { return nil })
+	flag := cmd.Flags().Lookup("stdin")
+	if flag == nil {
+		t.Fatal("console shell has no --stdin override")
+	}
+	if flag.DefValue != "false" {
+		t.Fatalf("--stdin default = %q, want false force-override default", flag.DefValue)
 	}
 }
 
@@ -415,8 +582,8 @@ func TestMatchesService(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := matchesService(tc.pod, tc.service); got != tc.want {
-				t.Fatalf("matchesService(%q, %q) = %v, want %v", tc.pod, tc.service, got, tc.want)
+			if got := aktprovider.MatchesService(tc.pod, tc.service); got != tc.want {
+				t.Fatalf("MatchesService(%q, %q) = %v, want %v", tc.pod, tc.service, got, tc.want)
 			}
 		})
 	}

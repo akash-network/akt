@@ -266,14 +266,23 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, resul
 
 		// Backoff before retry for 429 and (idempotent-only) 5xx.
 		if attempt < maxRetries-1 {
-			backoff := time.Duration(1<<uint(attempt)) * 100 * time.Millisecond
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(backoff):
+			if err := waitForRetry(ctx, attempt); err != nil {
+				return err
 			}
 		}
 	}
 
 	return lastErr
+}
+
+// waitForRetry applies the client's bounded exponential backoff while still
+// allowing the caller's timeout or cancellation to stop the operation.
+func waitForRetry(ctx context.Context, attempt int) error {
+	backoff := time.Duration(1<<uint(attempt)) * 100 * time.Millisecond
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-time.After(backoff):
+		return nil
+	}
 }

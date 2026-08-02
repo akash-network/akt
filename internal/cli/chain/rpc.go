@@ -8,6 +8,8 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/cosmos/cosmos-sdk/types/query"
+
+	"pkg.akt.dev/akt/internal/output"
 )
 
 // GetValidatorSetCmd returns the validator set for a given height
@@ -49,7 +51,7 @@ func GetValidatorSetCmd() *cobra.Command {
 	}
 
 	cmd.Flags().String(flags.FlagNode, "tcp://localhost:26657", "<host>:<port> to CometBFT RPC interface for this chain")
-	cmd.Flags().StringP(flags.FlagOutput, "o", "text", "Output format (text|json)")
+	cmd.Flags().VarP(output.NewEnumFlag("text", "text", "json"), flags.FlagOutput, "o", "Output format (text|json)")
 	cmd.Flags().Int(flags.FlagPage, query.DefaultPage, "Query a specific page of paginated results")
 	cmd.Flags().Int(flags.FlagLimit, 100, "Query number of results returned per page")
 

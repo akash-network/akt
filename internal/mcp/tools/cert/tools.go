@@ -37,6 +37,10 @@ func HandleListCertificates(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 			}
 		}
 
+		if owner == "" {
+			return marshal.ErrResult("owner address is required: pass owner, or configure a default account for the active context"), nil
+		}
+
 		state := marshal.OptionalString(req, "state")
 
 		resp, err := cl.Query().Certs().Certificates(ctx, &ctypes.QueryCertificatesRequest{

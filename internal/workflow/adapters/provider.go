@@ -3,16 +3,21 @@ package adapters
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkquery "github.com/cosmos/cosmos-sdk/types/query"
 
 	aktprovider "pkg.akt.dev/akt/internal/provider"
 	"pkg.akt.dev/akt/internal/workflow/steps"
+	manifest "pkg.akt.dev/go/manifest/v2beta3"
 	mv1 "pkg.akt.dev/go/node/market/v1"
+	mtypes "pkg.akt.dev/go/node/market/v1beta5"
 	ptypes "pkg.akt.dev/go/node/provider/v1beta4"
 	rest "pkg.akt.dev/go/provider/client"
 	"pkg.akt.dev/go/sdl"
@@ -52,16 +57,64 @@ func (p *providerClient) SendManifest(ctx context.Context, provider string, dseq
 		return fmt.Errorf("send manifest: dseq is required")
 	}
 
-	sdlManifest, err := readSDL(sdlData)
+	mani, err := manifestFromSDL(sdlData)
 	if err != nil {
 		return err
 	}
 
-	mani, err := sdlManifest.Manifest()
-	if err != nil {
-		return fmt.Errorf("build manifest from SDL: %w", err)
+	return p.submitManifest(ctx, provider, dseq, mani)
+}
+
+// SendManifestToActiveLeases submits an updated manifest to every provider
+// with an active lease for the deployment. Every provider is attempted even
+// when an earlier one rejects the manifest; the returned addresses are the
+// providers that accepted it.
+func (p *providerClient) SendManifestToActiveLeases(ctx context.Context, dseq uint64, sdlData []byte) ([]string, error) {
+	if dseq == 0 {
+		return nil, fmt.Errorf("send manifest to active leases: dseq is required")
 	}
 
+	owner := p.cctx.GetFromAddress().String()
+	if owner == "" {
+		return nil, fmt.Errorf("send manifest to active leases: owner address is required")
+	}
+
+	mani, err := manifestFromSDL(sdlData)
+	if err != nil {
+		return nil, err
+	}
+
+	queryClient := mtypes.NewQueryClient(p.cctx)
+	providers, err := activeLeaseProviders(ctx, owner, dseq, func(
+		ctx context.Context,
+		request *mtypes.QueryLeasesRequest,
+	) (*mtypes.QueryLeasesResponse, error) {
+		return queryClient.Leases(ctx, request)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return sendManifestToProviders(ctx, providers, func(ctx context.Context, provider string) error {
+		return p.submitManifest(ctx, provider, dseq, mani)
+	})
+}
+
+func manifestFromSDL(sdlData []byte) (manifest.Manifest, error) {
+	sdlManifest, err := readSDL(sdlData)
+	if err != nil {
+		return nil, err
+	}
+
+	mani, err := sdlManifest.Manifest()
+	if err != nil {
+		return nil, fmt.Errorf("build manifest from SDL: %w", err)
+	}
+
+	return mani, nil
+}
+
+func (p *providerClient) submitManifest(ctx context.Context, provider string, dseq uint64, mani manifest.Manifest) error {
 	cl, err := p.gatewayClient(ctx, provider)
 	if err != nil {
 		return err
@@ -72,6 +125,92 @@ func (p *providerClient) SendManifest(ctx context.Context, provider string, dseq
 	}
 
 	return nil
+}
+
+type leasePageFetcher func(context.Context, *mtypes.QueryLeasesRequest) (*mtypes.QueryLeasesResponse, error)
+
+func activeLeaseProviders(
+	ctx context.Context,
+	owner string,
+	dseq uint64,
+	fetch leasePageFetcher,
+) ([]string, error) {
+	providers := make(map[string]struct{})
+	seenPageKeys := make(map[string]struct{})
+	var pageKey []byte
+
+	for {
+		response, err := fetch(ctx, &mtypes.QueryLeasesRequest{
+			Filters: mv1.LeaseFilters{
+				Owner: owner,
+				DSeq:  dseq,
+				State: "active",
+			},
+			Pagination: &sdkquery.PageRequest{
+				Key:   append([]byte(nil), pageKey...),
+				Limit: 100,
+			},
+		})
+		if err != nil {
+			return nil, fmt.Errorf("query active leases for deployment %d: %w", dseq, err)
+		}
+		if response == nil {
+			return nil, fmt.Errorf("query active leases for deployment %d: empty response", dseq)
+		}
+
+		for _, lease := range response.Leases {
+			if provider := lease.Lease.ID.Provider; provider != "" {
+				providers[provider] = struct{}{}
+			}
+		}
+
+		var nextKey []byte
+		if response.Pagination != nil {
+			nextKey = response.Pagination.NextKey
+		}
+		if len(nextKey) == 0 {
+			break
+		}
+
+		key := string(nextKey)
+		if _, seen := seenPageKeys[key]; seen {
+			return nil, fmt.Errorf("query active leases for deployment %d: repeated pagination key", dseq)
+		}
+		seenPageKeys[key] = struct{}{}
+		pageKey = append(pageKey[:0], nextKey...)
+	}
+
+	result := make([]string, 0, len(providers))
+	for provider := range providers {
+		result = append(result, provider)
+	}
+	sort.Strings(result)
+
+	return result, nil
+}
+
+func sendManifestToProviders(
+	ctx context.Context,
+	providers []string,
+	submit func(context.Context, string) error,
+) ([]string, error) {
+	sent := make([]string, 0, len(providers))
+	var failures []error
+
+	for _, provider := range providers {
+		if err := ctx.Err(); err != nil {
+			failures = append(failures, err)
+			break
+		}
+
+		if err := submit(ctx, provider); err != nil {
+			failures = append(failures, fmt.Errorf("provider %s: %w", provider, err))
+			continue
+		}
+		sent = append(sent, provider)
+	}
+
+	return sent, errors.Join(failures...)
 }
 
 // LeaseStatus queries the live status of a lease from the provider gateway

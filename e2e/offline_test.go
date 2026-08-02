@@ -6,6 +6,7 @@ package e2e
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -13,6 +14,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"gopkg.in/yaml.v3"
 )
 
 // Deterministic BIP39 mnemonic used for recovery tests. The derived address
@@ -117,6 +120,37 @@ func TestKeysLifecycle(t *testing.T) {
 		}
 	}
 
+	// Machine formats carry canonical key fields, while address-only remains
+	// a scalar so scripts do not need a different object shape.
+	jsonShow := mustRunAkt(t, home, "context", "keys", "show", "alice", "-o", "json")
+	var keyJSON map[string]string
+	if err := json.Unmarshal([]byte(jsonShow), &keyJSON); err != nil {
+		t.Fatalf("parse keys show JSON %q: %v", jsonShow, err)
+	}
+	if len(keyJSON) != 4 || keyJSON["name"] != "alice" || keyJSON["address"] != addr {
+		t.Fatalf("keys show JSON = %#v", keyJSON)
+	}
+
+	yamlShow := mustRunAkt(t, home, "context", "keys", "show", "alice", "-o", "yaml")
+	var keyYAML map[string]string
+	if err := yaml.Unmarshal([]byte(yamlShow), &keyYAML); err != nil {
+		t.Fatalf("parse keys show YAML %q: %v", yamlShow, err)
+	}
+	if len(keyYAML) != 4 || keyYAML["name"] != "alice" || keyYAML["address"] != addr {
+		t.Fatalf("keys show YAML = %#v", keyYAML)
+	}
+
+	jsonAddress := mustRunAkt(t, home, "context", "keys", "show", "alice", "-a", "-o", "json")
+	var addressJSON string
+	if err := json.Unmarshal([]byte(jsonAddress), &addressJSON); err != nil || addressJSON != addr {
+		t.Fatalf("keys address JSON = %q (%v), want %q", addressJSON, err, addr)
+	}
+	yamlAddress := mustRunAkt(t, home, "context", "keys", "show", "alice", "-a", "-o", "yaml")
+	var addressYAML string
+	if err := yaml.Unmarshal([]byte(yamlAddress), &addressYAML); err != nil || addressYAML != addr {
+		t.Fatalf("keys address YAML = %q (%v), want %q", addressYAML, err, addr)
+	}
+
 	// show by address: lookup works with the bech32 address too.
 	stdout = stripANSI(mustRunAkt(t, home, "context", "keys", "show", addr))
 	if !strings.Contains(stdout, "alice") {
@@ -162,6 +196,91 @@ func TestKeysLifecycle(t *testing.T) {
 	stdout = stripANSI(mustRunAkt(t, home, "context", "keys", "list"))
 	if strings.Contains(stdout, "bob") {
 		t.Fatalf("expected keys list to NOT contain 'bob' after delete, got:\n%s", stdout)
+	}
+}
+
+func TestOfflineTransactionConstructionAndSigningStreams(t *testing.T) {
+	home := setupContextHome(t)
+	mnemonicFile := filepath.Join(t.TempDir(), "mnemonic.txt")
+	if err := os.WriteFile(mnemonicFile, []byte(testMnemonic+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	mustRunAkt(t, home, "context", "keys", "add", "signer", "--recover", "--source", mnemonicFile)
+	mustRunAkt(t, home, "context", "edit", "prod", "--default-account", "signer")
+
+	generated, stderr, exitCode := runAkt(t, home,
+		"tx", "bank", "send", testMnemonicAddr, testMnemonicAddr, "1uakt",
+		"--offline", "--account-number", "0", "--sequence", "0",
+		"--from", "signer", "--chain-id", "akashnet-2",
+		"--generate-only", "--gas", "200000", "-o", "json", "--yes")
+	if exitCode != 0 {
+		t.Fatalf("generate-only exited %d\nstdout: %s\nstderr: %s", exitCode, generated, stderr)
+	}
+	var unsigned map[string]any
+	if err := json.Unmarshal([]byte(generated), &unsigned); err != nil {
+		t.Fatalf("generate-only did not emit a JSON object: %v\n%s", err, generated)
+	}
+	if _, ok := unsigned["body"]; !ok {
+		t.Fatalf("generate-only top-level value is not a transaction: %#v", unsigned)
+	}
+
+	unsignedFile := filepath.Join(t.TempDir(), "unsigned.json")
+	if err := os.WriteFile(unsignedFile, []byte(generated), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	for _, leaf := range []string{"sign", "sign-batch"} {
+		t.Run(leaf, func(t *testing.T) {
+			stdout, stderr, exitCode := runAkt(t, home,
+				"tx", leaf, unsignedFile,
+				"--offline", "--account-number", "0", "--sequence", "0",
+				"--from", "signer", "--chain-id", "akashnet-2",
+				"--generate-only", "--gas", "200000", "-o", "json", "--yes")
+			if exitCode != 0 {
+				t.Fatalf("%s exited %d\nstdout: %s\nstderr: %s", leaf, exitCode, stdout, stderr)
+			}
+			var signed map[string]any
+			if err := json.Unmarshal([]byte(strings.TrimSpace(stdout)), &signed); err != nil {
+				t.Fatalf("%s stdout is not signed transaction JSON: %v\nstdout: %s\nstderr: %s", leaf, err, stdout, stderr)
+			}
+			signatures, ok := signed["signatures"].([]any)
+			if !ok || len(signatures) != 1 {
+				t.Fatalf("%s signature count = %#v", leaf, signed["signatures"])
+			}
+			if strings.Contains(stderr, `"body"`) {
+				t.Fatalf("%s wrote transaction data to stderr:\n%s", leaf, stderr)
+			}
+		})
+	}
+}
+
+func TestKeysParseMachineOutput(t *testing.T) {
+	home := t.TempDir()
+	initHome(t, home)
+
+	stdout := mustRunAkt(t, home, "context", "keys", "parse", testMnemonicAddr, "-o", "json")
+	var parsedJSON struct {
+		Format    string            `json:"format"`
+		HRP       string            `json:"hrp"`
+		Hex       string            `json:"hex"`
+		Addresses map[string]string `json:"addresses"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &parsedJSON); err != nil {
+		t.Fatalf("parse address JSON %q: %v", stdout, err)
+	}
+	if parsedJSON.Format != "bech32" || parsedJSON.HRP != "akash" || parsedJSON.Addresses["akash"] != testMnemonicAddr {
+		t.Fatalf("parse address JSON = %+v", parsedJSON)
+	}
+
+	stdout = mustRunAkt(t, home, "context", "keys", "parse", "0x"+parsedJSON.Hex, "-o", "yaml")
+	var parsedYAML map[string]any
+	if err := yaml.Unmarshal([]byte(stdout), &parsedYAML); err != nil {
+		t.Fatalf("parse address YAML %q: %v", stdout, err)
+	}
+	if parsedYAML["format"] != "hex" || parsedYAML["hex"] != parsedJSON.Hex {
+		t.Fatalf("parse address YAML = %#v", parsedYAML)
+	}
+	if _, exists := parsedYAML["hrp"]; exists {
+		t.Fatalf("hex parse unexpectedly includes hrp: %#v", parsedYAML)
 	}
 }
 
@@ -749,5 +868,26 @@ func TestConfigFreeCommandsSkipBootstrap(t *testing.T) {
 				t.Fatalf("akt %s wrote a config on an unconfigured machine", name)
 			}
 		})
+	}
+}
+
+func TestSDLInitInvalidImageIsUsageError(t *testing.T) {
+	home := t.TempDir()
+	initHome(t, home)
+
+	stdout, stderr, exitCode := runAkt(t, home, "sdl", "init", "web", "--image", "nginx")
+	if exitCode != 2 {
+		t.Fatalf("expected exit 2, got %d\nstdout: %s\nstderr: %s", exitCode, stdout, stderr)
+	}
+	if stdout != "" {
+		t.Fatalf("expected empty stdout for invalid input, got:\n%s", stdout)
+	}
+	for _, want := range []string{"--image", `image "nginx" has no tag`} {
+		if !strings.Contains(stderr, want) {
+			t.Fatalf("expected stderr to contain %q, got:\n%s", want, stderr)
+		}
+	}
+	if strings.Contains(stderr, "internal error") {
+		t.Fatalf("expected a usage error, got:\n%s", stderr)
 	}
 }

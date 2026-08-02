@@ -10,6 +10,7 @@ import (
 	"charm.land/bubbles/v2/table"
 	"charm.land/bubbles/v2/viewport"
 	"charm.land/lipgloss/v2"
+	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 
 	"pkg.akt.dev/akt/internal/glyphs"
 	"pkg.akt.dev/akt/internal/output/pretty"
@@ -67,26 +68,28 @@ type ProviderViewState struct {
 
 // ViewContext holds all data needed to render the view
 type ViewContext struct {
-	State              *consensus.State
-	Endpoint           string
-	Width              int
-	Height             int
-	HubTab             HubTab
-	ActiveTab          Tab
-	Embedded           bool // when true, skip the bottom help/status lines
-	Monikers           map[string]string
-	Providers          ProviderViewState
-	GovernanceParams   *governance.AllParams
-	BlockHistory       []BlockRecord
-	ExpandedBlock      int // -1=none, 0=current, 1+=history index
-	ExpandedScroll     int
-	ExpandedValidators []BlockValidatorVote // frozen snapshot
-	ExpandedValidator  int                  // expanded validator (-1=none)
-	ValSignHistory     map[int][]bool       // per-validator signing history
-	ProposerHistory    []int                // proposer index per historical block (newest first)
-	CurrentProposer    int                  // current block's proposer index (-1=unknown)
-	WSConnected        bool
-	Oracle             OracleState
+	State                  *consensus.State
+	Endpoint               string
+	Width                  int
+	Height                 int
+	HubTab                 HubTab
+	ActiveTab              Tab
+	Embedded               bool // when true, skip the bottom help/status lines
+	Monikers               map[string]string
+	Providers              ProviderViewState
+	GovernanceProposals    *govv1.QueryProposalsResponse
+	GovernanceProposalsErr error
+	GovernanceParams       *governance.AllParams
+	BlockHistory           []BlockRecord
+	ExpandedBlock          int // -1=none, 0=current, 1+=history index
+	ExpandedScroll         int
+	ExpandedValidators     []BlockValidatorVote // frozen snapshot
+	ExpandedValidator      int                  // expanded validator (-1=none)
+	ValSignHistory         map[int][]bool       // per-validator signing history
+	ProposerHistory        []int                // proposer index per historical block (newest first)
+	CurrentProposer        int                  // current block's proposer index (-1=unknown)
+	WSConnected            bool
+	Oracle                 OracleState
 
 	// Bubbles component models
 	ProviderTable   table.Model
@@ -96,6 +99,7 @@ type ViewContext struct {
 	GovModuleIdx    int // selected module index
 	GovModuleScroll int // first visible module index
 	GovModuleHeight int // visible rows for module list
+	GovProposalView viewport.Model
 	GovParamView    viewport.Model
 }
 
@@ -139,7 +143,14 @@ func RenderView(ctx ViewContext) string {
 
 	// Help & status — full width (skipped when the parent TUI provides its own status bar)
 	if !ctx.Embedded {
-		b.WriteString(renderStatusBar(ctx.Endpoint, ctx.ActiveTab, ctx.Providers.Detail.Showing, ctx.WSConnected, w))
+		b.WriteString(renderStatusBar(
+			ctx.Endpoint,
+			ctx.HubTab,
+			ctx.ActiveTab,
+			ctx.Providers.Detail.Showing,
+			ctx.WSConnected,
+			w,
+		))
 	}
 
 	return b.String()
@@ -169,6 +180,8 @@ func renderNetworkDashboard(ctx ViewContext) string {
 		b.WriteString(renderValidatorsTab(ctx))
 	case TabGovernance:
 		b.WriteString(renderGovernanceTab(ctx))
+	case TabParameters:
+		b.WriteString(renderParametersTab(ctx))
 	}
 
 	return b.String()
@@ -320,6 +333,7 @@ func renderTabBar(activeTab Tab, width int) string {
 		{"1: Overview", activeTab == TabOverview},
 		{"2: Validators", activeTab == TabValidators},
 		{"3: Governance", activeTab == TabGovernance},
+		{"4: Parameters", activeTab == TabParameters},
 	}
 
 	// Compute per-tab width: distribute evenly across terminal width.
@@ -1347,15 +1361,35 @@ func formatGPUDisplay(gpuStr string, hasGPU bool) string {
 }
 
 // renderStatusBar renders the bottom status bar
-func renderStatusBar(endpoint string, activeTab Tab, _ bool, wsConnected bool, width int) string {
+func renderStatusBar(
+	endpoint string,
+	hubTab HubTab,
+	activeTab Tab,
+	providerDetail bool,
+	wsConnected bool,
+	width int,
+) string {
 	var helpText string
-	switch activeTab {
-	case TabValidators:
-		helpText = "q: quit | r: refresh | Tab/1-3: switch tabs | j/k: scroll"
-	case TabGovernance:
-		helpText = "q: quit | r: refresh params | Tab/1-3: switch tabs"
+	switch hubTab {
+	case HubProvider:
+		if providerDetail {
+			helpText = "q: quit | Tab/Shift-Tab: dashboard | Esc: provider list | j/k: scroll"
+		} else {
+			helpText = "q: quit | Tab/Shift-Tab: dashboard | r: refresh | h/l: version | j/k: select | Enter: details"
+		}
+	case HubOracleBME:
+		helpText = "q: quit | Tab/Shift-Tab: dashboard"
 	default:
-		helpText = "q: quit | Tab/1-3: switch | j/k: select | Enter: expand | Esc: collapse"
+		switch activeTab {
+		case TabValidators:
+			helpText = "q: quit | Tab/Shift-Tab: dashboard | 1-4: network view | j/k: scroll | Enter: details"
+		case TabGovernance:
+			helpText = "q: quit | Tab/Shift-Tab: dashboard | 1-4: network view | r: refresh | j/k: scroll | h/l: pan"
+		case TabParameters:
+			helpText = "q: quit | Tab/Shift-Tab: dashboard | 1-4: network view | r: refresh | j/k: module | h/l: scroll"
+		default:
+			helpText = "q: quit | Tab/Shift-Tab: dashboard | 1-4: network view | j/k: select | Enter: expand | Esc: collapse"
+		}
 	}
 	help := helpStyle.Width(width).Render(helpText)
 
@@ -1398,6 +1432,25 @@ func formatBytes(bytes uint64) string {
 }
 
 func renderGovernanceTab(ctx ViewContext) string {
+	if ctx.GovernanceProposals == nil {
+		if ctx.GovernanceProposalsErr != nil {
+			return errorStyle.Render(fmt.Sprintf("Unable to load governance proposals: %v", ctx.GovernanceProposalsErr))
+		}
+		return errorStyle.Render("Loading governance proposals...")
+	}
+
+	var b strings.Builder
+	b.WriteString(headerStyle.Render("Governance Proposals") + "\n")
+	b.WriteString(mutedStyle.Render("j/k: scroll, h/l: pan, r: refresh") + "\n\n")
+	if ctx.GovernanceProposalsErr != nil {
+		b.WriteString(errorStyle.Render(fmt.Sprintf("Refresh failed: %v", ctx.GovernanceProposalsErr)) + "\n")
+	}
+	b.WriteString(ctx.GovProposalView.View())
+
+	return b.String()
+}
+
+func renderParametersTab(ctx ViewContext) string {
 	params := ctx.GovernanceParams
 	if params == nil {
 		return errorStyle.Render("Loading governance parameters...")

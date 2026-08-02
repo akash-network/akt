@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strconv"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -18,6 +20,7 @@ import (
 	"pkg.akt.dev/akt/internal/cliutil"
 	"pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
+	"pkg.akt.dev/akt/internal/output"
 	"pkg.akt.dev/akt/internal/transport"
 	wf "pkg.akt.dev/akt/internal/workflow"
 	"pkg.akt.dev/akt/internal/workflow/builtin"
@@ -61,17 +64,24 @@ func CommandsWithManager(homeFn func() string, ctxNameFn func() string, mgrFn fu
 func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() string, mgrFn func() *aktctx.Manager) *cobra.Command {
 	// Determine positional arg usage from params.
 	use := def.Name
-	var fileParam string
-	for pname, p := range def.Params {
-		if p.Type == wf.ParamFile && p.Required {
+	paramNames := sortedParamNames(def.Params)
+	var positionalParams []string
+	for _, pname := range paramNames {
+		p := def.Params[pname]
+		if (p.Type == wf.ParamFile || p.Type == wf.ParamSDL) && p.Required {
 			use += " <" + pname + ">"
-			fileParam = pname
+			positionalParams = append(positionalParams, pname)
 		}
+	}
+	positional := make(map[string]struct{}, len(positionalParams))
+	for _, pname := range positionalParams {
+		positional[pname] = struct{}{}
 	}
 
 	// If the workflow has an optional int param (like dseq), allow it as positional.
 	var dseqParam string
-	for pname, p := range def.Params {
+	for _, pname := range paramNames {
+		p := def.Params[pname]
 		if p.Type == wf.ParamInt && pname == "dseq" {
 			use += " [dseq]"
 			dseqParam = pname
@@ -85,7 +95,8 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 	cmd := &cobra.Command{
 		Use:     use,
 		Short:   def.Description,
-		Example: fmt.Sprintf("  akt %s --help", def.Name),
+		Long:    def.Long,
+		Example: def.Example,
 		// Workflow commands run on either rail (internal/transport): chain
 		// tx broadcasting on keyring contexts or Console API calls on
 		// console-api contexts. Either capability satisfies the gate.
@@ -128,35 +139,47 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 
 			params := make(map[string]any)
 
-			// Resolve file param from positional arg.
+			// Resolve required file and SDL params from positional args.
 			argIdx := 0
-			if fileParam != "" && argIdx < len(args) {
-				params[fileParam] = args[argIdx]
-				argIdx++
+			for _, pname := range positionalParams {
+				if argIdx < len(args) {
+					params[pname] = args[argIdx]
+					argIdx++
+				}
 			}
 
 			// Resolve dseq from positional or flag.
 			if dseqParam != "" {
 				dseq, _ := cmd.Flags().GetInt(dseqParam)
+				dseqSet := cmd.Flags().Changed(dseqParam)
 				if argIdx < len(args) {
+					if dseqSet {
+						return fmt.Errorf(
+							"%s supplied both positionally and with --%s; use one form",
+							dseqParam,
+							dseqParam,
+						)
+					}
 					parsed, parseErr := strconv.Atoi(args[argIdx])
 					if parseErr != nil {
 						return fmt.Errorf("invalid dseq %q: %w", args[argIdx], parseErr)
 					}
 					dseq = parsed
+					dseqSet = true
 				}
-				if dseq != 0 {
+				if dseqSet {
 					params[dseqParam] = dseq
 				}
 			}
 
 			// Resolve remaining flag-based params.
-			for pname, pdef := range rtDef.Params {
-				if pname == fileParam || pname == dseqParam {
+			for _, pname := range sortedParamNames(rtDef.Params) {
+				pdef := rtDef.Params[pname]
+				if _, ok := positional[pname]; ok || pname == dseqParam {
 					continue // already handled
 				}
 				switch pdef.Type {
-				case wf.ParamString:
+				case wf.ParamString, wf.ParamFile, wf.ParamSDL, wf.ParamDeposit, wf.ParamBidSelection:
 					v, _ := cmd.Flags().GetString(pname)
 					params[pname] = v
 				case wf.ParamInt:
@@ -171,19 +194,28 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 				}
 			}
 
+			if err := validateWorkflowParams(rtDef, params); err != nil {
+				return err
+			}
+
 			dryRun, _ := cmd.Flags().GetBool("dry-run")
 			out := cmd.OutOrStdout()
 			jsonl := outputFormat(cmd) == outputJSONL
 
-			// Print the execution plan, except in JSONL mode where stdout
-			// must carry only JSONL step lines.
-			if dryRun || !jsonl {
-				printPlan(out, rtDef, params)
-			}
-
 			if dryRun {
+				if jsonl {
+					return emitDryRunJSONL(out, rtDef)
+				}
+
+				printPlan(out, rtDef, params)
 				fmt.Fprintln(out, "\nDry run — no transactions broadcast.")
 				return nil
+			}
+
+			// During execution, keep stdout pure in JSONL mode; other modes
+			// retain the human plan before step results.
+			if !jsonl {
+				printPlan(out, rtDef, params)
 			}
 
 			return executeWorkflow(cmd, rtDef, params, mgrFn, ctxNameFn, jsonl, discoverErr)
@@ -191,12 +223,13 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 	}
 
 	// Auto-generate flags from workflow params.
-	for pname, pdef := range def.Params {
-		if pdef.Type == wf.ParamFile {
+	for _, pname := range paramNames {
+		pdef := def.Params[pname]
+		if _, ok := positional[pname]; ok {
 			continue // positional, not a flag
 		}
 		switch pdef.Type {
-		case wf.ParamString:
+		case wf.ParamString, wf.ParamFile, wf.ParamSDL, wf.ParamDeposit, wf.ParamBidSelection:
 			cmd.Flags().String(pname, pdef.Default, pdef.Description)
 		case wf.ParamInt:
 			def := 0
@@ -214,6 +247,7 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 	// Common workflow flags.
 	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompts")
 	cmd.Flags().Bool("dry-run", false, "Show execution plan without broadcasting transactions")
+	cmd.Flags().VarP(output.NewFormatFlag(cflags.OutputPretty, outputJSONL), cflags.FlagOutput, "o", "Output format (pretty|json|yaml|jsonl)")
 
 	// Standard chain tx flags (--from, --gas, --node, ...) so keyring-auth
 	// execution can discover a chain client; flags already defined above
@@ -221,18 +255,24 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 	addMissingTxFlags(cmd)
 
 	// Set args validation based on what we expect.
-	minArgs := 0
-	maxArgs := 0
-	if fileParam != "" {
-		minArgs++
-		maxArgs++
-	}
+	minArgs := len(positionalParams)
+	maxArgs := len(positionalParams)
 	if dseqParam != "" {
 		maxArgs++ // optional positional
 	}
 	cmd.Args = cobra.RangeArgs(minArgs, maxArgs)
 
 	return cmd
+}
+
+func sortedParamNames(params map[string]wf.ParamDef) []string {
+	names := make([]string, 0, len(params))
+	for name := range params {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	return names
 }
 
 // executeWorkflow resolves credentials for the active context, picks the
@@ -329,15 +369,16 @@ func executeWorkflow(
 	engine := wf.NewEngine(registry, logger)
 
 	state, runErr := engine.Run(cmd.Context(), rtDef, account, params)
+	recovery := deployRecoveryAdvice(state, runErr)
 
 	if jsonl {
-		emitJSONL(out, state)
+		emitJSONL(out, state, recovery)
 	} else {
-		printResults(out, state, runErr)
+		printResults(out, state, runErr, recovery)
 	}
 
 	if runErr != nil {
-		return fmt.Errorf("workflow %q failed: %w", rtDef.Name, runErr)
+		return workflowFailureError(rtDef.Name, runErr, recovery)
 	}
 
 	return nil
@@ -421,7 +462,7 @@ func printPlan(out io.Writer, rtDef *wf.WorkflowDef, params map[string]any) {
 
 // printResults renders per-step outcomes and the overall workflow status in
 // simple aligned text.
-func printResults(out io.Writer, state *wf.RunState, runErr error) {
+func printResults(out io.Writer, state *wf.RunState, runErr error, recovery *workflowRecovery) {
 	fmt.Fprintln(out, "\nResults:")
 
 	for _, name := range state.StepOrder {
@@ -442,7 +483,110 @@ func printResults(out io.Writer, state *wf.RunState, runErr error) {
 
 	if runErr == nil {
 		fmt.Fprintf(out, "\nWorkflow %q completed successfully.\n", state.Workflow)
+	} else if recovery != nil {
+		fmt.Fprintln(out, "\nPartial deployment state:")
+		fmt.Fprintf(out, "  DSEQ: %d\n", recovery.DSeq)
+		if recovery.Provider != "" {
+			fmt.Fprintf(out, "  Provider: %s\n", recovery.Provider)
+		}
+		fmt.Fprintln(out, "  WARNING: This deployment remains open; escrow may continue to be consumed.")
+		if recovery.Recovery != "" {
+			fmt.Fprintf(out, "  Recovery: %s\n", recovery.Recovery)
+		}
+		fmt.Fprintf(out, "  Explicit cleanup: %s\n", recovery.Cleanup)
 	}
+}
+
+type workflowRecovery struct {
+	DSeq     uint64
+	Provider string
+	Recovery string
+	Cleanup  string
+}
+
+func deployRecoveryAdvice(state *wf.RunState, runErr error) *workflowRecovery {
+	if state == nil || runErr == nil || state.Workflow != "deploy" {
+		return nil
+	}
+
+	created := state.Steps["create-deployment"]
+	if created == nil || created.Status != "success" {
+		return nil
+	}
+
+	dseq, err := workflowOutputUint64(created.Output, "dseq")
+	if err != nil || dseq == 0 {
+		return nil
+	}
+
+	provider := workflowOutputString(state.Steps["create-lease"], "provider")
+	if provider == "" {
+		provider = workflowOutputString(state.Steps["select-bid"], "provider")
+	}
+
+	recovery := &workflowRecovery{
+		DSeq:     dseq,
+		Provider: provider,
+		Cleanup:  fmt.Sprintf("akt close %d", dseq),
+	}
+	if provider != "" {
+		if sdlPath, ok := state.Params["sdl-file"].(string); ok && strings.TrimSpace(sdlPath) != "" {
+			recovery.Recovery = fmt.Sprintf(
+				"akt provider send-manifest %s --dseq %d --provider %s",
+				shellQuote(sdlPath), dseq, provider,
+			)
+		}
+	}
+
+	return recovery
+}
+
+func workflowOutputUint64(output map[string]any, key string) (uint64, error) {
+	if output == nil || output[key] == nil {
+		return 0, fmt.Errorf("workflow output %q is missing", key)
+	}
+
+	value := strings.TrimSpace(fmt.Sprint(output[key]))
+	parsed, err := strconv.ParseUint(value, 10, 64)
+	if err != nil {
+		return 0, fmt.Errorf("workflow output %q is not an unsigned integer: %w", key, err)
+	}
+
+	return parsed, nil
+}
+
+func workflowOutputString(result *wf.StepResult, key string) string {
+	if result == nil || result.Output == nil || result.Output[key] == nil {
+		return ""
+	}
+
+	return strings.TrimSpace(fmt.Sprint(result.Output[key]))
+}
+
+func shellQuote(value string) string {
+	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
+}
+
+func workflowFailureError(workflow string, runErr error, recovery *workflowRecovery) error {
+	if recovery == nil {
+		return fmt.Errorf("workflow %q failed: %w", workflow, runErr)
+	}
+
+	provider := ""
+	if recovery.Provider != "" {
+		provider = fmt.Sprintf(" with provider %s", recovery.Provider)
+	}
+	retry := ""
+	if recovery.Recovery != "" {
+		retry = fmt.Sprintf("\nretry manifest delivery: %s", recovery.Recovery)
+	}
+
+	return fmt.Errorf(
+		"workflow %q failed: %w\n"+
+			"deployment DSEQ %d%s remains open; escrow may continue to be consumed.%s\n"+
+			"explicit cleanup: %s",
+		workflow, runErr, recovery.DSeq, provider, retry, recovery.Cleanup,
+	)
 }
 
 // jsonlTx is the tx object of a JSONL step line (SPEC §2.3.8).
@@ -461,10 +605,14 @@ type jsonlLine struct {
 	Result   string    `json:"result"`
 	Errors   []string  `json:"errors"`
 	Txs      []jsonlTx `json:"txs"`
+	DSeq     uint64    `json:"dseq,omitempty"`
+	Provider string    `json:"provider,omitempty"`
+	Recovery string    `json:"recovery,omitempty"`
+	Cleanup  string    `json:"cleanup,omitempty"`
 }
 
 // emitJSONL writes one JSONL line per completed step (SPEC §2.3.8).
-func emitJSONL(out io.Writer, state *wf.RunState) {
+func emitJSONL(out io.Writer, state *wf.RunState, recovery *workflowRecovery) {
 	enc := json.NewEncoder(out)
 
 	for _, name := range state.StepOrder {
@@ -493,6 +641,12 @@ func emitJSONL(out io.Writer, state *wf.RunState) {
 		if sr.Error != "" {
 			line.Errors = append(line.Errors, sr.Error)
 		}
+		if line.Result == "error" && recovery != nil {
+			line.DSeq = recovery.DSeq
+			line.Provider = recovery.Provider
+			line.Recovery = recovery.Recovery
+			line.Cleanup = recovery.Cleanup
+		}
 
 		if sr.TxHash != "" {
 			line.Txs = append(line.Txs, jsonlTx{
@@ -503,6 +657,30 @@ func emitJSONL(out io.Writer, state *wf.RunState) {
 
 		_ = enc.Encode(line)
 	}
+}
+
+// emitDryRunJSONL renders the validated plan without executing or discovering
+// clients. Every line shares one run ID so consumers can treat it like an
+// execution stream, while "planned" distinguishes it from completed work.
+func emitDryRunJSONL(out io.Writer, def *wf.WorkflowDef) error {
+	enc := json.NewEncoder(out)
+	runID := wf.GenerateWorkflowID()
+
+	for _, step := range def.Steps {
+		line := jsonlLine{
+			Workflow: def.Name,
+			ID:       runID,
+			Step:     step.Name,
+			Result:   "planned",
+			Errors:   []string{},
+			Txs:      []jsonlTx{},
+		}
+		if err := enc.Encode(line); err != nil {
+			return fmt.Errorf("render workflow dry-run JSONL: %w", err)
+		}
+	}
+
+	return nil
 }
 
 // outputFormat returns the effective --output value for the command,

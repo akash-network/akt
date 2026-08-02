@@ -36,7 +36,7 @@ func GetTxSlashingUnjailCmd() *cobra.Command {
 		Short: "unjail validator previously jailed for downtime",
 		Long: `unjail a jailed validator:
 
-$ <appd> tx slashing unjail --from mykey
+$ akt tx slashing unjail --from mykey
 `,
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, _ []string) error {

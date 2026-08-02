@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,6 +14,7 @@ import (
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
 	sdkserver "github.com/cosmos/cosmos-sdk/server"
+	sdkversion "github.com/cosmos/cosmos-sdk/version"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
@@ -20,6 +23,7 @@ import (
 	"pkg.akt.dev/akt/internal/bootstrap"
 	"pkg.akt.dev/akt/internal/capability"
 	chaincli "pkg.akt.dev/akt/internal/cli/chain"
+	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 
 	cliconsole "pkg.akt.dev/akt/internal/cli/console"
 	clicontext "pkg.akt.dev/akt/internal/cli/context"
@@ -35,6 +39,7 @@ import (
 	aktkeyring "pkg.akt.dev/akt/internal/keyring"
 	akttui "pkg.akt.dev/akt/internal/tui"
 
+	"pkg.akt.dev/akt/internal/output"
 	"pkg.akt.dev/akt/internal/output/pretty"
 
 	arpcclient "pkg.akt.dev/go/node/client"
@@ -50,6 +55,12 @@ type BuildInfo struct {
 // NewRootCmd creates the root cobra command for akt.
 func NewRootCmd(bi BuildInfo) *cobra.Command {
 	cobra.EnableTraverseRunHooks = true
+
+	// Copied SDK commands interpolate this value while their command trees are
+	// built. Release ldflags set it, but library users and unit tests do not.
+	if sdkversion.AppName == "" || sdkversion.AppName == "<appd>" {
+		sdkversion.AppName = "akt"
+	}
 
 	v := viper.New()
 	v.SetEnvPrefix("AKT")
@@ -75,10 +86,7 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			return nil, fmt.Errorf("keyring manager not initialized")
 		}
 
-		ctxName := v.GetString("context")
-		if ctxName == "" && mgr != nil {
-			ctxName = mgr.CurrentContext()
-		}
+		ctxName := activeContextName(mgr, v.GetString("context"))
 
 		if ctxName == "" {
 			return krMgr.Get("default")
@@ -100,7 +108,26 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	root := &cobra.Command{
 		Use:   "akt",
 		Short: "Akash Network CLI",
-		Long:  "akt is the unified command-line interface for the Akash Network.",
+		Long: `akt is the unified command-line interface for the Akash Network. Configure
+networks, contexts, and keys; query chain state; sign and broadcast
+transactions; deploy and operate workloads through local keys or Akash
+Console; interact with provider gateways; and monitor network health.
+
+Getting started:
+  akt sdl init web > deploy.yaml     # generate a starter SDL
+  akt deploy deploy.yaml             # deploy it and pick a bid
+  akt context show                   # see the active configuration
+
+Running akt for the first time in a terminal walks you through creating a
+context: the network to talk to, the keyring that signs, and where akt keeps
+its record of your deployments.
+
+Two ways to pay and sign, chosen per context:
+  keyring       you hold the key, akt signs and broadcasts, costs are in AKT
+  console-api   Akash Console holds a managed wallet and signs for you, in USD
+
+Deployments are identified by a dseq (deployment sequence number), printed when
+the deployment is created.`,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			// 1. Seed the SDK client.Context with encoding config so that
 			//    downstream PersistentPreRunE hooks (tx/query) always find
@@ -136,6 +163,9 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			_ = v.BindPFlag("interactive", cmd.Flags().Lookup("interactive"))
 			_ = v.BindPFlag("verbose", cmd.Flags().Lookup("verbose"))
 			_ = v.BindPFlag("quiet", cmd.Flags().Lookup("quiet"))
+			if fromFlag := cmd.Flags().Lookup(cflags.FlagFrom); fromFlag != nil {
+				_ = v.BindPFlag(cflags.FlagFrom, fromFlag)
+			}
 
 			// Verbosity validation: -q and -v are mutually exclusive.
 			if v.GetBool("quiet") && v.GetInt("verbose") > 0 {
@@ -187,7 +217,14 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 
 			// 3. If an akt context is active, enrich the SDK client.Context
 			//    with context-specific values (chain-id, RPC, keyring, etc.).
-			resolved, err := aktclient.MustResolveAndInit(cmd, mgr, krMgr, encCfg, v.GetString("context"))
+			resolved, err := aktclient.MustResolveAndInit(
+				cmd,
+				mgr,
+				krMgr,
+				encCfg,
+				v.GetString("context"),
+				v.GetString(cflags.FlagFrom),
+			)
 			if err != nil {
 				return err
 			}
@@ -199,6 +236,21 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			//    run, and help must never require a context.
 			if !resolved && requiresContext(cmd) && !isHelpInvocation(cmd, os.Args[1:]) {
 				return noContextError(mgr)
+			}
+			if resolved {
+				rc, resolveErr := mgr.Resolve(activeContextName(mgr, v.GetString("context")))
+				if resolveErr != nil {
+					return resolveErr
+				}
+				applyTransactionDefaults(cmd, rc)
+				if err := applyProviderDefaults(cmd, rc); err != nil {
+					return err
+				}
+			}
+			if resolved && cmd.Flags().Lookup(cflags.FlagOffline) != nil {
+				if err := chaincli.ValidateTxInvocation(cmd); err != nil {
+					return err
+				}
 			}
 
 			// 4b. Capability gating: derive the feature set from the active
@@ -228,9 +280,9 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 				}
 			}
 
-			// 5. Open the action log for the current context (if any).
-			if current := mgr.CurrentContext(); current != "" {
-				logPath := aktctx.ActionLogPath(cfgRoot, current)
+			// 5. Open the action log for the selected context (if any).
+			if selected := activeContextName(mgr, v.GetString("context")); selected != "" {
+				logPath := aktctx.ActionLogPath(cfgRoot, selected)
 				logger, logErr := actionlog.Open(logPath)
 				if logErr == nil {
 					ctx := cliutil.WithActionLog(cmd.Context(), logger)
@@ -253,14 +305,24 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 				}
 
 				cctx := sdkclient.GetClientContextFromCmd(cmd)
-				cfgRoot, _ := aktctx.ConfigHome(v.GetString("home"))
+				runtime, err := resolveMonitorRuntime(
+					v,
+					cctx.NodeURI,
+					false,
+					"",
+					func() string { return resolvedCfgRoot },
+					mgrFn,
+				)
+				if err != nil {
+					return err
+				}
 
 				return akttui.Run(akttui.Config{
 					Viper:        v,
-					RPCEndpoint:  cctx.NodeURI,
-					RESTEndpoint: "", // resolved by rpc.NewClient default when empty
-					CacheDir:     filepath.Join(cfgRoot, "cache"),
-					Insecure:     true,
+					RPCEndpoint:  runtime.rpcEndpoint,
+					RESTEndpoint: runtime.restEndpoint,
+					CacheDir:     runtime.cacheDir,
+					Insecure:     false,
 				})
 			}
 
@@ -285,10 +347,14 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	// not captured into Go variables.
 	root.PersistentFlags().String("home", "", "Home directory for config, contexts, and keyrings (default: $AKT_HOME or ~/.config/akt)")
 	root.PersistentFlags().String("context", "", "Active context name (overrides current-context in config)")
-	root.PersistentFlags().StringP("output", "o", "pretty", "Output format: pretty, json, yaml")
-	root.PersistentFlags().BoolP("interactive", "i", false, "Launch the TUI. Currently disabled while UX feedback is collected; set AKT_EXPERIMENTAL_TUI=1 to opt in")
+	root.PersistentFlags().VarP(output.NewFormatFlag("pretty"), "output", "o", "Output format: pretty, json, yaml")
+	// Local, not persistent: launching the TUI is only meaningful at the root.
+	// As a persistent flag it was advertised on all ~400 subcommands and
+	// silently discarded by every one of them -- `akt -i` refused with an
+	// explanation while `akt version -i` accepted it and did nothing.
+	root.Flags().BoolP("interactive", "i", false, "Launch the TUI. Currently disabled while UX feedback is collected; set AKT_EXPERIMENTAL_TUI=1 to opt in")
 	root.PersistentFlags().CountP("verbose", "v", "Increase output verbosity (-v verbose, -vv debug)")
-	root.PersistentFlags().BoolP("quiet", "q", false, "Suppress all output except errors")
+	root.PersistentFlags().BoolP("quiet", "q", false, "Suppress informational output; keep results and errors")
 
 	// Register shell completion for the global --context flag.
 	_ = root.RegisterFlagCompletionFunc("context", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
@@ -311,21 +377,18 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	root.AddCommand(chaincli.TxCmd())
 	root.AddCommand(chaincli.QueryCmd())
 
-	root.AddCommand(monitorCmd(v))
+	homeFn := func() string { return resolvedCfgRoot }
+	root.AddCommand(monitorCmd(v, homeFn, mgrFn))
 	root.AddCommand(mcpCmd(mgrFn))
 	root.AddCommand(cliprovider.Commands())
 	root.AddCommand(clisdl.Commands())
-	homeFn := func() string { return resolvedCfgRoot }
 	// ctxNameFn resolves the active context name for the command groups that
 	// need it. The global --context override wins over current-context so
 	// that `akt --context staging ...` stores credentials under and bills
 	// the context the user named.
 	ctxNameFn := func() string {
-		if name := v.GetString("context"); name != "" {
-			return name
-		}
 		if mgr != nil {
-			return mgr.CurrentContext()
+			return activeContextName(mgr, v.GetString("context"))
 		}
 		return ""
 	}
@@ -340,6 +403,11 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	}
 	root.AddCommand(versionCmd(bi))
 	root.AddCommand(completionCmd())
+	enforceGroupInputValidation(root)
+	enforceOutputValidation(root)
+	enforceTransactionModeValidation(root)
+	root.InitDefaultHelpCmd()
+	prepareCommandHelp(root)
 
 	// Capability gating must also shape help output when cobra
 	// short-circuits --help before the persistent hooks run (parsed help
@@ -376,6 +444,89 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	return root
 }
 
+// applyTransactionDefaults resolves transaction economics without marking
+// inherited defaults as explicit flags. Fixed fees and gas prices are two ways
+// to determine one fee, so a higher-precedence value on either side suppresses
+// a lower-precedence value on the other.
+func applyTransactionDefaults(cmd *cobra.Command, rc *aktctx.Context) {
+	flags := cmd.Flags()
+	if flags.Lookup(cflags.FlagGas) == nil {
+		return
+	}
+
+	setDefault := func(name, envName, contextValue string) {
+		flag := flags.Lookup(name)
+		if flag == nil || flag.Changed {
+			return
+		}
+		value, exists := os.LookupEnv(envName)
+		if !exists {
+			value = contextValue
+		}
+		if value != "" {
+			_ = flag.Value.Set(value)
+		}
+	}
+
+	setDefault(cflags.FlagGas, "AKT_GAS", rc.Gas)
+	setDefault(cflags.FlagGasAdjustment, "AKT_GAS_ADJUSTMENT", rc.GasAdjustment)
+	if dryRun, _ := flags.GetBool(cflags.FlagDryRun); dryRun {
+		// The SDK distinguishes gas auto (simulate then execute) from
+		// --dry-run (simulate only). Leaving both enabled makes its simulation
+		// builder demand a signing key even when the user supplied an address.
+		// The gas value is immaterial to dry-run and is replaced by the estimate.
+		_ = flags.Lookup(cflags.FlagGas).Value.Set("0")
+	}
+
+	feesFlag := flags.Lookup(cflags.FlagFees)
+	pricesFlag := flags.Lookup(cflags.FlagGasPrices)
+	if feesFlag == nil || pricesFlag == nil || feesFlag.Changed || pricesFlag.Changed {
+		return
+	}
+
+	envFees, hasEnvFees := os.LookupEnv("AKT_FEES")
+	envPrices, hasEnvPrices := os.LookupEnv("AKT_GAS_PRICES")
+	switch {
+	case hasEnvFees && envFees != "":
+		_ = feesFlag.Value.Set(envFees)
+		_ = pricesFlag.Value.Set("")
+	case hasEnvPrices:
+		_ = feesFlag.Value.Set("")
+		_ = pricesFlag.Value.Set(envPrices)
+	case hasEnvFees:
+		_ = feesFlag.Value.Set("")
+		_ = pricesFlag.Value.Set(rc.GasPrices)
+	case rc.Fees != "":
+		_ = feesFlag.Value.Set(rc.Fees)
+		_ = pricesFlag.Value.Set("")
+	case rc.GasPrices != "":
+		_ = pricesFlag.Value.Set(rc.GasPrices)
+	}
+}
+
+func applyProviderDefaults(cmd *cobra.Command, rc *aktctx.Context) error {
+	if cmd.Name() == "status" && cmd.Parent() != nil && cmd.Parent().Name() == "provider" {
+		return nil
+	}
+
+	flag := cmd.Flags().Lookup("auth-type")
+	if flag == nil {
+		flag = cmd.InheritedFlags().Lookup("auth-type")
+	}
+	if flag == nil || flag.Changed {
+		return nil
+	}
+
+	authType, err := aktctx.ResolveProviderAuthType(rc.AuthType)
+	if err != nil {
+		return err
+	}
+	if err := flag.Value.Set(authType); err != nil {
+		return fmt.Errorf("apply context provider auth type: %w", err)
+	}
+	return nil
+}
+
 // Execute seeds the SDK client and server context keys on the command context
 // (so that downstream PersistentPreRunE hooks find a non-nil ClientContextKey),
 // then executes the root command.
@@ -409,6 +560,9 @@ func requiresConfig(cmd *cobra.Command) bool {
 		return false
 	// Completion scripts are generated from the command tree alone.
 	case strings.HasPrefix(path, "akt completion"):
+		return false
+	// A monitor invocation with its own RPC is a complete standalone setup.
+	case strings.HasPrefix(path, "akt monitor"):
 		return false
 	// SDL authoring is entirely local (see requiresContext), so demanding
 	// a network fetch before linting a local file would be backwards.
@@ -550,7 +704,123 @@ func noContextError(mgr *aktctx.Manager) error {
 // monitorRunE is the shared RunE for the monitor command and all its
 // subcommands.  The dashboard parameter selects which hub tab is shown
 // first (empty string = default = network).
-func monitorRunE(v *viper.Viper, dashboard string) func(*cobra.Command, []string) error {
+type monitorRuntime struct {
+	rpcEndpoint  string
+	cacheDir     string
+	restEndpoint string
+}
+
+func resolveMonitorRuntime(
+	v *viper.Viper,
+	rpcEndpoint string,
+	rpcExplicit bool,
+	restEndpoint string,
+	homeFn func() string,
+	mgrFn func() *aktctx.Manager,
+) (monitorRuntime, error) {
+	cfgRoot := homeFn()
+	if cfgRoot == "" {
+		var err error
+		cfgRoot, err = aktctx.ConfigHome(v.GetString("home"))
+		if err != nil {
+			return monitorRuntime{}, err
+		}
+	}
+
+	var resolved *aktctx.Context
+	if mgr := mgrFn(); mgr != nil {
+		ctxName := activeContextName(mgr, v.GetString("context"))
+		if ctxName != "" {
+			var err error
+			resolved, err = mgr.Resolve(ctxName)
+			if err != nil {
+				return monitorRuntime{}, err
+			}
+		}
+	}
+
+	selectedFromContext := !rpcExplicit
+	if resolved != nil && rpcExplicit {
+		selectedFromContext = endpointInNetwork(rpcEndpoint, resolved.Network.Endpoints.RPC)
+	}
+	if resolved != nil && !rpcExplicit &&
+		resolved.Network.ChainID == "akashnet-2" &&
+		sameMonitorEndpoint(rpcEndpoint, "https://rpc.akashnet.net:443") {
+		if template, ok := aktctx.NetworkTemplates()["mainnet"]; ok && len(template.Endpoints.RPC) > 0 {
+			rpcEndpoint = template.Endpoints.RPC[0]
+		}
+	}
+
+	if restEndpoint == "" && selectedFromContext && resolved != nil &&
+		len(resolved.Network.Endpoints.API) > 0 {
+		restEndpoint = resolved.Network.Endpoints.API[0]
+	}
+	if restEndpoint == "" {
+		var err error
+		restEndpoint, err = deriveMonitorRESTEndpoint(rpcEndpoint)
+		if err != nil {
+			return monitorRuntime{}, err
+		}
+	}
+
+	return monitorRuntime{
+		rpcEndpoint:  rpcEndpoint,
+		cacheDir:     filepath.Join(cfgRoot, "cache"),
+		restEndpoint: restEndpoint,
+	}, nil
+}
+
+func endpointInNetwork(endpoint string, candidates []string) bool {
+	for _, candidate := range candidates {
+		if sameMonitorEndpoint(endpoint, candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func sameMonitorEndpoint(left, right string) bool {
+	return strings.TrimSuffix(arpcclient.NormalizeEndpoint(left), "/") ==
+		strings.TrimSuffix(arpcclient.NormalizeEndpoint(right), "/")
+}
+
+func deriveMonitorRESTEndpoint(rpcEndpoint string) (string, error) {
+	parsed, err := url.Parse(rpcEndpoint)
+	if err != nil {
+		return "", fmt.Errorf("derive monitor REST endpoint from RPC %q: %w", rpcEndpoint, err)
+	}
+	if parsed.Scheme == "" || parsed.Hostname() == "" {
+		return "", fmt.Errorf("derive monitor REST endpoint: RPC endpoint %q must include a scheme and hostname", rpcEndpoint)
+	}
+
+	switch parsed.Scheme {
+	case "ws", "tcp":
+		parsed.Scheme = "http"
+	case "wss":
+		parsed.Scheme = "https"
+	}
+	parsed.RawQuery = ""
+	parsed.Fragment = ""
+
+	trimmedPath := strings.TrimSuffix(parsed.Path, "/")
+	if strings.HasSuffix(trimmedPath, "/rpc") {
+		parsed.Path = strings.TrimSuffix(trimmedPath, "/rpc") + "/rest"
+		parsed.RawPath = ""
+		return parsed.String(), nil
+	}
+
+	parsed.Host = net.JoinHostPort(parsed.Hostname(), "1317")
+	parsed.Path = ""
+	parsed.RawPath = ""
+	return parsed.String(), nil
+}
+
+func monitorRunE(
+	v *viper.Viper,
+	dashboard string,
+	homeFn func() string,
+	mgrFn func() *aktctx.Manager,
+) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		if err := checkInteractive(v); err != nil {
 			return err
@@ -565,6 +835,7 @@ func monitorRunE(v *viper.Viper, dashboard string) func(*cobra.Command, []string
 		if len(args) > 0 {
 			rpcEndpoint = args[0]
 		}
+		rpcExplicit := len(args) > 0 || cmd.Flags().Changed("rpc")
 
 		// Resolve endpoints from active akt context when not
 		// explicitly provided via flags.
@@ -577,35 +848,52 @@ func monitorRunE(v *viper.Viper, dashboard string) func(*cobra.Command, []string
 			return fmt.Errorf("no RPC endpoint; provide one via --rpc flag, positional argument, or configure an akt context")
 		}
 
+		runtime, err := resolveMonitorRuntime(
+			v,
+			rpcEndpoint,
+			rpcExplicit,
+			restEndpoint,
+			homeFn,
+			mgrFn,
+		)
+		if err != nil {
+			return err
+		}
+		rpcEndpoint = runtime.rpcEndpoint
+		restEndpoint = runtime.restEndpoint
+
 		// Ensure endpoints carry explicit ports (inferred from scheme
 		// when omitted) so downstream CometBFT clients can connect.
 		rpcEndpoint = arpcclient.NormalizeEndpoint(rpcEndpoint)
 		restEndpoint = arpcclient.NormalizeEndpoint(restEndpoint)
 
-		// Resolve store path for the bbolt cache.
-		cfgRoot, err := aktctx.ConfigHome("")
-		if err != nil {
-			return err
-		}
-
-		cacheDir := filepath.Join(cfgRoot, "cache")
-
 		if cleanCache {
-			dbPath := filepath.Join(cacheDir, "monitor.db")
-			_ = os.Remove(dbPath)
-			fmt.Println("Cache cleared")
+			if err := clearMonitorCache(runtime.cacheDir); err != nil {
+				return err
+			}
+			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Cache cleared")
 		}
 
 		return akttui.RunMonitor(akttui.Config{
 			Viper:            v,
 			RPCEndpoint:      rpcEndpoint,
 			RESTEndpoint:     restEndpoint,
-			CacheDir:         cacheDir,
+			CacheDir:         runtime.cacheDir,
 			Insecure:         insecure,
 			Standalone:       true,
 			InitialDashboard: dashboard,
 		})
 	}
+}
+
+func clearMonitorCache(cacheDir string) error {
+	for _, name := range []string{"monitor.db", "top.db"} {
+		path := filepath.Join(cacheDir, name)
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("clear monitor cache %s: %w", path, err)
+		}
+	}
+	return nil
 }
 
 // addMonitorFlags adds the shared flags used by monitor and all its
@@ -614,10 +902,14 @@ func addMonitorFlags(cmd *cobra.Command) {
 	cmd.Flags().String("rpc", "", "RPC endpoint URL (resolved from context if not set)")
 	cmd.Flags().String("rest", "", "REST endpoint URL (resolved from context if not set)")
 	cmd.Flags().Bool("clean-cache", false, "Delete monitor cache and start fresh")
-	cmd.Flags().Bool("insecure", true, "Skip TLS certificate verification for provider queries")
+	cmd.Flags().Bool("insecure", false, "Skip TLS certificate verification for provider queries")
 }
 
-func monitorCmd(v *viper.Viper) *cobra.Command {
+func monitorCmd(
+	v *viper.Viper,
+	homeFn func() string,
+	mgrFn func() *aktctx.Manager,
+) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "monitor [rpc-endpoint]",
 		Short: "Real-time monitoring hub",
@@ -627,7 +919,7 @@ func monitorCmd(v *viper.Viper) *cobra.Command {
 
 The monitor hub provides three dashboards navigable via Tab/Shift-Tab:
 
-  Network     Consensus state, validator voting, governance parameters
+  Network     Consensus state, validators, governance proposals and parameters
   Provider    Provider fleet health, version distribution, resources
   Oracle/BME  Oracle prices, price health, vault state, mint status
 
@@ -649,38 +941,43 @@ context. A positional argument overrides the --rpc flag.`,
   akt monitor
 
   # Connect to a specific RPC endpoint
-  akt monitor https://rpc.akashnet.net:443
+  akt monitor https://rpc.akt.dev:443/rpc
 
   # Launch directly into the Provider dashboard
   akt monitor provider`,
-		RunE: monitorRunE(v, ""),
+		RunE: monitorRunE(v, "", homeFn, mgrFn),
 	}
 
 	addMonitorFlags(cmd)
 
-	cmd.AddCommand(monitorNetworkCmd(v))
-	cmd.AddCommand(monitorProviderCmd(v))
-	cmd.AddCommand(monitorOracleCmd(v))
-	cmd.AddCommand(monitorBMECmd(v))
+	cmd.AddCommand(monitorNetworkCmd(v, homeFn, mgrFn))
+	cmd.AddCommand(monitorProviderCmd(v, homeFn, mgrFn))
+	cmd.AddCommand(monitorOracleCmd(v, homeFn, mgrFn))
+	cmd.AddCommand(monitorBMECmd(v, homeFn, mgrFn))
 
 	return cmd
 }
 
-func monitorNetworkCmd(v *viper.Viper) *cobra.Command {
+func monitorNetworkCmd(
+	v *viper.Viper,
+	homeFn func() string,
+	mgrFn func() *aktctx.Manager,
+) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "network [rpc-endpoint]",
 		Short: "Network monitoring (consensus, validators, governance)",
 		Long: `Launch the monitor directly into the Network dashboard.
 
-Displays real-time consensus state (height, round, step), validator
-voting progress, and governance parameters. Sub-tabs:
+Displays real-time consensus state (height, round, step), validator voting
+progress, governance proposals and network parameters. Sub-tabs:
 
   1  Overview    Consensus state, vote progress bars, vote grid
   2  Validators  Scrollable validator list with signing history
-  3  Governance  Module-by-module parameter browser`,
+  3  Governance  Recent and active proposals with vote tallies
+  4  Parameters  Module-by-module parameter browser`,
 		Args:    cobra.MaximumNArgs(1),
-		Example: `  akt monitor network https://rpc.akashnet.net:443`,
-		RunE:    monitorRunE(v, "network"),
+		Example: `  akt monitor network https://rpc.akt.dev:443/rpc`,
+		RunE:    monitorRunE(v, "network", homeFn, mgrFn),
 	}
 
 	addMonitorFlags(cmd)
@@ -688,7 +985,11 @@ voting progress, and governance parameters. Sub-tabs:
 	return cmd
 }
 
-func monitorProviderCmd(v *viper.Viper) *cobra.Command {
+func monitorProviderCmd(
+	v *viper.Viper,
+	homeFn func() string,
+	mgrFn func() *aktctx.Manager,
+) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "provider [rpc-endpoint]",
 		Short: "Provider fleet monitoring",
@@ -699,7 +1000,7 @@ visualization, provider health scanning with priority-based scheduling,
 and per-provider detail with node-level CPU/memory/GPU resources.`,
 		Args:    cobra.MaximumNArgs(1),
 		Example: `  akt monitor provider`,
-		RunE:    monitorRunE(v, "provider"),
+		RunE:    monitorRunE(v, "provider", homeFn, mgrFn),
 	}
 
 	addMonitorFlags(cmd)
@@ -707,7 +1008,11 @@ and per-provider detail with node-level CPU/memory/GPU resources.`,
 	return cmd
 }
 
-func monitorOracleCmd(v *viper.Viper) *cobra.Command {
+func monitorOracleCmd(
+	v *viper.Viper,
+	homeFn func() string,
+	mgrFn func() *aktctx.Manager,
+) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "oracle [rpc-endpoint]",
 		Short: "Oracle and BME monitoring",
@@ -718,7 +1023,7 @@ BME state (mint status, vault balances, ledger entries). This is
 the same dashboard as "akt monitor bme".`,
 		Args:    cobra.MaximumNArgs(1),
 		Example: `  akt monitor oracle`,
-		RunE:    monitorRunE(v, "oracle-bme"),
+		RunE:    monitorRunE(v, "oracle-bme", homeFn, mgrFn),
 	}
 
 	addMonitorFlags(cmd)
@@ -726,7 +1031,11 @@ the same dashboard as "akt monitor bme".`,
 	return cmd
 }
 
-func monitorBMECmd(v *viper.Viper) *cobra.Command {
+func monitorBMECmd(
+	v *viper.Viper,
+	homeFn func() string,
+	mgrFn func() *aktctx.Manager,
+) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "bme [rpc-endpoint]",
 		Short: "BME and Oracle monitoring",
@@ -737,7 +1046,7 @@ and oracle price data (aggregated prices, TWAP, health). This is
 the same dashboard as "akt monitor oracle".`,
 		Args:    cobra.MaximumNArgs(1),
 		Example: `  akt monitor bme`,
-		RunE:    monitorRunE(v, "oracle-bme"),
+		RunE:    monitorRunE(v, "oracle-bme", homeFn, mgrFn),
 	}
 
 	addMonitorFlags(cmd)
@@ -830,8 +1139,35 @@ func versionCmd(bi BuildInfo) *cobra.Command {
   akt version --long`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := cmd.OutOrStdout()
+			long, _ := cmd.Flags().GetBool("long")
 
-			if long, _ := cmd.Flags().GetBool("long"); long {
+			if f := output.FormatFromCmd(cmd); f != output.FormatTable {
+				payload := struct {
+					Version   string `json:"version"            yaml:"version"`
+					Commit    string `json:"commit"             yaml:"commit"`
+					Built     string `json:"built"              yaml:"built"`
+					Go        string `json:"go,omitempty"       yaml:"go,omitempty"`
+					Platform  string `json:"platform,omitempty" yaml:"platform,omitempty"`
+					BuildTags string `json:"buildTags,omitempty" yaml:"buildTags,omitempty"`
+				}{Version: bi.Version, Commit: bi.Commit, Built: bi.Date}
+
+				if long {
+					payload.Go = runtime.Version()
+					payload.Platform = runtime.GOOS + "/" + runtime.GOARCH
+
+					if dbi, ok := debug.ReadBuildInfo(); ok {
+						for _, setting := range dbi.Settings {
+							if setting.Key == "-tags" && setting.Value != "" {
+								payload.BuildTags = setting.Value
+							}
+						}
+					}
+				}
+
+				return output.Print(f, payload)
+			}
+
+			if long {
 				info := []struct{ k, v string }{
 					{"version", bi.Version},
 					{"commit", bi.Commit},

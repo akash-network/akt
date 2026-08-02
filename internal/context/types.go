@@ -1,6 +1,29 @@
 package context
 
-import "gopkg.in/yaml.v3"
+import (
+	"fmt"
+
+	"gopkg.in/yaml.v3"
+)
+
+const (
+	ProviderAuthJWT  = "jwt"
+	ProviderAuthMTLS = "mtls"
+)
+
+// ResolveProviderAuthType applies the context default and validates the
+// provider gateway authentication enum at the configuration boundary.
+func ResolveProviderAuthType(value string) (string, error) {
+	if value == "" {
+		return ProviderAuthJWT, nil
+	}
+	switch value {
+	case ProviderAuthJWT, ProviderAuthMTLS:
+		return value, nil
+	default:
+		return "", fmt.Errorf("invalid provider auth type %q: must be %q or %q", value, ProviderAuthJWT, ProviderAuthMTLS)
+	}
+}
 
 // Endpoints defines the network transport endpoints.
 type Endpoints struct {

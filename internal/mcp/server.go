@@ -7,6 +7,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -29,6 +32,10 @@ import (
 // Server wraps the MCP server with Akash tools.
 type Server struct {
 	mcp *mcpserver.MCPServer
+
+	// schemas records each registered tool's declared input schema, so the
+	// argument-validating middleware can check a call against it.
+	schemas map[string]mcp.ToolInputSchema
 }
 
 // New creates a new MCP server from an akt-resolved SDK client context.
@@ -40,14 +47,29 @@ type Server struct {
 // When enableWrites is true, write tools (on-chain transactions and provider
 // REST mutations) are additionally registered. The user must explicitly opt
 // in by passing --enable-writes.
-func New(ctx context.Context, cctx sdkclient.Context, enableWrites bool, consoleClient *aktconsole.Client) (*Server, error) {
+func New(
+	ctx context.Context,
+	cctx sdkclient.Context,
+	providerAuthType string,
+	enableWrites bool,
+	consoleClient *aktconsole.Client,
+) (*Server, error) {
+	// WithRecovery turns a panicking tool handler into an error result for
+	// that one call. Without it the panic unwinds through the stdio loop and
+	// takes the process down, so a single bad call ends the session and every
+	// other tool with it -- including the Console rail, which had nothing to
+	// do with it.
+	s := &Server{schemas: map[string]mcp.ToolInputSchema{}}
+
 	srv := mcpserver.NewMCPServer(
 		"akash-mcp",
 		"0.1.0",
 		mcpserver.WithToolCapabilities(true),
+		mcpserver.WithRecovery(),
+		mcpserver.WithToolHandlerMiddleware(s.validateArguments),
 	)
 
-	s := &Server{mcp: srv}
+	s.mcp = srv
 
 	// A chain client is not a prerequisite when the Console rail is
 	// available: a managed context reaches deployments, wallet, providers and
@@ -55,7 +77,7 @@ func New(ctx context.Context, cctx sdkclient.Context, enableWrites bool, console
 	// start without a wallet and an RPC endpoint would deny that user a
 	// server they can fully use. The failure is only fatal when it leaves the
 	// server with nothing at all.
-	chainErr := s.registerChainTools(ctx, cctx, enableWrites)
+	chainErr := s.registerChainTools(ctx, cctx, providerAuthType, enableWrites)
 
 	// The Console rail is additive, and registered only when a key resolved --
 	// otherwise every call would fail on auth.
@@ -78,7 +100,12 @@ func New(ctx context.Context, cctx sdkclient.Context, enableWrites bool, console
 // that prevented it rather than failing the server. A context with no RPC
 // endpoint -- which a console-api context is allowed to be -- simply has no
 // chain tools.
-func (s *Server) registerChainTools(ctx context.Context, cctx sdkclient.Context, enableWrites bool) error {
+func (s *Server) registerChainTools(
+	ctx context.Context,
+	cctx sdkclient.Context,
+	providerAuthType string,
+	enableWrites bool,
+) error {
 	// Checked before building a client, because the constructors accept an
 	// empty context happily and hand back something that fails on every call.
 	// Registering those tools would advertise a chain rail that cannot work,
@@ -93,8 +120,8 @@ func (s *Server) registerChainTools(ctx context.Context, cctx sdkclient.Context,
 			return err
 		}
 
-		s.registerQueryTools(cl)
-		s.registerWriteTools(cl)
+		s.registerQueryTools(cl, providerAuthType)
+		s.registerWriteTools(cl, providerAuthType)
 
 		return nil
 	}
@@ -104,7 +131,7 @@ func (s *Server) registerChainTools(ctx context.Context, cctx sdkclient.Context,
 		return err
 	}
 
-	s.registerQueryTools(cl)
+	s.registerQueryTools(cl, providerAuthType)
 
 	return nil
 }
@@ -130,13 +157,19 @@ func (s *Server) registerConsoleWriteTools(cl *aktconsole.Client) {
 
 // ServeStdio starts the server over stdio transport.
 func (s *Server) ServeStdio(ctx context.Context) error {
-	return mcpserver.ServeStdio(s.mcp, mcpserver.WithStdioContextFunc(func(_ context.Context) context.Context {
-		return ctx
-	}))
+	ctx, stop := signal.NotifyContext(ctx, os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	stdio := mcpserver.NewStdioServer(s.mcp)
+	err := stdio.Listen(ctx, os.Stdin, os.Stdout)
+	if errors.Is(err, context.Canceled) && ctx.Err() != nil {
+		return nil
+	}
+	return err
 }
 
 // registerQueryTools registers all read-only query tools.
-func (s *Server) registerQueryTools(cl client.LightClient) {
+func (s *Server) registerQueryTools(cl client.LightClient, providerAuthType string) {
 	// Node tools
 	s.addQueryTool(node.ToolNodeStatus(), node.HandleNodeStatus(cl))
 	s.addQueryTool(node.ToolBlockHeight(), node.HandleBlockHeight(cl))
@@ -163,8 +196,8 @@ func (s *Server) registerQueryTools(cl client.LightClient) {
 
 	// Provider REST query tools
 	s.addQueryTool(provider.ToolProviderStatus(), provider.HandleProviderStatus(cl))
-	s.addQueryTool(provider.ToolLeaseStatus(), provider.HandleLeaseStatus(cl))
-	s.addQueryTool(provider.ToolServiceStatus(), provider.HandleServiceStatus(cl))
+	s.addQueryTool(provider.ToolLeaseStatus(), provider.HandleLeaseStatus(cl, providerAuthType))
+	s.addQueryTool(provider.ToolServiceStatus(), provider.HandleServiceStatus(cl, providerAuthType))
 
 	// Audit tools
 	s.addQueryTool(audit.ToolListAuditedProviders(), audit.HandleListAuditedProviders(cl))
@@ -175,7 +208,7 @@ func (s *Server) registerQueryTools(cl client.LightClient) {
 
 // registerWriteTools registers write tools that require --enable-writes.
 // These tools perform on-chain transactions or mutating provider REST calls.
-func (s *Server) registerWriteTools(cl client.Client) {
+func (s *Server) registerWriteTools(cl client.Client, providerAuthType string) {
 	// Deployment tx tools
 	s.addWriteTool(deployment.ToolCloseDeployment(), deployment.HandleCloseDeployment(cl))
 
@@ -184,7 +217,7 @@ func (s *Server) registerWriteTools(cl client.Client) {
 	s.addWriteTool(market.ToolCloseLease(), market.HandleCloseLease(cl))
 
 	// Provider REST mutation tools
-	s.addWriteTool(provider.ToolSubmitManifest(), provider.HandleSubmitManifest(cl))
+	s.addWriteTool(provider.ToolSubmitManifest(), provider.HandleSubmitManifest(cl, providerAuthType))
 }
 
 // addQueryTool registers a read-only tool. The MCP spec defaults an
@@ -195,6 +228,7 @@ func (s *Server) registerWriteTools(cl client.Client) {
 // the two cannot drift apart.
 func (s *Server) addQueryTool(tool mcp.Tool, handler mcpserver.ToolHandlerFunc) {
 	tool.Annotations = queryToolAnnotations()
+	s.schemas[tool.Name] = tool.InputSchema
 	s.mcp.AddTool(tool, handler)
 }
 
@@ -217,6 +251,7 @@ func queryToolAnnotations() mcp.ToolAnnotation {
 // client should confirm them with the user rather than auto-approve.
 func (s *Server) addWriteTool(tool mcp.Tool, handler mcpserver.ToolHandlerFunc) {
 	tool.Annotations = writeToolAnnotations()
+	s.schemas[tool.Name] = tool.InputSchema
 	s.mcp.AddTool(tool, handler)
 }
 

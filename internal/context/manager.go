@@ -294,9 +294,11 @@ func (m *Manager) CreateContext(ctx Context) error {
 		ctx.Gas = "auto"
 	}
 
-	if ctx.ProviderDefaults.AuthType == "" {
-		ctx.ProviderDefaults.AuthType = "jwt"
+	providerAuthType, err := ResolveProviderAuthType(ctx.ProviderDefaults.AuthType)
+	if err != nil {
+		return err
 	}
+	ctx.ProviderDefaults.AuthType = providerAuthType
 
 	switch ctx.AuthMethod {
 	case "", AuthMethodKeyring, AuthMethodConsoleAPI:
@@ -330,31 +332,116 @@ func (m *Manager) UseContext(name string) error {
 
 // UpdateContext modifies an existing context in-place.
 func (m *Manager) UpdateContext(name string, apply func(*Context) error) error {
+	return m.UpdateContextAndNetwork(name, "", apply, nil)
+}
+
+// UpdateContextAndNetwork applies context and optional network changes in one
+// config write. When forkName is non-empty, the selected network is copied,
+// updated, and assigned only to the named context. A failed validation or save
+// leaves both the in-memory manager and config file at their prior state.
+func (m *Manager) UpdateContextAndNetwork(
+	name string,
+	forkName string,
+	applyContext func(*Context) error,
+	applyNetwork func(*Network) error,
+) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	ctx := m.getContext(name)
-	if ctx == nil {
+	ctxIndex := -1
+	for i := range m.cfg.Contexts {
+		if m.cfg.Contexts[i].Name == name {
+			ctxIndex = i
+			break
+		}
+	}
+	if ctxIndex < 0 {
 		return fmt.Errorf("context %q not found", name)
 	}
 
-	if err := apply(ctx); err != nil {
-		return err
+	ctx := m.cfg.Contexts[ctxIndex]
+	if applyContext != nil {
+		if err := applyContext(&ctx); err != nil {
+			return err
+		}
+	}
+
+	var updatedNetwork *Network
+	networkIndex := -1
+	if applyNetwork != nil {
+		if ctx.Network.Name == "" {
+			return fmt.Errorf("context %q has no network to edit", name)
+		}
+
+		for i := range m.cfg.Networks {
+			if m.cfg.Networks[i].Name == ctx.Network.Name {
+				networkIndex = i
+				break
+			}
+		}
+		if networkIndex < 0 {
+			return fmt.Errorf("network %q not found", ctx.Network.Name)
+		}
+
+		networkCopy := cloneNetwork(m.cfg.Networks[networkIndex])
+		if forkName != "" {
+			if m.getNetwork(forkName) != nil {
+				return fmt.Errorf("network %q already exists", forkName)
+			}
+			networkCopy.Name = forkName
+			ctx.Network = Network{Name: forkName}
+		}
+
+		if err := applyNetwork(&networkCopy); err != nil {
+			return err
+		}
+		updatedNetwork = &networkCopy
+	} else if forkName != "" {
+		return fmt.Errorf("cannot fork a network without network changes")
 	}
 
 	// Validate references after mutation.
 	// console-api contexts may be network-less (CreateContext permits it);
 	// requiring a network here would make them uneditable — including by the
 	// `akt context edit ... --console-api-key` remedy other errors suggest.
-	if ctx.Network.Name != "" && m.getNetwork(ctx.Network.Name) == nil {
+	if ctx.Network.Name != "" && forkName == "" && m.getNetwork(ctx.Network.Name) == nil {
 		return fmt.Errorf("network %q not found", ctx.Network.Name)
 	}
 
 	if m.getKeyring(ctx.Keyring.Name) == nil {
 		return fmt.Errorf("keyring %q not found", ctx.Keyring.Name)
 	}
+	providerAuthType, err := ResolveProviderAuthType(ctx.ProviderDefaults.AuthType)
+	if err != nil {
+		return err
+	}
+	ctx.ProviderDefaults.AuthType = providerAuthType
 
-	return m.save()
+	oldContexts := append([]Context(nil), m.cfg.Contexts...)
+	oldNetworks := append([]Network(nil), m.cfg.Networks...)
+	m.cfg.Contexts[ctxIndex] = ctx
+	if updatedNetwork != nil {
+		if forkName != "" {
+			m.cfg.Networks = append(m.cfg.Networks, *updatedNetwork)
+		} else {
+			m.cfg.Networks[networkIndex] = *updatedNetwork
+		}
+	}
+
+	if err := m.save(); err != nil {
+		m.cfg.Contexts = oldContexts
+		m.cfg.Networks = oldNetworks
+		return err
+	}
+
+	return nil
+}
+
+func cloneNetwork(network Network) Network {
+	network.Endpoints.RPC = append([]string(nil), network.Endpoints.RPC...)
+	network.Endpoints.API = append([]string(nil), network.Endpoints.API...)
+	network.Endpoints.GRPC = append([]string(nil), network.Endpoints.GRPC...)
+	return network
 }
 
 // DeleteContext removes a context. Cannot delete the current context.
@@ -520,6 +607,13 @@ func (m *Manager) Resolve(name string) (*Context, error) {
 		consoleURL = DefaultConsoleAPIURL
 	}
 
+	providerAuthType, err := ResolveProviderAuthType(ctx.ProviderDefaults.AuthType)
+	if err != nil {
+		return nil, fmt.Errorf("context %q: %w", name, err)
+	}
+	providerDefaults := ctx.ProviderDefaults
+	providerDefaults.AuthType = providerAuthType
+
 	return &Context{
 		Name:             ctx.Name,
 		Network:          *net,
@@ -529,10 +623,10 @@ func (m *Manager) Resolve(name string) (*Context, error) {
 		DefaultAccount:   ctx.DefaultAccount,
 		Gas:              ctx.Gas,
 		Fees:             ctx.Fees,
-		ProviderDefaults: ctx.ProviderDefaults,
+		ProviderDefaults: providerDefaults,
 		GasPrices:        net.GasPrices,
 		GasAdjustment:    net.GasAdjustment,
-		AuthType:         ctx.ProviderDefaults.AuthType,
+		AuthType:         providerAuthType,
 		Root:             m.root,
 		ConsoleAPIKey:    ResolveConsoleAPIKey(m.root, ctx.Name),
 	}, nil

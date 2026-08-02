@@ -1,9 +1,9 @@
                                               [1;38;2;244;244;245makt monitor - Akash Network[m                                               
 [48;2;255;65;54m [m[1;38;2;9;9;11;48;2;255;65;54mNetwork[m[48;2;255;65;54m [m   [38;2;161;161;170mProvider[m    [38;2;161;161;170mOracle/BME[m                                                                                      
- [38;2;161;161;170m 1: Overview                           [m  [38;2;161;161;170m 2: Validators                         [m [48;2;255;65;54m [m[1;38;2;9;9;11;48;2;255;65;54m 3: Governance                         [m[48;2;255;65;54m [m
+ [38;2;161;161;170m 1: Overview                 [m  [38;2;161;161;170m 2: Validators               [m [48;2;255;65;54m [m[1;38;2;9;9;11;48;2;255;65;54m 3: Governance               [m[48;2;255;65;54m [m [38;2;161;161;170m 4: Parameters               [m 
 
-[1;38;2;255;65;54mLoading governance parameters...[m
+[1;38;2;255;65;54mLoading governance proposals...[m
                                                                                                                         
-[38;2;113;113;122mq: quit | r: refresh params | Tab/1-3: switch tabs[m                                                                      
+[38;2;113;113;122mq: quit | Tab/Shift-Tab: dashboard | 1-4: network view | r: refresh | j/k: scroll | h/l: pan[m                            
                                                                                                                         
 [38;2;113;113;122mRPC: https://rpc.akashnet.net:443 [WS][m                                                                                  

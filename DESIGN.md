@@ -41,7 +41,7 @@ The hub presents three dashboards, navigable via Tab/Shift-Tab:
 
 | Dashboard | CLI Subcommand | Content |
 |-----------|---------------|---------|
-| **Network** (default) | `akt monitor network` | Consensus state, validator voting, governance parameters |
+| **Network** (default) | `akt monitor network` | Consensus state, validator voting, governance proposals, governance parameters |
 | **Provider** | `akt monitor provider` | Provider fleet health, version distribution, resource utilization |
 | **Oracle/BME** | `akt monitor oracle` / `akt monitor bme` | Aggregated prices, price health, vault state, mint status, ledger |
 
@@ -56,7 +56,68 @@ The hub presents three dashboards, navigable via Tab/Shift-Tab:
 - **Critical tool during network upgrades**: Validators coordinate upgrades at a specific block height; the chain halts while validators upgrade their software. Online block explorers and status pages frequently lag, stall, or lose their WebSocket connections during these windows, making them unreliable. `akt monitor` connects directly to the user's chosen RPC endpoint, providing the authoritative local view of: which round and step the chain is in, which validators have come back online and are voting, whether 2/3+ voting power has reached precommit, and when the chain resumes block production.
 - **Standalone operation**: Requires only an RPC endpoint — no keyring, no default account, no chain-id. A monitoring-only context (with no `default-account`) or a bare `--rpc` flag is sufficient. This makes it usable by anyone observing the network, not just deployers.
 - **Context-integrated but not context-dependent**: When a context is active, the RPC endpoint resolves automatically (consistent with the flag-minimal operation goal). A positional argument or `--rpc` flag overrides for ad-hoc monitoring of any network.
-- **Hub-based navigation**: Tab/Shift-Tab cycles between three dashboards (Network, Provider, Oracle/BME); number keys (1/2/3) switch sub-tabs within the Network dashboard. Each dashboard is also directly accessible via its CLI subcommand.
+- **Hub-based navigation**: Tab/Shift-Tab cycles between three dashboards (Network, Provider, Oracle/BME); number keys (1/2/3/4) switch sub-tabs within the Network dashboard. Each dashboard is also directly accessible via its CLI subcommand.
+
+The monitor owns those navigation keys while it is visible. Standalone
+`akt monitor` sends input directly to the monitor model and renders that
+model's full-height view, including its own navigation help and RPC status.
+The hidden resource router is not part of the standalone input path. In the
+experimental embedded shell, monitor-local Tab/Shift-Tab and Network 1/2/3/4
+take precedence over shell navigation; Esc returns ownership to the shell.
+This keeps the same visible controls functional in both launch modes while
+preserving the shell's global shortcuts outside the monitor.
+
+An explicit monitor RPC also makes configuration optional: it does not launch
+the first-run bootstrap or require a keyring merely because no akt config file
+exists. Cache creation/open failures are startup errors rather than a silent
+empty dashboard, and `--clean-cache` removes both the current and legacy cache
+filenames or reports why it could not.
+
+Governance data follows the same typed query boundary as the CLI. The monitor
+queries recent `cosmos.gov.v1` proposals through its selected RPC endpoint and
+uses the live tally query for proposals still in the voting period. The
+proposal list delegates to the same pretty renderer as `akt query gov
+proposals`; completed proposals show their final tallies and active proposals
+show the current tally. A separate Parameters sub-tab queries the complete
+`cosmos.gov.v1` parameter response, converts that protobuf with Cosmos JSON
+semantics, and delegates rendering to the shared pretty parameter renderer. It
+does not compose a modern view from a single legacy REST subtype, because
+absent deposit and tally fields would otherwise render as valid-looking zero
+values.
+
+Provider monitoring is a continuously running pipeline, not a view that is
+populated only after navigation. Startup loads the persisted provider cache,
+immediately reconciles it with the on-chain provider set, and starts the health
+check, chain-resync, and cache-save schedules. Switching dashboards changes only
+what is rendered; it does not start or stop the pipeline. Manual refresh
+requests an immediate reconciliation while retaining the periodic schedules.
+The selected version is a real table filter, not only a sort preference. Every
+reconciliation rebinds the selection to the rebuilt version list so an
+appearing or disappearing version cannot leave an invalid index. Provider
+detail responses carry the requested provider identity and are discarded when
+the user has since selected another provider or left the detail view.
+Both REST and gRPC provider probes verify TLS certificates by default. The
+diagnostic `--insecure` override is threaded through both transports; neither
+probe may silently opt out on its own.
+
+Monitor examples use an RPC endpoint that is verified to expose CometBFT's
+WebSocket service. HTTP-only public gateways are still valid for ordinary chain
+queries, but they must not be advertised for a command whose primary data path
+is a WebSocket subscription. The same rule applies to built-in network
+templates: their first RPC is the flagless monitor endpoint and is therefore
+WebSocket-capable. Monitor auxiliary REST reads use the selected context's API
+endpoint only when the selected RPC belongs to that context. An ad-hoc RPC
+override derives a same-origin REST endpoint (or uses explicit `--rest`) rather
+than silently combining one network's RPC with another network's API. Known
+HTTP-only primaries from older built-in templates are replaced at monitor
+resolution by the current template's WebSocket endpoint without rewriting the
+user's context; an explicit endpoint is never substituted. The cache stays
+below the resolved CLI home so `--home` remains a complete isolation boundary.
+
+The standalone monitor receives the entire terminal height. The embedded
+monitor receives exactly the shell content height after all shell chrome is
+reserved; its renderer and input model use the same dimensions so navigation
+help and bottom rows are not clipped.
 
 #### Non-Goals
 
@@ -159,6 +220,8 @@ graph TB
 - Defines chain connectivity: chain-id, RPC/API/gRPC endpoints, gas prices, gas adjustment.
 - Can be shared by multiple contexts (e.g., a "mainnet" network used by both "prod" and "monitoring" contexts).
 - Instantiatable from built-in templates (mainnet, testnet, sandbox).
+- Built-in templates track the Akash network registry's current chain IDs and
+  endpoints; the sandbox template targets the live `sandbox-2` network.
 - When a shared network's config is edited within a context, two modes are offered:
   - **Edit parent**: Modify the network definition. Change applies to all contexts using it.
   - **Fork**: Create a copy of the network for this context only. The context switches to the forked copy.
@@ -188,6 +251,14 @@ The context is resolved once at application startup and propagated through the e
 2. Load the context's network, keyring, store, and action log.
 3. Apply overrides: flags > env vars > network config > built-in defaults.
 4. Inject the resolved context into all services (client, provider gateway, sync engine, TUI).
+
+Transaction subtrees imported from Cosmos SDK or IBC modules are not exempt
+from this boundary. Before any transaction leaf constructs a message, queries
+an account, simulates, or broadcasts, akt installs the selected context's
+client context and discovered chain client on that leaf. Dependency defaults
+such as `tcp://localhost:26657` must never replace a resolved endpoint. Local
+transaction leaves use the same pre-run boundary; a leaf that needs codecs or
+clients cannot reach its handler without that initialization.
 
 #### 3.1.3 Live Reload
 
@@ -219,6 +290,25 @@ Each context has an `auth-method` that determines how transactions are signed an
 
 A context uses **one** auth method. Users who need both can create separate contexts (e.g., `prod` with keyring auth and `console` with console-api auth), potentially sharing the same network definition.
 
+Provider authentication is selected by operation, not merely by command
+group. Provider `/status` is a public read: CLI and MCP callers construct it
+through `internal/provider.NewPublicGatewayClient`, which attaches neither a
+wallet JWT nor an mTLS certificate and therefore works without a default
+account or keyring. Lease-, service-, manifest-, migration-, log-, event-, and
+shell-scoped chain-backed operations construct clients through
+`internal/provider.NewGatewayClient`. That boundary validates the resolved
+auth enum, account, keyring, and signing-key presence before installing the
+selected JWT or mTLS identity. CLI callers perform that local preflight before
+on-chain provider URL discovery, so an RPC failure cannot hide a missing
+signing identity. `--auth-type` overrides the selected context's
+`provider-defaults.auth-type`; both CLI and MCP consume that same resolved
+default. Callers may choose the provider URL, but do not construct provider
+REST clients ad hoc.
+The MCP adapter follows the same boundary: protected chain-backed gateway tools
+use that resolved wallet identity, while public status remains unauthenticated.
+Console MCP tools likewise translate Console wire values into the semantic
+units promised by their schemas before returning them to a client.
+
 #### 3.1.5 Console Provider Gateway Access
 
 A `console-api` context has no wallet, yet the operations users reach for most after a deployment goes live — container logs, cluster events, live lease status, an interactive shell — are served by the **provider's** gateway, not by the Console API. `akt` reaches those gateways directly from a managed context, with no wallet and no local signing key involved (`internal/cli/console/gateway.go`):
@@ -229,6 +319,24 @@ A `console-api` context has no wallet, yet the operations users reach for most a
 4. The standard provider REST client is constructed against that gateway — `rest.NewClient(ctx, providerAddr, rest.WithProviderURL(hostUri), rest.WithAuthToken(token))` — and the call proceeds exactly as it would on a keyring context.
 
 **Why this shape**: Akash Console fronts provider gateways with a server-side `provider-proxy` websocket relay. `akt` is a native client that can reach the gateway directly, so it deliberately does **not** reimplement that relay. Step 4 hands off to the same provider client and the same streaming code paths that back `akt provider lease-status`, `lease-logs`, `lease-events`, and `lease-shell` — one implementation of log streaming, event streaming, and PTY handling, exercised by both rails. The Console-minted JWT simply substitutes for the wallet-signed JWT a keyring context would present, so `akt console status|logs|events|shell` and their `akt provider` counterparts cannot drift apart.
+
+The shared gateway boundary also normalizes protocol details that providers do
+not implement uniformly. It resolves a provider address to the on-chain host
+URI unless the user supplies an explicit URL override, verifies a lease before
+opening its log, event, or shell stream, applies bounded log filters locally, and
+treats an EOF as normal completion only for one-shot streams. Shell stdin EOF
+is held until the remote result arrives so a successful command cannot print
+its output and then fail locally. Interactive shells and piped commands attach
+stdin automatically. A one-shot command launched from a terminal does not
+advertise stdin to the provider unless the user explicitly supplies `--stdin`;
+otherwise providers can keep an already-finished command open waiting for
+terminal input. Gateway HTTP errors retain the provider's response detail so
+rejected operations remain actionable on both rails.
+Shell output crosses one shared formatting boundary on both rails: pretty mode
+streams an interactive PTY unchanged, while JSON and YAML require an explicit
+remote command, disable the PTY, capture stdout and stderr separately, and emit
+one structured result. This keeps arbitrary remote bytes from masquerading as
+the requested machine-readable format.
 
 This is the only point at which a `console-api` context talks to a provider gateway. Deployment lifecycle operations still route through the Console API, which submits manifests internally during lease creation (SPEC §7.4).
 
@@ -346,6 +454,30 @@ graph LR
 | `NewConsole(consoleClient, chainQueries, root, ctxName)` | `KindConsole` | Mapping each message type to a Console API REST endpoint (SPEC §7.5). Query steps go straight to the chain when a chain client is available; without one, `market.bids` falls back to the Console bids endpoint. `root`/`ctxName` locate the per-context manifest cache that carries the manifest from deployment create to lease create. |
 | `NewProvider(clientCtx, authType)` | chain rail only | Provider gateway calls (JWT or mTLS). The console rail has **no** provider client: the Console API submits the manifest internally during lease creation, so provider steps are dropped from the run with a note on stderr rather than failing it. |
 
+On the chain rail, an update's provider step queries every page of active
+leases for the deployment, de-duplicates and sorts their provider addresses,
+then submits the updated manifest to every provider. A failure from one
+provider does not prevent attempts to the others, but the workflow remains
+failed until every active provider accepts the manifest. Retrying the update is
+therefore safe. The Console rail continues to omit this provider step because
+its deployment update endpoint owns manifest delivery.
+
+Workflow failures never close deployments automatically. When deploy reaches
+paid on-chain state before failing, the command surfaces the DSEQ, provider (if
+known), and exact retry and explicit-close commands in both human and JSONL
+output. This keeps irreversible cleanup under the user's control while making
+the continuing escrow liability unmistakable.
+
+Console mutation responses are not trusted as the only evidence of resulting
+state. A non-idempotent lease POST is never replayed after an error; the client
+instead reads the deployment back and accepts success only when every exact
+requested lease is active. Deployment updates are idempotent, so the Console's
+specific transient manifest-version rejection is retried within the normal
+three-attempt bound. After any failed update response, the client compares the
+deployment's API-reported version hash with the deterministic hash of the SDL
+before deciding whether the update failed. Action logs record the reconciled
+outcome, not merely the first HTTP response.
+
 **Why a translation layer and not per-rail commands**: the alternative — a `deploy` that knows about keyrings and a separate Console `deploy` — means every new action is designed twice, and the two surfaces drift on flag names, defaults, argument order, and error text. Here, adding an action is a workflow definition plus (at most) a message mapping in the console adapter. Neither rail's command handler changes, and no rail-specific redesign is required.
 
 **One argument surface**: the CLI's argument surface is *generated* from the workflow definition (`internal/cli/workflow`). Positional arguments come from the definition's required file param and its optional `dseq` param, and every non-file param also gets a flag carrying the definition's type, default, and description. Because the definition is shared, `akt deploy`, `akt update`, and `akt close` take **identical arguments on both rails** — the rail is a property of the active context (`auth-method`), not of the command line. A user switching from a keyring context to a console-api one types the same command.
@@ -355,11 +487,18 @@ graph LR
 | Form | Examples | Meaning |
 |---|---|---|
 | USD | `5usd`, `$5`, `5.50usd` | A USD amount. The `usd` unit is case-insensitive and always wins over coin parsing, so a value ending in `usd` is never read as a chain denomination. |
-| Coin | `5000000uakt`, `5akt` | A chain coin amount, parsed as a decimal coin. |
+| Coin | an explicit `<amount><denom>` | A chain coin amount, parsed as a decimal coin. The denomination must match the active network's deployment deposit parameter. |
 | Bare number | `5`, `5.50` | Unit-less: USD on the console rail, rejected on the chain rail (coins have always required a denomination). |
 | `auto` / empty | `auto` | Defer to the rail default: the chain-minimum deployment deposit on the chain rail; the console rail has no default and asks for an explicit USD amount. |
 
-Every form parses on every rail; only the *interpretation* is rail-specific, and each rejection names the rail that would accept the value ("USD deposits require a console-api context; specify a coin amount like `5000000uakt`"). SPEC §7.4 carries the full per-rail acceptance table. The Console minimum is a single exported constant (`transport.MinConsoleDepositUSD`, aliasing `console.MinDepositUSD`) so every surface that enforces it — CLI commands and workflow adapters alike — shares one value.
+Every form parses on every rail; only the *interpretation* is rail-specific,
+and each rejection names the rail that would accept the value. Chain users are
+directed to `auto` first because it queries the active network's minimum amount
+and denomination; an explicit coin remains available as an override. SPEC
+§7.4 carries the full per-rail acceptance table. The Console minimum is a
+single exported constant (`transport.MinConsoleDepositUSD`, aliasing
+`console.MinDepositUSD`) so every surface that enforces it — CLI commands and
+workflow adapters alike — shares one value.
 
 ### 3.6 Capability Gating
 
@@ -381,7 +520,7 @@ Capabilities are deliberately coarse — they describe what the *configuration* 
 |---|---|---|
 | `chain-query` | network has at least one RPC endpoint | `akt query`, `akt monitor` |
 | `chain-tx` | network has at least one RPC endpoint | `akt tx` |
-| `provider` | network has at least one RPC endpoint (gateway discovery + wallet auth) | `akt provider` |
+| `provider` | network has at least one RPC endpoint (gateway discovery; protected operations validate wallet auth at execution) | `akt provider` |
 | `console` | a Console API key is resolvable (§3.1.4) | `akt console` subcommands |
 
 `chain-tx` deliberately does not probe for a funded key: opening an OS keyring can prompt for a password, and a help listing must never do that. Key and balance problems remain execution-time failures. `akt sdl` declares nothing at all — SDL scaffolding, validation, and linting run entirely locally, so gating them would be wrong.
@@ -498,6 +637,36 @@ The `chain-sdk` CLI package (`pkg.akt.dev/go/cli`) will be deprecated and eventu
 > current. See the status note at the end of this section.
 
 - **Cobra** handles command parsing, flag management, help generation, and shell completion for CLI mode. It is the standard in the Go and Cosmos SDK ecosystem.
+- **Boundary validation** is applied uniformly to the assembled Cobra tree:
+  pure command groups reject unknown positional tokens instead of treating
+  them as a successful help request, and enum-valued flags reject values not
+  advertised by that command before any configuration or transport work. An
+  accepted transport, snapshot, or format flag must change the operation; a
+  command that cannot implement it rejects it at this boundary. Conflicting
+  positional and flag forms of the same value are rejected instead of choosing
+  one silently. Generator commands apply the same rule to generation
+  parameters: explicit values are checked with the generated artifact's
+  authoritative parser and linter before output. An internal invariant error
+  is reserved for a built-in scaffold whose defaults fail that validation.
+- **Invocation resolution has one target**: `--context` selects every
+  context-owned read and write in the invocation, including context details,
+  action logs, Console credential storage, and Console credential removal.
+  The same resolution pass applies `--from`/`AKT_FROM` before the SDK client
+  context is built, so a downstream command cannot silently fall back to the
+  context's stored default account.
+- **Preflight validates before it plans**: workflow dry-runs reuse the same
+  required, typed, and semantic parameter validators as execution. They may
+  skip client discovery and every state-changing step, but they cannot skip
+  SDL, deposit, duration, sequence, selector, transaction chain, or enum
+  validation. A plan therefore describes an invocation that could enter
+  execution, not merely one that Cobra could parse. Pretty dry-runs render the
+  human plan; JSONL dry-runs render one `planned` record per step and never mix
+  prose into stdout.
+- **Transaction identity is checked at the boundary**: online construction,
+  simulation, and broadcast require an explicit chain ID to agree with the
+  selected context and accept only advertised sign modes. Explicit offline
+  construction may name another chain because it performs no context-node
+  work; invalid sign modes remain errors in both paths.
 - **Bubbletea v2** (Elm Architecture: Model-Update-View) handles the interactive TUI. Its functional design isolates state management and rendering.
 - **Lipgloss v2** provides CSS-like styling for terminal output in both modes -- table formatting in CLI, full layout composition in TUI.
 - **Bubbles v2** provides battle-tested components: table, viewport, text input, spinner, help, key bindings, list, progress bar, paginator.
@@ -556,6 +725,45 @@ Query commands use a registry-based formatter system (`internal/output/pretty/`)
 
 **Dispatch flow:** Every query command calls `pretty.PrintQueryResult(cmd, cctx, msg)`. This function reads `--output`: if `json` or `yaml`, it delegates to `clientCtx.PrintProto()` with the appropriate Cosmos SDK output format; if `pretty` (the default), it looks up a registered `PrettyFormatter` for the message's protobuf type. If a formatter exists, it renders pretty output; otherwise, it falls back to JSON output. This means new protobuf types automatically get JSON output until a formatter is registered -- no regressions.
 
+Vendored query trees pass through an akt adapter before execution. The adapter
+normalizes dependency-owned pagination when a callback leaks skipped-prefix or
+lookahead records, so accepted `--offset`, `--page`, and `--limit` values retain
+their public meaning. It also applies the resolved context and explicit
+endpoint overrides, converts upstream
+errors into normal command errors, normalizes JSON/YAML output, enforces the
+requested page boundary even when an upstream client over-collects, and removes
+duplicate sibling registrations. Queries backed by the current transaction
+index, rather than height-addressable module state, reject historical snapshot
+selection at this boundary. This keeps clean-copied and dependency-owned
+commands under the same public CLI contract without forking their whole trees.
+
+For Console API values, the public JSON representation is canonical. YAML is
+generated from that JSON semantic tree rather than by reflecting the Go
+transport type, so JSON field names, raw embedded objects, byte/string
+representations, and integer precision remain identical across formats.
+
+The output flag is an enum at the parsing boundary. A misspelling such as
+`-o josn` is a usage error; it must never fall through to pretty output. The
+same boundary owns the flag's help text so adopted commands cannot advertise a
+stale dependency enum after akt changes the accepted values.
+
+Machine-readable collection fields have a format-independent semantic shape.
+Empty collections are arrays in both JSON and YAML, including persisted store
+exports; they never change to `null` because one encoder observed a nil slice.
+
+Commands whose stdout is itself a source document, rather than a rendering of
+command state, keep that document byte-stable and reject an explicitly selected
+`--output` format. For example, `akt sdl init` always emits deployable SDL YAML;
+it does not wrap that YAML or silently reinterpret `-o json`. Validation
+commands are different: their JSON and YAML modes serialize a stable validation
+result containing validity, document counts, errors, and warnings.
+
+Pretty output is styled only at an interactive terminal. Writers strip all ANSI
+styling (including bold and underline, not only color) when stdout is redirected
+or `NO_COLOR` is present. This decision is made at the final write boundary so
+shared renderers remain byte-identical between the CLI and monitor while files,
+pipes, and test buffers remain plain text.
+
 **Formatting conventions:**
 - **List results**: Tabwriter-aligned tables with lipgloss-styled headers. State columns are color-coded (green=active/open, yellow=warning states, red=closed/lost, gray=invalid). Key identifiers (DSEQ, moniker) are bolded.
 - **Single-item results**: Grouped key-value pairs with lipgloss-styled section headers (e.g., "Deployment", "Groups", "Escrow"). Values are colorized where appropriate.
@@ -584,6 +792,25 @@ This replaces the MVP's manual backup-endpoint approach with transparent, automa
 ### 5.7 Transaction Result Pretty Output
 
 Transaction commands (`tx`) use the same registry-based formatter system as query commands (§5.5) to render human-friendly transaction results. When `--output pretty` is active (the default for both `tx` and `query` commands), a `TxResponse` is rendered in two distinct sections.
+
+Simulation is a transaction result, not a successful dry planning shortcut.
+If the node returns a non-zero SDK code, the command returns a transaction
+error and a non-zero process status while retaining the response for
+diagnostics. Only pure construction (`--generate-only` or `--offline`) may
+carry a non-zero-shaped fixture without converting it into an execution
+failure.
+The CLI parses fee strings and validates multisig record types and batch
+cardinality before calling SDK helpers whose invalid-input behavior includes
+panics. Unsigned construction preserves a supplied signer address without
+turning that address into a keyring lookup; only signer names request local key
+material.
+
+Construction and signing utilities preserve a single data pipeline. Unsigned
+and signed transaction payloads are written to stdout (or the explicit
+`--output-document`) and never to the diagnostic stream. A transaction JSON
+payload already returned as bytes is treated as encoded JSON, not serialized
+again as a byte slice. This keeps locally implemented and SDK-owned
+`--generate-only` leaves interchangeable in scripts.
 
 **Section 1: Transaction Summary (common to all transactions)**
 
@@ -666,7 +893,7 @@ Send
 - Keyring management: shared keyrings, keys visible to all referencing contexts
 - Action log: append-only JSONL log per context, reading/filtering
 - Chain client with multi-endpoint failover
-- Core tx commands: bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, slashing, vesting, upgrade, crisis, IBC
+- Core tx commands: bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, slashing, vesting, upgrade, IBC
 - Core query commands: all matching modules
 - Key management commands
 - Output formatting with pretty output: registry-based per-type formatters for all query results, lipgloss color-coded states. `--output json` and `--output yaml` for machine-readable output
@@ -677,6 +904,13 @@ Send
 - Version command with build-time injection
 - Shell completion (bash, zsh, fish)
 - Basic e2e test suite
+
+The transaction surface follows executable Akash app capabilities, not every
+group exported by upstream SDK dependencies. Modules whose messages are not
+registered by the Akash app are omitted, as are future-facing command groups
+with no action children. This keeps help, completion, and surface coverage from
+presenting a successful no-op or a transaction the selected Akash network can
+never handle.
 
 ### Phase 2: Store + Workflow Commands
 

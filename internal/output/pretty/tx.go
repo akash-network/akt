@@ -1,9 +1,10 @@
 package pretty
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -11,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	clioutput "pkg.akt.dev/akt/internal/output"
 )
 
 // PrintTxResult is the main dispatch function for transaction output (SPEC §10.11).
@@ -24,6 +26,9 @@ import (
 // interface{}. It is expected to be *sdk.TxResponse or proto.Message.
 func PrintTxResult(cmd *cobra.Command, cctx sdkclient.Context, resp interface{}) error {
 	output, _ := cmd.Flags().GetString(cflags.FlagOutput)
+	if payload, ok := resp.([]byte); ok {
+		return printEncodedTransaction(cmd, output, payload)
+	}
 
 	// For json/yaml, delegate to the SDK printer.
 	switch output {
@@ -61,7 +66,7 @@ func PrintTxResult(cmd *cobra.Command, cctx sdkclient.Context, resp interface{})
 		return cctx.PrintObjectLegacy(resp)
 	}
 
-	w := os.Stdout
+	w := clioutput.TerminalAwareWriter(cmd.OutOrStdout())
 
 	// Section 1: Common transaction summary.
 	renderTxSummaryWithCodec(w, cctx, txResp)
@@ -87,6 +92,90 @@ func PrintTxResult(cmd *cobra.Command, cctx sdkclient.Context, resp interface{})
 	}
 
 	return nil
+}
+
+// PrintTxResults preserves one structured document when a command intentionally
+// splits one message set into multiple transactions.
+func PrintTxResults(cmd *cobra.Command, cctx sdkclient.Context, responses []interface{}) error {
+	if len(responses) == 0 {
+		return fmt.Errorf("no transaction results to print")
+	}
+	if len(responses) == 1 {
+		return PrintTxResult(cmd, cctx, responses[0])
+	}
+
+	format, _ := cmd.Flags().GetString(cflags.FlagOutput)
+	if format != cflags.OutputJSON && format != cflags.OutputYAML {
+		for _, response := range responses {
+			if err := PrintTxResult(cmd, cctx, response); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	values := make([]any, 0, len(responses))
+	for _, response := range responses {
+		value, err := txResultJSONValue(cctx, response)
+		if err != nil {
+			return err
+		}
+		values = append(values, value)
+	}
+
+	outputFormat := clioutput.FormatJSON
+	if format == cflags.OutputYAML {
+		outputFormat = clioutput.FormatYAML
+	}
+	return clioutput.FprintJSONSemantics(cmd.OutOrStdout(), outputFormat, values)
+}
+
+func txResultJSONValue(cctx sdkclient.Context, response interface{}) (any, error) {
+	var payload []byte
+	var err error
+	switch response := response.(type) {
+	case []byte:
+		payload = response
+	case proto.Message:
+		if cctx.Codec == nil {
+			return nil, fmt.Errorf("cannot encode transaction result without a codec")
+		}
+		payload, err = cctx.Codec.MarshalJSON(response)
+	default:
+		payload, err = json.Marshal(response)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	return value, nil
+}
+
+func printEncodedTransaction(cmd *cobra.Command, format string, payload []byte) error {
+	payload = bytes.TrimSpace(payload)
+	if !json.Valid(payload) {
+		return fmt.Errorf("generated transaction is not valid JSON")
+	}
+
+	if format != cflags.OutputYAML {
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), string(payload))
+		return err
+	}
+
+	decoder := json.NewDecoder(bytes.NewReader(payload))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return err
+	}
+
+	return clioutput.FprintJSONSemantics(cmd.OutOrStdout(), clioutput.FormatYAML, value)
 }
 
 // renderTxSummaryWithCodec renders Section 1 using the provided client context

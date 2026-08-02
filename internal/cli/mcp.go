@@ -8,6 +8,8 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	"github.com/spf13/cobra"
 
+	aclient "pkg.akt.dev/go/node/client"
+
 	"pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
 	aktmcp "pkg.akt.dev/akt/internal/mcp"
@@ -16,24 +18,32 @@ import (
 func mcpCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "mcp",
-		Short: "Start MCP server for AI assistant integration",
+		Short: "Start the Model Context Protocol server",
 		Long: `Start an MCP (Model Context Protocol) server over stdio transport.
 
-Exposes Akash Network tools for use by AI assistants. Configuration is
+Exposes Akash Network tools to any MCP-compatible client. Configuration is
 resolved from the active akt context (network, keyring, default account).
 
 By default, only read-only query tools are available. Write
 tools (on-chain transactions and provider mutations) require explicit
-opt-in via --enable-writes to prevent AI agents from sending unapproved
+opt-in via --enable-writes to prevent clients from sending unapproved
 transactions.
 
-Read-only tools include: node status, account balances, deployments,
-orders, bids, leases, providers, audited attributes, and certificates.
+Read-only tools cover both rails. On the chain: node status, account
+balances, deployments, groups, orders, bids, leases, providers, audited
+attributes, certificates, and provider/lease/service status. On the Console
+API: deployments, bids, wallet balance, usage history, providers, and GPU
+pricing.
 
-Write tools (with --enable-writes): close deployment, create lease,
-close lease, and submit manifest.`,
+Write tools, unlocked only by --enable-writes:
+  akash_close_deployment    close a deployment on chain
+  akash_create_lease        accept a bid and create a lease
+  akash_close_lease         close a lease on chain
+  akash_submit_manifest     send a manifest to a provider
+  console_close_deployment  close a Console-managed deployment
+  console_deposit           add funds to a deployment, spending real credits`,
 		Args: cobra.NoArgs,
-		Example: `  # Read-only mode (safe for AI agents)
+		Example: `  # Read-only mode
   akt mcp
 
   # With write tools enabled
@@ -41,6 +51,10 @@ close lease, and submit manifest.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cctx := sdkclient.GetClientContextFromCmd(cmd)
+			providerAuthType, err := providerAuthTypeFor(cmd, mgrFn)
+			if err != nil {
+				return err
+			}
 
 			enableWrites, _ := cmd.Flags().GetBool("enable-writes")
 
@@ -53,7 +67,28 @@ close lease, and submit manifest.`,
 				cctx = cctx.WithSignModeStr(flags.SignModeDirect)
 			}
 
-			srv, err := aktmcp.New(ctx, cctx, enableWrites, consoleClientFor(cmd, mgrFn))
+			// Attach an RPC client. The tx and query trees build one in their
+			// own PersistentPreRunE; this command has neither, so the context
+			// arrives with a node URI and no client. Every chain tool then
+			// fails -- the query tools with "no RPC client is defined in
+			// offline mode", and the node tools by dereferencing the missing
+			// client, which takes the whole server down.
+			if cctx.Client == nil && cctx.NodeURI != "" {
+				rpcClient, err := aclient.NewClient(ctx, cctx.NodeURI)
+				if err != nil {
+					return fmt.Errorf("connect to %s: %w", cctx.NodeURI, err)
+				}
+
+				cctx = cctx.WithClient(rpcClient)
+			}
+
+			srv, err := aktmcp.New(
+				ctx,
+				cctx,
+				providerAuthType,
+				enableWrites,
+				consoleClientFor(cmd, mgrFn),
+			)
 			if err != nil {
 				return fmt.Errorf("failed to create MCP server: %w", err)
 			}
@@ -63,7 +98,13 @@ close lease, and submit manifest.`,
 				mode = "read-write"
 			}
 
-			_, _ = fmt.Fprintf(os.Stderr, "akt mcp: starting stdio server (node=%s, chain=%s, mode=%s)\n", cctx.NodeURI, cctx.ChainID, mode)
+			// A startup banner, so --quiet silences it. Written directly
+			// rather than through cliutil.Status: stdout is the JSON-RPC pipe
+			// here and never a TTY, and the banner is the one line that says
+			// which rail the server came up on.
+			if quiet, _ := cmd.Flags().GetBool("quiet"); !quiet {
+				_, _ = fmt.Fprintf(os.Stderr, "akt mcp: starting stdio server (node=%s, chain=%s, mode=%s)\n", cctx.NodeURI, cctx.ChainID, mode)
+			}
 
 			return srv.ServeStdio(ctx)
 		},
@@ -76,6 +117,25 @@ close lease, and submit manifest.`,
 			"Without this flag, only read-only query tools are available.")
 
 	return cmd
+}
+
+func providerAuthTypeFor(cmd *cobra.Command, mgrFn func() *aktctx.Manager) (string, error) {
+	m := mgrFn()
+	if m == nil {
+		return aktctx.ProviderAuthJWT, nil
+	}
+	override := ""
+	if flag := cmd.Flags().Lookup("context"); flag != nil {
+		override = flag.Value.String()
+	}
+	rc, err := m.Resolve(m.ActiveContext(override))
+	if err != nil {
+		return "", fmt.Errorf("resolve MCP provider authentication: %w", err)
+	}
+	if rc == nil {
+		return "", fmt.Errorf("resolve MCP provider authentication: empty context")
+	}
+	return aktctx.ResolveProviderAuthType(rc.AuthType)
 }
 
 // consoleClientFor resolves a Console API client for the MCP server, or nil

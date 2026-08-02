@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
@@ -17,11 +18,13 @@ import (
 	"pkg.akt.dev/akt/internal/cliutil"
 	"pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
+	"pkg.akt.dev/akt/internal/output"
 )
 
 func Commands(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "console",
+		RunE:  sdkclient.ValidateCmd,
 		Short: "Akash Console managed-wallet operations",
 		Long: "Interact with the Akash Console API: create and manage deployments through " +
 			"the Console managed wallet, inspect bids and leases, and browse the public " +
@@ -79,7 +82,7 @@ func loginCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		Use:   "login [key]",
 		Short: "Validate a Console API key and store it for the active context",
 		Long: "Validate a Console API key against the Console API and store it as the active " +
-			"context's credential (SPEC §7.1). The key can be passed as an argument or entered " +
+			"context's credential. The key can be passed as an argument or entered " +
 			"at a hidden prompt. Keys are created at console.akash.network > Settings > API Keys.",
 		Args: cobra.MaximumNArgs(1),
 		Example: `  # Prompt for the key (input hidden)
@@ -88,7 +91,7 @@ func loginCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
   # Pass the key directly
   akt console login sk-console-...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			rc, err := mgrFn().Resolve("")
+			rc, err := resolveContextFromCmd(cmd, mgrFn())
 			if err != nil {
 				return fmt.Errorf("login requires an active context to store the key: %w", err)
 			}
@@ -123,8 +126,14 @@ func loginCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Logged in as %s (context %q)\n", user.Username, rc.Name)
-			return nil
+			return printConsoleResult(cmd,
+				fmt.Sprintf("Logged in as %s (context %q)", user.Username, rc.Name),
+				struct {
+					Username      string `json:"username"      yaml:"username"`
+					Context       string `json:"context"       yaml:"context"`
+					Authenticated bool   `json:"authenticated" yaml:"authenticated"`
+				}{Username: user.Username, Context: rc.Name, Authenticated: true},
+			)
 		},
 	}
 }
@@ -136,7 +145,7 @@ func logoutCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		Args:    cobra.NoArgs,
 		Example: `  akt console logout`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			rc, err := mgrFn().Resolve("")
+			rc, err := resolveContextFromCmd(cmd, mgrFn())
 			if err != nil {
 				return err
 			}
@@ -145,8 +154,13 @@ func logoutCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Removed Console API key for context %q\n", rc.Name)
-			return nil
+			return printConsoleResult(cmd,
+				fmt.Sprintf("Removed Console API key for context %q", rc.Name),
+				struct {
+					Context       string `json:"context"       yaml:"context"`
+					Authenticated bool   `json:"authenticated" yaml:"authenticated"`
+				}{Context: rc.Name, Authenticated: false},
+			)
 		},
 	}
 }
@@ -215,12 +229,7 @@ func clientFromCmd(cmd *cobra.Command, mgrFn func() *aktctx.Manager, requireKey 
 		// Honor the global --context override: credentials are read from and
 		// written to the context the user named, and Console operations bill
 		// that context's managed wallet.
-		override := ""
-		if f := cmd.Flags().Lookup("context"); f != nil {
-			override = f.Value.String()
-		}
-
-		rc, _ = m.Resolve(m.ActiveContext(override)) // missing context is OK for public endpoints
+		rc, _ = resolveContextFromCmd(cmd, m) // missing context is OK for public endpoints
 	}
 
 	key, _ := cmd.Flags().GetString("console-api-key")
@@ -251,26 +260,45 @@ func clientFromCmd(cmd *cobra.Command, mgrFn func() *aktctx.Manager, requireKey 
 	return cl, rc, nil
 }
 
-// printJSON marshals v to indented JSON and writes it to the command's output.
+func resolveContextFromCmd(cmd *cobra.Command, m *aktctx.Manager) (*aktctx.Context, error) {
+	return m.Resolve(cliutil.SelectedContextName(cmd, m))
+}
+
+// printJSON renders v in the format --output asks for and writes it to the
+// command's output.
+//
+// It used to marshal JSON unconditionally, so `-o yaml` returned JSON with
+// exit 0 on every command in this group and a YAML consumer silently parsed
+// the wrong format. Table stays JSON: the console payloads are nested API
+// objects rather than rows, and there is no column layout to render them as.
 func printJSON(cmd *cobra.Command, v interface{}) error {
-	data, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
+	format := output.FormatFromCmd(cmd)
+	if format != output.FormatYAML {
+		format = output.FormatJSON
+	}
+
+	if err := output.FprintJSONSemantics(cmd.OutOrStdout(), format, v); err != nil {
 		return fmt.Errorf("marshal output: %w", err)
 	}
 
-	fmt.Fprintln(cmd.OutOrStdout(), string(data))
 	return nil
 }
 
 // printRawJSON re-indents a raw JSON document and writes it to the command's
 // output.
 func printRawJSON(cmd *cobra.Command, raw json.RawMessage) error {
-	var v interface{}
-	if err := json.Unmarshal(raw, &v); err != nil {
-		return fmt.Errorf("decode output: %w", err)
+	return printJSON(cmd, raw)
+}
+
+// printConsoleResult keeps the concise human acknowledgement used by default
+// while giving JSON and YAML callers a stable object to parse.
+func printConsoleResult(cmd *cobra.Command, pretty string, structured any) error {
+	if output.FormatFromCmd(cmd) == output.FormatTable {
+		_, err := fmt.Fprintln(cmd.OutOrStdout(), pretty)
+		return err
 	}
 
-	return printJSON(cmd, v)
+	return printJSON(cmd, structured)
 }
 
 // formatUSD renders a USD amount as $X.XX.

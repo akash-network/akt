@@ -41,6 +41,10 @@ func HandleListOrders(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 			}
 		}
 
+		if owner == "" {
+			return marshal.ErrResult("owner address is required: pass owner, or configure a default account for the active context"), nil
+		}
+
 		resp, err := cl.Query().Market().Orders(ctx, &mtypes.QueryOrdersRequest{
 			Filters: mtypes.OrderFilters{
 				Owner: owner,
@@ -66,14 +70,17 @@ func ToolGetOrder() mcp.Tool {
 		mcp.WithNumber("dseq",
 			mcp.Required(),
 			mcp.Description("Deployment sequence number."),
+			marshal.PositiveInteger(),
 		),
 		mcp.WithNumber("gseq",
 			mcp.Required(),
 			mcp.Description("Group sequence number."),
+			marshal.PositiveInteger(),
 		),
 		mcp.WithNumber("oseq",
 			mcp.Required(),
 			mcp.Description("Order sequence number."),
+			marshal.PositiveInteger(),
 		),
 	)
 }
@@ -125,6 +132,7 @@ func ToolListBids() mcp.Tool {
 		),
 		mcp.WithNumber("dseq",
 			mcp.Description("Filter by deployment sequence number."),
+			marshal.PositiveInteger(),
 		),
 		mcp.WithString("state",
 			mcp.Description("Filter by bid state: 'open', 'active', 'lost', 'closed'."),
@@ -142,12 +150,18 @@ func HandleListBids(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 			}
 		}
 
+		if owner == "" {
+			return marshal.ErrResult("owner address is required: pass owner, or configure a default account for the active context"), nil
+		}
+
 		filters := mtypes.BidFilters{
 			Owner: owner,
 			State: marshal.OptionalString(req, "state"),
 		}
 
-		if dseq, ok := marshal.OptionalUint64(req, "dseq"); ok {
+		if dseq, ok, err := marshal.OptionalUint64(req, "dseq"); err != nil {
+			return marshal.ErrResult(err.Error()), nil
+		} else if ok {
 			filters.DSeq = dseq
 		}
 
@@ -173,14 +187,17 @@ func ToolGetBid() mcp.Tool {
 		mcp.WithNumber("dseq",
 			mcp.Required(),
 			mcp.Description("Deployment sequence number."),
+			marshal.PositiveInteger(),
 		),
 		mcp.WithNumber("gseq",
 			mcp.Required(),
 			mcp.Description("Group sequence number."),
+			marshal.PositiveInteger(),
 		),
 		mcp.WithNumber("oseq",
 			mcp.Required(),
 			mcp.Description("Order sequence number."),
+			marshal.PositiveInteger(),
 		),
 		mcp.WithString("provider",
 			mcp.Required(),
@@ -241,6 +258,7 @@ func ToolListLeases() mcp.Tool {
 		),
 		mcp.WithNumber("dseq",
 			mcp.Description("Filter by deployment sequence number."),
+			marshal.PositiveInteger(),
 		),
 		mcp.WithString("state",
 			mcp.Description("Filter by lease state: 'active', 'closed', 'insufficient_funds'."),
@@ -261,13 +279,19 @@ func HandleListLeases(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 			}
 		}
 
+		if owner == "" {
+			return marshal.ErrResult("owner address is required: pass owner, or configure a default account for the active context"), nil
+		}
+
 		filters := mv1.LeaseFilters{
 			Owner:    owner,
 			State:    marshal.OptionalString(req, "state"),
 			Provider: marshal.OptionalString(req, "provider"),
 		}
 
-		if dseq, ok := marshal.OptionalUint64(req, "dseq"); ok {
+		if dseq, ok, err := marshal.OptionalUint64(req, "dseq"); err != nil {
+			return marshal.ErrResult(err.Error()), nil
+		} else if ok {
 			filters.DSeq = dseq
 		}
 
@@ -293,14 +317,17 @@ func ToolGetLease() mcp.Tool {
 		mcp.WithNumber("dseq",
 			mcp.Required(),
 			mcp.Description("Deployment sequence number."),
+			marshal.PositiveInteger(),
 		),
 		mcp.WithNumber("gseq",
 			mcp.Required(),
 			mcp.Description("Group sequence number."),
+			marshal.PositiveInteger(),
 		),
 		mcp.WithNumber("oseq",
 			mcp.Required(),
 			mcp.Description("Order sequence number."),
+			marshal.PositiveInteger(),
 		),
 		mcp.WithString("provider",
 			mcp.Required(),
@@ -363,14 +390,17 @@ func ToolCreateLease() mcp.Tool {
 		mcp.WithNumber("dseq",
 			mcp.Required(),
 			mcp.Description("Deployment sequence number."),
+			marshal.PositiveInteger(),
 		),
 		mcp.WithNumber("gseq",
 			mcp.Required(),
 			mcp.Description("Group sequence number."),
+			marshal.PositiveInteger(),
 		),
 		mcp.WithNumber("oseq",
 			mcp.Required(),
 			mcp.Description("Order sequence number."),
+			marshal.PositiveInteger(),
 		),
 		mcp.WithString("provider",
 			mcp.Required(),
@@ -433,14 +463,17 @@ func ToolCloseLease() mcp.Tool {
 		mcp.WithNumber("dseq",
 			mcp.Required(),
 			mcp.Description("Deployment sequence number."),
+			marshal.PositiveInteger(),
 		),
 		mcp.WithNumber("gseq",
 			mcp.Required(),
 			mcp.Description("Group sequence number."),
+			marshal.PositiveInteger(),
 		),
 		mcp.WithNumber("oseq",
 			mcp.Required(),
 			mcp.Description("Order sequence number."),
+			marshal.PositiveInteger(),
 		),
 		mcp.WithString("provider",
 			mcp.Required(),

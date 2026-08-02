@@ -1,10 +1,22 @@
 name: update
 description: Update a deployment and send the new manifest to providers
+long: |
+  Update a deployment's SDL and send the revised manifest to every provider
+  holding a lease on it.
+
+  Changing the resource profile can close existing leases and re-open bidding;
+  changing only the image or environment usually does not.
+example: |
+    # Apply a revised SDL
+    akt update deploy.yaml 12345
+
+    # Show what would change without broadcasting
+    akt update deploy.yaml 12345 --dry-run
 version: 1
 
 params:
   sdl-file:
-    type: file
+    type: sdl
     required: true
     description: Path to updated SDL deployment file
   dseq:
@@ -19,6 +31,17 @@ steps:
     params:
       sdl: "{{ index .Params \"sdl-file\" }}"
       dseq: "{{ .Params.dseq }}"
+    on-error: abort
+
+  - name: send-manifest
+    type: provider
+    action: send-manifest-to-active-leases
+    params:
+      dseq: "{{ .Params.dseq }}"
+      sdl: "{{ index .Params \"sdl-file\" }}"
+    retry:
+      max: 3
+      delay: "5s"
     on-error: abort
 
   - name: display-result

@@ -1,6 +1,9 @@
 package console
 
-import "encoding/json"
+import (
+	"encoding/json"
+	"strings"
+)
 
 // FlexString unmarshals from either a JSON string or a JSON number, since the
 // Console API is inconsistent about numeric identifiers (dseq, amounts).
@@ -67,6 +70,21 @@ type Wallet struct {
 	Denom        string  `json:"denom"`
 }
 
+// CreditUSD returns the wallet credit in USD.
+//
+// creditAmount is denominated in the units its own denom names, and that denom
+// is "uact" -- micro-ACT, the same 1e6 scale as /v1/balances, with ACT pegged
+// 1:1 to USD. Taking it for dollars printed an $11.35 wallet as
+// $11,350,924.00 while `wallet balance` reported $57.49 for the same account.
+// Any other denom is passed through unscaled rather than guessed at.
+func (w Wallet) CreditUSD() float64 {
+	if strings.EqualFold(w.Denom, "uact") {
+		return w.CreditAmount / 1e6
+	}
+
+	return w.CreditAmount
+}
+
 // WalletSettings holds account-level wallet settings
 // (GET/PUT /v1/wallet-settings).
 type WalletSettings struct {
@@ -94,6 +112,7 @@ type DeploymentID struct {
 type Deployment struct {
 	ID        DeploymentID    `json:"id"`
 	State     string          `json:"state"`
+	Hash      string          `json:"hash,omitempty"`
 	CreatedAt json.RawMessage `json:"created_at,omitempty"`
 }
 
@@ -193,6 +212,15 @@ type DeploymentSettings struct {
 	AutoTopUpEnabled     bool       `json:"autoTopUpEnabled"`
 	EstimatedTopUpAmount float64    `json:"estimatedTopUpAmount"`
 	TopUpFrequencyMs     int64      `json:"topUpFrequencyMs"`
+}
+
+// EstimatedTopUpUSD returns the estimated top-up in USD.
+//
+// The field is µACT like the rest of this rail, and was printed raw while
+// every other money value goes through formatUSD -- so a $0.22 top-up read as
+// "222945" on the setting that governs unattended spending.
+func (s DeploymentSettings) EstimatedTopUpUSD() float64 {
+	return s.EstimatedTopUpAmount / 1e6
 }
 
 // --- API keys / auth --------------------------------------------------------

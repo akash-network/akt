@@ -1,9 +1,17 @@
 package cli
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 
 	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
+	"gopkg.in/yaml.v3"
+
+	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 )
 
 // TestBuildAddressPredictable pins the derivation against a vector produced by
@@ -61,4 +69,131 @@ func TestBuildAddressPredictableRejects(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBuildAddressCommandDecodesSaltExactlyOnce(t *testing.T) {
+	const (
+		codeHash = "B97763A6116D2EAAD99D96DE83B5FFABF4CC5DD927CA3E426AC02C767902162A"
+		creator  = "akash10d07y265gmmuvt4z0w9aw880jnsr700jhe7z0f"
+		want     = "akash1m0330femfr9nwea5uj4p00snn64xgfyyz79uf54w2xxzxvwxawxqj6hqt0"
+	)
+
+	cases := []struct {
+		name string
+		salt string
+		flag string
+	}{
+		{"default hex", "6162", ""},
+		{"explicit hex", "6162", "hex"},
+		{"ASCII", "ab", "ascii"},
+		{"base64", "YWI=", "b64"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, err := runBuildAddressCommand(t, cflags.OutputPretty, tc.flag, codeHash, creator, tc.salt)
+			if err != nil {
+				t.Fatalf("build-address: %v", err)
+			}
+			if got := strings.TrimSpace(out); got != want {
+				t.Fatalf("address = %q, want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestBuildAddressCommandAcceptsSingleZeroByteSalt(t *testing.T) {
+	const (
+		codeHash = "B97763A6116D2EAAD99D96DE83B5FFABF4CC5DD927CA3E426AC02C767902162A"
+		creator  = "akash10d07y265gmmuvt4z0w9aw880jnsr700jhe7z0f"
+	)
+
+	want, err := buildAddressPredictable(&wasmtypes.QueryBuildAddressRequest{
+		CodeHash:       codeHash,
+		CreatorAddress: creator,
+		Salt:           "00",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	out, err := runBuildAddressCommand(t, cflags.OutputPretty, "", codeHash, creator, "00")
+	if err != nil {
+		t.Fatalf("build-address: %v", err)
+	}
+	if got := strings.TrimSpace(out); got != want.Address {
+		t.Fatalf("address = %q, want %q", got, want.Address)
+	}
+}
+
+func TestBuildAddressCommandHonorsStructuredOutput(t *testing.T) {
+	const (
+		codeHash = "B97763A6116D2EAAD99D96DE83B5FFABF4CC5DD927CA3E426AC02C767902162A"
+		creator  = "akash10d07y265gmmuvt4z0w9aw880jnsr700jhe7z0f"
+		want     = "akash1m0330femfr9nwea5uj4p00snn64xgfyyz79uf54w2xxzxvwxawxqj6hqt0"
+	)
+
+	jsonOut, err := runBuildAddressCommand(t, cflags.OutputJSON, "", codeHash, creator, "6162")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var jsonAddress string
+	if err := json.Unmarshal([]byte(jsonOut), &jsonAddress); err != nil {
+		t.Fatalf("JSON output: %v\n%s", err, jsonOut)
+	}
+	if jsonAddress != want {
+		t.Fatalf("JSON address = %q, want %q", jsonAddress, want)
+	}
+
+	yamlOut, err := runBuildAddressCommand(t, cflags.OutputYAML, "", codeHash, creator, "6162")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var yamlAddress string
+	if err := yaml.Unmarshal([]byte(yamlOut), &yamlAddress); err != nil {
+		t.Fatalf("YAML output: %v\n%s", err, yamlOut)
+	}
+	if yamlAddress != want {
+		t.Fatalf("YAML address = %q, want %q", yamlAddress, want)
+	}
+}
+
+func TestBuildAddressCommandDoesNotRequireQueryClient(t *testing.T) {
+	const (
+		codeHash = "B97763A6116D2EAAD99D96DE83B5FFABF4CC5DD927CA3E426AC02C767902162A"
+		creator  = "akash10d07y265gmmuvt4z0w9aw880jnsr700jhe7z0f"
+	)
+
+	cmd := GetQueryWasmBuildAddressCmd()
+	cmd.Flags().String(cflags.FlagOutput, cflags.OutputPretty, "")
+	cctx := sdkclient.Context{ChainID: "akashnet-2"}
+	cmd.SetContext(context.WithValue(context.Background(), ClientContextKey, &cctx))
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{codeHash, creator, "00"})
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("local build-address: %v", err)
+	}
+	if strings.TrimSpace(out.String()) == "" {
+		t.Fatal("local build-address returned no address")
+	}
+}
+
+func runBuildAddressCommand(t *testing.T, format, encodingFlag string, args ...string) (string, error) {
+	t.Helper()
+	cmd := GetQueryWasmBuildAddressCmd()
+	cmd.Flags().String(cflags.FlagOutput, format, "")
+	if encodingFlag != "" {
+		if err := cmd.PersistentFlags().Set(encodingFlag, "true"); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	err := cmd.RunE(cmd, args)
+	return out.String(), err
 }
