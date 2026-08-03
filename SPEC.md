@@ -257,6 +257,15 @@ The context is resolved once at application startup and propagated through the e
 
 The resolved context is injected into every service: chain client, provider gateway, sync engine, store, action log, and TUI models.
 
+Building the client context for a query MUST NOT read or unlock a keyring solely
+because `default-account` is configured. A named default account is resolved
+against the keyring only when an omitted owner filter needs its address. A
+network-wide query, or an owner-scoped query supplied an explicit owner address,
+MUST execute without keyring access. An address-valued `default-account` is
+parsed directly without opening the keyring. Commands that sign, authenticate
+to a provider, or otherwise require the local identity keep resolving it at
+their existing execution boundary.
+
 ### 1.8 Live Reload
 
 The config file (`config.yaml`) is watched for changes using Viper's built-in `WatchConfig()` which uses fsnotify.

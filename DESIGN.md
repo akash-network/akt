@@ -260,6 +260,15 @@ such as `tcp://localhost:26657` must never replace a resolved endpoint. Local
 transaction leaves use the same pre-run boundary; a leaf that needs codecs or
 clients cannot reach its handler without that initialization.
 
+Query context assembly carries the configured default-account reference
+without opening the keyring merely because the context has one. A query
+resolves a named default account only when its own omitted owner filter
+requires that address. Network-wide queries and queries with an explicit owner
+never unlock the keyring. An address-valued default is parsed directly and also
+requires no keyring access. Transaction, workflow, and authenticated provider
+paths keep their existing signer resolution because those operations actually
+need the local identity.
+
 #### 3.1.3 Live Reload
 
 The context is **live-reloadable**. The config file is watched for changes (via fsnotify or polling):

@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- **Network-wide queries unlocked the configured keyring unnecessarily**:
+  query initialization now carries a named default account without resolving
+  it. Only an omitted owner filter that needs the account opens the keyring;
+  network-wide reads and explicitly scoped queries remain non-interactive.
+
 - **Root help described deployment as the whole CLI**: the introduction now
   presents akt as the unified interface for chain queries and transactions,
   deployments on either payment rail, provider operations, context and key

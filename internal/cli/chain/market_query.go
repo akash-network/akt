@@ -64,7 +64,10 @@ rather than printing it.`,
 				return err
 			}
 
-			defaultOwner := cl.ClientContext().GetFromAddress().String()
+			defaultOwner, err := defaultOwnerForQueryArg(cl.ClientContext(), args)
+			if err != nil {
+				return err
+			}
 
 			if len(args) > 0 {
 				af, err := cflags.OrderFiltersFromArg(args[0], defaultOwner)
@@ -103,6 +106,12 @@ rather than printing it.`,
 
 			// Default owner fallback when no arg and no --owner flag.
 			if ofilters.Owner == "" {
+				if defaultOwner == "" {
+					defaultOwner, err = resolveDefaultAccountAddress(cl.ClientContext())
+					if err != nil {
+						return err
+					}
+				}
 				if defaultOwner == "" {
 					return requireOwnerScope("order filter")
 				}
@@ -192,12 +201,19 @@ than printing it.`,
 				return err
 			}
 
-			defaultOwner := cl.ClientContext().GetFromAddress().String()
 			byProvider, _ := cmd.Flags().GetString("by")
 
 			isByProvider, err := parseByPerspective(byProvider)
 			if err != nil {
 				return err
+			}
+
+			var defaultOwner string
+			if !isByProvider {
+				defaultOwner, err = defaultOwnerForQueryArg(cl.ClientContext(), args)
+				if err != nil {
+					return err
+				}
 			}
 
 			if len(args) > 0 {
@@ -244,6 +260,12 @@ than printing it.`,
 					return requireProviderScope("bid filter")
 				}
 			} else if bfilters.Owner == "" {
+				if defaultOwner == "" {
+					defaultOwner, err = resolveDefaultAccountAddress(cl.ClientContext())
+					if err != nil {
+						return err
+					}
+				}
 				if defaultOwner == "" {
 					return requireOwnerScope("bid filter")
 				}
@@ -335,12 +357,19 @@ rather than printing it.`,
 				return err
 			}
 
-			defaultOwner := cl.ClientContext().GetFromAddress().String()
 			byProvider, _ := cmd.Flags().GetString("by")
 
 			isByProvider, err := parseByPerspective(byProvider)
 			if err != nil {
 				return err
+			}
+
+			var defaultOwner string
+			if !isByProvider {
+				defaultOwner, err = defaultOwnerForQueryArg(cl.ClientContext(), args)
+				if err != nil {
+					return err
+				}
 			}
 
 			if len(args) > 0 {
@@ -387,6 +416,12 @@ rather than printing it.`,
 					return requireProviderScope("lease filter")
 				}
 			} else if lfilters.Owner == "" {
+				if defaultOwner == "" {
+					defaultOwner, err = resolveDefaultAccountAddress(cl.ClientContext())
+					if err != nil {
+						return err
+					}
+				}
 				if defaultOwner == "" {
 					return requireOwnerScope("lease filter")
 				}

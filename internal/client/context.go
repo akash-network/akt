@@ -31,6 +31,16 @@ func BuildClientContext(
 	enc sdkutil.EncodingConfig,
 	fromOverride string,
 ) sdkclient.Context {
+	return buildClientContext(rc, kr, enc, fromOverride, true)
+}
+
+func buildClientContext(
+	rc *aktctx.Context,
+	kr sdkkeyring.Keyring,
+	enc sdkutil.EncodingConfig,
+	fromOverride string,
+	resolveNamedAccount bool,
+) sdkclient.Context {
 	cctx := sdkclient.Context{}.
 		WithCodec(enc.Codec).
 		WithInterfaceRegistry(enc.InterfaceRegistry).
@@ -43,16 +53,16 @@ func BuildClientContext(
 		WithChainID(rc.Network.ChainID).
 		WithKeyringDir(aktctx.KeyringDir(rc.Root, rc.Keyring))
 
-	// Resolve the invocation signer before downstream tx/query hooks run.
+	// Carry the invocation account before downstream tx/query hooks run.
 	//
 	// WithFrom records the name only; FromName and FromAddress stay empty
-	// until something resolves the name against the keyring. Tx commands do
-	// that themselves, queries never do -- so every query that falls back to
-	// the default account saw no address and reported "no default account
-	// set" on a context that had one configured and displayed. Resolve it
-	// here so both paths agree.
+	// until something resolves the name against the keyring. Commands that
+	// need a signer resolve it here. Query initialization deliberately leaves
+	// a named account unresolved so network-wide and explicitly scoped reads
+	// never unlock the keyring; owner-defaulting query handlers resolve it only
+	// when they actually need its address.
 	//
-	// A name that is not in the keyring is left as the bare From value rather
+	// A name that is not resolved is left as the bare From value rather
 	// than failing: the context is built for every command, including the
 	// keys and context commands someone would use to fix it.
 	from := fromOverride
@@ -62,18 +72,13 @@ func BuildClientContext(
 	if from != "" {
 		cctx = cctx.WithFrom(from)
 
-		resolvedName := false
-		if kr != nil {
+		if addr, err := sdk.AccAddressFromBech32(from); err == nil {
+			cctx = cctx.WithFromAddress(addr)
+		} else if resolveNamedAccount && kr != nil {
 			if rec, err := kr.Key(from); err == nil {
 				if addr, err := rec.GetAddress(); err == nil {
 					cctx = cctx.WithFromName(from).WithFromAddress(addr)
-					resolvedName = true
 				}
-			}
-		}
-		if !resolvedName {
-			if addr, err := sdk.AccAddressFromBech32(from); err == nil {
-				cctx = cctx.WithFromAddress(addr)
 			}
 		}
 	}
@@ -105,7 +110,18 @@ func InitClientContext(
 	enc sdkutil.EncodingConfig,
 	fromOverride string,
 ) error {
-	cctx := BuildClientContext(rc, kr, enc, fromOverride)
+	return initClientContext(cmd, rc, kr, enc, fromOverride, true)
+}
+
+func initClientContext(
+	cmd *cobra.Command,
+	rc *aktctx.Context,
+	kr sdkkeyring.Keyring,
+	enc sdkutil.EncodingConfig,
+	fromOverride string,
+	resolveNamedAccount bool,
+) error {
+	cctx := buildClientContext(rc, kr, enc, fromOverride, resolveNamedAccount)
 
 	// Store address codecs in the context for chain-sdk commands.
 	ctx := cmd.Context()
@@ -169,5 +185,15 @@ func MustResolveAndInit(
 		return false, err
 	}
 
-	return true, InitClientContext(cmd, rc, kr, enc, fromOverride)
+	return true, initClientContext(cmd, rc, kr, enc, fromOverride, !isQueryCommand(cmd))
+}
+
+func isQueryCommand(cmd *cobra.Command) bool {
+	for current := cmd; current != nil; current = current.Parent() {
+		if current.Name() == "query" {
+			return true
+		}
+	}
+
+	return false
 }

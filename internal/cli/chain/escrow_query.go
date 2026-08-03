@@ -268,8 +268,11 @@ akt query escrow blocks-remaining akash1owner.../12345`,
 
 			// Positional [owner/]dseq; owner defaults to the context
 			// default account (SPEC §3.8).
-			defaultOwner := cl.ClientContext().GetFromAddress().String()
-			id, err := cflags.DeploymentIDFromArgs(args, id, defaultOwner)
+			defaultOwner, err := defaultOwnerForQueryArg(cl.ClientContext(), args)
+			if err != nil {
+				return err
+			}
+			id, err = cflags.DeploymentIDFromArgs(args, id, defaultOwner)
 			if err != nil {
 				return err
 			}
