@@ -65,6 +65,11 @@ func buildClientContext(
 	// A name that is not resolved is left as the bare From value rather
 	// than failing: the context is built for every command, including the
 	// keys and context commands someone would use to fix it.
+	//
+	// kr is nil for commands that declare no local identity (SPEC §1.7). A
+	// named account then stays unresolved -- resolving it would open the
+	// keyring and prompt -- while an address-valued default still resolves,
+	// because parsing bech32 costs nothing.
 	from := fromOverride
 	if from == "" {
 		from = rc.DefaultAccount
@@ -147,6 +152,14 @@ func initClientContext(
 // MustResolveAndInit is a convenience that resolves the context, gets the
 // keyring, and initializes the SDK client context on the command. Used in
 // the root PersistentPreRunE. Returns true if a context was resolved.
+//
+// needsLocalIdentity is the caller's explicit decision about whether this
+// invocation can need the local signing identity (SPEC §1.7). When it is
+// false the keyring is not opened and a named default account is left
+// unresolved, because both can prompt for a passphrase or an OS unlock that
+// the command has no use for. The root command decides this via
+// requiresLocalIdentity; the client layer must not infer it from command
+// names.
 func MustResolveAndInit(
 	cmd *cobra.Command,
 	mgr *aktctx.Manager,
@@ -154,6 +167,7 @@ func MustResolveAndInit(
 	enc sdkutil.EncodingConfig,
 	contextOverride string,
 	fromOverride string,
+	needsLocalIdentity bool,
 ) (bool, error) {
 	ctxName := contextOverride
 	if ctxName == "" {
@@ -175,14 +189,20 @@ func MustResolveAndInit(
 		return false, err
 	}
 
-	krName := rc.Keyring.Name
-	if krName == "" {
-		krName = "default"
-	}
+	// A nil keyring is a deliberate, complete answer for commands that declare
+	// no local identity: BuildClientContext leaves a named account unresolved
+	// and still parses an address-valued default.
+	var kr sdkkeyring.Keyring
+	if needsLocalIdentity {
+		krName := rc.Keyring.Name
+		if krName == "" {
+			krName = "default"
+		}
 
-	kr, err := krMgr.Get(krName)
-	if err != nil {
-		return false, err
+		kr, err = krMgr.Get(krName)
+		if err != nil {
+			return false, err
+		}
 	}
 
 	return true, initClientContext(cmd, rc, kr, enc, fromOverride, !isQueryCommand(cmd))

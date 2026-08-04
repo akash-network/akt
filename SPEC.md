@@ -229,6 +229,36 @@ Keyrings are shared wallet storage. Adding a key to a keyring makes it immediate
 | `backend` | string | no       | `"os"`  | Backend type: `os`, `file`, `test`, `kwallet`, `pass`  |
 | `dir`     | string | no       | `""`    | Keyring directory (default: `<root>/keyrings/<name>/`) |
 
+**Backend resolution is pinned.** The configured `backend` names the credential
+store that akt will use, not a preference to be negotiated. `file`, `test`,
+`kwallet`, and `pass` each resolve to exactly that store. `os` resolves to the
+platform's system credential store and to nothing else:
+
+| Platform  | System store for `os`             |
+| --------- | ---------------------------------- |
+| `darwin`  | Keychain                           |
+| `windows` | Windows Credential Manager         |
+| `linux`   | Secret Service (or KWallet)        |
+
+akt MUST NOT substitute a different store when the configured one is
+unavailable. In particular, a headless host with no session bus MUST NOT fall
+back to an encrypted file keyring, a `pass` store, or the kernel keyring while
+the configuration and `akt context show` continue to report `os`: that
+silently changes where the user's keys live and prompts for a passphrase the
+user never knowingly set. Opening a keyring whose configured backend cannot be
+provided is a normal, fail-fast error (§2.10) that names the backend, the
+platform store it needed, and the remedy — rerun with
+`--keyring-backend file`, or persist the change with
+`akt context keyring set <name> file`.
+
+**Effective backend.** Because `os` is an alias, akt distinguishes the
+*configured* backend from the *effective* one — the concrete store that serves
+it on this host (`keychain`, `wincred`, `secret-service`, `kwallet`). Every
+surface that reports a keyring reports both whenever they differ, and reports
+the backend as unavailable rather than claiming a store that is not there.
+Resolution is inspection only: determining the effective backend MUST NOT read
+a key, unlock a store, or prompt.
+
 ### 1.6 Config Management (Viper)
 
 Configuration is managed via [Viper](https://github.com/spf13/viper). Viper handles config file reading/writing, environment variable binding, flag binding, and live-reload (via fsnotify built into Viper).
@@ -257,14 +287,26 @@ The context is resolved once at application startup and propagated through the e
 
 The resolved context is injected into every service: chain client, provider gateway, sync engine, store, action log, and TUI models.
 
-Building the client context for a query MUST NOT read or unlock a keyring solely
-because `default-account` is configured. A named default account is resolved
-against the keyring only when an omitted owner filter needs its address. A
-network-wide query, or an owner-scoped query supplied an explicit owner address,
-MUST execute without keyring access. An address-valued `default-account` is
-parsed directly without opening the keyring. Commands that sign, authenticate
-to a provider, or otherwise require the local identity keep resolving it at
-their existing execution boundary.
+**Local identity is resolved only where it is needed.** A command declares
+whether it needs the local signing identity — the keyring and the account
+`default-account` names. Startup opens the context's keyring and resolves a
+named `default-account` only for commands that declare that need: transactions,
+workflow execution, provider gateway operations, owner-scoped queries, key
+management, and the MCP server. Commands that are defined to run without a
+signer — SDL authoring (§2.11), monitoring (§2.6), version, completion, store,
+context management, and the Console rail — MUST NOT open a keyring and MUST NOT
+resolve a named account, because both actions can prompt for a passphrase or an
+OS unlock that the command has no use for. An address-valued `default-account`
+is parsed directly and never requires keyring access.
+
+Queries are the one case where declaring the need does not imply using it.
+Building the client context for a query MUST NOT *unlock* a keyring solely
+because `default-account` is configured: a named default account is resolved
+only when an omitted owner filter needs its address. A network-wide query, or an
+owner-scoped query supplied an explicit owner address, MUST execute without any
+keyring read. The keyring is opened so the address can be resolved on demand;
+opening is not unlocking, and no passphrase is requested unless a name has to be
+turned into an address.
 
 ### 1.8 Live Reload
 
@@ -300,8 +342,8 @@ All environment variables use the `AKT_` prefix. When set, they override the cor
 | `AKT_NODE`            | `networks[*].endpoints.rpc[0]` (via context's network)  | `https://rpc.akt.dev:443/rpc` |
 | `AKT_GRPC_ADDR`       | `networks[*].endpoints.grpc[0]` (via context's network) | `grpc.akashnet.net:443`        |
 | `AKT_FROM`            | `contexts[*].default-account`                           | `alice`                        |
-| `AKT_KEYRING_BACKEND` | `keyrings[*].backend` (via context's keyring)           | `os`                           |
-| `AKT_KEYRING_DIR`     | `keyrings[*].dir` (via context's keyring)               | `/path/to/keyring`             |
+| `AKT_KEYRING_BACKEND` | `keyrings[*].backend` (via context's keyring); same value as `--keyring-backend` (§3.1) | `os`                           |
+| `AKT_KEYRING_DIR`     | `keyrings[*].dir` (via context's keyring); same value as `--keyring-dir` (§3.1) | `/path/to/keyring`             |
 | `AKT_GAS`             | `contexts[*].gas`                                       | `auto`                         |
 | `AKT_GAS_PRICES`      | `networks[*].gas-prices` (via context's network)        | `0.025uakt`                    |
 | `AKT_GAS_ADJUSTMENT`  | `networks[*].gas-adjustment` (via context's network)    | `1.5`                          |
@@ -465,6 +507,10 @@ akt
 │   │   ├── edit <name>                  # Edit network definition
 │   │   ├── list                         # List all networks (show which contexts use each)
 │   │   └── show <name>                  # Show network details
+│   ├── keyring                          # Keyring definition management (shared resource)
+│   │   ├── create <name> <backend>      # Create a new keyring definition
+│   │   ├── list                         # List keyrings (configured + effective backend)
+│   │   └── set <name> <backend>         # Change a keyring's stored backend/dir
 │   └── keys                             # Key management
 │       ├── add <name>                   # Add key (mnemonic, ledger, or multisig)
 │       ├── delete <name>                # Delete key
@@ -787,6 +833,14 @@ output includes the fully resolved network and keyring, effective gas/provider
 settings, capability booleans, `store_path`, and `action_log_path`; it never
 includes the Console API key.
 
+The keyring line reports the *configured* backend. When that backend is an
+alias for a platform store — `os` (§1.5) — the concrete store that serves it is
+reported on an `Effective` sub-line, and a configured backend the host cannot
+provide is reported as unavailable together with its remedy. Structured output
+carries the same two facts as `keyring_backend_effective` (empty when
+unavailable) and `keyring_backend_available`. Rendering this view never opens a
+key store and never prompts.
+
 ```bash
 $ akt context show
 Context:         prod
@@ -798,6 +852,7 @@ Network:         mainnet
   Gas Prices:    0.025uakt
   Gas Adj:       1.5
 Keyring:         default (backend: os)
+  Effective:     keychain
 Default Account: alice
 Gas:             auto
 Fees:            (none)
@@ -948,7 +1003,60 @@ $ akt context network list
 
 Show full network details.
 
-### 2.2.2 Keys Commands
+### 2.2.2 Keyring Commands
+
+Keyrings are a shared resource (§1.5), managed independently of the contexts
+that reference them. Without these commands the only way to change where a
+context stores its keys after first run is to hand-edit `config.yaml`.
+
+#### `akt context keyring create <name> <backend>`
+
+Create a new keyring definition. `<backend>` is one of `os`, `file`, `test`,
+`kwallet`, `pass`, `memory`; any other value is a usage error.
+
+| Flag    | Type   | Default | Description                                                |
+| ------- | ------ | ------- | ---------------------------------------------------------- |
+| `--dir` | string | `""`    | Keyring directory (empty = `<root>/keyrings/<name>/`)      |
+
+```bash
+akt context keyring create headless file
+```
+
+#### `akt context keyring list`
+
+List every configured keyring with its configured backend, the effective
+backend on this host (§1.5), its directory, and the contexts that reference it.
+A configured backend that cannot be provided here is reported as
+`unavailable`, never as if it were in use.
+
+```bash
+$ akt context keyring list
+  NAME       BACKEND   EFFECTIVE   DIR                        USED BY
+  default    os        keychain    ~/.config/akt/keyrings/default   prod
+  headless   file      file        ~/.config/akt/keyrings/headless  (none)
+```
+
+#### `akt context keyring set <name> <backend>`
+
+Change a keyring's stored backend, and optionally its directory. This is the
+persistent counterpart of the per-invocation `--keyring-backend` /
+`--keyring-dir` overrides (§3.1) and is the remedy named by the fail-fast error
+raised when a configured backend is unavailable (§1.5).
+
+Changing the backend does **not** migrate existing keys: each backend has its
+own store, so keys added under the previous backend remain there. The command
+says so on stdout.
+
+| Flag    | Type   | Default   | Description                                            |
+| ------- | ------ | --------- | ------------------------------------------------------ |
+| `--dir` | string | unchanged | Keyring directory (empty string is not "unchanged" only when the flag is set) |
+
+```bash
+akt context keyring set default file
+akt context keyring set default file --dir /mnt/secure/keys
+```
+
+### 2.2.3 Keys Commands
 
 #### `akt context keys add <name>`
 
@@ -1780,7 +1888,7 @@ describe both controls as one ambiguous "switch tabs" action.
 An embedded monitor receives exactly the height remaining after the shell's
 chrome; the parent MUST NOT size it for one height and clip it to another.
 
-**Standalone operation**: `akt monitor` (and all subcommands) requires only an RPC endpoint. It does not require a keyring, default account, or chain-id. A monitoring-only context (with no `default-account`) or a bare `--rpc` flag is sufficient, making it usable by anyone observing the network.
+**Standalone operation**: `akt monitor` (and all subcommands) requires only an RPC endpoint. It does not require a keyring, default account, or chain-id. A monitoring-only context (with no `default-account`) or a bare `--rpc` flag is sufficient, making it usable by anyone observing the network. The group declares no local identity (§1.7): a context that *does* carry a keyring and a named `default-account` must not cause the monitor to open that keyring or prompt for it.
 
 #### `akt monitor network [rpc-endpoint]`
 
@@ -2166,7 +2274,7 @@ Example: a network-less `console-api` context (API key only) lists and runs only
 
 ### 2.11 SDL Commands
 
-Transport-independent SDL authoring, ported from console-axi (`src/sdl/templates`, `src/sdl/lint.ts`). All `akt sdl` subcommands run entirely locally: no context, key, or RPC endpoint is required, and the group declares no capability requirements.
+Transport-independent SDL authoring, ported from console-axi (`src/sdl/templates`, `src/sdl/lint.ts`). All `akt sdl` subcommands run entirely locally: no context, key, or RPC endpoint is required, and the group declares no capability requirements. The group declares no local identity either (§1.7), so a configured keyring is never opened and a named `default-account` is never resolved — `akt sdl validate` on a context with a `file` or `os` keyring must not prompt for a passphrase or an OS unlock.
 
 #### `akt sdl scaffolds`
 
@@ -2296,10 +2404,24 @@ Applied to every command via the root command's `PersistentFlags()`.
 | ----------- | ----- | ------ | ------------------------ | ---------------------------------------------------------------- |
 | `--home`    |       | string | `$AKT_HOME` or XDG default | Home directory for config, contexts, and keyrings             |
 | `--context` |       | string | config `current-context` | Active context name (overrides AKT_CONTEXT)                      |
+| `--keyring-backend` |  | string | context's keyring `backend` | Keyring backend for this invocation: `os`, `file`, `test`, `kwallet`, `pass`, `memory` (overrides AKT_KEYRING_BACKEND) |
+| `--keyring-dir` |     | string | context's keyring `dir`  | Keyring directory for this invocation (overrides AKT_KEYRING_DIR) |
 | `--output`  | `-o`  | string | `"pretty"`               | Output format: `pretty`, `json`, `yaml`. For workflows, also accepts `jsonl` (see 2.3.8). |
 | `--interactive` | `-i` | bool | `false`              | Force interactive mode even when `defaults.interactive` is `false` in config or no TTY is detected. Has no effect when interactive mode is already enabled (the default). **Two effects**: (1) Workflow commands (`deploy`, `update`, `close`) use TUI progress display instead of JSONL. (2) Commands that auto-suppress prompts and spinners in non-TTY contexts will show them. Does **not** launch the root TUI application. |
 | `--verbose` | `-v`  | count  | `0`                      | Increase output verbosity. Stacks: `-v` (level 1) shows operational detail (gas estimates, endpoint selection, config resolution); `-vv` (level 2) adds debug diagnostics (RPC request/response dumps, full stack traces). Default (no flag) shows progress/status messages. Mutually exclusive with `--quiet`. |
 | `--quiet`   | `-q`  | bool   | `false`                  | Suppress all informational output (progress messages, status lines, confirmations). Only data output (query results, transaction results) and errors are emitted. Useful for scripting. Mutually exclusive with `-v`. |
+
+`--keyring-backend` and `--keyring-dir` are **global**, not transaction-local.
+Key storage is a property of the invocation, not of signing: listing, adding,
+exporting, and querying keys need the same override that a transaction does,
+and on a host whose configured backend is unavailable (§1.5) the override is
+the only way to reach the keys at all. They are registered once on the root
+command, carry an empty default so that leaving them unset never shadows the
+context's persisted `keyrings[*].backend` / `keyrings[*].dir`, and are bound to
+Viper so `AKT_KEYRING_BACKEND` / `AKT_KEYRING_DIR` (§1.9) resolve through the
+normal flag > env > config > default chain. An unknown backend value is a usage
+error. A supplied override applies to every keyring the invocation opens,
+including the one behind `akt context keys`.
 
 #### 3.1.1 Confirmation and Override Conventions
 
@@ -2325,8 +2447,6 @@ Added to all `tx` commands via `AddTxFlagsToCmd()`.
 | `--fees`             |       | string   | `""`                        | Fixed fees (overrides gas-prices)                             |
 | `--broadcast-mode`   | `-b`  | string   | `"sync"`                    | `sync`, `async`, or `block`                                   |
 | `--sign-mode`        |       | string   | `"direct"`                  | Signing mode: `direct`, `amino-json`, `direct-aux`, `eip-191` |
-| `--keyring-backend`  |       | string   | context default             | Keyring backend override                                      |
-| `--keyring-dir`      |       | string   | context default             | Keyring directory override                                    |
 | `--note`             |       | string   | `""`                        | Transaction memo/note                                         |
 | `--timeout-height`   |       | uint64   | `0`                         | Block height timeout                                          |
 | `--timeout-duration` |       | duration | `0`                         | Time-based timeout                                            |
@@ -2340,6 +2460,13 @@ Added to all `tx` commands via `AddTxFlagsToCmd()`.
 | `--yes`              | `-y`  | bool     | `false`                     | Skip confirmation prompts                                     |
 | `--ledger`           |       | bool     | `false`                     | Use Ledger hardware wallet                                    |
 | `--unordered`        |       | bool     | `false`                     | Unordered transaction                                         |
+
+Key storage is selected by the global `--keyring-backend` / `--keyring-dir`
+flags (§3.1), which every command inherits. Transaction commands do not
+register their own copies: a transaction-local duplicate shadowed the global
+flag, so the documented `AKT_KEYRING_BACKEND` / `AKT_KEYRING_DIR` environment
+variables never reached a `tx` invocation, and its non-empty `os` default
+stood ready to override the context's persisted backend.
 
 `--sign-mode` and `--broadcast-mode` are closed enums: values outside their
 advertised sets are usage errors. For online construction, simulation, and
@@ -2654,6 +2781,14 @@ Select keyring backend  ↑↓ move  enter confirm
     [ ]  file        File-based encrypted keyring
     [ ]  test        Unencrypted test keyring (development only)
 ```
+
+An option the host cannot provide is not offered as if it could be. When the
+platform has no system credential store (§1.5) the `os` row is annotated as
+unavailable, is not selectable, and is not the default cursor position — the
+first selectable option is. The non-TTY fallback follows the same rule: it
+resolves to `os` only where `os` is actually available, and to `file`
+otherwise. Offering `os` on a host that will silently store keys elsewhere is
+the bug this rule exists to prevent.
 
 **Multi-select prompt**: The user toggles items on/off and confirms the batch. Space toggles; Enter confirms. A "Select all" row is the first item. Used for network selection during bootstrap.
 

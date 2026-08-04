@@ -233,17 +233,15 @@ func ReadPersistentCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) 
 		cctx = cctx.WithChainID(chainID)
 	}
 
-	if cctx.Keyring == nil || flagSet.Changed(cflags.FlagKeyringBackend) {
-		keyringBackend, _ := flagSet.GetString(cflags.FlagKeyringBackend)
-		if keyringBackend != "" {
-			kr, err := sdkclient.NewKeyringFromBackend(cctx, keyringBackend)
-			if err != nil {
-				return cctx, err
-			}
-
-			cctx = cctx.WithKeyring(kr)
-		}
-	}
+	// --keyring-backend is deliberately NOT turned into a keyring here.
+	//
+	// It is an akt global flag (SPEC §3.1), applied to the keyring
+	// configuration the root command hands to internal/keyring before any
+	// leaf runs -- which is also where an "os" backend is checked against the
+	// platform's credential stores. Rebuilding a keyring from the raw flag
+	// value would bypass that check and, because this runs from the root's
+	// own pre-run on every command, would open a key store for commands that
+	// declare no local identity at all (SPEC §1.7).
 
 	nodeChanged := flagSet.Lookup(cflags.FlagNode) != nil && flagSet.Changed(cflags.FlagNode)
 	if cctx.Client == nil || nodeChanged {

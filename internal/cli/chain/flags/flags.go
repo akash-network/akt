@@ -391,10 +391,17 @@ func AddTxFlagsToCmd(cmd *cobra.Command) {
 	cmd.MarkFlagsMutuallyExclusive(FlagUnordered, FlagSequence)
 	cmd.MarkFlagsRequiredTogether(FlagUnordered, TimeoutDuration)
 
-	AddKeyringFlags(f)
+	// --keyring-backend and --keyring-dir are deliberately NOT registered
+	// here. They are global (SPEC §3.1), registered once on the root command
+	// so key management, queries, and transactions all read the same value.
+	// A transaction-local copy shadowed the global one, which kept the
+	// documented AKT_KEYRING_BACKEND/AKT_KEYRING_DIR variables from ever
+	// reaching a tx invocation, and its non-empty "os" default stood ready to
+	// override the context's persisted backend.
 }
 
-// AddKeyringFlags sets common keyring flags
+// AddKeyringFlags sets common keyring flags on a standalone command tree that
+// does not inherit akt's global flags (SPEC §3.1).
 func AddKeyringFlags(flags *pflag.FlagSet) {
 	flags.String(FlagKeyringDir, "", "The client Keyring directory; if omitted, the default 'home' directory will be used")
 	flags.String(FlagKeyringBackend, DefaultKeyringBackend, "Select keyring's backend (os|file|kwallet|pass|test|memory)")

@@ -260,14 +260,53 @@ such as `tcp://localhost:26657` must never replace a resolved endpoint. Local
 transaction leaves use the same pre-run boundary; a leaf that needs codecs or
 clients cannot reach its handler without that initialization.
 
-Query context assembly carries the configured default-account reference
-without opening the keyring merely because the context has one. A query
-resolves a named default account only when its own omitted owner filter
-requires that address. Network-wide queries and queries with an explicit owner
-never unlock the keyring. An address-valued default is parsed directly and also
-requires no keyring access. Transaction, workflow, and authenticated provider
-paths keep their existing signer resolution because those operations actually
-need the local identity.
+Step 2 loads the keyring only for commands that declare a need for the local
+signing identity. The startup boundary is uniform, but "resolve the context"
+and "unlock the user's keys" are separate decisions: opening a keyring can
+prompt for a passphrase or an OS unlock, so a command that will never sign must
+not trigger one. The decision lives next to the existing `requiresConfig` /
+`requiresContext` predicates as `requiresLocalIdentity`, and the root passes it
+down explicitly rather than letting the client layer guess from command names.
+When it is false the client context is built with a nil keyring and a named
+`default-account` is left unresolved; an address-valued default is still parsed,
+because that costs nothing. This is what makes `akt sdl validate` and
+`akt monitor` keep the "runs entirely locally" promise on a machine that has a
+context configured.
+
+Queries declare the need but do not spend it eagerly. Query context assembly
+carries the configured default-account reference without unlocking the keyring
+merely because the context has one: a named default account is resolved only
+when the query's own omitted owner filter requires that address. Network-wide
+queries and queries given an explicit owner never read a key. An address-valued
+default is parsed directly and costs nothing either way. Transaction, workflow,
+and authenticated provider paths keep their existing signer resolution because
+those operations actually need the local identity.
+
+#### 3.1.2.1 Keyring Backend Resolution
+
+The Cosmos SDK asks `github.com/99designs/keyring` to open the `os` backend
+without pinning `AllowedBackends`, and that library walks its registered
+backends and skips any whose opener errors. On a headless Linux host neither
+Secret Service nor KWallet registers (no session bus) and the kernel keyring
+opener fails, so the walk reaches `pass` — or, failing that, the file backend,
+which always registers and never errors. The user asked for the system keyring
+and got an encrypted file, while the config and `akt context show` kept
+reporting `os`.
+
+akt therefore resolves the backend itself before handing the request to the
+SDK. `internal/keyring` maps `os` to the platform's system store (Keychain,
+Windows Credential Manager, Secret Service/KWallet) and opens *only* that store,
+with `AllowedBackends` pinned to it. Because the library's own preference order
+puts every OS-specific backend ahead of `pass` and `file`, a pinned probe that
+succeeds proves the SDK's unpinned open would select the same store — so the
+probe is a check, not a second implementation of the choice. A pinned probe
+that fails is a fail-fast error naming the platform store that was missing and
+the two remedies (`--keyring-backend file` for one invocation,
+`akt context keyring set` to persist). Never a substitution.
+
+The same resolver answers the display question without opening anything a
+second time, which is how `akt context show` can report an *effective* backend
+instead of echoing the configured one back at the user.
 
 #### 3.1.3 Live Reload
 

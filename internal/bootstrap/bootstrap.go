@@ -16,6 +16,7 @@ import (
 
 	aktctx "pkg.akt.dev/akt/internal/context"
 	"pkg.akt.dev/akt/internal/glyphs"
+	aktkeyring "pkg.akt.dev/akt/internal/keyring"
 )
 
 const (
@@ -328,25 +329,44 @@ func allSelected(checked []bool) bool {
 
 // keyringOption describes one selectable keyring backend.
 type keyringOption struct {
-	value string
-	label string
-	desc  string
+	value       string
+	label       string
+	desc        string
+	unavailable bool
 }
 
 // selectKeyringBackend presents a single-select menu for keyring backend.
 // Returns the selected backend string (e.g. "os", "file", "test").
+//
+// A backend this host cannot provide is shown but not offered: "os" is an
+// alias for the platform credential store, and choosing it on a machine
+// without one used to end with keys in an encrypted file while the context
+// went on reporting "os" (SPEC §1.5, §3.9.1).
 func selectKeyringBackend() string {
+	systemKeyring := aktkeyring.SystemKeyringAvailable()
+
+	osDesc := "System keyring (recommended)"
+	if !systemKeyring {
+		osDesc = "System keyring — unavailable on this host"
+	}
+
 	options := []keyringOption{
-		{value: "os", label: "os", desc: "System keyring (recommended)"},
+		{value: "os", label: "os", desc: osDesc, unavailable: !systemKeyring},
 		{value: "file", label: "file", desc: "File-based encrypted keyring"},
 		{value: "test", label: "test", desc: "Unencrypted test keyring (development only)"},
 	}
 
-	cursor := 0 // default to "os"
+	// Start on the first backend that actually works here.
+	cursor := 0
+	for cursor < len(options) && options[cursor].unavailable {
+		cursor++
+	}
 
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
-		return "os" // fallback
+		// Non-TTY fallback (SPEC §3.9.3): the default option, which is the
+		// first selectable one -- never a backend this host cannot provide.
+		return options[cursor].value
 	}
 	defer func() { _ = term.Restore(int(os.Stdin.Fd()), oldState) }()
 
@@ -363,6 +383,14 @@ func selectKeyringBackend() string {
 			prefix := "  "
 			rowStart := ""
 			rowEnd := ""
+			if opt.unavailable {
+				// Listed so the absence is visible, never highlighted as a
+				// choice: the cursor cannot rest here.
+				b.WriteString(fmt.Sprintf("  %s%s %s  %-10s %s%s\r\n",
+					prefix, ansiDim+g.CheckboxOff, ansiReset+ansiDim, opt.label,
+					opt.desc, ansiReset))
+				continue
+			}
 			if i == cursor {
 				icon = ansiGreen + g.CheckboxOn + ansiReset
 				nameStyle = ansiReset
@@ -393,6 +421,18 @@ func selectKeyringBackend() string {
 
 	buf := make([]byte, 3)
 	totalItems := len(options)
+
+	// step advances the cursor past any backend this host cannot provide, so
+	// an unavailable row can never be selected.
+	step := func(delta int) {
+		for i := 0; i < totalItems; i++ {
+			cursor = (cursor + delta + totalItems) % totalItems
+			if !options[cursor].unavailable {
+				return
+			}
+		}
+	}
+
 	for {
 		nr, err := os.Stdin.Read(buf)
 		if err != nil {
@@ -407,11 +447,11 @@ func selectKeyringBackend() string {
 				return options[cursor].value
 			case 'j':
 				clearLines()
-				cursor = (cursor + 1) % totalItems
+				step(1)
 				render()
 			case 'k':
 				clearLines()
-				cursor = (cursor - 1 + totalItems) % totalItems
+				step(-1)
 				render()
 			case 'q', 3:
 				os.Stdout.WriteString("\r\n")
@@ -423,9 +463,9 @@ func selectKeyringBackend() string {
 			clearLines()
 			switch buf[2] {
 			case 65: // Up
-				cursor = (cursor - 1 + totalItems) % totalItems
+				step(-1)
 			case 66: // Down
-				cursor = (cursor + 1) % totalItems
+				step(1)
 			}
 			render()
 		}

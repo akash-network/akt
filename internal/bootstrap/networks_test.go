@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	aktctx "pkg.akt.dev/akt/internal/context"
+	aktkeyring "pkg.akt.dev/akt/internal/keyring"
 )
 
 // stubTransport answers requests from a URL-suffix -> response table without
@@ -288,7 +289,13 @@ func TestAllSelected(t *testing.T) {
 // failure arms of the two wizard selectors. When stdin is not a terminal (a
 // pipe, a CI runner) raw mode cannot be entered, and the selectors must return
 // a safe default instead of blocking on a read that will never be answered:
-// every network selected, and the recommended "os" keyring backend.
+// every network selected, and the first keyring backend this host can actually
+// provide.
+//
+// The keyring default is host-dependent on purpose. "os" is an alias for the
+// platform credential store, and a headless machine has none — writing "os"
+// into the config there produced a context that claimed the system keyring
+// while the SDK quietly used an encrypted file (SPEC §1.5, §3.9.3).
 func TestInteractiveSelectorsFallBackWithoutATerminal(t *testing.T) {
 	r, w, err := os.Pipe()
 	if err != nil {
@@ -313,7 +320,39 @@ func TestInteractiveSelectorsFallBackWithoutATerminal(t *testing.T) {
 		t.Errorf("multiSelect fallback = %+v, want every network", got)
 	}
 
-	if backend := selectKeyringBackend(); backend != "os" {
-		t.Errorf("keyring backend fallback = %q, want os", backend)
+	want := "file"
+	if aktkeyring.SystemKeyringAvailable() {
+		want = "os"
+	}
+
+	if backend := selectKeyringBackend(); backend != want {
+		t.Errorf("keyring backend fallback = %q, want %q", backend, want)
+	}
+}
+
+// TestKeyringBackendFallbackIsAlwaysUsable is the property the previous test
+// asserts per host, stated directly: whatever the wizard picks without a
+// terminal, opening it must succeed. A backend that resolves to nothing is
+// exactly the silent substitution this guards against.
+func TestKeyringBackendFallbackIsAlwaysUsable(t *testing.T) {
+	root := t.TempDir()
+
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("pipe: %v", err)
+	}
+	defer func() {
+		_ = w.Close()
+		_ = r.Close()
+	}()
+
+	prev := os.Stdin
+	os.Stdin = r
+	defer func() { os.Stdin = prev }()
+
+	backend := selectKeyringBackend()
+
+	if _, ok := aktkeyring.EffectiveBackend(root, aktctx.Keyring{Name: "default", Backend: backend}); !ok {
+		t.Errorf("wizard selected backend %q, which this host cannot provide", backend)
 	}
 }

@@ -167,6 +167,15 @@ the deployment is created.`,
 				_ = v.BindPFlag(cflags.FlagFrom, fromFlag)
 			}
 
+			// Keyring overrides. The env names are bound explicitly rather
+			// than left to AutomaticEnv, which would look for
+			// AKT_KEYRING-BACKEND and never find the documented
+			// AKT_KEYRING_BACKEND (SPEC §1.9).
+			_ = v.BindPFlag(cflags.FlagKeyringBackend, cmd.Flags().Lookup(cflags.FlagKeyringBackend))
+			_ = v.BindPFlag(cflags.FlagKeyringDir, cmd.Flags().Lookup(cflags.FlagKeyringDir))
+			_ = v.BindEnv(cflags.FlagKeyringBackend, "AKT_KEYRING_BACKEND")
+			_ = v.BindEnv(cflags.FlagKeyringDir, "AKT_KEYRING_DIR")
+
 			// Verbosity validation: -q and -v are mutually exclusive.
 			if v.GetBool("quiet") && v.GetInt("verbose") > 0 {
 				return fmt.Errorf("--quiet and --verbose are mutually exclusive")
@@ -211,12 +220,25 @@ the deployment is created.`,
 				return err
 			}
 
-			// Initialize the keyring manager with all keyring configs.
+			// Initialize the keyring manager with all keyring configs, with
+			// the per-invocation --keyring-backend/--keyring-dir overrides
+			// applied so every keyring this run opens agrees (SPEC §3.1).
+			keyringBackend := v.GetString(cflags.FlagKeyringBackend)
+			if err := aktkeyring.ValidateBackend(keyringBackend); err != nil {
+				return err
+			}
+
 			cfg := mgr.Config()
-			krMgr = aktkeyring.NewManager(cfgRoot, cfg.Keyrings, encCfg.Codec)
+			krMgr = aktkeyring.NewManager(
+				cfgRoot,
+				aktkeyring.ApplyOverrides(cfg.Keyrings, keyringBackend, v.GetString(cflags.FlagKeyringDir)),
+				encCfg.Codec,
+			)
 
 			// 3. If an akt context is active, enrich the SDK client.Context
 			//    with context-specific values (chain-id, RPC, keyring, etc.).
+			//    The keyring is opened only when this command can need the
+			//    local signing identity (SPEC §1.7).
 			resolved, err := aktclient.MustResolveAndInit(
 				cmd,
 				mgr,
@@ -224,6 +246,7 @@ the deployment is created.`,
 				encCfg,
 				v.GetString("context"),
 				v.GetString(cflags.FlagFrom),
+				requiresLocalIdentity(cmd),
 			)
 			if err != nil {
 				return err
@@ -347,6 +370,15 @@ the deployment is created.`,
 	// not captured into Go variables.
 	root.PersistentFlags().String("home", "", "Home directory for config, contexts, and keyrings (default: $AKT_HOME or ~/.config/akt)")
 	root.PersistentFlags().String("context", "", "Active context name (overrides current-context in config)")
+	// Key storage is a property of the invocation, not of signing: listing and
+	// adding keys need the same override a transaction does, and on a host
+	// whose configured backend is unavailable it is the only way in. Empty
+	// defaults so that leaving them unset never shadows the context's stored
+	// keyring (SPEC §3.1).
+	root.PersistentFlags().String(cflags.FlagKeyringBackend, "",
+		"Keyring backend for this invocation: "+strings.Join(aktkeyring.Backends(), "|")+" (default: the context's keyring backend)")
+	root.PersistentFlags().String(cflags.FlagKeyringDir, "",
+		"Keyring directory for this invocation (default: the context's keyring directory)")
 	root.PersistentFlags().VarP(output.NewFormatFlag("pretty"), "output", "o", "Output format: pretty, json, yaml")
 	// Local, not persistent: launching the TUI is only meaningful at the root.
 	// As a persistent flag it was advertised on all ~400 subcommands and
@@ -567,6 +599,62 @@ func requiresConfig(cmd *cobra.Command) bool {
 	// SDL authoring is entirely local (see requiresContext), so demanding
 	// a network fetch before linting a local file would be backwards.
 	case strings.HasPrefix(path, "akt sdl"):
+		return false
+	}
+
+	return true
+}
+
+// requiresLocalIdentity returns true if the command can need the local
+// signing identity -- the context's keyring, and the account its
+// default-account names. It is the third and narrowest of the startup
+// predicates: requiresConfig decides whether to bootstrap, requiresContext
+// decides whether a context is mandatory, and this one decides whether to
+// open a key store.
+//
+// The distinction matters because opening a keyring and resolving a named
+// account are interactive: a file backend prompts for its passphrase and an
+// os backend asks the desktop to unlock. Doing that for `akt sdl validate`
+// broke the group's documented promise to run entirely locally (SPEC §2.11),
+// and did the same to `akt monitor` (SPEC §2.6). Commands listed here are
+// defined to work without a signer, so they must not trigger either.
+//
+// Query commands are deliberately absent: an owner-scoped query with no
+// explicit owner falls back to the context's default account, so a named
+// account still has to resolve. Narrowing that to the queries that actually
+// need the address is a separate change (see the lazy resolvers in
+// internal/cli/chain/cctx.go); this predicate is the single place that will
+// record the decision once they land.
+func requiresLocalIdentity(cmd *cobra.Command) bool {
+	path := cmd.CommandPath()
+
+	switch {
+	// The root command itself only prints help.
+	case path == "akt":
+		return false
+	// SDL authoring is entirely local: parsing, scaffolding, and linting
+	// never touch a network or a credential.
+	case strings.HasPrefix(path, "akt sdl"):
+		return false
+	// Monitoring reads public chain state over RPC.
+	case strings.HasPrefix(path, "akt monitor"):
+		return false
+	// Build metadata and completion scripts come from the binary alone.
+	case strings.HasPrefix(path, "akt version"),
+		strings.HasPrefix(path, "akt completion"):
+		return false
+	// Context, network, and keyring management edits config.yaml. The keys
+	// subgroup does need keys, and gets them from the getKeyring closure at
+	// the point it uses them -- which is also what lets `akt context keys`
+	// fix a context whose configured backend this host cannot open.
+	case strings.HasPrefix(path, "akt context"):
+		return false
+	// The store is a local bbolt database.
+	case strings.HasPrefix(path, "akt store"):
+		return false
+	// The Console rail authenticates with an API key; its contexts may have
+	// no keyring at all.
+	case strings.HasPrefix(path, "akt console"):
 		return false
 	}
 

@@ -11,7 +11,13 @@ import (
 
 // RenderContextShow renders a full context detail view as a string.
 // Used by both CLI "akt context show" and TUI context detail views.
-func RenderContextShow(rc aktctx.Context) string {
+//
+// effectiveKeyringBackend is the concrete credential store that serves the
+// context's configured backend on this host, or "" when the host cannot
+// provide it (SPEC §1.5). It is passed in rather than resolved here so the
+// renderer stays a pure formatter -- and so this view can never be the reason
+// a key store is opened.
+func RenderContextShow(rc aktctx.Context, effectiveKeyringBackend string) string {
 	var buf strings.Builder
 	w := &buf
 
@@ -66,7 +72,24 @@ func RenderContextShow(rc aktctx.Context) string {
 		}
 	}
 
-	KV(w, "Keyring", fmt.Sprintf("%s (backend: %s)", rc.Keyring.Name, rc.Keyring.Backend))
+	// An omitted backend means "os", the same normalization the keyring
+	// manager applies before opening.
+	configuredBackend := rc.Keyring.Backend
+	if configuredBackend == "" {
+		configuredBackend = aktctx.DefaultKeyring().Backend
+	}
+
+	KV(w, "Keyring", fmt.Sprintf("%s (backend: %s)", rc.Keyring.Name, configuredBackend))
+
+	// "os" is an alias for a platform store, so the configured value alone is
+	// not an answer to "where are my keys?". Report the concrete store, and
+	// say so plainly when this host has none.
+	switch {
+	case effectiveKeyringBackend == "":
+		SubKV(w, "Effective", Dim("unavailable — this host has no "+configuredBackend+" credential store"))
+	case effectiveKeyringBackend != configuredBackend:
+		SubKV(w, "Effective", effectiveKeyringBackend)
+	}
 
 	if rc.DefaultAccount != "" {
 		KV(w, "Default Account", rc.DefaultAccount)

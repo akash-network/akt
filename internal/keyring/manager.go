@@ -8,6 +8,7 @@
 package keyring
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -76,6 +77,13 @@ func (m *Manager) Get(name string) (sdkkeyring.Keyring, error) {
 
 	kr, err := m.open(cfg)
 	if err != nil {
+		// An unavailable backend already names the keyring and its remedy;
+		// prefixing it again buries the remedy behind a second "open keyring".
+		var unavailable *UnavailableBackendError
+		if errors.As(err, &unavailable) {
+			return nil, err
+		}
+
 		return nil, fmt.Errorf("open keyring %q: %w", name, err)
 	}
 
@@ -127,7 +135,30 @@ func (m *Manager) open(cfg aktctx.Keyring) (sdkkeyring.Keyring, error) {
 		backend = sdkkeyring.BackendOS
 	}
 
+	if err := ValidateBackend(backend); err != nil {
+		return nil, err
+	}
+
 	dir := aktctx.KeyringDir(m.root, cfg)
+
+	// "os" is an alias for the platform credential store, and the SDK opens it
+	// without pinning the backend list -- so on a host without one it silently
+	// lands on pass or file while the config keeps claiming "os". Refuse
+	// instead, and name the remedy (SPEC §1.5).
+	if backend == sdkkeyring.BackendOS {
+		if _, ok := EffectiveBackend(m.root, cfg); !ok {
+			name := cfg.Name
+			if name == "" {
+				name = "default"
+			}
+
+			return nil, &UnavailableBackendError{
+				Keyring:  name,
+				Backend:  backend,
+				Expected: SystemBackendNames(),
+			}
+		}
+	}
 
 	// Ensure keyring directory exists for file-based backends.
 	if backend == sdkkeyring.BackendFile || backend == sdkkeyring.BackendTest {
@@ -137,6 +168,20 @@ func (m *Manager) open(cfg aktctx.Keyring) (sdkkeyring.Keyring, error) {
 	}
 
 	return sdkkeyring.New(appName, backend, dir, m.input, m.cdc)
+}
+
+// EffectiveBackend reports the concrete credential store that serves the named
+// keyring on this host (SPEC §1.5), and whether the host can provide it.
+func (m *Manager) EffectiveBackend(name string) (string, bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cfg, ok := m.configs[name]
+	if !ok {
+		return "", false
+	}
+
+	return EffectiveBackend(m.root, cfg)
 }
 
 // NewInMemory creates an in-memory keyring for dry-run / testing use.

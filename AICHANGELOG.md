@@ -9,6 +9,43 @@
   it. Only an omitted owner filter that needs the account opens the keyring;
   network-wide reads and explicitly scoped queries remain non-interactive.
 
+- **Offline commands asked for the wallet passphrase**: startup resolved the
+  context's named `default-account` for every command, and resolving a name
+  means unlocking the keyring — so `akt sdl validate` and `akt monitor`, both
+  documented to run entirely locally, prompted for a file passphrase or an OS
+  keychain unlock. Whether an invocation needs the local signing identity is
+  now an explicit decision (`requiresLocalIdentity`, alongside
+  `requiresConfig`/`requiresContext`) that the root passes down to the client
+  context builder. Commands defined to run without a signer neither open a
+  keyring nor resolve a named account; an address-valued default still
+  resolves, because parsing bech32 costs nothing.
+
+- **A configured `os` keyring silently became a different store**: the Cosmos
+  SDK opens the `os` backend without pinning the backend list, and the
+  underlying library skips past any backend whose opener fails — so a headless
+  host with no session bus landed on `pass` or, failing that, an encrypted
+  file keyring, while `config.yaml` and `akt context show` went on reporting
+  `os`. That is also where the mysterious passphrase prompt came from. akt now
+  resolves `os` to the platform's system credential store itself (Keychain,
+  Windows Credential Manager, Secret Service/KWallet) with the backend list
+  pinned, and fails fast when the host has none, naming both remedies instead
+  of substituting a store the user never chose. `akt context show` and
+  `akt context keyring list` report the *effective* backend next to the
+  configured one, and the first-run wizard no longer offers `os` on a host
+  that cannot provide it.
+
+- **Key storage could not be chosen where it mattered**: `--keyring-backend`
+  and `--keyring-dir` existed only on `tx` commands, so the documented
+  `AKT_KEYRING_BACKEND`/`AKT_KEYRING_DIR` variables did nothing and there was
+  no way to add a key to a `file` keyring on a box whose context said `os`.
+  Both flags are now global, bound to Viper so the environment variables work,
+  and applied to every keyring the invocation opens — including the one behind
+  `akt context keys`. The transaction-local duplicates are removed: they
+   shadowed the global flag, and their non-empty `os` default stood ready to
+   override a context's persisted backend. A new `akt context keyring`
+   group (`create`, `list`, `set`) makes the change persistent, which until now
+   required hand-editing `config.yaml`.
+
 - **Root help described deployment as the whole CLI**: the introduction now
   presents akt as the unified interface for chain queries and transactions,
   deployments on either payment rail, provider operations, context and key

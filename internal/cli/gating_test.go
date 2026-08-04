@@ -186,3 +186,41 @@ func TestRequiresContextExemptsOfflineGroups(t *testing.T) {
 		t.Error("tx must still require a context")
 	}
 }
+
+// TestOfflineGroupsDeclareNoLocalIdentity is the keyring half of the same
+// contract. Exempting a group from needing a *context* is not enough: startup
+// still opened the context's keyring and resolved its named default-account,
+// which prompts for a file passphrase or an OS unlock. `akt sdl validate`
+// asking for a wallet password is the bug this pins (SPEC §1.7, §2.11).
+func TestOfflineGroupsDeclareNoLocalIdentity(t *testing.T) {
+	root := &cobra.Command{Use: "akt"}
+
+	if requiresLocalIdentity(root) {
+		t.Error("the root command prints help and must not open a keyring")
+	}
+
+	for _, group := range []string{"sdl", "monitor", "version", "completion", "context", "store", "console"} {
+		g := &cobra.Command{Use: group}
+		root.AddCommand(g)
+
+		if requiresLocalIdentity(g) {
+			t.Errorf("%s must not open a keyring", group)
+		}
+
+		// Leaves inherit the group's answer -- `akt sdl validate` is the
+		// invocation that actually reported the bug.
+		leaf := &cobra.Command{Use: "validate"}
+		g.AddCommand(leaf)
+		if requiresLocalIdentity(leaf) {
+			t.Errorf("%s validate must not open a keyring", group)
+		}
+	}
+
+	for _, group := range []string{"tx", "query", "provider", "deploy", "mcp"} {
+		g := &cobra.Command{Use: group}
+		root.AddCommand(g)
+		if !requiresLocalIdentity(g) {
+			t.Errorf("%s signs or scopes by account and must resolve the local identity", group)
+		}
+	}
+}
