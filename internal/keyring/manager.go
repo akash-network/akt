@@ -20,7 +20,10 @@ import (
 	aktctx "pkg.akt.dev/akt/internal/context"
 )
 
-const appName = "akt"
+// appName is the service name handed to the SDK keyring. It is defined in
+// internal/context so the first-run wizard can name it when explaining why
+// legacy akash keyring entries are invisible to akt (SPEC §1.12).
+const appName = aktctx.KeyringServiceName
 
 // Manager manages multiple named keyrings. It lazily opens keyrings on
 // first access and caches them for the lifetime of the process.

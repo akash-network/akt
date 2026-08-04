@@ -424,6 +424,46 @@ gas-adjustment: "1.5"
 | `DotFilled` | `*` | Selected version dot |
 | `DotOpen` | `o` | Unselected version dot |
 
+### 1.12 Legacy `akash` Home
+
+The legacy `akash` and `provider-services` CLIs keep their state in `~/.akash`.
+`akt` uses its own home (§1.1) and **never** reads, writes, moves, or deletes
+anything under `~/.akash`. Nothing carries over implicitly, and there is no
+importer.
+
+Three concrete incompatibilities make the legacy home unusable as-is:
+
+| Artifact | Legacy location | `akt` location | Why it does not carry over |
+|---|---|---|---|
+| `os` keyring entries | Keychain/libsecret service `akash` | Keychain/libsecret service `akt` | The service name is the lookup key; entries written under `akash` are invisible to `akt`. |
+| `file` / `test` keyring | `~/.akash/keyring-file`, `~/.akash/keyring-test` | `<home>/keyrings/<keyring-name>` (§1.5) | Different directory; `akt` never scans outside its own home. |
+| Client mTLS certificate | `~/.akash/<address>.pem` | `<home>/<address>.pem` | The chain client's home directory is the `akt` home, so the PEM is looked up there. |
+
+What this costs the user, precisely:
+
+- **An account is recoverable, not lost.** `akt context keys add <name>
+  --recover` with the original mnemonic reproduces the same address and the same
+  on-chain identity. Nothing on chain changes.
+- **A published certificate is not lost.** The certificate is on-chain state and
+  remains valid and queryable with `akt query cert list <address>`. Only the
+  local PEM half is in the wrong directory. Its encryption password is derived
+  deterministically from a keyring signature over the account address, so once
+  the same key is present in the `akt` keyring, copying
+  `~/.akash/<address>.pem` to `<home>/<address>.pem` restores it byte-for-byte
+  with no re-publish and no transaction. Regenerating instead
+  (`akt tx cert generate client` then `akt tx cert publish client`) costs a
+  transaction.
+
+**Detection.** The first-run wizard (§2.0) detects a legacy home so the user is
+told this up front instead of discovering it as a missing key. Detection is
+read-only and strictly bounded to three operations: `os.Stat` on `~/.akash`, a
+`*.pem` filename glob inside it, and `os.Stat` on `keyring-file/` and
+`keyring-test/`. File contents are never read and legacy keyrings are never
+opened. The notice is emitted only when the directory exists **and** at least
+one of those artifacts is present; a bare or unrelated `~/.akash` produces no
+output. The notice states explicitly that nothing in `~/.akash` is read,
+modified, or deleted.
+
 ---
 
 ## 2. CLI Command Reference
@@ -474,7 +514,23 @@ it emits no human plan text.
 
 When `akt` is invoked with no subcommand, the following flow determines what happens:
 
-1. **No config exists** (first run): The bootstrap wizard runs (§1.11, `internal/bootstrap/wizard.go`). It prompts the user to select networks, select a keyring backend (`os`, `file`, or `test`; default: `os`), and configure an initial context. It then offers optional Akash Console onboarding: the user may enter a Console API key (validated best-effort against `/v1/user/me`, stored as the initial context's per-context credential per §7.1) and choose whether deployments for that context should be routed through Console (`auth-method: console-api`). Both prompts default to "no" and are skipped entirely in non-interactive runs. The wizard runs only when stdin is a terminal: in headless environments it declines to bootstrap (no network fetch, no config written) and prints guidance to create a config via `akt context network create` / `akt context create`; the root command then continues to step 2 without a config. After bootstrap completes, the root command continues to step 2.
+1. **No config exists** (first run): The bootstrap wizard runs (`internal/bootstrap/`; glyphs per §1.11, prompt rendering per §3.9). The wizard runs only when stdin is a terminal: in headless environments it declines to bootstrap (no network fetch, no config written) and prints guidance to create a config via `akt context network create` / `akt context create`; the root command then continues to step 2 without a config. After bootstrap completes, the root command continues to step 2.
+
+In a terminal the wizard performs the following steps, in order. All of its output — announcements, prompts, progress, and the closing summary — goes to stderr (§3.9.2, §10.1.1); the wizard writes nothing to stdout.
+
+**a. Announce the destination.** *Before the first prompt*, the wizard prints the resolved config root and the `config.yaml` path it will write, and names the `--home` flag and the `AKT_HOME` environment variable as the overrides that relocate them (full resolution order in §1.1). It states that nothing is written until the prompts complete. A user who abandons the wizard, or who is unsure whether `AKT_HOME`/`XDG_CONFIG_HOME` is in effect, MUST still learn where akt would place its files without having to finish setup. Printing the destination only in the closing summary does not satisfy this.
+
+**b. Select networks.** A multi-select over the network definitions fetched from `github.com/akash-network/net`, with every network pre-selected. One context is created per selected network, named after that network.
+
+**c. Select the keyring backend.** Single-select over `os`, `file`, and `test`; default `os`.
+
+**d. Select the active context.** The wizard asks explicitly which of the created contexts becomes `current-context`. It MUST NOT choose one silently. The cursor starts on a test network — `sandbox` if it was selected, otherwise `testnet`, otherwise any other non-mainnet selection — so that accepting the default lands on a network where a mistake costs nothing. Mainnet is always present in the list and reachable in a single keystroke, but is never the pre-selected row: the first command a new user runs must not be able to spend real AKT because the active network was inherited from a default rather than chosen. The prompt is shown even when only one network was selected, so the active network is always something the user saw and confirmed.
+
+**e. Optional Akash Console onboarding.** The user may enter a Console API key (validated best-effort against `/v1/user/me`, stored as the initial context's per-context credential per §7.1) and choose whether deployments for that context should be routed through Console (`auth-method: console-api`). Both prompts default to "no" and are skipped entirely in non-interactive runs.
+
+**f. Summary.** After the config is written the wizard prints the config file path; the active context with its chain ID; and that context's context directory, store, action log, and keyring location, using the same labels as `akt context show` (`Store`, `Action Log`). `SaveConfig` creates only the home directory, so paths that do not exist yet are described as where they *will* be created rather than presented as existing. For the `os` backend the keyring line names the system keychain and the `akt` service name rather than a directory, because no directory is used. No context receives a `default-account`, so the summary closes with the next steps that make the configuration usable: `akt context keys add <name>` for a new account, `akt context keys add <name> --recover` for an existing mnemonic, and `akt context show`.
+
+**g. Legacy Akash CLI notice.** Last, the wizard prints the legacy-home notice of §1.12 when — and only when — a legacy `~/.akash` with recoverable artifacts is detected. It is printed after the summary so it is the last thing on screen when the user goes looking for their existing keys.
 > **TUI shell status (2026-07): DISABLED pending UX feedback.** Bare `akt` prints the help text and `--interactive`/`-i` reports that the TUI is disabled. The launch path remains compiled behind `AKT_EXPERIMENTAL_TUI=1` for feedback sessions, and `akt monitor` (§2.6) is unaffected. Steps 2–5 below describe the behavior that resumes when the TUI is re-enabled.
 
 The root help introduction describes `akt` as the unified Akash Network CLI.
@@ -2802,6 +2858,16 @@ Select networks  ↑↓ move  space toggle  enter confirm
     [x]  sandbox             sandbox-2         [1 rpc, 1 api, 1 grpc]
 
   q quit
+```
+
+**Active-context prompt**: A single-select over the contexts just created, used at the end of network selection during bootstrap (§2.0 step d). The cursor starts on a test network, never on mainnet, and each row states in plain language what transacting on that network costs.
+
+```
+Select the active context  ↑↓ move  enter confirm
+
+  > [x]  sandbox     sandbox-2    test network - tokens have no value
+    [ ]  testnet     testnet-02   test network - tokens have no value
+    [ ]  mainnet     akashnet-2   live network - transactions spend real AKT
 ```
 
 **Value input prompt**: Free-form text or numeric input with an optional default. Used for deposit amounts, gas overrides, or custom names. Input is validated before acceptance.
