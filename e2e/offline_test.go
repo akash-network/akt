@@ -599,6 +599,91 @@ func TestTxDeploymentClosePositionalArgsOffline(t *testing.T) {
 	}
 }
 
+// TestQueryProviderPositionalArgOffline pins the positional-primary form
+// documented in README.md, SPEC §3.8.5, and DESIGN §7.1. The group used to
+// carry no positional at all, so the documented `akt query provider
+// akash1prov...` failed with `unknown command "akash1..." for "provider"`.
+// The `list`/`get` subcommands must keep working alongside it.
+func TestQueryProviderPositionalArgOffline(t *testing.T) {
+	home := setupContextHome(t)
+
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"positional address", []string{"query", "provider", testMnemonicAddr, "--node", unreachableNode}},
+		{"no argument lists", []string{"query", "provider", "--node", unreachableNode}},
+		{"get subcommand", []string{"query", "provider", "get", testMnemonicAddr, "--node", unreachableNode}},
+		{"list subcommand", []string{"query", "provider", "list", "--node", unreachableNode}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout, stderr, exitCode := runAkt(t, home, tc.args...)
+			combined := stdout + stderr
+
+			if exitCode == 0 {
+				t.Fatalf("expected non-zero exit against unreachable node, got 0:\n%s", combined)
+			}
+			if strings.Contains(combined, "unknown command") || strings.Contains(combined, "accepts at most") {
+				t.Fatalf("the documented form was rejected by cobra args validation:\n%s", combined)
+			}
+			if !strings.Contains(combined, "127.0.0.1") {
+				t.Fatalf("expected a connection-stage error mentioning the node address, got:\n%s", combined)
+			}
+		})
+	}
+}
+
+// TestProviderLeaseCommandsBlameTheMissingDSeqOffline pins the honest guard
+// order on the provider gateway commands. Every one of them used to report
+// `provider address is required (positional argument or --provider flag)` for
+// any missing input — false advice, since none takes a positional provider and
+// four of them use that slot for the dseq. The deployment sequence is what the
+// provider is now resolved from, so it must be reported first and with the
+// form the command actually accepts.
+func TestProviderLeaseCommandsBlameTheMissingDSeqOffline(t *testing.T) {
+	home := setupContextHome(t)
+
+	cases := []struct {
+		name   string
+		args   []string
+		remedy string
+	}{
+		{"lease-status", []string{"provider", "lease-status"}, "positional argument"},
+		{"lease-logs", []string{"provider", "lease-logs"}, "positional argument"},
+		{"lease-events", []string{"provider", "lease-events"}, "positional argument"},
+		{"get-manifest", []string{"provider", "get-manifest"}, "positional argument"},
+		{"lease-shell", []string{"provider", "lease-shell", "--", "/bin/sh"}, "--dseq"},
+		{"send-manifest", []string{"provider", "send-manifest", "does-not-exist.yaml"}, "--dseq"},
+		{"migrate-hostnames", []string{"provider", "migrate-hostnames", "--hostnames", "a.example.com"}, "--dseq"},
+		{"migrate-endpoints", []string{"provider", "migrate-endpoints", "--endpoints", "ep1"}, "--dseq"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout, stderr, exitCode := runAkt(t, home, tc.args...)
+			combined := stdout + stderr
+
+			if exitCode == 0 {
+				t.Fatalf("expected non-zero exit for a missing dseq, got 0:\n%s", combined)
+			}
+			if !strings.Contains(combined, "dseq is required") {
+				t.Fatalf("expected the dseq guard error, got:\n%s", combined)
+			}
+			if !strings.Contains(combined, tc.remedy) {
+				t.Fatalf("expected the remedy to offer %q, got:\n%s", tc.remedy, combined)
+			}
+			if strings.Contains(combined, "provider address is required") {
+				t.Fatalf("error still blames the provider:\n%s", combined)
+			}
+			if strings.Contains(combined, "positional argument or --provider") {
+				t.Fatalf("error advertises a positional provider that does not exist:\n%s", combined)
+			}
+		})
+	}
+}
+
 // --- dseq fail-fast guards (2026-07 positional-only trial) ---
 //
 // With --dseq disabled, the positional dseq is the only source for
@@ -816,6 +901,8 @@ func TestAllCommandsHelp(t *testing.T) {
 		{"query", "oracle"},
 		{"query", "params"},
 		{"query", "provider"},
+		{"query", "provider", "get"},
+		{"query", "provider", "list"},
 		{"query", "slashing"},
 		{"query", "staking"},
 		{"query", "tx"},

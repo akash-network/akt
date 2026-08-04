@@ -694,7 +694,7 @@ akt
 │   │   ├── bid [filter] [state]         # [owner/]dseq[/gseq/oseq[/prov]] [state]; --by; --state — **disabled pending feedback** (positional only, 2026-07)
 │   │   ├── lease [filter] [state]       # [owner/]dseq[/gseq/oseq[/prov]] [state]; --by; --state — **disabled pending feedback** (positional only, 2026-07)
 │   │   └── params
-│   ├── provider [address]               # List or get (address → single)
+│   ├── provider [address]               # List or get (address → single); `list`/`get` remain as aliases
 │   ├── cert [owner] [state]             # Owner or default account, plus [state]; --owner/--state flags — **disabled pending feedback** (positional only, 2026-07)
 │   ├── audit [owner]                    # Owner or default account; --auditor flag
 │   ├── escrow [filter]                  # [owner[/dseq]]; --state flag
@@ -1699,6 +1699,43 @@ Provider status remains public; lease status, service status, and manifest
 submission use the shared authenticated gateway boundary with JWT or mTLS as
 configured.
 
+**Provider resolution for lease-scoped commands.** `--provider` names the
+gateway explicitly and always wins. When it is omitted, `akt` resolves the
+provider from the deployment's leases on chain: it queries the leases owned by
+the selected context's `default-account` for the given deployment sequence and
+uses the provider of the deployment's single active lease. This is the same
+identification `akt console status <dseq>` already performs on the Console rail,
+so a deployment `akt` created is addressed identically on both rails. The
+resolved lease also supplies `gseq`/`oseq` unless they were given explicitly.
+
+Resolution is refused rather than guessed when it is ambiguous or impossible,
+and the error names the actual cause:
+
+- the deployment has no leases at all;
+- it has leases but none active (their states are listed);
+- more than one lease is active (every active provider is listed and
+  `--provider` is required to choose).
+
+Each of those errors points at `akt query market lease <dseq>` for the full
+record. `--provider` is never a cobra-required flag (§3.8): the deployment
+sequence is the primary value and the provider is an optional override.
+
+`--provider-url` overrides the gateway URL, not the provider identity: the
+lease path sent to the gateway still needs a provider address, so without
+`--provider` the lease is read from chain even when a URL is supplied. Because
+one URL cannot address several gateways, combining `--provider-url` with a
+`send-manifest` fan-out over multiple active leases is refused.
+
+Because the provider is resolved *from* the deployment sequence, the sequence is
+validated first. A lease command invoked with neither a `dseq` nor a
+`--provider` reports the missing deployment sequence, not the missing provider,
+and never suggests a positional provider on a command whose positional slot is
+the `dseq`.
+
+The lease owner is always the selected context's `default-account`. The provider
+group has no `--from` flag; select a different account with `akt context use`,
+`--context`, or the context's `default-account` setting.
+
 #### `akt provider lease-status [dseq]`
 
 Query lease deployment status from the provider gateway. The positional `dseq` supplies the deployment sequence. The `--dseq` flag is **disabled pending feedback** (positional only, 2026-07).
@@ -1706,10 +1743,9 @@ Query lease deployment status from the provider gateway. The positional `dseq` s
 | Flag          | Type   | Default         | Description         |
 | ------------- | ------ | --------------- | ------------------- |
 | `--dseq`      | uint64 | required unless positional `dseq` given | Deployment sequence — **disabled pending feedback** (positional only, 2026-07) |
-| `--gseq`      | uint32 | `1`             | Group sequence      |
-| `--oseq`      | uint32 | `1`             | Order sequence      |
-| `--provider`  | string | required        | Provider address    |
-| `--from`      | string | context default | Owner account       |
+| `--gseq`      | uint32 | active lease    | Group sequence      |
+| `--oseq`      | uint32 | active lease    | Order sequence      |
+| `--provider`  | string | active lease    | Provider address; resolved from the deployment's active lease when omitted |
 | `--auth-type` | string | context default | Auth type           |
 
 #### `akt provider lease-logs [dseq]`
@@ -1719,10 +1755,9 @@ Stream container logs from a lease. The positional `dseq` supplies the deploymen
 | Flag          | Type   | Default         | Description               |
 | ------------- | ------ | --------------- | ------------------------- |
 | `--dseq`      | uint64 | required unless positional `dseq` given | Deployment sequence — **disabled pending feedback** (positional only, 2026-07) |
-| `--gseq`      | uint32 | `1`             | Group sequence            |
-| `--oseq`      | uint32 | `1`             | Order sequence            |
-| `--provider`  | string | required        | Provider address          |
-| `--from`      | string | context default | Owner account             |
+| `--gseq`      | uint32 | active lease    | Group sequence            |
+| `--oseq`      | uint32 | active lease    | Order sequence            |
+| `--provider`  | string | active lease    | Provider address; resolved from the deployment's active lease when omitted |
 | `--service`   | string | `""`            | Filter by service name    |
 | `--follow`    | bool   | `false`         | Stream logs continuously  |
 | `--tail`      | int64  | `-1`            | Lines from end (-1 = all) |
@@ -1746,10 +1781,9 @@ Open an interactive shell into a running container.
 | Flag          | Type   | Default         | Description         |
 | ------------- | ------ | --------------- | ------------------- |
 | `--dseq`      | uint64 | required        | Deployment sequence |
-| `--gseq`      | uint32 | `1`             | Group sequence      |
-| `--oseq`      | uint32 | `1`             | Order sequence      |
-| `--provider`  | string | required        | Provider address    |
-| `--from`      | string | context default | Owner account       |
+| `--gseq`      | uint32 | active lease    | Group sequence      |
+| `--oseq`      | uint32 | active lease    | Order sequence      |
+| `--provider`  | string | active lease    | Provider address; resolved from the deployment's active lease when omitted |
 | `--service`   | string | required        | Service name        |
 | `--tty`       | bool   | `true`          | Allocate a TTY      |
 | `--stdin`     | bool   | `false`         | Force stdin attachment for an explicit terminal command |
@@ -1776,30 +1810,39 @@ Send an SDL manifest to provider(s) for an existing lease.
 | Flag          | Type   | Default         | Description                                                   |
 | ------------- | ------ | --------------- | ------------------------------------------------------------- |
 | `--dseq`      | uint64 | required        | Deployment sequence                                           |
-| `--from`      | string | context default | Owner account                                                 |
 | `--provider`  | string | `""`            | Specific provider (default: all providers with active leases) |
 | `--auth-type` | string | context default | Auth type                                                     |
 
+Unlike the other lease-scoped commands, `send-manifest` fans out: with no
+`--provider` it submits the manifest to **every** provider holding an active
+lease for the deployment, which is the same delivery the `update` workflow's
+manifest step performs (§2.3). Every provider is attempted even when an earlier
+one rejects the manifest, each accepted submission is reported by full provider
+address, and the command fails unless all of them accepted. A deployment with a
+single active lease therefore needs no `--provider` at all.
+
 #### `akt provider get-manifest [dseq]`
 
-Retrieve the current manifest from a provider. The positional `dseq` supplies the deployment sequence. The `--dseq` flag is **disabled pending feedback** (positional only, 2026-07).
+Retrieve the current manifest from a provider. The positional `dseq` supplies the deployment sequence. The `--dseq` flag is **disabled pending feedback** (positional only, 2026-07). `--provider` is resolved from the deployment's active lease when omitted.
 
 #### `akt provider migrate-hostnames`
 
-Migrate hostnames from one deployment to another on the same provider.
+Migrate hostnames onto a deployment from whichever deployment currently holds
+them on the same provider. The gateway addresses the **destination** lease only,
+so there is no source flag.
 
-| Flag                 | Type     | Default         | Description                |
-| -------------------- | -------- | --------------- | -------------------------- |
-| `--dseq`             | uint64   | required        | Source deployment sequence |
-| `--destination-dseq` | uint64   | required        | Target deployment sequence |
-| `--from`             | string   | context default | Owner account              |
-| `--provider`         | string   | required        | Provider address           |
-| `--hostnames`        | []string | required        | Hostnames to migrate       |
-| `--auth-type`        | string   | context default | Auth type                  |
+| Flag                 | Type     | Default         | Description                            |
+| -------------------- | -------- | --------------- | -------------------------------------- |
+| `--dseq`             | uint64   | required        | Destination deployment sequence        |
+| `--gseq`             | uint32   | active lease    | Destination group sequence             |
+| `--provider`         | string   | active lease    | Provider address; resolved from the destination deployment's active lease when omitted |
+| `--hostnames`        | []string | required        | Hostnames to migrate                   |
+| `--auth-type`        | string   | context default | Auth type                              |
 
 #### `akt provider migrate-endpoints`
 
-Same pattern as `migrate-hostnames` but for IP endpoints.
+Same pattern as `migrate-hostnames`, with `--endpoints` naming the IP endpoints
+to migrate.
 
 **Provider gateway output and stream contract:** provider status, lease
 status, and manifest reads emit JSON by default; `--output json` and
@@ -2826,6 +2869,8 @@ akt query market lease --by provider akash1prov.../12345/1/1/akash1owner...  # G
 ```bash
 akt query cert                                 # List certs for default account
 akt query cert akash1abc...                    # List certs for that owner
+akt query provider                             # List every provider on the network
+akt query provider akash1prov...               # Get one provider (the `get` subcommand remains an alias)
 akt query escrow 12345                         # List escrow accounts for dseq 12345 (owner from context)
 akt query escrow akash1abc.../12345            # Specific escrow account
 ```

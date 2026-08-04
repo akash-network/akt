@@ -9,7 +9,6 @@ import (
 	"strings"
 	"testing"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
@@ -43,19 +42,6 @@ func newProviderCmd(t *testing.T, args ...string) *cobra.Command {
 // A valid bech32 akash account address, used wherever the code path runs
 // through sdk.AccAddressFromBech32.
 const testProviderAddr = "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx"
-
-// mustAddr decodes testProviderAddr, failing the test if the fixture is not a
-// valid bech32 address.
-func mustAddr(t *testing.T) sdk.AccAddress {
-	t.Helper()
-
-	addr, err := sdk.AccAddressFromBech32(testProviderAddr)
-	if err != nil {
-		t.Fatalf("test fixture is not a valid address: %v", err)
-	}
-
-	return addr
-}
 
 // TestResolveProviderRequiresAnAddress covers the guard that keeps a gateway
 // call from being attempted with no provider at all — without it the bech32
@@ -174,19 +160,19 @@ func TestResolveProviderFlagFallback(t *testing.T) {
 	}
 }
 
-// TestLeaseIDFromFlagsPositionalDSeq covers the positional-only UX trial path
+// TestLeaseScopePositionalDSeq covers the positional-only UX trial path
 // (FEEDBACK 2026-07): the positional [dseq] must land in the LeaseID, and the
 // gseq/oseq defaults must be 1 — a zero gseq would address a nonexistent
 // group and fail at the provider with an unhelpful error.
-func TestLeaseIDFromFlagsPositionalDSeq(t *testing.T) {
+func TestLeaseScopePositionalDSeq(t *testing.T) {
 	cmd := newProviderCmd(t)
 
-	addr := mustAddr(t)
-
-	lid, err := leaseIDFromFlags(cmd, []string{"12345"}, addr)
+	scope, err := leaseScopeFromCmd(cmd, []string{"12345"})
 	if err != nil {
-		t.Fatalf("leaseIDFromFlags: %v", err)
+		t.Fatalf("leaseScopeFromCmd: %v", err)
 	}
+
+	lid := scope.leaseID(testProviderAddr)
 
 	if lid.DSeq != 12345 {
 		t.Errorf("dseq = %d, want 12345", lid.DSeq)
@@ -197,67 +183,70 @@ func TestLeaseIDFromFlagsPositionalDSeq(t *testing.T) {
 	if lid.Provider != testProviderAddr {
 		t.Errorf("provider = %q, want %q", lid.Provider, testProviderAddr)
 	}
+	if scope.GSeqSet || scope.OSeqSet {
+		t.Errorf("unset --gseq/--oseq recorded as explicit (%v/%v)", scope.GSeqSet, scope.OSeqSet)
+	}
 }
 
-// TestLeaseIDFromFlagsPositionalWinsOverFlag pins the precedence for
-// lease-shell, the one command that still registers --dseq: an explicit
-// positional value must win, exactly as DSeqFromArgs documents.
-func TestLeaseIDFromFlagsPositionalWinsOverFlag(t *testing.T) {
+// TestLeaseScopePositionalWinsOverFlag pins the precedence for lease-shell,
+// the one lease command that still registers --dseq: an explicit positional
+// value must win, exactly as DSeqFromArgs documents.
+func TestLeaseScopePositionalWinsOverFlag(t *testing.T) {
 	cmd := newProviderCmd(t, "--dseq", "999", "--gseq", "2", "--oseq", "3")
 
-	addr := mustAddr(t)
-
-	lid, err := leaseIDFromFlags(cmd, []string{"12345"}, addr)
+	scope, err := leaseScopeFromCmd(cmd, []string{"12345"})
 	if err != nil {
-		t.Fatalf("leaseIDFromFlags: %v", err)
+		t.Fatalf("leaseScopeFromCmd: %v", err)
 	}
+
+	lid := scope.leaseID(testProviderAddr)
 	if lid.DSeq != 12345 {
 		t.Errorf("dseq = %d, want the positional 12345", lid.DSeq)
 	}
 	if lid.GSeq != 2 || lid.OSeq != 3 {
 		t.Errorf("gseq/oseq = %d/%d, want the flag values 2/3", lid.GSeq, lid.OSeq)
 	}
+	if !scope.GSeqSet || !scope.OSeqSet {
+		t.Error("explicit --gseq/--oseq must be recorded so lease resolution does not override them")
+	}
 }
 
-// TestLeaseIDFromFlagsUsesDSeqFlagWithoutPositional covers lease-shell's own
-// path: it consumes its positional args as the remote command, so --dseq is
-// the only source there.
-func TestLeaseIDFromFlagsUsesDSeqFlagWithoutPositional(t *testing.T) {
+// TestLeaseScopeUsesDSeqFlagWithoutPositional covers lease-shell's own path:
+// it consumes its positional args as the remote command, so --dseq is the
+// only source there.
+func TestLeaseScopeUsesDSeqFlagWithoutPositional(t *testing.T) {
 	cmd := newProviderCmd(t, "--dseq", "777")
 
-	addr := mustAddr(t)
-
-	lid, err := leaseIDFromFlags(cmd, nil, addr)
+	scope, err := leaseScopeFromCmd(cmd, nil)
 	if err != nil {
-		t.Fatalf("leaseIDFromFlags: %v", err)
+		t.Fatalf("leaseScopeFromCmd: %v", err)
 	}
-	if lid.DSeq != 777 {
-		t.Errorf("dseq = %d, want 777 from --dseq", lid.DSeq)
+	if scope.DSeq != 777 {
+		t.Errorf("dseq = %d, want 777 from --dseq", scope.DSeq)
 	}
 }
 
-// TestLeaseIDFromFlagsRejectsMissingDSeq covers the guard that stops a lease
-// call from being made against dseq 0, which the provider would answer with a
-// generic not-found.
-func TestLeaseIDFromFlagsRejectsMissingDSeq(t *testing.T) {
+// TestLeaseScopeRejectsMissingDSeq covers the guard that stops a lease call
+// from being made against dseq 0, which the provider would answer with a
+// generic not-found. The remedy must name --dseq here, because the command
+// under test registers it.
+func TestLeaseScopeRejectsMissingDSeq(t *testing.T) {
 	cmd := newProviderCmd(t)
 
-	addr := mustAddr(t)
-
-	if _, err := leaseIDFromFlags(cmd, nil, addr); err == nil {
+	if _, err := leaseScopeFromCmd(cmd, nil); err == nil {
 		t.Fatal("dseq 0 must be rejected")
 	} else if !strings.Contains(err.Error(), "dseq is required") {
 		t.Errorf("error should say dseq is required, got %q", err)
+	} else if !strings.Contains(err.Error(), "--dseq") {
+		t.Errorf("error should name the --dseq flag this command registers, got %q", err)
 	}
 }
 
-// TestLeaseIDFromFlagsRejectsNonNumericDSeq covers the positional parse error.
-func TestLeaseIDFromFlagsRejectsNonNumericDSeq(t *testing.T) {
+// TestLeaseScopeRejectsNonNumericDSeq covers the positional parse error.
+func TestLeaseScopeRejectsNonNumericDSeq(t *testing.T) {
 	cmd := newProviderCmd(t)
 
-	addr := mustAddr(t)
-
-	if _, err := leaseIDFromFlags(cmd, []string{"twelve"}, addr); err == nil {
+	if _, err := leaseScopeFromCmd(cmd, []string{"twelve"}); err == nil {
 		t.Fatal("a non-numeric positional dseq must be rejected")
 	} else if !strings.Contains(err.Error(), "invalid dseq") {
 		t.Errorf("error should name the bad dseq, got %q", err)
@@ -604,18 +593,64 @@ func TestAuthenticatedGatewayRejectsUnknownAuthTypeBeforeIdentityChecks(t *testi
 	}
 }
 
-// TestLeaseCommandsRequireProviderBeforeGatewayWork walks every lease-scoped
-// subcommand through its first guard. These commands take no positional
-// provider, so a missing --provider must be reported by name rather than
-// surfacing as a gateway construction failure.
-func TestLeaseCommandsRequireProviderBeforeGatewayWork(t *testing.T) {
+// TestLeaseCommandsBlameTheMissingDSeqNotTheProvider walks every lease-scoped
+// subcommand invoked with neither a deployment sequence nor a provider. The
+// deployment sequence is what the provider is resolved from, so it must be the
+// value the error names, and the remedy must name the form this particular
+// command actually accepts. The previous behavior reported "provider address
+// is required (positional argument or --provider flag)" on all eight, which
+// was doubly wrong: none of them takes a positional provider, and on four of
+// them the positional slot is the dseq, so following the hint produced a
+// second, more confusing parse error.
+func TestLeaseCommandsBlameTheMissingDSeqNotTheProvider(t *testing.T) {
+	cases := []struct {
+		args   []string
+		remedy string
+	}{
+		{[]string{"lease-status"}, "positional argument"},
+		{[]string{"lease-logs"}, "positional argument"},
+		{[]string{"lease-events"}, "positional argument"},
+		{[]string{"get-manifest"}, "positional argument"},
+		{[]string{"lease-shell", "--", "/bin/sh"}, "--dseq"},
+		{[]string{"send-manifest", "deploy.yaml"}, "--dseq"},
+		{[]string{"migrate-hostnames", "--hostnames", "a.example.com"}, "--dseq"},
+		{[]string{"migrate-endpoints", "--endpoints", "ep1"}, "--dseq"},
+	}
+
+	for _, tc := range cases {
+		root := Commands()
+		root.SetOut(&bytes.Buffer{})
+		root.SetErr(&bytes.Buffer{})
+		root.SetArgs(tc.args)
+
+		err := root.Execute()
+		if err == nil {
+			t.Errorf("%v without a dseq must fail", tc.args)
+			continue
+		}
+		if !strings.Contains(err.Error(), "dseq is required") {
+			t.Errorf("%v: error should name the missing dseq, got %v", tc.args, err)
+		}
+		if !strings.Contains(err.Error(), tc.remedy) {
+			t.Errorf("%v: error should offer %q, got %v", tc.args, tc.remedy, err)
+		}
+		if strings.Contains(err.Error(), "provider address is required") {
+			t.Errorf("%v: error still blames the provider: %v", tc.args, err)
+		}
+	}
+}
+
+// TestLeaseCommandsNeverAdvertiseAPositionalProvider pins the honesty of the
+// lease-command errors: not one of them accepts a provider positionally, so
+// none may suggest it.
+func TestLeaseCommandsNeverAdvertiseAPositionalProvider(t *testing.T) {
 	cases := [][]string{
 		{"lease-status", "1"},
 		{"lease-logs", "1"},
 		{"lease-events", "1"},
 		{"get-manifest", "1"},
 		{"lease-shell", "--dseq", "1", "--", "/bin/sh"},
-		{"send-manifest", "deploy.yaml"},
+		{"send-manifest", "deploy.yaml", "--dseq", "1"},
 		{"migrate-hostnames", "--dseq", "1", "--hostnames", "a.example.com"},
 		{"migrate-endpoints", "--dseq", "1", "--endpoints", "ep1"},
 	}
@@ -628,11 +663,16 @@ func TestLeaseCommandsRequireProviderBeforeGatewayWork(t *testing.T) {
 
 		err := root.Execute()
 		if err == nil {
-			t.Errorf("%v without a provider must fail", args)
+			t.Errorf("%v without a signing identity must fail", args)
 			continue
 		}
-		if !strings.Contains(err.Error(), "provider address is required") {
-			t.Errorf("%v: unexpected error %v", args, err)
+		// With a dseq present the next guard is the local signing identity,
+		// which every one of these needs before any provider work.
+		if !strings.Contains(err.Error(), "configured default account") {
+			t.Errorf("%v: error = %v, want the signing-identity remedy", args, err)
+		}
+		if strings.Contains(err.Error(), "positional argument or --provider") {
+			t.Errorf("%v: error suggests a positional provider that does not exist: %v", args, err)
 		}
 	}
 }

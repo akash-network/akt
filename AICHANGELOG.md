@@ -4,6 +4,42 @@
 
 ### Fixed
 
+- **Provider commands demanded a provider `akt` had already chosen, and
+  suggested a shortcut that did not work**: every lease-scoped `akt provider`
+  command now resolves the provider from the deployment's active lease on
+  chain, exactly as `akt console status <dseq>` already does, so `akt provider
+  lease-status 12345` needs no `--provider` for a deployment `akt` set up
+  itself. `--provider` remains an optional override for choosing between
+  several active leases, and never became a required flag. Ambiguity is refused
+  rather than guessed: the error distinguishes a deployment with no leases,
+  with no *active* lease (listing the states that exist), and with several
+  active leases (listing every provider address in full), and points at `akt
+  query market lease <dseq>`. The resolved lease also supplies `gseq`/`oseq`
+  unless they were named explicitly, so a lease on a re-ordered group is
+  reachable. `send-manifest` without `--provider` now delivers to every
+  provider with an active lease, the behavior the spec had documented but never
+  implemented. The guard order was inverted so a command missing everything
+  reports the missing deployment sequence instead of blaming the provider, and
+  the eight lease commands no longer advertise a positional provider argument
+  that none of them accepts — on four of them that positional slot is the
+  `dseq`, so following the old hint produced a second, more confusing parse
+  error.
+
+- **The documented provider lookup command did not exist**: `akt query
+  provider <address>` — the form printed in README.md, SPEC §3.8.5, and
+  DESIGN §7.1 — failed with `unknown command "akash1..." for "provider"`
+  because the group carried no positional argument. The provider query is now
+  positional-primary like `query deployment` and `query market lease`: an
+  address returns that provider, no argument lists them all, and the `list` and
+  `get` subcommands keep working unchanged.
+
+- **Provider spec documented flags that did not exist**: `--from` was listed on
+  every lease command but registered nowhere in the provider tree (the owner
+  comes from the context's `default-account`), and `migrate-hostnames` /
+  `migrate-endpoints` documented a `--destination-dseq` that has no
+  counterpart in the gateway API, which addresses the destination lease alone.
+  SPEC §2.4 now matches the command surface.
+
 - **Strict keyring validation blocked commands that never used a key**: the
   startup identity boundary now distinguishes no access, deferred access, and
   required access. Public queries, provider status, MCP startup, workflow

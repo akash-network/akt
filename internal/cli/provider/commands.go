@@ -4,6 +4,7 @@ package provider
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -13,18 +14,22 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
-	mtypes "pkg.akt.dev/go/node/market/v1"
+	manifest "pkg.akt.dev/go/manifest/v2beta3"
 	ptypes "pkg.akt.dev/go/node/provider/v1beta4"
 	rest "pkg.akt.dev/go/provider/client"
 	"pkg.akt.dev/go/sdl"
 
 	"pkg.akt.dev/akt/internal/capability"
 	chaincli "pkg.akt.dev/akt/internal/cli/chain"
-	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	aktclient "pkg.akt.dev/akt/internal/client"
 	"pkg.akt.dev/akt/internal/output"
 	aktprovider "pkg.akt.dev/akt/internal/provider"
 )
+
+// leaseProviderHelp is appended to every lease-scoped command's long help so
+// the auto-resolution documented in SPEC §2.4 is discoverable from --help.
+const leaseProviderHelp = "The provider is resolved from the deployment's active lease on chain, " +
+	"so --provider is only needed to choose between several active leases or to override the lookup."
 
 // Commands returns the `akt provider` command group.
 func Commands() *cobra.Command {
@@ -38,7 +43,7 @@ func Commands() *cobra.Command {
 	}
 
 	cmd.PersistentFlags().String("auth-type", "", "Provider auth type: jwt (default) or mtls")
-	cmd.PersistentFlags().String("provider", "", "Provider address (bech32)")
+	cmd.PersistentFlags().String("provider", "", "Provider address (bech32); default: the deployment's active lease")
 	cmd.PersistentFlags().String("provider-url", "", "Provider gateway URL (e.g. https://provider.example.com:8443)")
 
 	cmd.AddCommand(
@@ -97,24 +102,23 @@ func leaseStatusCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "lease-status [dseq]",
 		Short: "Query lease deployment status",
-		Long:  "Query the live status of a lease from a provider, including service status, forwarded ports, and IPs.",
-		Args:  cobra.MaximumNArgs(1),
-		Example: `  # Query lease status (positional dseq)
+		Long: "Query the live status of a lease from a provider, including service status, forwarded " +
+			"ports, and IPs. " + leaseProviderHelp,
+		Args: cobra.MaximumNArgs(1),
+		Example: `  # Query lease status (provider resolved from the active lease)
+  akt provider lease-status 12345
+
+  # Pin the provider when several leases are active
   akt provider lease-status 12345 --provider akash1...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
-			providerAddr, providerURL, err := resolveAuthenticatedProvider(cmd, nil)
+			lid, providerURL, err := resolveAuthenticatedLease(cmd, args)
 			if err != nil {
 				return err
 			}
 
 			cl, err := gatewayClientFromCmd(cmd, providerURL)
-			if err != nil {
-				return err
-			}
-
-			lid, err := leaseIDFromFlags(cmd, args, providerAddr)
 			if err != nil {
 				return err
 			}
@@ -137,16 +141,20 @@ func leaseLogsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "lease-logs [dseq]",
 		Short: "Stream container logs",
-		Long:  "Stream container logs from a lease. Supports filtering by service and following output.",
-		Args:  cobra.MaximumNArgs(1),
-		Example: `  # Stream logs for all services (positional dseq)
-  akt provider lease-logs 12345 --provider akash1...
+		Long: "Stream container logs from a lease. Supports filtering by service and following " +
+			"output. " + leaseProviderHelp,
+		Args: cobra.MaximumNArgs(1),
+		Example: `  # Stream logs for all services (provider resolved from the active lease)
+  akt provider lease-logs 12345
 
   # Follow logs for a specific service
-  akt provider lease-logs 12345 --provider akash1... --service web --follow
+  akt provider lease-logs 12345 --service web --follow
 
   # Show last 100 lines
-  akt provider lease-logs 12345 --provider akash1... --tail 100`,
+  akt provider lease-logs 12345 --tail 100
+
+  # Pin the provider when several leases are active
+  akt provider lease-logs 12345 --provider akash1...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			follow, _ := cmd.Flags().GetBool("follow")
@@ -156,17 +164,12 @@ func leaseLogsCmd() *cobra.Command {
 				return err
 			}
 
-			providerAddr, providerURL, err := resolveAuthenticatedProvider(cmd, nil)
+			lid, providerURL, err := resolveAuthenticatedLease(cmd, args)
 			if err != nil {
 				return err
 			}
 
 			cl, err := gatewayClientFromCmd(cmd, providerURL)
-			if err != nil {
-				return err
-			}
-
-			lid, err := leaseIDFromFlags(cmd, args, providerAddr)
 			if err != nil {
 				return err
 			}
@@ -196,28 +199,26 @@ func leaseEventsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "lease-events [dseq]",
 		Short: "Stream Kubernetes events",
-		Long:  "Stream Kubernetes events for a lease from the provider.",
+		Long:  "Stream Kubernetes events for a lease from the provider. " + leaseProviderHelp,
 		Args:  cobra.MaximumNArgs(1),
-		Example: `  # Stream events (positional dseq)
-  akt provider lease-events 12345 --provider akash1...
+		Example: `  # Stream events (provider resolved from the active lease)
+  akt provider lease-events 12345
 
   # Follow events
-  akt provider lease-events 12345 --provider akash1... --follow`,
+  akt provider lease-events 12345 --follow
+
+  # Pin the provider when several leases are active
+  akt provider lease-events 12345 --provider akash1...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			follow, _ := cmd.Flags().GetBool("follow")
 
-			providerAddr, providerURL, err := resolveAuthenticatedProvider(cmd, nil)
+			lid, providerURL, err := resolveAuthenticatedLease(cmd, args)
 			if err != nil {
 				return err
 			}
 
 			cl, err := gatewayClientFromCmd(cmd, providerURL)
-			if err != nil {
-				return err
-			}
-
-			lid, err := leaseIDFromFlags(cmd, args, providerAddr)
 			if err != nil {
 				return err
 			}
@@ -245,19 +246,23 @@ func leaseShellCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "lease-shell [-- command...]",
 		Short: "Open interactive shell",
-		Long:  "Open an interactive shell session to a container in a lease. The remote command defaults to /bin/sh.",
-		Args:  cobra.ArbitraryArgs,
+		Long: "Open an interactive shell session to a container in a lease. The remote command " +
+			"defaults to /bin/sh. " + leaseProviderHelp,
+		Args: cobra.ArbitraryArgs,
 		Example: `  # Open the default /bin/sh shell
-  akt provider lease-shell --dseq 12345 --provider akash1... --service web
+  akt provider lease-shell --dseq 12345 --service web
 
   # Open a bash shell
-  akt provider lease-shell --dseq 12345 --provider akash1... --service web -- /bin/bash
+  akt provider lease-shell --dseq 12345 --service web -- /bin/bash
 
   # Run a single command
-  akt provider lease-shell --dseq 12345 --provider akash1... --service web -- ls -la
+  akt provider lease-shell --dseq 12345 --service web -- ls -la
 
   # Capture an explicit command as structured stdout and stderr
-  akt provider lease-shell --dseq 12345 --provider akash1... --service web -o json -- pwd`,
+  akt provider lease-shell --dseq 12345 --service web -o json -- pwd
+
+  # Pin the provider when several leases are active
+  akt provider lease-shell --dseq 12345 --provider akash1... --service web`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			shellCtx, cancelShell := context.WithCancel(ctx)
@@ -267,19 +272,14 @@ func leaseShellCmd() *cobra.Command {
 				return err
 			}
 
-			providerAddr, providerURL, err := resolveAuthenticatedProvider(cmd, nil)
+			// lease-shell consumes its positional args as the remote command,
+			// so dseq must come from the --dseq flag here.
+			lid, providerURL, err := resolveAuthenticatedLease(cmd, nil)
 			if err != nil {
 				return err
 			}
 
 			cl, err := gatewayClientFromCmd(cmd, providerURL)
-			if err != nil {
-				return err
-			}
-
-			// lease-shell consumes its positional args as the remote command,
-			// so dseq must come from the --dseq flag here.
-			lid, err := leaseIDFromFlags(cmd, nil, providerAddr)
 			if err != nil {
 				return err
 			}
@@ -321,26 +321,25 @@ func sendManifestCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "send-manifest <sdl-file>",
 		Short: "Send SDL manifest to provider",
-		Long:  "Parse an SDL file and submit the resulting manifest to the provider for a deployment.",
-		Args:  cobra.ExactArgs(1),
-		Example: `  # Send manifest from SDL file
+		Long: "Parse an SDL file and submit the resulting manifest to the deployment's providers. " +
+			"Without --provider the manifest goes to every provider holding an active lease for " +
+			"the deployment; each one is attempted even if an earlier one rejects it.",
+		Args: cobra.ExactArgs(1),
+		Example: `  # Send the manifest to every provider with an active lease
+  akt provider send-manifest deploy.yaml --dseq 12345
+
+  # Send it to one specific provider
   akt provider send-manifest deploy.yaml --dseq 12345 --provider akash1...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
-			providerAddr, providerURL, err := resolveAuthenticatedProvider(cmd, nil)
+			scope, err := leaseScopeFromCmd(cmd, nil)
 			if err != nil {
 				return err
 			}
 
-			cl, err := gatewayClientFromCmd(cmd, providerURL)
-			if err != nil {
+			if _, _, _, err := gatewayAuthenticationFromCmd(cmd); err != nil {
 				return err
-			}
-
-			dseq, _ := cmd.Flags().GetUint64("dseq")
-			if dseq == 0 {
-				return fmt.Errorf("--dseq is required")
 			}
 
 			sdlManifest, err := sdl.ReadFile(args[0])
@@ -353,14 +352,24 @@ func sendManifestCmd() *cobra.Command {
 				return fmt.Errorf("build manifest from SDL: %w", err)
 			}
 
-			err = cl.SubmitManifest(ctx, dseq, mani)
-			recordProviderAction(ctx, "send-manifest", providerAddr.String(), dseq, err)
+			providers, err := sendManifestTargets(cmd, scope, chainLeaseQuery(cmd))
 			if err != nil {
-				return aktprovider.GatewayError("submit manifest", err)
+				return err
 			}
 
-			fmt.Fprintln(cmd.OutOrStdout(), "Manifest submitted successfully.")
-			return nil
+			var failures []error
+			for _, provider := range providers {
+				err := submitManifest(cmd, provider, scope.DSeq, mani)
+				recordProviderAction(ctx, "send-manifest", provider, scope.DSeq, err)
+				if err != nil {
+					failures = append(failures, fmt.Errorf("provider %s: %w", provider, err))
+					continue
+				}
+
+				fmt.Fprintf(cmd.OutOrStdout(), "Manifest submitted successfully to %s.\n", provider)
+			}
+
+			return errors.Join(failures...)
 		},
 	}
 
@@ -369,28 +378,74 @@ func sendManifestCmd() *cobra.Command {
 	return cmd
 }
 
+// sendManifestTargets resolves the providers a manifest is delivered to: the
+// explicit --provider, or every provider with an active lease for the
+// deployment (SPEC §2.4).
+func sendManifestTargets(cmd *cobra.Command, scope leaseScope, leases leaseQuery) ([]string, error) {
+	if addrStr, _ := cmd.Flags().GetString("provider"); addrStr != "" {
+		addr, err := sdk.AccAddressFromBech32(addrStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid provider address %q: %w", addrStr, err)
+		}
+
+		return []string{addr.String()}, nil
+	}
+
+	providers, err := activeLeaseProviders(cmd.Context(), scope, leases)
+	if err != nil {
+		return nil, err
+	}
+
+	// A single explicit gateway URL cannot stand in for several providers.
+	if providerURL, _ := cmd.Flags().GetString("provider-url"); providerURL != "" && len(providers) > 1 {
+		return nil, fmt.Errorf(
+			"--provider-url addresses one gateway but deployment %d has %d active leases; add --provider to choose one",
+			scope.DSeq, len(providers))
+	}
+
+	return providers, nil
+}
+
+// submitManifest delivers the manifest to one provider, resolving that
+// provider's gateway on the way.
+func submitManifest(cmd *cobra.Command, provider string, dseq uint64, mani manifest.Manifest) error {
+	providerURL, err := gatewayURL(cmd, provider, providerHostURILookup(cmd))
+	if err != nil {
+		return err
+	}
+
+	cl, err := gatewayClientFromCmd(cmd, providerURL)
+	if err != nil {
+		return err
+	}
+
+	if err := cl.SubmitManifest(cmd.Context(), dseq, mani); err != nil {
+		return aktprovider.GatewayError("submit manifest", err)
+	}
+
+	return nil
+}
+
 func getManifestCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "get-manifest [dseq]",
 		Short: "Retrieve current manifest",
-		Long:  "Retrieve the current manifest for a lease from the provider.",
+		Long:  "Retrieve the current manifest for a lease from the provider. " + leaseProviderHelp,
 		Args:  cobra.MaximumNArgs(1),
-		Example: `  # Get manifest for a lease (positional dseq)
+		Example: `  # Get manifest for a lease (provider resolved from the active lease)
+  akt provider get-manifest 12345
+
+  # Pin the provider when several leases are active
   akt provider get-manifest 12345 --provider akash1...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 
-			providerAddr, providerURL, err := resolveAuthenticatedProvider(cmd, nil)
+			lid, providerURL, err := resolveAuthenticatedLease(cmd, args)
 			if err != nil {
 				return err
 			}
 
 			cl, err := gatewayClientFromCmd(cmd, providerURL)
-			if err != nil {
-				return err
-			}
-
-			lid, err := leaseIDFromFlags(cmd, args, providerAddr)
 			if err != nil {
 				return err
 			}
@@ -413,14 +468,24 @@ func migrateHostnamesCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "migrate-hostnames",
 		Short: "Migrate hostnames between deployments",
-		Long:  "Migrate hostnames from one deployment to another on the same provider.",
-		Args:  cobra.NoArgs,
+		Long: "Migrate hostnames onto a deployment from whichever deployment currently holds them " +
+			"on the same provider. --dseq/--gseq address the destination lease; the provider is " +
+			"resolved from that deployment's active lease unless --provider names one.",
+		Args: cobra.NoArgs,
 		Example: `  # Migrate hostnames to a new deployment
-  akt provider migrate-hostnames --dseq 12345 --gseq 1 --provider akash1... --hostnames example.com,app.example.com`,
+  akt provider migrate-hostnames --dseq 12345 --hostnames example.com,app.example.com
+
+  # Pin the destination group and provider
+  akt provider migrate-hostnames --dseq 12345 --gseq 1 --provider akash1... --hostnames example.com`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 
-			providerAddr, providerURL, err := resolveAuthenticatedProvider(cmd, nil)
+			hostnames, _ := cmd.Flags().GetStringSlice("hostnames")
+			if len(hostnames) == 0 {
+				return fmt.Errorf("--hostnames is required")
+			}
+
+			lid, providerURL, err := resolveAuthenticatedLease(cmd, nil)
 			if err != nil {
 				return err
 			}
@@ -430,19 +495,8 @@ func migrateHostnamesCmd() *cobra.Command {
 				return err
 			}
 
-			dseq, _ := cmd.Flags().GetUint64("dseq")
-			if dseq == 0 {
-				return fmt.Errorf("--dseq is required")
-			}
-
-			gseq, _ := cmd.Flags().GetUint32("gseq")
-			hostnames, _ := cmd.Flags().GetStringSlice("hostnames")
-			if len(hostnames) == 0 {
-				return fmt.Errorf("--hostnames is required")
-			}
-
-			err = cl.MigrateHostnames(ctx, hostnames, dseq, gseq)
-			recordProviderAction(ctx, "migrate-hostnames", providerAddr.String(), dseq, err)
+			err = cl.MigrateHostnames(ctx, hostnames, lid.DSeq, lid.GSeq)
+			recordProviderAction(ctx, "migrate-hostnames", lid.Provider, lid.DSeq, err)
 			if err != nil {
 				return aktprovider.GatewayError("migrate hostnames", err)
 			}
@@ -463,14 +517,24 @@ func migrateEndpointsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "migrate-endpoints",
 		Short: "Migrate endpoints between deployments",
-		Long:  "Migrate endpoints from one deployment to another on the same provider.",
-		Args:  cobra.NoArgs,
+		Long: "Migrate IP endpoints onto a deployment from whichever deployment currently holds them " +
+			"on the same provider. --dseq/--gseq address the destination lease; the provider is " +
+			"resolved from that deployment's active lease unless --provider names one.",
+		Args: cobra.NoArgs,
 		Example: `  # Migrate endpoints to a new deployment
-  akt provider migrate-endpoints --dseq 12345 --gseq 1 --provider akash1... --endpoints ep1,ep2`,
+  akt provider migrate-endpoints --dseq 12345 --endpoints ep1,ep2
+
+  # Pin the destination group and provider
+  akt provider migrate-endpoints --dseq 12345 --gseq 1 --provider akash1... --endpoints ep1`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 
-			providerAddr, providerURL, err := resolveAuthenticatedProvider(cmd, nil)
+			endpoints, _ := cmd.Flags().GetStringSlice("endpoints")
+			if len(endpoints) == 0 {
+				return fmt.Errorf("--endpoints is required")
+			}
+
+			lid, providerURL, err := resolveAuthenticatedLease(cmd, nil)
 			if err != nil {
 				return err
 			}
@@ -480,19 +544,8 @@ func migrateEndpointsCmd() *cobra.Command {
 				return err
 			}
 
-			dseq, _ := cmd.Flags().GetUint64("dseq")
-			if dseq == 0 {
-				return fmt.Errorf("--dseq is required")
-			}
-
-			gseq, _ := cmd.Flags().GetUint32("gseq")
-			endpoints, _ := cmd.Flags().GetStringSlice("endpoints")
-			if len(endpoints) == 0 {
-				return fmt.Errorf("--endpoints is required")
-			}
-
-			err = cl.MigrateEndpoints(ctx, endpoints, dseq, gseq)
-			recordProviderAction(ctx, "migrate-endpoints", providerAddr.String(), dseq, err)
+			err = cl.MigrateEndpoints(ctx, endpoints, lid.DSeq, lid.GSeq)
+			recordProviderAction(ctx, "migrate-endpoints", lid.Provider, lid.DSeq, err)
 			if err != nil {
 				return aktprovider.GatewayError("migrate endpoints", err)
 			}
@@ -532,38 +585,6 @@ func addLeaseShellFlags(cmd *cobra.Command) {
 	cmd.Flags().Uint32("oseq", 1, "Order sequence number")
 }
 
-// leaseIDFromFlags builds a LeaseID from the command flags and an optional
-// positional dseq argument. Only lease-shell still registers --dseq
-// (FEEDBACK 2026-07: the flag is disabled on the positional-[dseq] commands
-// for the positional-only UX trial); for those commands the flag lookup
-// below yields zero and the positional argument is the sole source.
-func leaseIDFromFlags(cmd *cobra.Command, args []string, provider sdk.AccAddress) (mtypes.LeaseID, error) {
-	cctx := sdkclient.GetClientContextFromCmd(cmd)
-	owner := cctx.GetFromAddress()
-
-	dseq, _ := cmd.Flags().GetUint64("dseq")
-
-	dseq, err := cflags.DSeqFromArgs(args, dseq)
-	if err != nil {
-		return mtypes.LeaseID{}, err
-	}
-
-	if dseq == 0 {
-		return mtypes.LeaseID{}, fmt.Errorf("dseq is required: provide the positional [dseq] argument (or --dseq for lease-shell)")
-	}
-
-	gseq, _ := cmd.Flags().GetUint32("gseq")
-	oseq, _ := cmd.Flags().GetUint32("oseq")
-
-	return mtypes.LeaseID{
-		Owner:    owner.String(),
-		DSeq:     dseq,
-		GSeq:     gseq,
-		OSeq:     oseq,
-		Provider: provider.String(),
-	}, nil
-}
-
 // resolveProvider resolves the provider address and its on-chain HostURI. An
 // explicit --provider-url remains an override for diagnostics and private
 // gateways.
@@ -571,7 +592,7 @@ func resolveProvider(cmd *cobra.Command, args []string) (sdk.AccAddress, string,
 	return resolveProviderWithLookup(cmd, args, providerHostURILookup(cmd))
 }
 
-func providerHostURILookup(cmd *cobra.Command) func(context.Context, string) (string, error) {
+func providerHostURILookup(cmd *cobra.Command) hostURIQuery {
 	return func(ctx context.Context, owner string) (string, error) {
 		cctx, err := providerQueryContext(cmd)
 		if err != nil {
@@ -587,18 +608,6 @@ func providerHostURILookup(cmd *cobra.Command) func(context.Context, string) (st
 	}
 }
 
-func resolveAuthenticatedProvider(cmd *cobra.Command, args []string) (sdk.AccAddress, string, error) {
-	return resolveProviderWithLookupAndPreflight(
-		cmd,
-		args,
-		providerHostURILookup(cmd),
-		func() error {
-			_, _, _, err := gatewayAuthenticationFromCmd(cmd)
-			return err
-		},
-	)
-}
-
 func providerQueryContext(cmd *cobra.Command) (sdkclient.Context, error) {
 	cctx, err := chaincli.GetClientQueryContext(cmd)
 	if err != nil {
@@ -611,19 +620,15 @@ func providerQueryContext(cmd *cobra.Command) (sdkclient.Context, error) {
 	return cctx, nil
 }
 
+// resolveProviderWithLookup backs `provider status`, the one command whose
+// primary value genuinely is the provider address: it accepts it positionally,
+// with --provider as the flag alternative. Lease-scoped commands never come
+// through here — their positional slot is the dseq and their provider is
+// resolved from the lease (see lease.go).
 func resolveProviderWithLookup(
 	cmd *cobra.Command,
 	args []string,
-	lookup func(context.Context, string) (string, error),
-) (sdk.AccAddress, string, error) {
-	return resolveProviderWithLookupAndPreflight(cmd, args, lookup, nil)
-}
-
-func resolveProviderWithLookupAndPreflight(
-	cmd *cobra.Command,
-	args []string,
-	lookup func(context.Context, string) (string, error),
-	preflight func() error,
+	lookup hostURIQuery,
 ) (sdk.AccAddress, string, error) {
 	var addrStr string
 
@@ -641,23 +646,10 @@ func resolveProviderWithLookupAndPreflight(
 	if err != nil {
 		return nil, "", fmt.Errorf("invalid provider address %q: %w", addrStr, err)
 	}
-	if preflight != nil {
-		if err := preflight(); err != nil {
-			return nil, "", err
-		}
-	}
 
-	providerURL, _ := cmd.Flags().GetString("provider-url")
-	if providerURL != "" {
-		return addr, providerURL, nil
-	}
-
-	providerURL, err = lookup(cmd.Context(), addr.String())
+	providerURL, err := gatewayURL(cmd, addr.String(), lookup)
 	if err != nil {
 		return nil, "", err
-	}
-	if providerURL == "" {
-		return nil, "", fmt.Errorf("provider %s has no host URI on chain", addr)
 	}
 
 	return addr, providerURL, nil
