@@ -287,26 +287,29 @@ The context is resolved once at application startup and propagated through the e
 
 The resolved context is injected into every service: chain client, provider gateway, sync engine, store, action log, and TUI models.
 
-**Local identity is resolved only where it is needed.** A command declares
-whether it needs the local signing identity — the keyring and the account
-`default-account` names. Startup opens the context's keyring and resolves a
-named `default-account` only for commands that declare that need: transactions,
-workflow execution, provider gateway operations, owner-scoped queries, key
-management, and the MCP server. Commands that are defined to run without a
-signer — SDL authoring (§2.11), monitoring (§2.6), version, completion, store,
-context management, and the Console rail — MUST NOT open a keyring and MUST NOT
-resolve a named account, because both actions can prompt for a passphrase or an
-OS unlock that the command has no use for. An address-valued `default-account`
-is parsed directly and never requires keyring access.
+**Local identity is resolved only where it is needed.** Identity access has
+three modes, selected at the command boundary:
 
-Queries are the one case where declaring the need does not imply using it.
-Building the client context for a query MUST NOT *unlock* a keyring solely
-because `default-account` is configured: a named default account is resolved
-only when an omitted owner filter needs its address. A network-wide query, or an
-owner-scoped query supplied an explicit owner address, MUST execute without any
-keyring read. The keyring is opened so the address can be resolved on demand;
-opening is not unlocking, and no passphrase is requested unless a name has to be
-turned into an address.
+- **none** — the command never receives a keyring. SDL authoring (§2.11),
+  monitoring (§2.6), version, completion, store, context management, the
+  Console rail, and workflow dry-runs use this mode.
+- **on demand** — the client context receives a deferred keyring that does not
+  open its configured backend until an operation actually asks for a key. Chain
+  queries, read-only MCP startup, public provider status, and address-based
+  transaction construction or simulation use this mode.
+- **required** — startup opens the keyring and resolves a named account before
+  execution. Transactions that sign, workflow execution, and authenticated
+  provider operations use this mode.
+
+Opening a file or OS keyring can itself prompt, fail on a headless host, or ask
+the desktop to unlock. An on-demand command therefore MUST NOT open the backend
+merely because `default-account` is configured. A named default account is
+resolved only when an omitted owner or an authenticated operation needs its
+address. Network-wide queries, explicitly scoped queries, `akt provider
+status`, and MCP startup MUST run without any keyring access. An address-valued
+`default-account` or `--from` is parsed directly and never requires keyring
+access for `--generate-only` or `--dry-run`; a signer name opens the deferred
+keyring when it is resolved.
 
 ### 1.8 Live Reload
 
@@ -2149,6 +2152,14 @@ observing these process signals.
 
 **Default account handling:** Tools that accept an `owner` parameter (e.g., `akash_list_deployments`, `akash_list_leases`) default to the context's `default-account` when the parameter is omitted. If no `default-account` is configured (e.g., a monitoring-only context), the `owner` parameter is **required** — the tool returns an error explaining that the owner must be specified explicitly when no default account is available.
 
+Starting the MCP server is an on-demand identity operation (§1.7). Listing
+tools and invoking public or explicitly scoped read tools MUST NOT open the
+configured keyring. A read tool that omits its owner resolves a named
+`default-account` when that call is handled. On a keyring context,
+`--enable-writes` explicitly opts into resolving the signer during startup so
+every advertised chain/provider write tool is usable. Enabling writes on a
+Console-only context does not make that context require a local keyring.
+
 **Numeric argument contract:** Sequence identifiers (`dseq`, `gseq`, and
 `oseq`) are positive whole numbers. Pagination values (`skip` and `limit`) are
 non-negative whole numbers; zero retains the documented default behavior.
@@ -2552,7 +2563,10 @@ never an SDK panic.
 
 `--generate-only` accepts a signer address that is not stored in the local
 keyring. The address identifies the unsigned message and does not imply a
-signing-key lookup. A signer name still resolves through the selected keyring.
+signing-key lookup or even opening the configured backend. `--dry-run` has the
+same address-only identity contract because simulation does not sign. A signer
+name still resolves through the selected keyring on demand. A transaction that
+will sign opens and validates its keyring during startup.
 Multisign assembly accepts only a legacy amino multisig record and validates
 that each signature batch contains an entry for every transaction before
 indexing it; ordinary keys and short batches are normal input errors, never

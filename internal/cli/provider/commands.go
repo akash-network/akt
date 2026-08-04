@@ -21,6 +21,7 @@ import (
 	"pkg.akt.dev/akt/internal/capability"
 	chaincli "pkg.akt.dev/akt/internal/cli/chain"
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	aktclient "pkg.akt.dev/akt/internal/client"
 	"pkg.akt.dev/akt/internal/output"
 	aktprovider "pkg.akt.dev/akt/internal/provider"
 )
@@ -689,7 +690,13 @@ func gatewayClientFromCmd(cmd *cobra.Command, providerURL string) (rest.Client, 
 func gatewayAuthenticationFromCmd(cmd *cobra.Command) (sdkclient.Context, sdk.AccAddress, string, error) {
 	cctx := sdkclient.GetClientContextFromCmd(cmd)
 	authType, _ := cmd.Flags().GetString("auth-type")
-	addr := cctx.GetFromAddress()
+	addr, err := aktclient.ResolveAccountAddress(cctx)
+	if err != nil {
+		return sdkclient.Context{}, nil, "", err
+	}
+	if !addr.Empty() {
+		cctx = cctx.WithFromAddress(addr)
+	}
 	if err := aktprovider.ValidateGatewayAuthentication(addr, authType, cctx.Keyring); err != nil {
 		return sdkclient.Context{}, nil, "", err
 	}

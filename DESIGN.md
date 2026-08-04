@@ -260,27 +260,24 @@ such as `tcp://localhost:26657` must never replace a resolved endpoint. Local
 transaction leaves use the same pre-run boundary; a leaf that needs codecs or
 clients cannot reach its handler without that initialization.
 
-Step 2 loads the keyring only for commands that declare a need for the local
-signing identity. The startup boundary is uniform, but "resolve the context"
-and "unlock the user's keys" are separate decisions: opening a keyring can
-prompt for a passphrase or an OS unlock, so a command that will never sign must
-not trigger one. The decision lives next to the existing `requiresConfig` /
-`requiresContext` predicates as `requiresLocalIdentity`, and the root passes it
-down explicitly rather than letting the client layer guess from command names.
-When it is false the client context is built with a nil keyring and a named
-`default-account` is left unresolved; an address-valued default is still parsed,
-because that costs nothing. This is what makes `akt sdl validate` and
-`akt monitor` keep the "runs entirely locally" promise on a machine that has a
-context configured.
+Step 2 assigns one of three identity modes: none, on demand, or required.
+"Resolve the context" and "open the user's key store" are separate decisions
+because opening a backend can prompt, fail on a headless host, or request an OS
+unlock. None supplies no keyring. On demand supplies a deferred keyring whose
+backend opens on the first real key operation. Required opens and resolves the
+signer during startup. The decision lives next to `requiresConfig` and
+`requiresContext` as `localIdentityMode`; the root passes the typed result down
+rather than making the client layer infer behavior from command names.
 
-Queries declare the need but do not spend it eagerly. Query context assembly
-carries the configured default-account reference without unlocking the keyring
-merely because the context has one: a named default account is resolved only
-when the query's own omitted owner filter requires that address. Network-wide
-queries and queries given an explicit owner never read a key. An address-valued
-default is parsed directly and costs nothing either way. Transaction, workflow,
-and authenticated provider paths keep their existing signer resolution because
-those operations actually need the local identity.
+Queries, public provider status, and MCP startup use the deferred form. A named
+default account resolves only when an omitted owner or protected gateway call
+needs it, so network-wide and explicitly scoped reads never open a key store.
+Address-based transaction generation and simulation also stay deferred; the SDK
+can build or simulate from the bech32 address without proving that the key is
+local. Signing transactions, executing workflows, and protected provider calls
+remain eager. `mcp --enable-writes` promotes a keyring context to eager so its
+advertised chain writes are usable, but a Console-only context remains
+keyring-free. Purely local commands and workflow dry-runs receive no keyring.
 
 #### 3.1.2.1 Keyring Backend Resolution
 

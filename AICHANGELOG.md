@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- **Strict keyring validation blocked commands that never used a key**: the
+  startup identity boundary now distinguishes no access, deferred access, and
+  required access. Public queries, provider status, MCP startup, workflow
+  dry-runs, and address-only transaction generation/simulation no longer open
+  an unavailable OS backend. Owner-defaulting and authenticated calls still
+  resolve named accounts at the first operation that needs them.
+
 - **Network-wide queries unlocked the configured keyring unnecessarily**:
   query initialization now carries a named default account without resolving
   it. Only an omitted owner filter that needs the account opens the keyring;

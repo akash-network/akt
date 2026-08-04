@@ -7,7 +7,9 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strings"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
@@ -21,6 +23,16 @@ import (
 
 	arpcclient "pkg.akt.dev/go/node/client"
 	"pkg.akt.dev/go/sdkutil"
+)
+
+// LocalIdentityMode controls when command startup may open the selected
+// context's keyring (SPEC §1.7).
+type LocalIdentityMode uint8
+
+const (
+	LocalIdentityNone LocalIdentityMode = iota
+	LocalIdentityOnDemand
+	LocalIdentityRequired
 )
 
 // BuildClientContext constructs a fully populated Cosmos SDK client.Context
@@ -104,6 +116,40 @@ func buildClientContext(
 	return cctx
 }
 
+// ResolveAccountAddress resolves the account carried by cctx. Address-valued
+// accounts are parsed without consulting the keyring; named accounts trigger
+// the first key operation on an on-demand keyring.
+func ResolveAccountAddress(cctx sdkclient.Context) (sdk.AccAddress, error) {
+	if addr := cctx.GetFromAddress(); !addr.Empty() {
+		return addr, nil
+	}
+
+	from := strings.TrimSpace(cctx.From)
+	if from == "" {
+		return nil, nil
+	}
+
+	if addr, err := sdk.AccAddressFromBech32(from); err == nil {
+		return addr, nil
+	}
+
+	if cctx.Keyring == nil {
+		return nil, fmt.Errorf("resolve account %q: keyring is unavailable", from)
+	}
+
+	record, err := cctx.Keyring.Key(from)
+	if err != nil {
+		return nil, fmt.Errorf("resolve account %q: %w", from, err)
+	}
+
+	addr, err := record.GetAddress()
+	if err != nil {
+		return nil, fmt.Errorf("resolve account %q address: %w", from, err)
+	}
+
+	return addr, nil
+}
+
 // InitClientContext initializes the Cosmos SDK client context on a cobra command.
 // This must be called in the root PersistentPreRunE before any chain-sdk CLI
 // commands execute. It stores the client.Context in the cobra context the same
@@ -153,13 +199,9 @@ func initClientContext(
 // keyring, and initializes the SDK client context on the command. Used in
 // the root PersistentPreRunE. Returns true if a context was resolved.
 //
-// needsLocalIdentity is the caller's explicit decision about whether this
-// invocation can need the local signing identity (SPEC §1.7). When it is
-// false the keyring is not opened and a named default account is left
-// unresolved, because both can prompt for a passphrase or an OS unlock that
-// the command has no use for. The root command decides this via
-// requiresLocalIdentity; the client layer must not infer it from command
-// names.
+// identityMode is the caller's explicit decision about when this invocation
+// may open the local signing identity (SPEC §1.7). The client layer does not
+// infer that policy from command names.
 func MustResolveAndInit(
 	cmd *cobra.Command,
 	mgr *aktctx.Manager,
@@ -167,7 +209,7 @@ func MustResolveAndInit(
 	enc sdkutil.EncodingConfig,
 	contextOverride string,
 	fromOverride string,
-	needsLocalIdentity bool,
+	identityMode LocalIdentityMode,
 ) (bool, error) {
 	ctxName := contextOverride
 	if ctxName == "" {
@@ -189,31 +231,35 @@ func MustResolveAndInit(
 		return false, err
 	}
 
+	// Console contexts never use a local wallet. Even a command that can write
+	// selects the managed rail and must not turn that capability into a local
+	// keyring requirement.
+	if rc.AuthMethod == aktctx.AuthMethodConsoleAPI {
+		identityMode = LocalIdentityNone
+	}
+
 	// A nil keyring is a deliberate, complete answer for commands that declare
-	// no local identity: BuildClientContext leaves a named account unresolved
-	// and still parses an address-valued default.
+	// no local identity. On-demand commands receive a proxy that opens the
+	// backend only when a key operation is actually requested.
 	var kr sdkkeyring.Keyring
-	if needsLocalIdentity {
+	resolveNamedAccount := false
+	if identityMode != LocalIdentityNone {
 		krName := rc.Keyring.Name
 		if krName == "" {
 			krName = "default"
 		}
 
-		kr, err = krMgr.Get(krName)
-		if err != nil {
-			return false, err
+		switch identityMode {
+		case LocalIdentityOnDemand:
+			kr = krMgr.Deferred(krName)
+		case LocalIdentityRequired:
+			kr, err = krMgr.Get(krName)
+			if err != nil {
+				return false, err
+			}
+			resolveNamedAccount = true
 		}
 	}
 
-	return true, initClientContext(cmd, rc, kr, enc, fromOverride, !isQueryCommand(cmd))
-}
-
-func isQueryCommand(cmd *cobra.Command) bool {
-	for current := cmd; current != nil; current = current.Parent() {
-		if current.Name() == "query" {
-			return true
-		}
-	}
-
-	return false
+	return true, initClientContext(cmd, rc, kr, enc, fromOverride, resolveNamedAccount)
 }

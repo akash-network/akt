@@ -100,7 +100,7 @@ func TestOfflineCommandsDoNotOpenTheKeyring(t *testing.T) {
 
 			leaf := commandTree(path...)
 
-			resolved, err := MustResolveAndInit(leaf, mgr, keyrings, enc, "", "", false)
+			resolved, err := MustResolveAndInit(leaf, mgr, keyrings, enc, "", "", LocalIdentityNone)
 			require.NoError(t, err)
 			require.True(t, resolved)
 			require.Zero(t, input.reads, "an offline command must not read the keyring passphrase prompt")
@@ -120,13 +120,70 @@ func TestSignerCommandsStillResolveTheDefaultAccount(t *testing.T) {
 
 	leaf := commandTree("tx", "bank", "send")
 
-	resolved, err := MustResolveAndInit(leaf, mgr, keyrings, enc, "", "", true)
+	resolved, err := MustResolveAndInit(leaf, mgr, keyrings, enc, "", "", LocalIdentityRequired)
 	require.NoError(t, err)
 	require.True(t, resolved)
 
 	cctx := sdkclient.GetClientContextFromCmd(leaf)
 	require.Equal(t, "alice", cctx.FromName)
 	require.False(t, cctx.GetFromAddress().Empty())
+}
+
+func TestOnDemandIdentityOpensOnlyWhenAKeyIsUsed(t *testing.T) {
+	mgr, keyringConfig, root := lockedContext(t)
+	enc := aktcodec.MakeEncodingConfig()
+
+	input := &promptCountingReader{Reader: strings.NewReader("testpass123\n")}
+	keyrings := aktkeyring.NewManager(root, keyringConfig, enc.Codec)
+	keyrings.SetInput(input)
+
+	leaf := commandTree("query", "provider", "list")
+	resolved, err := MustResolveAndInit(
+		leaf,
+		mgr,
+		keyrings,
+		enc,
+		"",
+		"",
+		LocalIdentityOnDemand,
+	)
+	require.NoError(t, err)
+	require.True(t, resolved)
+	require.Zero(t, input.reads, "startup must not open the deferred keyring")
+
+	cctx := sdkclient.GetClientContextFromCmd(leaf)
+	require.NotNil(t, cctx.Keyring)
+	_, err = cctx.Keyring.Key("alice")
+	require.NoError(t, err)
+	require.Positive(t, input.reads, "the first key operation must open the keyring")
+}
+
+func TestConsoleContextNeverOpensLocalIdentity(t *testing.T) {
+	mgr, keyringConfig, root := lockedContext(t)
+	require.NoError(t, mgr.UpdateContext("locked", func(ctx *aktctx.Context) error {
+		ctx.AuthMethod = aktctx.AuthMethodConsoleAPI
+		return nil
+	}))
+
+	enc := aktcodec.MakeEncodingConfig()
+	input := &promptCountingReader{Reader: strings.NewReader("testpass123\n")}
+	keyrings := aktkeyring.NewManager(root, keyringConfig, enc.Codec)
+	keyrings.SetInput(input)
+
+	leaf := commandTree("mcp")
+	resolved, err := MustResolveAndInit(
+		leaf,
+		mgr,
+		keyrings,
+		enc,
+		"",
+		"",
+		LocalIdentityRequired,
+	)
+	require.NoError(t, err)
+	require.True(t, resolved)
+	require.Zero(t, input.reads)
+	require.Nil(t, sdkclient.GetClientContextFromCmd(leaf).Keyring)
 }
 
 func commandTree(path ...string) *cobra.Command {

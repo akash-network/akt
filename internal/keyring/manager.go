@@ -95,6 +95,23 @@ func (m *Manager) Get(name string) (sdkkeyring.Keyring, error) {
 	return kr, nil
 }
 
+// Deferred returns a proxy that opens the named keyring on its first key
+// operation. Inspecting Backend does not open the configured store.
+func (m *Manager) Deferred(name string) sdkkeyring.Keyring {
+	m.mu.Lock()
+	cfg := m.configs[name]
+	m.mu.Unlock()
+
+	backend := cfg.Backend
+	if backend == "" {
+		backend = sdkkeyring.BackendOS
+	}
+
+	return NewDeferred(backend, func() (sdkkeyring.Keyring, error) {
+		return m.Get(name)
+	})
+}
+
 // Reload updates the keyring configurations (e.g., after config live-reload).
 // Cached keyrings whose config changed are evicted.
 func (m *Manager) Reload(keyrings []aktctx.Keyring) {

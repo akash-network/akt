@@ -30,13 +30,12 @@ func ToolAccountBalance() mcp.Tool {
 // HandleAccountBalance returns the handler for the account_balance tool.
 func HandleAccountBalance(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		addr := marshal.OptionalString(req, "address")
+		addr, err := marshal.AddressOrDefault(cl.ClientContext(), marshal.OptionalString(req, "address"))
+		if err != nil {
+			return marshal.ErrResultf("failed to resolve account address: %v", err), nil
+		}
 		if addr == "" {
-			fromAddr := cl.ClientContext().GetFromAddress()
-			if fromAddr == nil {
-				return marshal.ErrResult("no address provided and no key configured"), nil
-			}
-			addr = fromAddr.String()
+			return marshal.ErrResult("no address provided and no default account configured"), nil
 		}
 
 		denom := marshal.OptionalString(req, "denom")

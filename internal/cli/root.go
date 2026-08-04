@@ -246,7 +246,7 @@ the deployment is created.`,
 				encCfg,
 				v.GetString("context"),
 				v.GetString(cflags.FlagFrom),
-				requiresLocalIdentity(cmd),
+				localIdentityMode(cmd),
 			)
 			if err != nil {
 				return err
@@ -605,12 +605,9 @@ func requiresConfig(cmd *cobra.Command) bool {
 	return true
 }
 
-// requiresLocalIdentity returns true if the command can need the local
-// signing identity -- the context's keyring, and the account its
-// default-account names. It is the third and narrowest of the startup
-// predicates: requiresConfig decides whether to bootstrap, requiresContext
-// decides whether a context is mandatory, and this one decides whether to
-// open a key store.
+// localIdentityMode decides whether startup supplies no keyring, a deferred
+// keyring, or an immediately opened signing identity (SPEC §1.7). It is the
+// third and narrowest startup predicate after requiresConfig/requiresContext.
 //
 // The distinction matters because opening a keyring and resolving a named
 // account are interactive: a file backend prompts for its passphrase and an
@@ -618,47 +615,82 @@ func requiresConfig(cmd *cobra.Command) bool {
 // broke the group's documented promise to run entirely locally (SPEC §2.11),
 // and did the same to `akt monitor` (SPEC §2.6). Commands listed here are
 // defined to work without a signer, so they must not trigger either.
-//
-// Query commands are deliberately absent: an owner-scoped query with no
-// explicit owner falls back to the context's default account, so a named
-// account still has to resolve. Narrowing that to the queries that actually
-// need the address is a separate change (see the lazy resolvers in
-// internal/cli/chain/cctx.go); this predicate is the single place that will
-// record the decision once they land.
-func requiresLocalIdentity(cmd *cobra.Command) bool {
+func localIdentityMode(cmd *cobra.Command) aktclient.LocalIdentityMode {
 	path := cmd.CommandPath()
 
 	switch {
 	// The root command itself only prints help.
 	case path == "akt":
-		return false
+		return aktclient.LocalIdentityNone
 	// SDL authoring is entirely local: parsing, scaffolding, and linting
 	// never touch a network or a credential.
 	case strings.HasPrefix(path, "akt sdl"):
-		return false
+		return aktclient.LocalIdentityNone
 	// Monitoring reads public chain state over RPC.
 	case strings.HasPrefix(path, "akt monitor"):
-		return false
+		return aktclient.LocalIdentityNone
 	// Build metadata and completion scripts come from the binary alone.
 	case strings.HasPrefix(path, "akt version"),
 		strings.HasPrefix(path, "akt completion"):
-		return false
+		return aktclient.LocalIdentityNone
 	// Context, network, and keyring management edits config.yaml. The keys
 	// subgroup does need keys, and gets them from the getKeyring closure at
 	// the point it uses them -- which is also what lets `akt context keys`
 	// fix a context whose configured backend this host cannot open.
 	case strings.HasPrefix(path, "akt context"):
-		return false
+		return aktclient.LocalIdentityNone
 	// The store is a local bbolt database.
 	case strings.HasPrefix(path, "akt store"):
-		return false
+		return aktclient.LocalIdentityNone
 	// The Console rail authenticates with an API key; its contexts may have
 	// no keyring at all.
 	case strings.HasPrefix(path, "akt console"):
+		return aktclient.LocalIdentityNone
+	// Queries may need a named default account, but only when an omitted owner
+	// reaches the command handler.
+	case strings.HasPrefix(path, "akt query"):
+		return aktclient.LocalIdentityOnDemand
+	// Provider status is the gateway's public endpoint. Protected provider
+	// operations still preflight their signing identity before network work.
+	case path == "akt provider status":
+		return aktclient.LocalIdentityNone
+	case strings.HasPrefix(path, "akt provider"):
+		if boolFlag(cmd, cflags.FlagDryRun) {
+			return aktclient.LocalIdentityOnDemand
+		}
+		return aktclient.LocalIdentityRequired
+	// MCP reads defer identity until an owner-defaulting tool is invoked.
+	// Explicitly enabling writes opts a keyring context into eager resolution;
+	// MustResolveAndInit keeps Console-only contexts keyring-free.
+	case strings.HasPrefix(path, "akt mcp"):
+		if boolFlag(cmd, "enable-writes") {
+			return aktclient.LocalIdentityRequired
+		}
+		return aktclient.LocalIdentityOnDemand
+	// Unsigned construction and simulation accept a bech32 signer without a
+	// local key. A signer name resolves through the deferred keyring later.
+	case strings.HasPrefix(path, "akt tx"):
+		if boolFlag(cmd, cflags.FlagGenerateOnly) || boolFlag(cmd, cflags.FlagDryRun) {
+			return aktclient.LocalIdentityOnDemand
+		}
+		return aktclient.LocalIdentityRequired
+	// Workflow dry-runs validate and print a plan without selecting a transport
+	// client or local signer.
+	case boolFlag(cmd, cflags.FlagDryRun):
+		return aktclient.LocalIdentityNone
+	}
+
+	return aktclient.LocalIdentityRequired
+}
+
+func boolFlag(cmd *cobra.Command, name string) bool {
+	flag := cmd.Flags().Lookup(name)
+	if flag == nil {
 		return false
 	}
 
-	return true
+	value, err := cmd.Flags().GetBool(name)
+	return err == nil && value
 }
 
 // requiresContext returns true if the command needs a fully resolved akt

@@ -75,7 +75,7 @@ func TestProviderListDoesNotReadNamedDefaultAccount(t *testing.T) {
 	queryCmd.AddCommand(providerCmd)
 	providerCmd.AddCommand(listCmd)
 
-	resolved, err := MustResolveAndInit(listCmd, mgr, keyrings, enc, "", "")
+	resolved, err := MustResolveAndInit(listCmd, mgr, keyrings, enc, "", "", LocalIdentityOnDemand)
 	require.NoError(t, err)
 	require.True(t, resolved)
 	require.Zero(t, promptInput.reads, "provider list must not access the keyring")

@@ -34,11 +34,9 @@ func ToolListOrders() mcp.Tool {
 // HandleListOrders returns the handler for listing orders.
 func HandleListOrders(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		owner := marshal.OptionalString(req, "owner")
-		if owner == "" {
-			if addr := cl.ClientContext().GetFromAddress(); !addr.Empty() {
-				owner = addr.String()
-			}
+		owner, err := marshal.AddressOrDefault(cl.ClientContext(), marshal.OptionalString(req, "owner"))
+		if err != nil {
+			return marshal.ErrResultf("failed to resolve owner address: %v", err), nil
 		}
 
 		if owner == "" {
@@ -143,11 +141,9 @@ func ToolListBids() mcp.Tool {
 // HandleListBids returns the handler for listing bids.
 func HandleListBids(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		owner := marshal.OptionalString(req, "owner")
-		if owner == "" {
-			if addr := cl.ClientContext().GetFromAddress(); !addr.Empty() {
-				owner = addr.String()
-			}
+		owner, err := marshal.AddressOrDefault(cl.ClientContext(), marshal.OptionalString(req, "owner"))
+		if err != nil {
+			return marshal.ErrResultf("failed to resolve owner address: %v", err), nil
 		}
 
 		if owner == "" {
@@ -272,11 +268,9 @@ func ToolListLeases() mcp.Tool {
 // HandleListLeases returns the handler for listing leases.
 func HandleListLeases(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		owner := marshal.OptionalString(req, "owner")
-		if owner == "" {
-			if addr := cl.ClientContext().GetFromAddress(); !addr.Empty() {
-				owner = addr.String()
-			}
+		owner, err := marshal.AddressOrDefault(cl.ClientContext(), marshal.OptionalString(req, "owner"))
+		if err != nil {
+			return marshal.ErrResultf("failed to resolve owner address: %v", err), nil
 		}
 
 		if owner == "" {

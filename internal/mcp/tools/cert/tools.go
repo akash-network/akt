@@ -30,11 +30,9 @@ func ToolListCertificates() mcp.Tool {
 // HandleListCertificates returns the handler for listing certificates.
 func HandleListCertificates(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		owner := marshal.OptionalString(req, "owner")
-		if owner == "" {
-			if addr := cl.ClientContext().GetFromAddress(); !addr.Empty() {
-				owner = addr.String()
-			}
+		owner, err := marshal.AddressOrDefault(cl.ClientContext(), marshal.OptionalString(req, "owner"))
+		if err != nil {
+			return marshal.ErrResultf("failed to resolve owner address: %v", err), nil
 		}
 
 		if owner == "" {
