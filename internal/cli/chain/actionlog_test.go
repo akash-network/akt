@@ -92,6 +92,44 @@ func TestLoggingTxClientRecordsBroadcast(t *testing.T) {
 	}
 }
 
+// TestLoggingTxClientRecordsPendingBroadcast covers the default sync broadcast
+// mode: the response is a CheckTx result with no height and no gas, so the entry
+// must record neither (a zero is indistinguishable from a real reading) and must
+// not claim the transaction succeeded (SPEC §5.4, §5.6).
+func TestLoggingTxClientRecordsPendingBroadcast(t *testing.T) {
+	l := newTestActionLogger(t)
+
+	tx := &loggingTxClient{
+		tx:   &fakeTxClient{resp: &sdk.TxResponse{TxHash: "PENDING1", Code: 0}},
+		log:  l,
+		cctx: sdkclient.Context{FromName: "alice"},
+	}
+
+	msg := &dv1beta.MsgCloseDeployment{ID: dv1.DeploymentID{DSeq: 99}}
+	if _, err := tx.BroadcastMsgs(context.Background(), []sdk.Msg{msg}); err != nil {
+		t.Fatalf("BroadcastMsgs: %v", err)
+	}
+
+	entries, err := l.Read(actionlog.Filter{})
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+
+	e := entries[0]
+	if e.TxHash != "PENDING1" {
+		t.Errorf("tx hash = %q, want PENDING1", e.TxHash)
+	}
+	if e.Height != 0 || e.GasUsed != 0 {
+		t.Errorf("unconfirmed broadcast must not record height/gas: %+v", e)
+	}
+	if e.Status != "pending" {
+		t.Errorf("status = %q, want pending", e.Status)
+	}
+}
+
 func TestLoggingTxClientRecordsFailure(t *testing.T) {
 	l := newTestActionLogger(t)
 

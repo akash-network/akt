@@ -757,7 +757,7 @@ akt
 │   │   └── list-contracts-by-creator <creator>
 │   ├── oracle
 │   │   ├── prices
-│   │   ├── aggregated-price <denom>
+│   │   ├── aggregated-price <denom>     # denom accepts akt, AKT, or uakt (normalized to the oracle's base denom)
 │   │   └── params
 │   ├── bme
 │   │   ├── params
@@ -1461,7 +1461,7 @@ On error:
 | Field      | Type   | Description                                   |
 | ---------- | ------ | --------------------------------------------- |
 | `hash`     | string | Transaction hash                              |
-| `height`   | int64  | Block height where the tx was included        |
+| `height`   | int64  | Block height where the tx was included. **Omitted** when the transaction has not been confirmed — under the default `--broadcast-mode sync` a step's transaction is only in the mempool, and emitting `"height":0` would be indistinguishable from a real height (see [§10.11.1](#broadcast-confirmation-state)) |
 | `gas_used` | int64  | Gas consumed (omitted when the executor does not report gas) |
 | `code`     | uint32 | Response code (0 = success)                   |
 | `raw_log`  | string | Raw log output (present on error, omitted otherwise) |
@@ -2234,7 +2234,7 @@ Both commands are aliases that launch directly into the **Oracle/BME** dashboard
 - **Price history section**: Recent price feed entries table with asset denom, base denom, price, source, and timestamp.
 - **BME status section**: Fields in order: Status (color-coded: green=healthy, yellow=warning, red=halt CR/halt Oracle), Mints (Allowed/Halted), Refunds (Allowed/Halted), Collateral Ratio, Thresholds (nested: Warn, Halt).
 - **Vault section**: Balances, total burned, total minted, remint credits. All amounts formatted using `FormatCoin()`.
-- **Ledger section**: Recent ledger entries table with route, ID, status, burned, minted, spread, remint accrued, remint issued.
+- **Ledger section**: Recent ledger entries table with route, ID, status, burned, minted, spread, remint accrued, remint issued. Status is always a full word — `Executed` (green), `Pending` (yellow), `Canceled (<reason>)` (red) — never a one-letter abbreviation (§10.10 BME).
 
 Data sources:
 - Oracle: REST `/akash/oracle/v2/prices`, `/akash/oracle/v2/aggregated-price/{denom}` + real-time bus events
@@ -2595,7 +2595,7 @@ default output setting in configuration does not alter the generated document.
 Validate an SDL offline (`-` reads stdin). Parsing and schema/relational validation use `pkg.akt.dev/go/sdl` — the same parser behind `akt deploy` and the chain tx commands — followed by lint rules ported from the reference:
 
 - **Unpinned image** (error): every service image must carry an explicit tag or `@sha256:` digest; untagged images and `:latest` are rejected as non-reproducible.
-- **Pricing denom**: `uact` passes; `uakt` produces a **warning**, not an error — a deliberate deviation from the reference, which hard-rejects `uakt` because it only serves the managed Console API. akt serves both rails: `uakt` is valid on-chain, but console-api (managed) contexts price in `uact`. Any other denom is an error, matching the reference.
+- **Pricing denom**: `uact` passes — it is the deployment pricing denom on **both** rails. `uakt` produces a **warning**, not an error: `akt` auto-resolves the deployment deposit to `uact` on the chain rail (`DetectDeploymentDeposit`) and on the console rail alike, and the chain requires the group price denom to equal the deposit denom (`Mismatched denominations (uact != uakt)`), so a `uakt`-priced SDL fails at `ValidateBasic()` before broadcast. It stays a warning rather than an error only because passing an explicitly matching `--deposit <amount>uakt` is a legitimate escape hatch; the reference hard-rejects anything but `uact`. Any other denom is an error, matching the reference.
 
 The command has three outcomes, and each one has its own exit code:
 
@@ -3558,9 +3558,11 @@ type ActionEntry struct {
 
     // Error fields (type=error, or on any failed action)
     Error      string          `json:"error,omitempty"`
-    Status     string          `json:"status,omitempty"`   // success, failed, timeout
+    Status     string          `json:"status,omitempty"`   // success, pending, failed, timeout
 }
 ```
+
+`Height` and `GasUsed` are only set when the broadcast actually reported them. Under the default `--broadcast-mode sync` a transaction result carries neither, and recording zero would be indistinguishable from a real reading (see [§10.11.1](#broadcast-confirmation-state)).
 
 `step` is the one field written unconditionally. With `omitempty` the first step
 of every workflow run (index 0) disappeared from machine output, so the entry
@@ -3602,7 +3604,7 @@ The action log records entries for the following command categories:
 
 | Command category | Logged | Entry type | When |
 |---|---|---|---|
-| `tx *` | Always | `tx` | After broadcast (success or failure). On success: includes tx hash, height, gas used. On failure: includes error message and result code. |
+| `tx *` | Always | `tx` | After broadcast (success or failure). On success: includes tx hash, plus height and gas used when the broadcast mode reports them. Status is `pending` when the transaction was accepted into the mempool but not yet included in a block (the default `sync` mode), and `success` once a height is known. On failure: includes error message and result code. |
 | `query *` | Never by default | `query` | Read-only queries are not state changes and are not recorded by default (see verbose row below). |
 | Workflow commands (`deploy`, `update`, `close`) | Always | `workflow` | One entry per workflow step. Each entry includes the step name, step index, result, and workflow run ID, and `akt context log` renders the step and run in `SUMMARY` so the steps of a run stay distinguishable and a failed step is identifiable (§2.2). |
 | `provider *` (state-changing: `send-manifest`, `migrate-hostnames`, `migrate-endpoints`, `lease-shell`) | Always | `provider` | After the provider gateway operation completes (success or failure). Read-only provider queries (`status`, `lease-status`, `lease-logs`, `lease-events`, `get-manifest`) are not recorded. |
@@ -4428,15 +4430,16 @@ Combined oracle price and BME state monitoring. Available as the Oracle/BME dash
 │  Aggregated Prices                   │  BME Status                           │
 │                                      │                                       │
 │  DENOM   TWAP        SOURCES         │  Status:           Healthy            │
-│  uakt    0.003125    4               │  Mints:            Allowed            │
-│  uatom   6.850000    3               │  Refunds:          Allowed            │
+│  akt     0.003125    4               │  Mints:            Allowed            │
+│  atom    6.85        3               │  Refunds:          Allowed            │
 │                                      │  Collateral Ratio: 1.523              │
 │  Price Health                        │  Thresholds:                          │
-│    Healthy:     yes                  │      Warn:         1.100              │
-│    Min Sources: yes                  │      Halt:         1.050              │
+│    Healthy:     yes                  │      Warn:         1.1                │
+│    Min Sources: yes                  │      Halt:         1.05               │
 │                                      │                                       │
 │                                      │  Ledger                               │
-│                                      │  ROUTE  ID  STATUS  BURNED  ...       │
+│                                      │  ROUTE      STATUS    BURNED  ...     │
+│                                      │  uakt→uact  Pending   5 AKT   ...     │
 ├──────────────────────────────────────┴───────────────────────────────────────┤
 │  <Tab> Dashboard  <j/k> Scroll  <r> Refresh  <?> Help                        │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -4451,9 +4454,14 @@ Combined oracle price and BME state monitoring. Available as the Oracle/BME dash
 
 **Refresh intervals**: Oracle aggregated prices every 30s, BME status/vault every 30s, price history and ledger every 2m.
 
-**Color coding**: Oracle health: Healthy (green), Unhealthy (red). BME status: healthy (green), warning (yellow), halt CR (red), halt Oracle (red). Mints/Refunds: Allowed (green), Halted (red).
+**Color coding**: Oracle health: Healthy (green), Unhealthy (red). BME status: healthy (green), warning (yellow), halt CR (red), halt Oracle (red). Mints/Refunds: Allowed (green), Halted (red). Ledger record status: `Executed` (green), `Pending` (yellow), `Canceled (<reason>)` (red) — spelled out, never abbreviated (§10.10 BME).
 
-**Amount formatting**: All micro-denominated values scaled using `FormatCoin()` — same rules as pretty output (§10.7). Prices displayed with full decimal precision, trailing zeros stripped.
+**Amount formatting**: All micro-denominated values scaled using `FormatCoin()` — same rules as pretty output (§10.7). Prices and ratios are rounded at their semantic precision and then have trailing zeros stripped; a collateral ratio of `1.5` renders as `1.5`, never `1.500000000000000000`.
+
+Ratios and prices round differently, because their significance sits in different digits:
+
+- **Ratios** (collateral ratio, warn/halt thresholds) are rounded to 3 decimal places before stripping. A `LegacyDec` always stringifies to 18 places and stripping only helps a value that has trailing zeros, so an on-chain ratio such as `1.495209570451729242` would otherwise render at full width beside a threshold of `0.95`. It renders as `1.495`.
+- **Prices** (oracle prices, the `@price` in ledger rows) are rounded to the oracle's published 8 decimal places before stripping. This retains an AKT price around `0.003125` while keeping derived 18-place `LegacyDec` values such as a TWAP comparable with the 8-place source observations.
 
 **Components:** bubbles/viewport (scrollable content panels), shared pretty.Render* functions for CLI/TUI parity.
 
@@ -5149,10 +5157,43 @@ Addresses are **always displayed in full**. Never truncated or shortened by defa
 
 **Prices**: Table with ASSET, BASE, PRICE, TIMESTAMP.
 
+**Aggregated price** (`akt query oracle aggregated-price <denom>`): Key-value sections for the aggregated price and its health, as mocked in §8.3.12.
+
+The oracle module keys prices by the **base** denom (`akt`), while every other
+surface in `akt` — gas, balances, fees, escrow — takes the micro denom
+(`uakt`). The positional denom is therefore normalized before the query so the
+spelling users already know keeps working: `akt`, `AKT`, `mAKT` and `uakt` all
+resolve to `akt`, and the ACT family (`act`, `mact`, `uact`) resolves to `act`.
+Any other denom passes through unchanged. Help text and examples use the base
+denom (`akt query oracle aggregated-price akt`).
+
+A failed oracle query is wrapped in a `CLIError` (§11.1) that names the denom
+that was tried and suggests `akt q oracle prices` to list the denoms the oracle
+carries; the raw gRPC/ABCI status must never reach the user verbatim.
+
 #### BME
 
-**Status/Vault**: Key-value sections with amounts.
-**Ledger**: Table of entries.
+**Status/Vault**: Key-value sections with amounts. The collateral ratio and the
+warn/halt thresholds are `LegacyDec` ratios, not coins: they render through
+the ratio formatter (`1.5`, not `1.500000000000000000`), matching the oracle
+panel beside them on the same dashboard.
+
+**Ledger**: Table with ROUTE, ID, STATUS, BURNED, MINTED, SPREAD, REMINT ACCRUED, REMINT ISSUED.
+
+- **ROUTE** — `<denom>→<to-denom>` from the record ID. It already carries the destination denom, so no other column repeats it.
+- **ID** — `<source>/<height>/<sequence>`.
+- **STATUS** — the full `LedgerRecordStatus` word, never an abbreviation: `Executed` (green), `Pending` (yellow), `Canceled (<reason>)` (red), where `<reason>` is the `BMCancelReason` name with underscores replaced by spaces (e.g. `Canceled (insufficient funds)`). This mirrors the `MintStatus` labels used by BME status ("Healthy", "Warning", "Halt CR", "Halt Oracle"). When the record oneof is absent the column falls back to the `status` field the entry carries alongside it, dimmed, rather than a blank cell.
+- **BURNED / MINTED / REMINT ACCRUED / REMINT ISSUED** — one rendering per concept, applied uniformly across every row type:
+  - an amount that carries an oracle price (`CoinPrice`) renders as `<FormatCoin(coin)> @<price>`, rounded to 8 decimal places and then stripped by `FormatPriceDec()`;
+  - an amount with no price attached renders as `FormatCoin()`;
+  - an amount that does not exist **yet** — the mint of a pending record, whose size depends on the oracle price at settlement — renders as a dim `pending`;
+  - an amount that does not exist renders as `-`.
+- **SPREAD** — always `FormatCoin()`. A zero spread renders as `0 AKT`, not `-`; only a record with no spread denom at all renders as `-`.
+
+Every `Coin`/`LegacyDec` read out of a ledger record passes through
+`IntOrZero()` / `DecOrZero()` first: proto3 omits zero values on the wire, so a
+field the node never set unmarshals with a nil inner value and any method call
+on it panics.
 
 #### Miscellaneous
 
@@ -5263,8 +5304,24 @@ Transaction commands use the same registry-based pretty output system as query c
 | `--output` | Behavior |
 |---|---|
 | `pretty` (default) | Two-section layout: common summary + message-specific detail |
-| `json` | Raw `TxResponse` JSON via `cctx.PrintProto()` |
-| `yaml` | Raw `TxResponse` YAML via `cctx.PrintProto()` |
+| `json` | Structured transaction result document (see [§10.11.6](#10116-machine-readable-transaction-result)) |
+| `yaml` | The same document rendered as YAML via `FprintJSONSemantics()` |
+
+`json`/`yaml` MUST NOT be produced by handing the raw `sdk.TxResponse` to `cctx.PrintProto()`. That printer marshals with `EmitDefaults: true`, so a transaction that has only been accepted into the mempool emits `"height":"0"`, `"gas_used":"0"` and `"gas_wanted":"0"` — values an automated consumer cannot distinguish from a real block height of zero or a real zero gas reading.
+
+##### Broadcast Confirmation State
+
+`akt` defaults to `--broadcast-mode sync`. In `sync` and `async` mode the node returns a CheckTx result only: `Code`, `Codespace`, `Data`, `RawLog`, `Logs` and `TxHash` are populated, while `Height`, `GasUsed`, `GasWanted` and `Timestamp` are zero and the transaction body (`TxResponse.Tx`) is `nil`. The transaction is in the mempool and has not been included in a block.
+
+Every transaction renderer therefore classifies a result into exactly one of three states:
+
+| State | Condition | Meaning |
+|---|---|---|
+| `failed` | `Code != 0` | CheckTx (or DeliverTx, in `block` mode) rejected the transaction |
+| `pending` | `Code == 0 && Height == 0` | Accepted into the mempool; not yet included in a block |
+| `confirmed` | `Code == 0 && Height > 0` | Included in a block at `Height` |
+
+A `pending` result MUST NOT be presented as a completed transaction: block height, gas and fee are unknown, not zero and not blank.
 
 #### 10.11.2 Two-Section Layout
 
@@ -5277,11 +5334,17 @@ Common to all transactions. Uses the same `Section()` + `KV()` formatting as que
 | Field | Source | Format |
 |---|---|---|
 | Hash | `TxResponse.TxHash` | Full hex string, bold |
-| Signer | First entry from `tx.AuthInfo.SignerInfos`, resolved to bech32 | Full address |
-| Height | `TxResponse.Height` | Comma-grouped via `FormatHeight()` |
-| Gas Used | `TxResponse.GasUsed` / `TxResponse.GasWanted` | `used / wanted`, both comma-grouped |
-| Fee | `tx.AuthInfo.Fee.Amount` | `FormatCoins()` (micro-denom scaling) |
-| Status | `TxResponse.Code` | Green "success" if code=0; Red "failed: `<RawLog>`" otherwise |
+| Signer | `message.sender` event attribute | Full address; omitted when the events carry no sender (always the case while `pending`) |
+| Height | `TxResponse.Height` | `Height > 0`: comma-grouped via `FormatHeight()`. `pending`: dim `not yet confirmed`. `failed` before inclusion: dim `not included in a block` |
+| Gas Used | `TxResponse.GasUsed` / `TxResponse.GasWanted` | `Height > 0`: `used / wanted`, both comma-grouped. `pending`: dim `not yet confirmed`. `failed` before inclusion: dim `not reported` |
+| Fee | `tx.AuthInfo.Fee.Amount` | `FormatCoins()` (micro-denom scaling). Always emitted; when the body is unavailable, dim `not reported by <mode> broadcast (query the tx to see it)` |
+| Status | `TxResponse.Code`, `TxResponse.Height` | Green `success` when `confirmed`; yellow `pending` + dim `(accepted into the mempool, not yet in a block)` when `pending`; red `failed: <RawLog>` otherwise |
+| Confirm With | `TxResponse.TxHash` | `pending` only: `akt query tx <hash>` |
+| Tip | — | `pending` only: `broadcast with --broadcast-mode block to wait for inclusion` |
+
+The `Fee` row is never silently dropped. Prior behavior omitted the whole row when the tx body could not be decoded, which is exactly the `pending` case, so the most common transaction output was missing its fee line with no explanation.
+
+Gas amounts are formatted by a gas-specific formatter, not by `FormatHeight()`. `FormatHeight()` renders `-` for any value `<= 0` because block height zero does not exist; gas zero does, and reusing the height formatter for gas is a comma-grouping coincidence rather than a semantic fit.
 
 The section header is `Transaction`, rendered with `Section()` (bold + underline).
 
@@ -5332,16 +5395,15 @@ type TxPrettyFormatterFunc struct {
 
 #### 10.11.4 Dispatch Flow
 
-`PrintTxResult(cmd, cctx, txResponse)` is called by all `tx` commands after broadcast:
+`PrintTxResult(cmd, cctx, txResponse)` is called by all `tx` commands after broadcast. The broadcaster returns `interface{}`, so dispatch is by concrete type first and by `--output` second:
 
-1. Read `--output` flag.
-2. If `json` → `cctx.PrintProto(txResponse)`.
-3. If `yaml` → `cctx.PrintProto(txResponse)` with YAML format.
-4. If `pretty`:
-   a. Render Section 1 (common summary) from `TxResponse` fields.
-   b. Decode `TxResponse.Tx` to extract messages.
-   c. For each message, look up `TxPrettyFormatter` by proto type.
-   d. Render Section 2 for each message (registered formatter or JSON fallback).
+1. Read the `--output` flag.
+2. `[]byte` (a `--generate-only` transaction body) → print the encoded transaction verbatim (JSON) or re-encoded (YAML).
+3. `*tx.SimulateResponse` (a `--dry-run` simulation) → render the simulation result ([§10.11.7](#10117-simulation-results-dry-run)).
+4. `*sdk.TxResponse`:
+   a. `json`/`yaml` → build the structured document ([§10.11.6](#10116-machine-readable-transaction-result)) and emit it with `FprintJSONSemantics()`.
+   b. `pretty` → render Section 1 (common summary) from `TxResponse` fields; decode `TxResponse.Tx` to extract messages; for each message look up a `TxPrettyFormatter` by proto type; render Section 2 for each message (registered formatter or JSON fallback). A `pending` result carries no body, so only Section 1 renders.
+5. Anything else → `PrintProto()` (proto messages) or `PrintObjectLegacy()` (amino values).
 
 #### 10.11.5 Per-Module Message Formatter Specification
 
@@ -5824,27 +5886,120 @@ Same fields as MsgInstantiateContract, plus:
 
 ##### BME
 
-**`MsgBurnMint`** — Title: "Burn Mint"
+A BME conversion is **not** executed by the transaction that carries it. The
+chain writes a pending ledger record and settles it in a later block, once the
+oracle price is available and the circuit breaker allows
+(`LEDGER_RECORD_STATUS_PENDING` → `EXECUTED`, or `CANCELED` with funds
+returned). The `Status: success` line of §10.11.2 therefore reports acceptance
+of the *request*, not completion of the conversion. All three BME message
+formatters must say so explicitly — without it the burned balance appears to
+vanish with no explanation of where it went.
+
+All three render the same block, produced by
+`pretty.RenderBMEPendingConversion(owner, coinsToBurn, denomToMint)`:
 
 | Field | Source | Format |
 |---|---|---|
-| Sender | Message | Full address |
-| Burned | Message | `FormatCoins()` |
-| Minted Denom | Message | |
+| Sender | Message `Owner` | Full address |
+| Burned | Message `CoinsToBurn` | `FormatCoin()` |
+| Minted Denom | Destination denom (per message, below) | Raw denom |
+| Conversion | Constant | `pending` (yellow) + "settles in a later block" |
+| Minted Amount | — | "not known yet" — the amount is set by the oracle price at settlement, which is exactly why a pending ledger row (§10.10 BME) can only show a destination denom |
 
-**`MsgMintACT`** — Title: "Mint ACT"
+followed by an indented note stating that the burned amount has already left the
+balance while the minted amount has not arrived, and the concrete follow-up
+command:
+
+```
+akt q bme ledger --owner <sender> --status ledger_record_status_pending
+```
+
+Destination denom per message:
+
+| Message | Title | Destination denom |
+|---|---|---|
+| `MsgBurnMint` | "Burn Mint" | `DenomToMint` (carried by the message) |
+| `MsgMintACT` | "Mint ACT" | `uact` — the message mints ACT by definition |
+| `MsgBurnACT` | "Burn ACT" | `uakt` — the message burns ACT to mint/remint AKT |
+
+The same deferred-settlement wording, and the same follow-up command, appear in
+the `Long`/`Example` help of `akt tx bme burn-mint`, `mint-act` and `burn-act`.
+
+#### 10.11.6 Machine-Readable Transaction Result
+
+`--output json` and `--output yaml` emit one structured document per transaction, built from the `sdk.TxResponse` rather than marshalled from it directly. Fields whose value is unknown because the transaction has not been confirmed are **absent**, never zero.
+
+| Field | Type | Presence |
+|---|---|---|
+| `txhash` | string | Always |
+| `status` | string | Always — `confirmed`, `pending` or `failed` ([§10.11.1](#broadcast-confirmation-state)) |
+| `confirmed` | bool | Always — `true` iff `Height > 0` |
+| `code` | uint32 | Always (`0` on success) |
+| `codespace` | string | When non-empty |
+| `height` | int64 | **Only when `Height > 0`** |
+| `gas_used` | int64 | **Only when `GasUsed > 0`** |
+| `gas_wanted` | int64 | **Only when `GasWanted > 0`** |
+| `timestamp` | string | When non-empty |
+| `data` | string | When non-empty |
+| `info` | string | When non-empty |
+| `raw_log` | string | When non-empty |
+| `logs` | array | When non-empty |
+| `events` | array | When non-empty |
+| `tx` | object | When the response carries the transaction body |
+
+`logs`, `events` and `tx` are carried through verbatim from the codec's proto-JSON encoding of the response so that interface fields (`Any`) resolve to their concrete types. They are dropped when the client context has no codec.
+
+A pending transaction therefore serializes as:
+
+```json
+{
+  "txhash": "9F3C...",
+  "status": "pending",
+  "confirmed": false,
+  "code": 0
+}
+```
+
+The same rule applies to every other machine-readable surface that reports a transaction height:
+
+- **Action log** ([§5.4](#54-log-entry-format)): `height` and `gas_used` are only recorded when the broadcast reported them, and `status` is `pending` for an accepted-but-unconfirmed transaction.
+- **Workflow JSONL** ([§2.3.8](#238-execution-modes)): the `height` key is omitted from a tx object when the step's transaction has not been confirmed.
+
+`PrintTxResults()` (used when one logical action is intentionally split across several transactions) emits a JSON array of these documents, applying the same rules to each element.
+
+#### 10.11.7 Simulation Results (`--dry-run`)
+
+`--dry-run` sets `client.Context.Simulate`, and the chain client returns a `*tx.SimulateResponse` — **not** an `sdk.TxResponse`. The response's `GasInfo.GasWanted` echoes back the gas limit that was sent with the simulated transaction, which for a dry run is the internal placeholder `0` that the CLI substitutes for the `--gas` flag. `gas_wanted` MUST NOT be surfaced from a simulation in any output mode.
+
+The adjusted gas estimate is computed by the chain client but discarded on the simulate-only path, so the renderer recomputes it from the same inputs:
+
+```
+gas_estimate  = uint64(--gas-adjustment * GasInfo.GasUsed)
+estimated_fee = --fees, when set
+              = ceil(--gas-prices[i] * gas_estimate) per denom, otherwise
+```
+
+This matches `tx.Factory.BuildUnsignedTx`, so the estimate the dry run reports is the fee the real broadcast would attach.
+
+**Pretty output** renders a single `Simulation` section:
 
 | Field | Source | Format |
 |---|---|---|
-| Sender | Message | Full address |
-| Burned | Message | `FormatCoins()` |
+| Gas Used | `GasInfo.GasUsed` | Comma-grouped |
+| Gas Adjustment | `--gas-adjustment` | Decimal, trailing zeros stripped |
+| Gas Estimate | Computed above | Comma-grouped |
+| Estimated Fee | Computed above | `FormatCoins()` (micro-denom scaling); `unknown (no --fees or --gas-prices set)` when neither flag provides a basis |
+| Status | — | Yellow `simulated` + dim `(not broadcast)` |
 
-**`MsgBurnACT`** — Title: "Burn ACT"
+**`json`/`yaml` output** emits:
 
-| Field | Source | Format |
+| Field | Type | Presence |
 |---|---|---|
-| Sender | Message | Full address |
-| Burned | Message | `FormatCoins()` |
+| `simulated` | bool | Always `true` |
+| `gas_used` | uint64 | Always |
+| `gas_adjustment` | float64 | Always |
+| `gas_estimate` | uint64 | Always |
+| `estimated_fee` | array of coins | When a fee basis is available |
 
 ---
 

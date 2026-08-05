@@ -208,6 +208,30 @@ func TrimDecTrailingZeros(s string) string {
 	return s
 }
 
+// priceDecimals is the precision every price is reported at. The oracle
+// publishes its source prices with 8 decimal places (`0.53598949`), but values
+// the chain derives from them — a TWAP, a remint credit price — are LegacyDecs
+// carrying all 18 (`0.536004234885265376`). Reporting both as they arrive puts
+// two widths on the same quantity in the same view. Rounding derived prices to
+// the oracle's own precision loses nothing real and makes them comparable.
+const priceDecimals = 8
+
+// FormatPriceDec formats a decimal price at priceDecimals with trailing zeros
+// stripped, guarding the nil Dec proto3 leaves for an unset field.
+//
+// Prices are rounded far finer than ratios: they are quoted in whole units, so
+// AKT near `0.003125` must survive intact.
+func FormatPriceDec(d math.LegacyDec) string {
+	return TrimDecTrailingZeros(roundDec(DecOrZero(d), priceDecimals).String())
+}
+
+// roundDec rounds a decimal to places decimal places, half away from zero.
+func roundDec(d math.LegacyDec, places int64) math.LegacyDec {
+	scale := math.LegacyNewDec(10).Power(uint64(places))
+
+	return math.LegacyNewDecFromInt(d.Mul(scale).RoundInt()).Quo(scale)
+}
+
 // FormatHeight formats a block height with comma grouping.
 func FormatHeight(height int64) string {
 	if height <= 0 {

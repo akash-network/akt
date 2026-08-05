@@ -733,26 +733,26 @@ func fmtOracleFeed(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.M
 // BME
 // ---------------------------------------------------------------------------
 
+// The three BME conversions all settle in a later block rather than in the
+// transaction that carries them, so each renders the shared pending-conversion
+// block from bme.go instead of a bare sender/amount pair.
+
 func fmtBMEBurnMint(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
 	m := msg.(*bmetypes.MsgBurnMint)
-	KV(w, "Sender", m.Owner)
-	KV(w, "Burned", FormatCoin(m.CoinsToBurn))
-	KV(w, "Minted Denom", m.DenomToMint)
-	return nil
+	_, err := fmt.Fprint(w, RenderBMEPendingConversion(m.Owner, m.CoinsToBurn, m.DenomToMint))
+	return err
 }
 
 func fmtBMEMintACT(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
 	m := msg.(*bmetypes.MsgMintACT)
-	KV(w, "Sender", m.Owner)
-	KV(w, "Burned", FormatCoin(m.CoinsToBurn))
-	return nil
+	_, err := fmt.Fprint(w, RenderBMEMintACT(m.Owner, m.CoinsToBurn))
+	return err
 }
 
 func fmtBMEBurnACT(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
 	m := msg.(*bmetypes.MsgBurnACT)
-	KV(w, "Sender", m.Owner)
-	KV(w, "Burned", FormatCoin(m.CoinsToBurn))
-	return nil
+	_, err := fmt.Fprint(w, RenderBMEBurnACT(m.Owner, m.CoinsToBurn))
+	return err
 }
 
 // ---------------------------------------------------------------------------

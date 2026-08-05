@@ -13,7 +13,7 @@ func AddBMELedgerFilterFlags(flags *pflag.FlagSet) {
 	flags.String(FlagOwner, "", "source address to filter")
 	flags.String(FlagDenom, "", "burn denomination to filter")
 	flags.String(FlagToDenom, "", "mint denomination to filter")
-	flags.String(FlagStatus, "", "record status to filter (ledger_record_status_pending,ledger_record_status_executed)")
+	flags.String(FlagStatus, "", "record status to filter (ledger_record_status_pending, ledger_record_status_executed, ledger_record_status_canceled)")
 }
 
 // BMELedgerFiltersFromFlags returns LedgerRecordFilters with given flags and error if occurred

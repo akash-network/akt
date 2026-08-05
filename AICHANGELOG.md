@@ -4,6 +4,17 @@
 
 ### Fixed
 
+- **Collateral ratios still rendered at full width**: stripping trailing zeros
+  only helps a value that has them, so a real on-chain ratio such as
+  `1.495209570451729242` kept all eighteen decimals beside a `0.95` threshold.
+  Ratios and thresholds now round to three decimal places before stripping, the
+  precision SPEC §8.3.12 already illustrated. Oracle prices are deliberately
+  exempt and keep full precision, because rounding AKT's `0.003125` to a ratio's
+  precision would erase it. Prices instead report at the 8 decimal places the
+  oracle itself publishes, so a derived TWAP (`0.536004234885265376`) no longer
+  sits at twice the width of the source median (`0.53598949`) it is derived
+  from. Every price in the BME and oracle views routes through one formatter.
+
 - **Completion reports overstated what actually happened**: `akt sdl validate`
   documented only exit `0` and `1` while an unreadable file exited `2`, and an
   unreadable stdin exited `1` for the same class of failure. The command's help
@@ -188,6 +199,111 @@
   All wizard rendering — prompts, progress, summary, and the Console onboarding
   prompts — moved from stdout to stderr as SPEC §3.9.2 and §10.1.1 require; the
   wizard now writes nothing to stdout.
+
+- **Transaction results presented an unconfirmed broadcast as a finished
+  transaction**: akt broadcasts with `--broadcast-mode sync` by default, so the
+  usual response is a CheckTx result — the transaction is in the mempool with no
+  height, no gas accounting and no body — yet every output surface reported it
+  as complete. Machine-readable output is now built from a structured result
+  document instead of the raw `TxResponse`: it carries an explicit
+  `status` (`confirmed`/`pending`/`failed`) plus `confirmed`, and omits
+  `height`, `gas_used` and `gas_wanted` entirely rather than emitting the `"0"`
+  that `PrintProto`'s `EmitDefaults` produced and that a script could not tell
+  apart from a real reading. The same rule now applies to the action log (height
+  and gas recorded only when reported; status `pending` until a height exists)
+  and to workflow JSONL (the `height` key is dropped for an unconfirmed step).
+  Pretty output no longer prints a bare `-`, `0 / 0` and a green `success` for a
+  transaction that has only entered the mempool: it labels the state `pending`
+  in yellow, says why height and gas are unknown, and points at
+  `akt query tx <hash>` and `--broadcast-mode block`. The `Fee:` row is also no
+  longer silently dropped when the body cannot be decoded — it is always
+  emitted, and it now actually resolves a fee from a returned body, which it
+  never could before (`cosmos.tx.v1beta1.Tx` does not satisfy `sdk.FeeTx`, so
+  the old `UnpackAny` route always failed). Gas amounts use a gas formatter
+  rather than the block-height formatter they were borrowing. SPEC.md §10.11.1,
+  §10.11.2, §10.11.4, §10.11.6, §2.3.8, §5.4 and §5.6 updated.
+
+- **A simulated transaction printed raw proto with a placeholder gas number**:
+  `--dry-run` returns a `tx.SimulateResponse`, not a `TxResponse`, so it missed
+  the pretty renderer entirely and fell through to a raw proto JSON dump. That
+  dump included `gas_wanted: 0` — the placeholder the CLI substitutes for
+  `--gas` on dry runs, echoed back by the node — while the adjusted gas estimate
+  the dry run exists to produce was computed by the chain client and then
+  discarded. Simulations now render a `Simulation` section (or a structured
+  document under `-o json`/`-o yaml`) with the gas used, the gas adjustment, the
+  recomputed gas estimate, and the estimated fee derived the same way
+  `tx.Factory` derives it (`--fees`, else `ceil(--gas-prices × estimate)`),
+  formatted through `FormatCoin`. Gas wanted is never surfaced from a
+  simulation. The dead `GasEstimateResponse` type in
+  `internal/cli/chain/auth_flags.go`, which upstream cosmos-sdk uses to print
+  this line on a code path akt bypasses, was removed in favor of the new
+  renderer. SPEC.md §10.11.7 added.
+
+- **Currency guidance sent deployments to the denom the chain rejects**: `akt
+  sdl validate` warned that `uakt` was "on-chain only" and hinted "keep `uakt`
+  for on-chain deployments". That is backwards. `akt` auto-resolves the
+  deployment deposit to `uact` on both rails (`DetectDeploymentDeposit`, and
+  the console adapter), and the chain requires a group's price denom to equal
+  the deposit denom, so following the hint produced `Mismatched denominations
+  (uact != uakt)` and the deployment failed. The warning now says `uact` is the
+  pricing denom on both rails and hints at switching to it (or passing a
+  matching `--deposit <amount>uakt`); the unknown-denom error no longer
+  advertises `uakt` as the on-chain alternative. SPEC §2.11 carried the same
+  inverted claim and was corrected first.
+
+- **BME conversions reported success while the funds were still in flight**:
+  `akt tx bme mint-act|burn-act|burn-mint` printed `Status: success` and a bare
+  sender/amount pair, but the chain does not execute the swap in that
+  transaction — it records a pending ledger entry and settles it in a later
+  block, so the burned amount had left the balance and nothing had arrived
+  yet. The three message formatters now render a shared pending-conversion
+  block (`pretty.RenderBMEPendingConversion`) that states the conversion is
+  pending, names the destination denom, says the minted amount is not knowable
+  until the oracle price is applied at settlement, and prints the follow-up
+  query `akt q bme ledger --owner <signer> --status
+  ledger_record_status_pending`. The three commands' help text says the same.
+
+- **Ledger status codes were undocumented single letters**: `akt q bme ledger`
+  wrote `e`, `p` and `c:<reason>` into STATUS, defined nowhere in the help,
+  the spec, or a legend, while the neighbouring BME mint status already
+  spelled its enum out. Statuses now render as `Executed`, `Pending` and
+  `Canceled (insufficient funds)` in the same colors, and `q bme ledger` gained
+  help describing each state; `--status` help lists the canceled filter it had
+  omitted.
+
+- **Oracle prices needed a denom spelling the rest of the tool never uses**:
+  `akt q oracle aggregated-price` passed its positional straight through, so
+  the `uakt` its own help and example advertised produced a raw gRPC status
+  error — the network keys prices by base denom (`akt`), which is what the
+  tool's production caller passes. The positional is now normalized (`akt`,
+  `AKT`, `mAKT`, `uakt` → `akt`; the ACT family → `act`; anything else
+  untouched), the example and `--asset-denom` help use the base denom, and
+  every oracle query error is wrapped in the `Error:/Context:/Suggestion:`
+  contract naming the denom tried and pointing at `akt q oracle prices`.
+
+- **BME amounts were formatted three different ways in one table**: the BME
+  status panel printed raw `LegacyDec` strings (`Collateral Ratio:
+  1.500000000000000000`) while the oracle panel beside it on the same
+  dashboard trimmed trailing zeros; the ledger table rendered two
+  identically-typed price-carrying fields as `5 AKT @0.003125` and `5 AKT` in
+  adjacent columns, showed a bare denom where an amount belongs on pending
+  rows, and printed `-` for a zero spread. Ratios and prices now go through
+  `TrimDecTrailingZeros`, every priced amount through one `formatCoinPrice`,
+  a zero spread renders as `0 AKT`, and an amount that does not exist yet
+  renders as a dim `pending` (the destination denom is already in ROUTE). The
+  local `formatDecTrimmed` copy of the exported `TrimDecTrailingZeros` is
+  gone.
+
+- **A sparse ledger response panicked the command**: `RenderBMELedger` called
+  `Spread.IsZero()` on a `Coin` whose `Amount` proto3 omits when zero, and a
+  nil inner `Int` panics on any method call. Every coin and decimal read out
+  of a ledger record now passes through the package's existing
+  `IntOrZero`/`DecOrZero` guards, with regression coverage.
+
+  `TestRenderBMELedger` had exactly one case (empty); it now covers executed,
+  pending, canceled, zero-spread and sparse-wire records, and new tests assert
+  the ledger status vocabulary, the BME transaction output, and the oracle
+  denom normalization and error contract.
 
 - **CI and release workflows used outdated GitHub Actions runtimes**:
   checkout, Go setup, and artifact upload now use their maintained v7

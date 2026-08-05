@@ -298,14 +298,16 @@ func TestLocalnet(t *testing.T) {
 				recipient, lastBalance, stdout, stderr)
 		}
 
-		// AKT-211 acceptance: the broadcast is recorded in the context
-		// action log as a tx entry.
+		// AKT-211 acceptance: the synchronous broadcast is recorded in the
+		// context action log as a pending tx entry. CheckTx acceptance carries
+		// no block height, even though the balance poll above later proves the
+		// transaction was committed (SPEC §10.11.4).
 		logOut := stripANSI(mustRunAkt(t, home, "context", "log", "--type", "tx"))
 		if !strings.Contains(logOut, "bank.MsgSend") {
 			t.Fatalf("expected action log to contain a bank.MsgSend tx entry, got:\n%s", logOut)
 		}
-		if !strings.Contains(logOut, "success") {
-			t.Fatalf("expected a successful tx entry in the action log, got:\n%s", logOut)
+		if !strings.Contains(logOut, "pending") {
+			t.Fatalf("expected a pending sync-broadcast entry in the action log, got:\n%s", logOut)
 		}
 	})
 }

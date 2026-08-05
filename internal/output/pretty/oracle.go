@@ -37,7 +37,7 @@ func RenderOraclePrices(res *types.QueryPricesResponse) string {
 
 	rows := make([][]string, 0, len(res.Prices))
 	for _, p := range res.Prices {
-		price := TrimDecTrailingZeros(p.State.Price.String())
+		price := FormatPriceDec(p.State.Price)
 		rows = append(rows, []string{
 			p.ID.Denom,
 			p.ID.BaseDenom,
@@ -66,10 +66,10 @@ func RenderAggregatedPrice(res *types.QueryAggregatedPriceResponse) string {
 
 	fmt.Fprintln(&buf, Section("Aggregated Price"))
 	KV(&buf, "Denom", Bold(ap.Denom))
-	KV(&buf, "TWAP", Bold(TrimDecTrailingZeros(ap.TWAP.String())))
-	KV(&buf, "Median", TrimDecTrailingZeros(ap.MedianPrice.String()))
-	KV(&buf, "Min", TrimDecTrailingZeros(ap.MinPrice.String()))
-	KV(&buf, "Max", TrimDecTrailingZeros(ap.MaxPrice.String()))
+	KV(&buf, "TWAP", Bold(FormatPriceDec(ap.TWAP)))
+	KV(&buf, "Median", FormatPriceDec(ap.MedianPrice))
+	KV(&buf, "Min", FormatPriceDec(ap.MinPrice))
+	KV(&buf, "Max", FormatPriceDec(ap.MaxPrice))
 	KV(&buf, "Sources", fmt.Sprintf("%d", ap.NumSources))
 	KV(&buf, "Deviation", fmt.Sprintf("%d bps", ap.DeviationBps))
 	KV(&buf, "Timestamp", ap.Timestamp.Format("2006-01-02 15:04:05 UTC"))

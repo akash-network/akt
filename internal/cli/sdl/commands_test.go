@@ -477,14 +477,39 @@ func TestValidateLatestTag(t *testing.T) {
 	require.Contains(t, stderr, ":latest")
 }
 
+// "uakt" pricing warns rather than errors: an explicitly matching
+// "--deposit <amount>uakt" is a legitimate escape hatch. The warning must point
+// at "uact", though — akt auto-resolves the deployment deposit to "uact" on both
+// rails, and the chain rejects a group whose price denom differs from the
+// deposit denom, so a user who keeps "uakt" without a matching deposit gets
+// "Mismatched denominations (uact != uakt)" at deploy time.
 func TestValidateUaktWarnsButPasses(t *testing.T) {
 	path := writeFixture(t, strings.Replace(validSDL, "denom: uact", "denom: uakt", 1))
 
 	stdout, _, err := runSDL(t, "", "validate", path)
-	require.NoError(t, err, "uakt is valid on-chain and must only warn")
+	require.NoError(t, err, "uakt only warns; the explicit-deposit escape hatch keeps it valid")
 	require.Contains(t, stdout, "valid: 1 service(s), 1 group(s), 1 warning(s)")
 	require.Contains(t, stdout, `warning:`)
+	require.Contains(t, stdout, "profiles/placement/dcloud/pricing")
 	require.Contains(t, stdout, "uakt")
+
+	// The advice must send the user to uact, not tell them to keep uakt.
+	require.Contains(t, stdout, `hint: switch the pricing denom to "uact"`)
+	require.NotContains(t, stdout, `keep "uakt"`)
+	require.NotContains(t, stdout, "on-chain only")
+}
+
+// Any denom that is neither uact nor uakt is an error, and the remedy names the
+// one denom the chain accepts on both rails.
+func TestValidateUnknownPricingDenomErrors(t *testing.T) {
+	path := writeFixture(t, strings.Replace(validSDL, "denom: uact", "denom: uatom", 1))
+
+	_, stderr, err := runSDL(t, "", "validate", path)
+	require.Error(t, err)
+	require.Equal(t, cliutil.ExitGeneral, cliutil.ExitCode(err))
+	require.Contains(t, stderr, `pricing denom "uatom" is not accepted`)
+	require.Contains(t, stderr, `change the denom to "uact"`)
+	require.NotContains(t, stderr, `"uakt" (on-chain)`)
 }
 
 func TestValidateStdin(t *testing.T) {
