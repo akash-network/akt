@@ -60,12 +60,11 @@ func RenderNetworkList(nets []aktctx.Network, getUsedBy func(name string) []stri
 
 	rows := make([][]string, 0, len(nets))
 	for _, n := range nets {
+		// Endpoints are printed in full: a truncated URL is not usable,
+		// and the column widens to fit like every other column.
 		rpcDisplay := ""
 		if len(n.Endpoints.RPC) > 0 {
 			rpcDisplay = n.Endpoints.RPC[0]
-			if len(rpcDisplay) > 40 {
-				rpcDisplay = rpcDisplay[:37] + "..."
-			}
 			if len(n.Endpoints.RPC) > 1 {
 				rpcDisplay += fmt.Sprintf(" (+%d)", len(n.Endpoints.RPC)-1)
 			}
@@ -82,6 +81,6 @@ func RenderNetworkList(nets []aktctx.Network, getUsedBy func(name string) []stri
 		rows = append(rows, []string{n.Name, n.ChainID, rpcDisplay, usedBy})
 	}
 
-	WriteTableCols(&buf, cols, rows)
+	WriteTableColsOrEmpty(&buf, cols, rows, "(no networks)")
 	return buf.String()
 }

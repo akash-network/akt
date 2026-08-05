@@ -41,7 +41,7 @@ func RenderEscrowAccounts(res *etypes.QueryAccountsResponse) string {
 			FormatHeight(a.State.SettledAt),
 		})
 	}
-	WriteTable(&buf, headers, rows)
+	WriteTableOrEmpty(&buf, headers, rows, "(no escrow accounts)")
 	return buf.String()
 }
 
@@ -63,7 +63,7 @@ func RenderEscrowPayments(res *etypes.QueryPaymentsResponse) string {
 			FormatCoin(p.State.Withdrawn),
 		})
 	}
-	WriteTable(&buf, headers, rows)
+	WriteTableOrEmpty(&buf, headers, rows, "(no escrow payments)")
 	return buf.String()
 }
 

@@ -371,6 +371,11 @@ func executeWorkflow(
 	state, runErr := engine.Run(cmd.Context(), rtDef, account, params)
 	recovery := deployRecoveryAdvice(state, runErr)
 
+	// Record the outcome locally before reporting it (SPEC §6.6). A one-shot
+	// CLI run exits before any chain event it produced could be observed, so
+	// the run itself is the only thing that can populate the store.
+	recordWorkflowOutcome(cmd, rc, state)
+
 	if jsonl {
 		emitJSONL(out, state, recovery)
 	} else {
@@ -590,9 +595,13 @@ func workflowFailureError(workflow string, runErr error, recovery *workflowRecov
 }
 
 // jsonlTx is the tx object of a JSONL step line (SPEC §2.3.8).
+//
+// Height is a pointer so it is omitted, not reported as 0, when the step's
+// transaction has not been confirmed — which is every transaction under the
+// default sync broadcast mode (SPEC §10.11.1).
 type jsonlTx struct {
 	Hash    string `json:"hash"`
-	Height  int64  `json:"height"`
+	Height  *int64 `json:"height,omitempty"`
 	GasUsed int64  `json:"gas_used,omitempty"`
 	Code    uint32 `json:"code"`
 }
@@ -649,10 +658,12 @@ func emitJSONL(out io.Writer, state *wf.RunState, recovery *workflowRecovery) {
 		}
 
 		if sr.TxHash != "" {
-			line.Txs = append(line.Txs, jsonlTx{
-				Hash:   sr.TxHash,
-				Height: sr.Height,
-			})
+			tx := jsonlTx{Hash: sr.TxHash}
+			if sr.Height > 0 {
+				height := sr.Height
+				tx.Height = &height
+			}
+			line.Txs = append(line.Txs, tx)
 		}
 
 		_ = enc.Encode(line)

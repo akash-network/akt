@@ -103,13 +103,26 @@ func (t *loggingTxClient) record(msgs []sdk.Msg, resp interface{}, err error) {
 
 	if r, ok := resp.(*sdk.TxResponse); ok && r != nil {
 		entry.TxHash = r.TxHash
-		entry.Height = r.Height
-		entry.GasUsed = r.GasUsed
 		entry.ResultCode = r.Code
 
-		if r.Code != 0 {
+		// Height and gas are only recorded when the broadcast actually reported
+		// them. Under the default sync broadcast mode the response is a CheckTx
+		// result with both fields zero, and a recorded zero is indistinguishable
+		// from a real reading (SPEC §5.4, §10.11.1).
+		if r.Height > 0 {
+			entry.Height = r.Height
+		}
+		if r.GasUsed > 0 {
+			entry.GasUsed = r.GasUsed
+		}
+
+		switch {
+		case r.Code != 0:
 			entry.Status = "failed"
 			entry.Error = r.RawLog
+		case r.Height == 0:
+			// Accepted into the mempool, not yet included in a block.
+			entry.Status = "pending"
 		}
 	}
 

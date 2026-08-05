@@ -44,7 +44,7 @@ func RenderProposalList(res *govv1.QueryProposalsResponse) string {
 			votingEnd,
 		})
 	}
-	WriteTable(&buf, headers, rows)
+	WriteTableOrEmpty(&buf, headers, rows, "(no proposals)")
 	return buf.String()
 }
 

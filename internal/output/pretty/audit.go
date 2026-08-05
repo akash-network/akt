@@ -31,7 +31,7 @@ func RenderAuditList(res *atypes.QueryProvidersResponse) string {
 		}
 		rows = append(rows, []string{p.Owner, p.Auditor, attrs})
 	}
-	WriteTable(&buf, headers, rows)
+	WriteTableOrEmpty(&buf, headers, rows, "(no audited providers)")
 	return buf.String()
 }
 

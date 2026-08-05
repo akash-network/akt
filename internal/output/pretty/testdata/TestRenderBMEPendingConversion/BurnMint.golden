@@ -1,0 +1,10 @@
+  [38;2;113;113;122mSender:[m              akash1uwqjtgjhjctjc45ugy7ev5prprhehc7w5xcfwl
+  [38;2;113;113;122mBurned:[m              1 AKT
+  [38;2;113;113;122mMinted Denom:[m        uact
+  [38;2;113;113;122mConversion:[m          [38;2;234;179;8mpending[m (settles in a later block)
+  [38;2;113;113;122mMinted Amount:[m       [38;2;161;161;170mnot known yet (set by the oracle price at settlement)[m
+
+[38;2;161;161;170m  The chain accepted the request and recorded a pending ledger entry;[m
+[38;2;161;161;170m  it burns and mints in a later block. Until it settles the burned[m
+[38;2;161;161;170m  amount has left your balance and no uact has arrived. Track it with:[m
+    [1makt q bme ledger --owner akash1uwqjtgjhjctjc45ugy7ev5prprhehc7w5xcfwl --status ledger_record_status_pending[m

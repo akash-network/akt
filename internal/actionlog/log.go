@@ -46,10 +46,14 @@ type Entry struct {
 	Params     json.RawMessage `json:"params,omitempty"`
 	DurationMs int64           `json:"duration_ms,omitempty"`
 	WorkflowID string          `json:"workflow_id,omitempty"`
-	Step       int             `json:"step,omitempty"`
-	StepName   string          `json:"step_name,omitempty"`
-	Error      string          `json:"error,omitempty"`
-	Status     string          `json:"status,omitempty"`
+	// Step is written unconditionally (SPEC §5.4): with omitempty the first
+	// step of every workflow run, index 0, vanished from machine output, so
+	// the entry recording where a run started looked like an entry with no
+	// step at all.
+	Step     int    `json:"step"`
+	StepName string `json:"step_name,omitempty"`
+	Error    string `json:"error,omitempty"`
+	Status   string `json:"status,omitempty"`
 }
 
 // Filter defines criteria for reading log entries.
@@ -59,6 +63,9 @@ type Filter struct {
 	Limit   int
 	DSeq    uint64
 	Account string
+	// WorkflowID isolates the entries of a single workflow run, so two
+	// interleaved runs of the same workflow can be read apart.
+	WorkflowID string
 }
 
 // Logger is an append-only action log backed by a JSONL file.
@@ -252,6 +259,10 @@ func matchesFilter(e Entry, f Filter) bool {
 	}
 
 	if f.Account != "" && e.Account != f.Account {
+		return false
+	}
+
+	if f.WorkflowID != "" && e.WorkflowID != f.WorkflowID {
 		return false
 	}
 

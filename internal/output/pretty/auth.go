@@ -58,10 +58,6 @@ func formatAccountResponse(w io.Writer, _ *cobra.Command, cctx sdkclient.Context
 
 func formatAccountsResponse(w io.Writer, _ *cobra.Command, cctx sdkclient.Context, msg proto.Message) error {
 	res := msg.(*types.QueryAccountsResponse)
-	if len(res.Accounts) == 0 {
-		fmt.Fprintln(w, Dim("(no accounts)"))
-		return nil
-	}
 
 	headers := []string{"ADDRESS", "TYPE", "ACCOUNT #", "SEQUENCE"}
 	rows := make([][]string, 0, len(res.Accounts))
@@ -81,16 +77,12 @@ func formatAccountsResponse(w io.Writer, _ *cobra.Command, cctx sdkclient.Contex
 		})
 	}
 
-	WriteTable(w, headers, rows)
+	WriteTableOrEmpty(w, headers, rows, "(no accounts)")
 	return nil
 }
 
 func formatModuleAccountsResponse(w io.Writer, _ *cobra.Command, cctx sdkclient.Context, msg proto.Message) error {
 	res := msg.(*types.QueryModuleAccountsResponse)
-	if len(res.Accounts) == 0 {
-		fmt.Fprintln(w, Dim("(no module accounts)"))
-		return nil
-	}
 
 	headers := []string{"NAME", "ADDRESS", "PERMISSIONS"}
 	rows := make([][]string, 0, len(res.Accounts))
@@ -118,7 +110,7 @@ func formatModuleAccountsResponse(w io.Writer, _ *cobra.Command, cctx sdkclient.
 		})
 	}
 
-	WriteTable(w, headers, rows)
+	WriteTableOrEmpty(w, headers, rows, "(no module accounts)")
 	return nil
 }
 

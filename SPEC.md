@@ -291,12 +291,12 @@ The resolved context is injected into every service: chain client, provider gate
 three modes, selected at the command boundary:
 
 - **none** — the command never receives a keyring. SDL authoring (§2.11),
-  monitoring (§2.6), version, completion, store, context management, the
-  Console rail, and workflow dry-runs use this mode.
+  monitoring (§2.6), version, completion, local store inspection/import/export,
+  context management, the Console rail, and workflow dry-runs use this mode.
 - **on demand** — the client context receives a deferred keyring that does not
   open its configured backend until an operation actually asks for a key. Chain
-  queries, read-only MCP startup, public provider status, and address-based
-  transaction construction or simulation use this mode.
+  queries, `store sync`, read-only MCP startup, public provider status, and
+  address-based transaction construction or simulation use this mode.
 - **required** — startup opens the keyring and resolves a named account before
   execution. Transactions that sign, workflow execution, and authenticated
   provider operations use this mode.
@@ -694,7 +694,7 @@ akt
 │   │   ├── bid [filter] [state]         # [owner/]dseq[/gseq/oseq[/prov]] [state]; --by; --state — **disabled pending feedback** (positional only, 2026-07)
 │   │   ├── lease [filter] [state]       # [owner/]dseq[/gseq/oseq[/prov]] [state]; --by; --state — **disabled pending feedback** (positional only, 2026-07)
 │   │   └── params
-│   ├── provider [address]               # List or get (address → single)
+│   ├── provider [address]               # List or get (address → single); `list`/`get` remain as aliases
 │   ├── cert [owner] [state]             # Owner or default account, plus [state]; --owner/--state flags — **disabled pending feedback** (positional only, 2026-07)
 │   ├── audit [owner]                    # Owner or default account; --auditor flag
 │   ├── escrow [filter]                  # [owner[/dseq]]; --state flag
@@ -757,7 +757,7 @@ akt
 │   │   └── list-contracts-by-creator <creator>
 │   ├── oracle
 │   │   ├── prices
-│   │   ├── aggregated-price <denom>
+│   │   ├── aggregated-price <denom>     # denom accepts akt, AKT, or uakt (normalized to the oracle's base denom)
 │   │   └── params
 │   ├── bme
 │   │   ├── params
@@ -981,22 +981,42 @@ Rename a context. Updates `current-context` if the renamed context was active. R
 
 View the action log for the current context.
 
-| Flag        | Type   | Default   | Description                                                         |
-| ----------- | ------ | --------- | ------------------------------------------------------------------- |
-| `--context` | string | current   | Context to view log for                                             |
-| `--limit`   | int    | `50`      | Number of entries to show                                           |
-| `--type`    | string | `""`      | Filter by action type: `tx`, `workflow`, `provider`, `context`, `console`, `error` (see §5.6) |
-| `--since`   | string | `""`      | Show entries since timestamp or duration (e.g., `1h`, `2024-01-01`) |
-| `--output`  | string | `pretty`  | Output format: `pretty` (table), `json` (raw JSONL entries, one per line) |
+| Flag            | Type   | Default   | Description                                                         |
+| --------------- | ------ | --------- | ------------------------------------------------------------------- |
+| `--context`     | string | current   | Context to view log for                                             |
+| `--limit`       | int    | `50`      | Number of entries to show                                           |
+| `--type`        | string | `""`      | Filter by action type: `tx`, `workflow`, `provider`, `context`, `console`, `error` (see §5.6) |
+| `--workflow-id` | string | `""`      | Show only the entries of one workflow run (the `run` id shown in `SUMMARY`) |
+| `--since`       | string | `""`      | Show entries since timestamp or duration (e.g., `1h`, `2024-01-01`) |
+| `--output`      | string | `pretty`  | Output format: `pretty` (table), `json` (raw JSONL entries, one per line) |
+
+The pretty table has four columns: `TIME`, `TYPE`, `SUMMARY`, and `STATUS`. The
+action name alone does not identify an entry — a single workflow run writes one
+entry per step, all under the same workflow name — so `SUMMARY` is composed per
+entry type from the fields that distinguish it:
+
+| Type              | `SUMMARY` composition                                                                        |
+| ----------------- | -------------------------------------------------------------------------------------------- |
+| `workflow`        | `<workflow>/<step-name>` plus `(run <workflow-id>)`, so every step of a run is its own row     |
+| `tx`              | Message action plus `(dseq: <n>)` when the entry carries one                                   |
+| `provider`        | Action plus ` -> <provider-address>` and `(dseq: <n>)`                                         |
+| `console`         | Action plus `(dseq: <n>)`                                                                      |
+| `context`         | Action plus the recorded parameters as `(key: value, ...)`, sorted by key                      |
+| `query`, `error`  | Action plus any recorded parameters                                                            |
+
+Addresses and workflow run ids are printed in full; only the error text shown in
+the `STATUS` column is shortened. The table is a summary view — machine output
+(`-o json|yaml`) always serializes complete entries with every field of §5.4.
 
 ```bash
-$ akt context log --limit 5
-  TIME                    TYPE      SUMMARY                                    STATUS
-  2026-03-23 10:15:32     tx        deployment create (dseq: 12345)            success
-  2026-03-23 10:15:45     tx        market lease create (dseq: 12345)          success
-  2026-03-23 10:15:50     workflow  send-manifest -> akash1prov1...            success
-  2026-03-23 10:20:01     context   edit (default-account: bob)                success
-  2026-03-23 10:25:00     tx        deployment close (dseq: 12345)             success
+$ akt context log --limit 6
+  TIME                 TYPE      SUMMARY                                                     STATUS
+  2026-03-23 10:25:00  context   keys.add (address: akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx, name: bob, type: local)  success
+  2026-03-23 10:20:01  context   edit (default-account: bob)                                 success
+  2026-03-23 10:15:50  workflow  deploy/send-manifest (run 9f2c1ab34d55e017)                 error: provider gateway unreachable
+  2026-03-23 10:15:47  workflow  deploy/create-lease (run 9f2c1ab34d55e017)                  success
+  2026-03-23 10:15:45  workflow  deploy/wait-for-bids (run 9f2c1ab34d55e017)                 success
+  2026-03-23 10:15:32  tx        deployment.MsgCreateDeployment (dseq: 12345)                success
 ```
 
 ### 2.2.1 Network Commands
@@ -1049,14 +1069,21 @@ Delete a network definition. Fails if any context references it. Use `--force` t
 
 List all networks and which contexts reference each.
 
+Pretty output is rendered by `pretty.RenderNetworkList`, the same renderer the
+TUI network list uses (§10.8). RPC endpoints are printed in full -- never
+truncated -- with a `(+N)` suffix counting the backups that are not shown.
+
 ```bash
 $ akt context network list
-  NAME              CHAIN-ID       RPC                          USED BY
-  mainnet           akashnet-2     rpc.akt.dev:443/rpc          prod, monitoring
-  testnet           testnet-02     rpc.testnet-02.aksh.pw:443   staging
-  sandbox           sandbox-2      rpc.sandbox-2.aksh.pw:443
-  mainnet-custom    akashnet-2     my-private-rpc:443           (none)
+NAME     CHAIN-ID    RPC                                 USED BY
+mainnet  akashnet-2  https://rpc.akt.dev:443/rpc (+2)    prod, monitoring
+testnet  testnet-02  https://rpc.testnet-02.aksh.pw:443  staging
+sandbox  sandbox-2   https://rpc.sandbox-2.aksh.pw:443   (none)
 ```
+
+With no networks configured, the pretty path prints the remedy
+(`No networks configured. Create one with: akt context network create <name> --template mainnet`);
+`--output json`/`yaml` print an empty array (§10.3).
 
 #### `akt context network show <name>`
 
@@ -1152,6 +1179,38 @@ Parse an address and render its canonical uppercase hex form plus full bech32
 forms for the `akash`, `cosmos`, and `osmo` prefixes. JSON/YAML output contains
 `format`, optional `hrp`, `hex`, and an `addresses` object; pretty output keeps
 the aligned human-readable form.
+
+#### Key management in the action log
+
+Keyring mutations are state changes and are recorded in the active context's
+action log (§5.6) as `type=context` entries under a dotted `keys.*` action, so
+`akt context log --type context` shows key changes next to context changes
+without colliding with the bare `create`/`delete`/`rename` context actions. The
+entry is written after the keyring call returns, with `status=success`, or
+`status=failed` plus the error text when the mutation failed, so an unsuccessful
+attempt is auditable too. Commands run without a selected context (no
+`current-context` and no `--context`) have no log to write to; the command
+itself is unaffected.
+
+| Command                                  | Action          | Recorded parameters                                                                          |
+| ---------------------------------------- | --------------- | -------------------------------------------------------------------------------------------- |
+| `keys add <name>`                        | `keys.add`      | `name`, `type` (`local`, `ledger`, `multi`), `address`; multisig adds `threshold` and `pubkeys` |
+| `keys add <name> --recover` / `--source` | `keys.recover`  | `name`, `type`, `address`                                                                      |
+| `keys delete <name>`                     | `keys.delete`   | `name`, `type`, `address`                                                                      |
+| `keys rename <old> <new>`                | `keys.rename`   | `from`, `to`                                                                                   |
+| `keys import <name> <keyfile>`           | `keys.import`   | `name`, `type`, `address`                                                                      |
+| `keys export <name>`                     | `keys.export`   | `name`                                                                                         |
+
+`keys export` changes no state, but it is the one command that moves private key
+material out of the keyring. It is recorded as a security event and is the only
+deliberate exception to the rule that read-only commands are not logged (§5.6).
+The read-only `keys list`, `keys show`, `keys parse`, and `keys mnemonic` are
+never recorded, and a cancelled `keys delete` confirmation records nothing.
+
+Secrets never reach the log: mnemonics, BIP39 passphrases, export and import
+passphrases, and armored key material are never recorded as parameters — the
+same rule that makes `context edit` record `console-api-key: updated` instead of
+the credential (§7.1). Addresses are recorded in full.
 
 ### 2.3 Workflow Engine
 
@@ -1409,7 +1468,7 @@ On error:
 | Field      | Type   | Description                                   |
 | ---------- | ------ | --------------------------------------------- |
 | `hash`     | string | Transaction hash                              |
-| `height`   | int64  | Block height where the tx was included        |
+| `height`   | int64  | Block height where the tx was included. **Omitted** when the transaction has not been confirmed — under the default `--broadcast-mode sync` a step's transaction is only in the mempool, and emitting `"height":0` would be indistinguishable from a real height (see [§10.11.1](#broadcast-confirmation-state)) |
 | `gas_used` | int64  | Gas consumed (omitted when the executor does not report gas) |
 | `code`     | uint32 | Response code (0 = success)                   |
 | `raw_log`  | string | Raw log output (present on error, omitted otherwise) |
@@ -1466,8 +1525,33 @@ steps:
   - name: display-result
     type: output
     template: |
-      Deployment updated!
+      {{- $manifest := index .Steps "send-manifest" -}}
+      {{- if not $manifest -}}
+      Deployment updated.
         DSEQ: {{ .Params.dseq }}
+        Manifest delivery: handled by the Console API.
+
+        Note: a provider restarts a service only when its image reference or
+        configuration actually changed; re-applying an identical manifest
+        leaves the running workload as it is.
+      {{- else if gt (index $manifest "count") 0 -}}
+      Deployment updated.
+        DSEQ: {{ .Params.dseq }}
+        Manifest sent to {{ index $manifest "count" }} provider(s):
+      {{ range index $manifest "providers" }}    {{ . }}
+      {{ end }}
+        Note: a provider restarts a service only when its image reference or
+        configuration actually changed; re-applying an identical manifest
+        leaves the running workload as it is.
+      {{- else -}}
+      Deployment updated on chain, but nothing was redeployed.
+        DSEQ: {{ .Params.dseq }}
+
+        WARNING: this deployment has no active leases, so the new manifest was
+        not sent to any provider. Only the SDL hash changed on chain; no
+        running workload was updated.
+        List leases with "akt query market lease {{ .Params.dseq }} active".
+      {{- end -}}
 ```
 
 On the chain rail, `send-manifest-to-active-leases` queries every page of active
@@ -1477,6 +1561,12 @@ delivery attempts to the remaining providers, but the step fails unless every
 provider accepts the update. No active leases is a successful no-op. The
 operation is safe to retry. Console API contexts omit the provider step because
 `PUT /v1/deployments/{dseq}` handles manifest delivery internally.
+
+The step records `{"providers": [...], "count": N}`, and `display-result` MUST
+read it rather than reporting an unconditional success: the update transaction
+only records a new SDL hash on chain, so "updated" is a claim about the chain,
+never a claim that a running workload changed. The three result forms are
+specified under `akt update` below.
 
 **Close workflow definition:**
 
@@ -1617,6 +1707,54 @@ akt update deployment.yaml 12345 --yes
 akt update deployment.yaml 12345 --yes -o jsonl
 ```
 
+**Result output.** The update transaction records a new SDL hash on chain; it
+does not by itself change anything a provider is running. The result therefore
+reports what the `send-manifest` step actually delivered, and never claims more
+than that. There are exactly three forms.
+
+Manifest delivered to one or more providers (chain rail):
+
+```
+Deployment updated.
+  DSEQ: 12345
+  Manifest sent to 2 provider(s):
+    akash1prov1...
+    akash1prov2...
+
+  Note: a provider restarts a service only when its image reference or
+  configuration actually changed; re-applying an identical manifest
+  leaves the running workload as it is.
+```
+
+No active leases — the step is a successful no-op, so nothing was redeployed:
+
+```
+Deployment updated on chain, but nothing was redeployed.
+  DSEQ: 12345
+
+  WARNING: this deployment has no active leases, so the new manifest was not
+  sent to any provider. Only the SDL hash changed on chain; no running
+  workload was updated.
+  List leases with "akt query market lease 12345 active".
+```
+
+Console API context — the provider step is filtered out because
+`PUT /v1/deployments/{dseq}` delivers the manifest:
+
+```
+Deployment updated.
+  DSEQ: 12345
+  Manifest delivery: handled by the Console API.
+
+  Note: a provider restarts a service only when its image reference or
+  configuration actually changed; re-applying an identical manifest
+  leaves the running workload as it is.
+```
+
+The bare transaction command `akt tx deployment update` sends no manifest at
+all, and its pretty output says so
+([§10.11](#1011-transaction-result-formatting)).
+
 **JSONL mode:**
 ```bash
 $ akt update deployment.yaml --dseq 12345 --yes -o jsonl
@@ -1699,6 +1837,43 @@ Provider status remains public; lease status, service status, and manifest
 submission use the shared authenticated gateway boundary with JWT or mTLS as
 configured.
 
+**Provider resolution for lease-scoped commands.** `--provider` names the
+gateway explicitly and always wins. When it is omitted, `akt` resolves the
+provider from the deployment's leases on chain: it queries the leases owned by
+the selected context's `default-account` for the given deployment sequence and
+uses the provider of the deployment's single active lease. This is the same
+identification `akt console status <dseq>` already performs on the Console rail,
+so a deployment `akt` created is addressed identically on both rails. The
+resolved lease also supplies `gseq`/`oseq` unless they were given explicitly.
+
+Resolution is refused rather than guessed when it is ambiguous or impossible,
+and the error names the actual cause:
+
+- the deployment has no leases at all;
+- it has leases but none active (their states are listed);
+- more than one lease is active (every active provider is listed and
+  `--provider` is required to choose).
+
+Each of those errors points at `akt query market lease <dseq>` for the full
+record. `--provider` is never a cobra-required flag (§3.8): the deployment
+sequence is the primary value and the provider is an optional override.
+
+`--provider-url` overrides the gateway URL, not the provider identity: the
+lease path sent to the gateway still needs a provider address, so without
+`--provider` the lease is read from chain even when a URL is supplied. Because
+one URL cannot address several gateways, combining `--provider-url` with a
+`send-manifest` fan-out over multiple active leases is refused.
+
+Because the provider is resolved *from* the deployment sequence, the sequence is
+validated first. A lease command invoked with neither a `dseq` nor a
+`--provider` reports the missing deployment sequence, not the missing provider,
+and never suggests a positional provider on a command whose positional slot is
+the `dseq`.
+
+The lease owner is always the selected context's `default-account`. The provider
+group has no `--from` flag; select a different account with `akt context use`,
+`--context`, or the context's `default-account` setting.
+
 #### `akt provider lease-status [dseq]`
 
 Query lease deployment status from the provider gateway. The positional `dseq` supplies the deployment sequence. The `--dseq` flag is **disabled pending feedback** (positional only, 2026-07).
@@ -1706,10 +1881,9 @@ Query lease deployment status from the provider gateway. The positional `dseq` s
 | Flag          | Type   | Default         | Description         |
 | ------------- | ------ | --------------- | ------------------- |
 | `--dseq`      | uint64 | required unless positional `dseq` given | Deployment sequence — **disabled pending feedback** (positional only, 2026-07) |
-| `--gseq`      | uint32 | `1`             | Group sequence      |
-| `--oseq`      | uint32 | `1`             | Order sequence      |
-| `--provider`  | string | required        | Provider address    |
-| `--from`      | string | context default | Owner account       |
+| `--gseq`      | uint32 | active lease    | Group sequence      |
+| `--oseq`      | uint32 | active lease    | Order sequence      |
+| `--provider`  | string | active lease    | Provider address; resolved from the deployment's active lease when omitted |
 | `--auth-type` | string | context default | Auth type           |
 
 #### `akt provider lease-logs [dseq]`
@@ -1719,10 +1893,9 @@ Stream container logs from a lease. The positional `dseq` supplies the deploymen
 | Flag          | Type   | Default         | Description               |
 | ------------- | ------ | --------------- | ------------------------- |
 | `--dseq`      | uint64 | required unless positional `dseq` given | Deployment sequence — **disabled pending feedback** (positional only, 2026-07) |
-| `--gseq`      | uint32 | `1`             | Group sequence            |
-| `--oseq`      | uint32 | `1`             | Order sequence            |
-| `--provider`  | string | required        | Provider address          |
-| `--from`      | string | context default | Owner account             |
+| `--gseq`      | uint32 | active lease    | Group sequence            |
+| `--oseq`      | uint32 | active lease    | Order sequence            |
+| `--provider`  | string | active lease    | Provider address; resolved from the deployment's active lease when omitted |
 | `--service`   | string | `""`            | Filter by service name    |
 | `--follow`    | bool   | `false`         | Stream logs continuously  |
 | `--tail`      | int64  | `-1`            | Lines from end (-1 = all) |
@@ -1746,10 +1919,9 @@ Open an interactive shell into a running container.
 | Flag          | Type   | Default         | Description         |
 | ------------- | ------ | --------------- | ------------------- |
 | `--dseq`      | uint64 | required        | Deployment sequence |
-| `--gseq`      | uint32 | `1`             | Group sequence      |
-| `--oseq`      | uint32 | `1`             | Order sequence      |
-| `--provider`  | string | required        | Provider address    |
-| `--from`      | string | context default | Owner account       |
+| `--gseq`      | uint32 | active lease    | Group sequence      |
+| `--oseq`      | uint32 | active lease    | Order sequence      |
+| `--provider`  | string | active lease    | Provider address; resolved from the deployment's active lease when omitted |
 | `--service`   | string | required        | Service name        |
 | `--tty`       | bool   | `true`          | Allocate a TTY      |
 | `--stdin`     | bool   | `false`         | Force stdin attachment for an explicit terminal command |
@@ -1776,30 +1948,39 @@ Send an SDL manifest to provider(s) for an existing lease.
 | Flag          | Type   | Default         | Description                                                   |
 | ------------- | ------ | --------------- | ------------------------------------------------------------- |
 | `--dseq`      | uint64 | required        | Deployment sequence                                           |
-| `--from`      | string | context default | Owner account                                                 |
 | `--provider`  | string | `""`            | Specific provider (default: all providers with active leases) |
 | `--auth-type` | string | context default | Auth type                                                     |
 
+Unlike the other lease-scoped commands, `send-manifest` fans out: with no
+`--provider` it submits the manifest to **every** provider holding an active
+lease for the deployment, which is the same delivery the `update` workflow's
+manifest step performs (§2.3). Every provider is attempted even when an earlier
+one rejects the manifest, each accepted submission is reported by full provider
+address, and the command fails unless all of them accepted. A deployment with a
+single active lease therefore needs no `--provider` at all.
+
 #### `akt provider get-manifest [dseq]`
 
-Retrieve the current manifest from a provider. The positional `dseq` supplies the deployment sequence. The `--dseq` flag is **disabled pending feedback** (positional only, 2026-07).
+Retrieve the current manifest from a provider. The positional `dseq` supplies the deployment sequence. The `--dseq` flag is **disabled pending feedback** (positional only, 2026-07). `--provider` is resolved from the deployment's active lease when omitted.
 
 #### `akt provider migrate-hostnames`
 
-Migrate hostnames from one deployment to another on the same provider.
+Migrate hostnames onto a deployment from whichever deployment currently holds
+them on the same provider. The gateway addresses the **destination** lease only,
+so there is no source flag.
 
-| Flag                 | Type     | Default         | Description                |
-| -------------------- | -------- | --------------- | -------------------------- |
-| `--dseq`             | uint64   | required        | Source deployment sequence |
-| `--destination-dseq` | uint64   | required        | Target deployment sequence |
-| `--from`             | string   | context default | Owner account              |
-| `--provider`         | string   | required        | Provider address           |
-| `--hostnames`        | []string | required        | Hostnames to migrate       |
-| `--auth-type`        | string   | context default | Auth type                  |
+| Flag                 | Type     | Default         | Description                            |
+| -------------------- | -------- | --------------- | -------------------------------------- |
+| `--dseq`             | uint64   | required        | Destination deployment sequence        |
+| `--gseq`             | uint32   | active lease    | Destination group sequence             |
+| `--provider`         | string   | active lease    | Provider address; resolved from the destination deployment's active lease when omitted |
+| `--hostnames`        | []string | required        | Hostnames to migrate                   |
+| `--auth-type`        | string   | context default | Auth type                              |
 
 #### `akt provider migrate-endpoints`
 
-Same pattern as `migrate-hostnames` but for IP endpoints.
+Same pattern as `migrate-hostnames`, with `--endpoints` naming the IP endpoints
+to migrate.
 
 **Provider gateway output and stream contract:** provider status, lease
 status, and manifest reads emit JSON by default; `--output json` and
@@ -1855,6 +2036,44 @@ Import records from a previously exported file.
 | `--merge`   | bool | `true`  | Merge with existing records (default) |
 | `--replace` | bool | `false` | Replace entire store contents         |
 | `--dry-run` | bool | `false` | Show what would be imported           |
+
+#### `akt store sync [account]`
+
+Reconcile the local store against on-chain state for the context's tracked
+accounts (§6.7), then record the chain height reached in the sync state.
+
+Workflow commands record their own results (§6.6), but a single run can only
+observe what passed through it. `akt store sync` is the escape hatch for
+everything else: deployments created before `akt` was used or from another
+machine, escrow balances and transferred amounts that move every block, leases
+closed by a provider rather than by the user, and any run whose best-effort
+store write failed.
+
+```
+$ akt store sync
+Store Sync
+  Accounts:     1
+      Owner:    akash1zn43lmk4dmvcjmfhtaqk4wa9zpuru3xy0kzupu
+  Deployments:  3
+  Leases:       3
+  Bids:         7
+  Height:       18,234,567
+```
+
+Every reconciled account is listed in full; addresses are never abbreviated.
+
+The optional positional `account` reconciles a single account instead of the
+context's tracked accounts. Accounts are resolved the way `--from` is: a bech32
+address is used as-is, any other value is looked up in the context's keyring.
+
+Reconciliation is the §6.4 full reconciliation, run on demand: every deployment
+owned by a tracked account, then that deployment's leases and bids, are queried
+and written to the store. Existing records for the same keys are overwritten
+with chain state; local-only metadata that the chain does not carry (`labels`,
+`notes`, `tags`, `sdl_path`, `sdl_hash`) is preserved from the existing record.
+
+Requires a chain RPC endpoint (capability `chain-query`, §2.10). A
+`console-api` context without a network cannot run it.
 
 ### 2.6 Monitor Command
 
@@ -2022,7 +2241,7 @@ Both commands are aliases that launch directly into the **Oracle/BME** dashboard
 - **Price history section**: Recent price feed entries table with asset denom, base denom, price, source, and timestamp.
 - **BME status section**: Fields in order: Status (color-coded: green=healthy, yellow=warning, red=halt CR/halt Oracle), Mints (Allowed/Halted), Refunds (Allowed/Halted), Collateral Ratio, Thresholds (nested: Warn, Halt).
 - **Vault section**: Balances, total burned, total minted, remint credits. All amounts formatted using `FormatCoin()`.
-- **Ledger section**: Recent ledger entries table with route, ID, status, burned, minted, spread, remint accrued, remint issued.
+- **Ledger section**: Recent ledger entries table with route, ID, status, burned, minted, spread, remint accrued, remint issued. Status is always a full word — `Executed` (green), `Pending` (yellow), `Canceled (<reason>)` (red) — never a one-letter abbreviation (§10.10 BME).
 
 Data sources:
 - Oracle: REST `/akash/oracle/v2/prices`, `/akash/oracle/v2/aggregated-price/{denom}` + real-time bus events
@@ -2242,7 +2461,7 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | ----------------------------- | ---------------------------- | ---------------------------------------------------------------- |
 | `akt console wallet list`     |                              | List managed wallets. `creditAmount` is dollar-scale per the `/v1/wallets` contract (shown as `$X.XX`, no µ scaling), with the wallet's `denom` when the API reports one. |
 | `akt console wallet balance`  |                              | Available / in-deployment / total balance in USD.                |
-| `akt console wallet settings [true\|false]` | `--auto-reload true\|false` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Show settings when no value is given; set auto-reload otherwise. |
+| `akt console wallet settings [true\|false]` | `--auto-reload true\|false` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Show settings when no value is given; set auto-reload otherwise. Reports `{ autoReloadEnabled, configured }` on every path — after a write, after a read, and for an account that has never configured auto-reload (the API's 404, which reports `configured: false` plus a `note` naming the command that enables it). The raw API record is never printed: like `deployment settings`, the command reshapes it so one command has one output shape. |
 | `akt console wallet cost`     |                              | Estimated weekly cost in USD.                                    |
 | `akt console usage [from] [to]` | `--from`, `--to` (YYYY-MM-DD, alternatives) — **disabled pending feedback** (positional only, 2026-07) | Daily spend history for the managed wallet. `totalSpent` is the spend within the requested range (sum of the daily values, order-independent); `lifetimeSpent` is the API's cumulative figure as of the range end, omitted when the range is empty. Omitted dates use the API defaults (last 30 days). |
 
@@ -2383,9 +2602,19 @@ default output setting in configuration does not alter the generated document.
 Validate an SDL offline (`-` reads stdin). Parsing and schema/relational validation use `pkg.akt.dev/go/sdl` — the same parser behind `akt deploy` and the chain tx commands — followed by lint rules ported from the reference:
 
 - **Unpinned image** (error): every service image must carry an explicit tag or `@sha256:` digest; untagged images and `:latest` are rejected as non-reproducible.
-- **Pricing denom**: `uact` passes; `uakt` produces a **warning**, not an error — a deliberate deviation from the reference, which hard-rejects `uakt` because it only serves the managed Console API. akt serves both rails: `uakt` is valid on-chain, but console-api (managed) contexts price in `uact`. Any other denom is an error, matching the reference.
+- **Pricing denom**: `uact` passes — it is the deployment pricing denom on **both** rails. `uakt` produces a **warning**, not an error: `akt` auto-resolves the deployment deposit to `uact` on the chain rail (`DetectDeploymentDeposit`) and on the console rail alike, and the chain requires the group price denom to equal the deposit denom (`Mismatched denominations (uact != uakt)`), so a `uakt`-priced SDL fails at `ValidateBasic()` before broadcast. It stays a warning rather than an error only because passing an explicitly matching `--deposit <amount>uakt` is a legitimate escape hatch; the reference hard-rejects anything but `uact`. Any other denom is an error, matching the reference.
 
-Exit `0` when valid, printing a summary (`valid: N service(s), M group(s), K warning(s)`) plus any warnings; exit `1` when invalid, listing every parse/lint error.
+The command has three outcomes, and each one has its own exit code:
+
+| Exit | Outcome                | Output                                                                              |
+| ---- | ---------------------- | ----------------------------------------------------------------------------------- |
+| `0`  | Valid (warnings allowed) | Summary on stdout (`valid: N service(s), M group(s), K warning(s)`) plus any warnings |
+| `1`  | Invalid                | Every parse/lint error on stderr                                                     |
+| `2`  | The document could not be read | Usage error on stderr ([§11.2](#112-exit-codes)); nothing was validated        |
+
+Exit `2` covers both input paths uniformly: a missing or unreadable `<file>` and
+a failed read of stdin for `-` are the same class of usage error, and neither is
+reported as an invalid SDL — nothing was parsed, so there is no verdict to give.
 
 With `--output json` or `--output yaml`, the command writes one structured result
 to stdout with the following stable shape, then preserves the same exit-status
@@ -2826,6 +3055,8 @@ akt query market lease --by provider akash1prov.../12345/1/1/akash1owner...  # G
 ```bash
 akt query cert                                 # List certs for default account
 akt query cert akash1abc...                    # List certs for that owner
+akt query provider                             # List every provider on the network
+akt query provider akash1prov...               # Get one provider (the `get` subcommand remains an alias)
 akt query escrow 12345                         # List escrow accounts for dseq 12345 (owner from context)
 akt query escrow akash1abc.../12345            # Specific escrow account
 ```
@@ -3213,6 +3444,11 @@ meta/
 - Each version has a corresponding migration function: `func migrateV<N>(tx *bbolt.Tx) error`.
 - On `Store.Migrate()`, all pending migrations are applied in order within a single bbolt transaction.
 - Migrations are forward-only. Downgrade is not supported; use `import` from a prior export.
+- Every code path that opens a context's store — `akt store *` and the
+  workflow persistence of §6.6 — opens it through one helper that resolves the
+  path from the context root (§1.1) and calls `Migrate()`. A store opened
+  without migrating would be read and written at whatever schema it was last
+  left at, which is exactly the drift the versioning exists to prevent.
 
 ### 4.6 Export Format
 
@@ -3273,7 +3509,7 @@ Each context has its own action log at:
 | `query`    | A chain query                              | Query path, parameters, result summary, duration                      |
 | `workflow` | A multi-step workflow (e.g., `akt deploy`) | Workflow name, step sequence, each step's type and result             |
 | `provider` | A provider gateway operation               | Operation (send-manifest, lease-logs, etc.), provider address, result |
-| `context`  | A context management operation             | Operation (switch, edit, etc.), old/new values                        |
+| `context`  | A context or keyring management operation  | Operation (switch, edit, `keys.add`, etc.), old/new values            |
 | `console`  | A state-changing Console API operation     | Operation (create-deployment, close-deployment, etc.), dseq, result   |
 | `error`    | A failed operation                         | Original action type, error message, context                          |
 
@@ -3285,10 +3521,16 @@ Each log entry is a single JSON line (JSONL format) for easy parsing:
 {"ts":"2026-03-23T10:15:32Z","type":"tx","action":"deployment.MsgCreateDeployment","dseq":12345,"tx_hash":"ABC123...","height":18234567,"gas_used":200000,"code":0}
 {"ts":"2026-03-23T10:15:45Z","type":"tx","action":"market.MsgCreateLease","dseq":12345,"provider":"akash1prov1...","tx_hash":"DEF456...","height":18234568,"gas_used":150000,"code":0}
 {"ts":"2026-03-23T10:15:50Z","type":"provider","action":"send-manifest","dseq":12345,"provider":"akash1prov1...","status":"success"}
+{"ts":"2026-03-23T10:16:00Z","type":"workflow","action":"deploy","workflow_id":"9f2c1ab34d55e017","step":0,"step_name":"create-deployment","status":"success"}
+{"ts":"2026-03-23T10:16:40Z","type":"workflow","action":"deploy","workflow_id":"9f2c1ab34d55e017","step":4,"step_name":"send-manifest","status":"failed","error":"provider gateway unreachable"}
 {"ts":"2026-03-23T10:20:01Z","type":"query","action":"deployment.deployments","params":{"dseq":12345},"duration_ms":120}
+{"ts":"2026-03-23T10:22:00Z","type":"context","action":"keys.add","params":{"address":"akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx","name":"bob","type":"local"},"status":"success"}
 {"ts":"2026-03-23T10:25:00Z","type":"tx","action":"deployment.MsgCloseDeployment","dseq":12345,"tx_hash":"GHI789...","height":18234600,"gas_used":100000,"code":0}
 {"ts":"2026-03-23T10:30:00Z","type":"error","action":"tx.bank.send","error":"insufficient funds","account":"alice"}
 ```
+
+`step` is written on every entry, including entries that are not workflow steps
+(§5.4); the lines above elide it where it carries no meaning.
 
 ### 5.4 Action Entry Schema
 
@@ -3318,14 +3560,23 @@ type ActionEntry struct {
 
     // Workflow fields (type=workflow)
     WorkflowID string          `json:"workflow_id,omitempty"` // groups steps of a single workflow
-    Step       int             `json:"step,omitempty"`
+    Step       int             `json:"step"`                  // 0-based index within the run; always emitted
     StepName   string          `json:"step_name,omitempty"`
 
     // Error fields (type=error, or on any failed action)
     Error      string          `json:"error,omitempty"`
-    Status     string          `json:"status,omitempty"`   // success, failed, timeout
+    Status     string          `json:"status,omitempty"`   // success, pending, failed, timeout
 }
 ```
+
+`Height` and `GasUsed` are only set when the broadcast actually reported them. Under the default `--broadcast-mode sync` a transaction result carries neither, and recording zero would be indistinguishable from a real reading (see [§10.11.1](#broadcast-confirmation-state)).
+
+`step` is the one field written unconditionally. With `omitempty` the first step
+of every workflow run (index 0) disappeared from machine output, so the entry
+that records where a run started was indistinguishable from an entry that has no
+step at all; entries that are not workflow steps carry `"step":0` as a
+consequence. Entries written before this rule simply have no `step` key and
+decode to `0`.
 
 ### 5.5 Log Interface
 
@@ -3345,11 +3596,12 @@ type ActionLog interface {
 }
 
 type ActionFilter struct {
-    Type    ActionType    // filter by action type (empty = all)
-    Since   time.Time     // entries after this time
-    Limit   int           // max entries to return (0 = no limit)
-    DSeq    uint64        // filter by deployment sequence
-    Account string        // filter by account
+    Type       ActionType // filter by action type (empty = all)
+    Since      time.Time  // entries after this time
+    Limit      int        // max entries to return (0 = no limit)
+    DSeq       uint64     // filter by deployment sequence
+    Account    string     // filter by account
+    WorkflowID string     // filter by workflow run id (isolates one run of a workflow)
 }
 ```
 
@@ -3359,11 +3611,13 @@ The action log records entries for the following command categories:
 
 | Command category | Logged | Entry type | When |
 |---|---|---|---|
-| `tx *` | Always | `tx` | After broadcast (success or failure). On success: includes tx hash, height, gas used. On failure: includes error message and result code. |
+| `tx *` | Always | `tx` | After broadcast (success or failure). On success: includes tx hash, plus height and gas used when the broadcast mode reports them. Status is `pending` when the transaction was accepted into the mempool but not yet included in a block (the default `sync` mode), and `success` once a height is known. On failure: includes error message and result code. |
 | `query *` | Never by default | `query` | Read-only queries are not state changes and are not recorded by default (see verbose row below). |
-| Workflow commands (`deploy`, `update`, `close`) | Always | `workflow` | One entry per workflow step. Each entry includes the step name, result, and workflow run ID. |
+| Workflow commands (`deploy`, `update`, `close`) | Always | `workflow` | One entry per workflow step. Each entry includes the step name, step index, result, and workflow run ID, and `akt context log` renders the step and run in `SUMMARY` so the steps of a run stay distinguishable and a failed step is identifiable (§2.2). |
 | `provider *` (state-changing: `send-manifest`, `migrate-hostnames`, `migrate-endpoints`, `lease-shell`) | Always | `provider` | After the provider gateway operation completes (success or failure). Read-only provider queries (`status`, `lease-status`, `lease-logs`, `lease-events`, `get-manifest`) are not recorded. |
 | `context *` | Always | `context` | After context management operation (switch, edit, create, delete). |
+| `context keys *` (state-changing: `add`, `add --recover`, `delete`, `rename`, `import`) | Always | `context` | After the keyring mutation returns (success or failure), under a dotted `keys.*` action. Secrets — mnemonics, BIP39 and armor passphrases, key material — are never recorded (§2.2.2). Read-only `list`, `show`, `parse`, and `mnemonic` are not recorded. |
+| `context keys export` | Always | `context` | The single exception to the read-only rule: exporting private key material is recorded as a security event, with the key name only and never the armor or passphrase (§2.2.2). |
 | Console API state changes (create/update/close deployment, create lease, deposit) | Always | `console` | After the Console API call completes (success or failure). Read-only Console queries are not recorded. |
 | All commands | On failure | `error` | When any command fails. Includes original action type and error message. |
 | `query` (read-only, no side effects) | When `-v` is set (future) | `query` | Verbose-mode query logging for debugging is planned but not yet implemented. Internal queries (e.g. by the sync engine) are never logged. |
@@ -3427,7 +3681,10 @@ On first launch for a context (no `SyncState` in store):
 1. Query all deployments for each tracked account: `query deployment --owner <addr>`.
 2. For each deployment, query leases: `query market lease --owner <addr> --dseq <dseq>`.
 3. For each deployment, query bids: `query market bid --owner <addr> --dseq <dseq>`.
-4. Store all records.
+4. Store all records. Chain state overwrites the on-chain fields of an existing
+   record; local-only metadata the chain does not carry (`labels`, `notes`,
+   `tags`, `sdl_path`, `sdl_hash`) is preserved from the record already in the
+   store, so reconciling never discards what a workflow run recorded (§6.6).
 5. Set `SyncState.LastBlockHeight` to the current chain height.
 
 On subsequent launches (existing `SyncState`):
@@ -3435,6 +3692,10 @@ On subsequent launches (existing `SyncState`):
 1. Query the current chain height.
 2. If `current_height - last_block_height > 1000`, perform a full reconciliation.
 3. Otherwise, query transaction events in the missed block range and apply them.
+
+`akt store sync` (§2.5) runs this same reconciliation on demand. It is the only
+way a one-shot CLI session reconciles, because no CLI invocation lives long
+enough to hold a subscription (§6.6).
 
 ### 6.5 Reconnection Strategy
 
@@ -3454,23 +3715,78 @@ On reconnection, the engine reconciles all blocks missed during the disconnectio
 
 ### 6.6 Workflow-to-Store Integration
 
-Workflow commands (`akt deploy`, `akt update`, `akt close`) do **not** write to the local store directly. Instead, the sync engine detects the on-chain events produced by workflow transactions and updates the store through the normal event processing pipeline (§6.3).
+A workflow run (`akt deploy`, `akt update`, `akt close`) persists its own
+outcome to the local store when the run finishes.
 
-This means there is a brief delay (typically 1-2 seconds) between a workflow completing and the store reflecting the new state. The workflow's output (DSEQ, lease details, endpoint URLs) is displayed directly from the transaction results and provider responses — it does not depend on the store.
+Chain events alone cannot populate the store. A CLI invocation is one-shot: it
+broadcasts its transactions and exits, before any subscription that would carry
+the resulting events could deliver them, and there is no daemon left behind to
+receive them afterwards. An event-driven-only model therefore leaves the store
+empty after a fully successful `akt deploy` — the local deployment record, one
+of the main things that distinguishes `akt` from the older tooling, never gets
+written. The run itself is the only component that observes the outcome while
+it is still running, so the run is what records it.
 
-If the sync engine is not running (e.g., no WebSocket connection), the store is reconciled on the next startup (§6.4).
+Persistence is **best-effort and never changes the command's outcome**. By the
+time the store is written the deployment is already real on chain; a
+bookkeeping failure must not be reported as a deployment failure. A store error
+is reported as a `warning:` line on stderr and the exit code is unchanged.
+Machine-readable output is unaffected: warnings go to stderr, so `--output
+jsonl` stdout stays pure.
+
+Records are written from the steps that actually succeeded, so a partially
+failed run still records the deployment it created — the same DSEQ the recovery
+advice (§2.3.6) tells the user to close.
+
+| Workflow | Source step         | Store effect                                                                                                                                                          |
+| -------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `deploy` | `create-deployment` | `DeploymentRecord`, state `active`, `created_height` from the transaction height, `sdl_path` from the `sdl-file` parameter, `sdl_hash` = `sha256:<hex>` of the SDL file |
+| `deploy` | `wait-for-bids`     | One `BidRecord` per bid observed, with its price; the winning provider's bid is `matched`, every other bid is `lost`                                                     |
+| `deploy` | `create-lease`      | `LeaseRecord` for the won lease (full lease ID), state `active`, price from `select-bid`                                                                                 |
+| `update` | `update-deployment` | Existing `DeploymentRecord` updated with the new `sdl_path`/`sdl_hash` and `updated_at`                                                                                  |
+| `close`  | `close-deployment`  | `DeploymentRecord` set to `closed` with `closed_at`; that deployment's leases are set to `closed`                                                                        |
+
+Fields a workflow run cannot observe — escrow balance, transferred amount,
+provider gateway URI, service endpoints, provider audit status — are left at
+their zero values rather than guessed. `akt store sync` (§2.5) fills them in
+from chain state.
+
+`deposit` is recorded only when the parameter names an explicit amount. `auto`
+resolves to a chain-queried minimum that the workflow never reports back, so
+the field is left empty instead of storing the literal word `auto`.
+
+The owner is taken from the transaction result, falling back to the bid or
+lease identity returned by the market, and finally to the context's
+`default-account` when that is an address rather than a keyring name. If no
+owner address can be determined — a rail whose deployment response omits it and
+no address-form default account — the store write is **skipped with a warning**
+rather than writing a record under an empty owner. Records are keyed
+`<owner>:<dseq>` (§4.4), so an empty owner would corrupt the key space and
+produce a record no lookup could find.
 
 ### 6.7 Multi-Account Tracking
 
-The sync engine tracks accounts configured in the context's `tracked-accounts` setting. By default, only the context's `default-account` is tracked. Users can add additional accounts to track deployments across multiple wallets within a single context.
+Reconciliation (§6.4, `akt store sync`) covers the accounts configured in the
+context's `tracked-accounts` setting. By default, only the context's
+`default-account` is tracked. Users can add further accounts to track
+deployments across multiple wallets within a single context.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `tracked-accounts` | []string | `["<default-account>"]` | List of account names or addresses to sync. Default: only the default account. Set to `"*"` to track all accounts in the context's keyring. |
 
-When `tracked-accounts` is `["*"]`, the sync engine tracks all accounts present in the current context's keyring. When a new key is added, the engine re-reconciles to pick up deployments from the new account.
+Entries are resolved the way `--from` is: a bech32 address is used as-is, any
+other value is looked up in the context's keyring and resolved to its address.
+An entry that resolves to nothing is an error naming the entry, not a silently
+skipped account.
+
+When `tracked-accounts` is `["*"]`, every account present in the current
+context's keyring is tracked, so a newly added key is picked up by the next
+reconciliation.
 
 The `tracked-accounts` field is context-specific (not shared via keyring or network). Each context can track a different subset of accounts.
+
+`akt context show` reports the configured value.
 
 ---
 
@@ -4121,15 +4437,16 @@ Combined oracle price and BME state monitoring. Available as the Oracle/BME dash
 │  Aggregated Prices                   │  BME Status                           │
 │                                      │                                       │
 │  DENOM   TWAP        SOURCES         │  Status:           Healthy            │
-│  uakt    0.003125    4               │  Mints:            Allowed            │
-│  uatom   6.850000    3               │  Refunds:          Allowed            │
+│  akt     0.003125    4               │  Mints:            Allowed            │
+│  atom    6.85        3               │  Refunds:          Allowed            │
 │                                      │  Collateral Ratio: 1.523              │
 │  Price Health                        │  Thresholds:                          │
-│    Healthy:     yes                  │      Warn:         1.100              │
-│    Min Sources: yes                  │      Halt:         1.050              │
+│    Healthy:     yes                  │      Warn:         1.1                │
+│    Min Sources: yes                  │      Halt:         1.05               │
 │                                      │                                       │
 │                                      │  Ledger                               │
-│                                      │  ROUTE  ID  STATUS  BURNED  ...       │
+│                                      │  ROUTE      STATUS    BURNED  ...     │
+│                                      │  uakt→uact  Pending   5 AKT   ...     │
 ├──────────────────────────────────────┴───────────────────────────────────────┤
 │  <Tab> Dashboard  <j/k> Scroll  <r> Refresh  <?> Help                        │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -4144,9 +4461,14 @@ Combined oracle price and BME state monitoring. Available as the Oracle/BME dash
 
 **Refresh intervals**: Oracle aggregated prices every 30s, BME status/vault every 30s, price history and ledger every 2m.
 
-**Color coding**: Oracle health: Healthy (green), Unhealthy (red). BME status: healthy (green), warning (yellow), halt CR (red), halt Oracle (red). Mints/Refunds: Allowed (green), Halted (red).
+**Color coding**: Oracle health: Healthy (green), Unhealthy (red). BME status: healthy (green), warning (yellow), halt CR (red), halt Oracle (red). Mints/Refunds: Allowed (green), Halted (red). Ledger record status: `Executed` (green), `Pending` (yellow), `Canceled (<reason>)` (red) — spelled out, never abbreviated (§10.10 BME).
 
-**Amount formatting**: All micro-denominated values scaled using `FormatCoin()` — same rules as pretty output (§10.7). Prices displayed with full decimal precision, trailing zeros stripped.
+**Amount formatting**: All micro-denominated values scaled using `FormatCoin()` — same rules as pretty output (§10.7). Prices and ratios are rounded at their semantic precision and then have trailing zeros stripped; a collateral ratio of `1.5` renders as `1.5`, never `1.500000000000000000`.
+
+Ratios and prices round differently, because their significance sits in different digits:
+
+- **Ratios** (collateral ratio, warn/halt thresholds) are rounded to 3 decimal places before stripping. A `LegacyDec` always stringifies to 18 places and stripping only helps a value that has trailing zeros, so an on-chain ratio such as `1.495209570451729242` would otherwise render at full width beside a threshold of `0.95`. It renders as `1.495`.
+- **Prices** (oracle prices, the `@price` in ledger rows) are rounded to the oracle's published 8 decimal places before stripping. This retains an AKT price around `0.003125` while keeping derived 18-place `LegacyDec` values such as a TWAP comparable with the 8-place source observations.
 
 **Components:** bubbles/viewport (scrollable content panels), shared pretty.Render* functions for CLI/TUI parity.
 
@@ -4580,6 +4902,7 @@ Default when `--output pretty` (or omitted).
 **List results** use tabwriter-aligned columns:
 
 - Headers in bold (lipgloss).
+- **A header is aligned exactly like the column it labels**: right-aligned columns get right-aligned headers, left-aligned columns get left-aligned headers. A header is never centered independently of its data.
 - State columns color-coded (see 10.6).
 - Key identifiers (DSEQ, moniker, proposal ID) in bold.
 - Addresses always displayed in full. Never truncated -- addresses are machine-parseable identifiers and truncation risks ambiguity.
@@ -4592,6 +4915,17 @@ Default when `--output pretty` (or omitted).
   12345      akash1abcdefghijklmnopqrstuvwxyz012345678901    active   2       1,234,567
   12346      akash1abcdefghijklmnopqrstuvwxyz012345678901    closed   1       1,234,500
 ```
+
+**Empty results** are stated, never implied. A query that matches nothing must
+print a dim line naming what is missing -- `(no deployments)`, `(no bids)`,
+`(no networks)` -- and must never print a bare column header with no rows: a
+lone header reads as a rendering failure, not as "zero results". The rule holds
+for every table in pretty output, including tables nested inside a larger
+detail view.
+
+This applies to the pretty/table path only. `--output json` and `--output yaml`
+still emit an empty array (§10.1.1); an empty result must never turn structured
+output into prose.
 
 **Single-item results** use grouped key-value pairs with section headers:
 
@@ -4842,10 +5176,43 @@ Addresses are **always displayed in full**. Never truncated or shortened by defa
 
 **Prices**: Table with ASSET, BASE, PRICE, TIMESTAMP.
 
+**Aggregated price** (`akt query oracle aggregated-price <denom>`): Key-value sections for the aggregated price and its health, as mocked in §8.3.12.
+
+The oracle module keys prices by the **base** denom (`akt`), while every other
+surface in `akt` — gas, balances, fees, escrow — takes the micro denom
+(`uakt`). The positional denom is therefore normalized before the query so the
+spelling users already know keeps working: `akt`, `AKT`, `mAKT` and `uakt` all
+resolve to `akt`, and the ACT family (`act`, `mact`, `uact`) resolves to `act`.
+Any other denom passes through unchanged. Help text and examples use the base
+denom (`akt query oracle aggregated-price akt`).
+
+A failed oracle query is wrapped in a `CLIError` (§11.1) that names the denom
+that was tried and suggests `akt q oracle prices` to list the denoms the oracle
+carries; the raw gRPC/ABCI status must never reach the user verbatim.
+
 #### BME
 
-**Status/Vault**: Key-value sections with amounts.
-**Ledger**: Table of entries.
+**Status/Vault**: Key-value sections with amounts. The collateral ratio and the
+warn/halt thresholds are `LegacyDec` ratios, not coins: they render through
+the ratio formatter (`1.5`, not `1.500000000000000000`), matching the oracle
+panel beside them on the same dashboard.
+
+**Ledger**: Table with ROUTE, ID, STATUS, BURNED, MINTED, SPREAD, REMINT ACCRUED, REMINT ISSUED.
+
+- **ROUTE** — `<denom>→<to-denom>` from the record ID. It already carries the destination denom, so no other column repeats it.
+- **ID** — `<source>/<height>/<sequence>`.
+- **STATUS** — the full `LedgerRecordStatus` word, never an abbreviation: `Executed` (green), `Pending` (yellow), `Canceled (<reason>)` (red), where `<reason>` is the `BMCancelReason` name with underscores replaced by spaces (e.g. `Canceled (insufficient funds)`). This mirrors the `MintStatus` labels used by BME status ("Healthy", "Warning", "Halt CR", "Halt Oracle"). When the record oneof is absent the column falls back to the `status` field the entry carries alongside it, dimmed, rather than a blank cell.
+- **BURNED / MINTED / REMINT ACCRUED / REMINT ISSUED** — one rendering per concept, applied uniformly across every row type:
+  - an amount that carries an oracle price (`CoinPrice`) renders as `<FormatCoin(coin)> @<price>`, rounded to 8 decimal places and then stripped by `FormatPriceDec()`;
+  - an amount with no price attached renders as `FormatCoin()`;
+  - an amount that does not exist **yet** — the mint of a pending record, whose size depends on the oracle price at settlement — renders as a dim `pending`;
+  - an amount that does not exist renders as `-`.
+- **SPREAD** — always `FormatCoin()`. A zero spread renders as `0 AKT`, not `-`; only a record with no spread denom at all renders as `-`.
+
+Every `Coin`/`LegacyDec` read out of a ledger record passes through
+`IntOrZero()` / `DecOrZero()` first: proto3 omits zero values on the wire, so a
+field the node never set unmarshals with a nil inner value and any method call
+on it panics.
 
 #### Miscellaneous
 
@@ -4956,8 +5323,24 @@ Transaction commands use the same registry-based pretty output system as query c
 | `--output` | Behavior |
 |---|---|
 | `pretty` (default) | Two-section layout: common summary + message-specific detail |
-| `json` | Raw `TxResponse` JSON via `cctx.PrintProto()` |
-| `yaml` | Raw `TxResponse` YAML via `cctx.PrintProto()` |
+| `json` | Structured transaction result document (see [§10.11.6](#10116-machine-readable-transaction-result)) |
+| `yaml` | The same document rendered as YAML via `FprintJSONSemantics()` |
+
+`json`/`yaml` MUST NOT be produced by handing the raw `sdk.TxResponse` to `cctx.PrintProto()`. That printer marshals with `EmitDefaults: true`, so a transaction that has only been accepted into the mempool emits `"height":"0"`, `"gas_used":"0"` and `"gas_wanted":"0"` — values an automated consumer cannot distinguish from a real block height of zero or a real zero gas reading.
+
+##### Broadcast Confirmation State
+
+`akt` defaults to `--broadcast-mode sync`. In `sync` and `async` mode the node returns a CheckTx result only: `Code`, `Codespace`, `Data`, `RawLog`, `Logs` and `TxHash` are populated, while `Height`, `GasUsed`, `GasWanted` and `Timestamp` are zero and the transaction body (`TxResponse.Tx`) is `nil`. The transaction is in the mempool and has not been included in a block.
+
+Every transaction renderer therefore classifies a result into exactly one of three states:
+
+| State | Condition | Meaning |
+|---|---|---|
+| `failed` | `Code != 0` | CheckTx (or DeliverTx, in `block` mode) rejected the transaction |
+| `pending` | `Code == 0 && Height == 0` | Accepted into the mempool; not yet included in a block |
+| `confirmed` | `Code == 0 && Height > 0` | Included in a block at `Height` |
+
+A `pending` result MUST NOT be presented as a completed transaction: block height, gas and fee are unknown, not zero and not blank.
 
 #### 10.11.2 Two-Section Layout
 
@@ -4970,11 +5353,17 @@ Common to all transactions. Uses the same `Section()` + `KV()` formatting as que
 | Field | Source | Format |
 |---|---|---|
 | Hash | `TxResponse.TxHash` | Full hex string, bold |
-| Signer | First entry from `tx.AuthInfo.SignerInfos`, resolved to bech32 | Full address |
-| Height | `TxResponse.Height` | Comma-grouped via `FormatHeight()` |
-| Gas Used | `TxResponse.GasUsed` / `TxResponse.GasWanted` | `used / wanted`, both comma-grouped |
-| Fee | `tx.AuthInfo.Fee.Amount` | `FormatCoins()` (micro-denom scaling) |
-| Status | `TxResponse.Code` | Green "success" if code=0; Red "failed: `<RawLog>`" otherwise |
+| Signer | `message.sender` event attribute | Full address; omitted when the events carry no sender (always the case while `pending`) |
+| Height | `TxResponse.Height` | `Height > 0`: comma-grouped via `FormatHeight()`. `pending`: dim `not yet confirmed`. `failed` before inclusion: dim `not included in a block` |
+| Gas Used | `TxResponse.GasUsed` / `TxResponse.GasWanted` | `Height > 0`: `used / wanted`, both comma-grouped. `pending`: dim `not yet confirmed`. `failed` before inclusion: dim `not reported` |
+| Fee | `tx.AuthInfo.Fee.Amount` | `FormatCoins()` (micro-denom scaling). Always emitted; when the body is unavailable, dim `not reported by <mode> broadcast (query the tx to see it)` |
+| Status | `TxResponse.Code`, `TxResponse.Height` | Green `success` when `confirmed`; yellow `pending` + dim `(accepted into the mempool, not yet in a block)` when `pending`; red `failed: <RawLog>` otherwise |
+| Confirm With | `TxResponse.TxHash` | `pending` only: `akt query tx <hash>` |
+| Tip | — | `pending` only: `broadcast with --broadcast-mode block to wait for inclusion` |
+
+The `Fee` row is never silently dropped. Prior behavior omitted the whole row when the tx body could not be decoded, which is exactly the `pending` case, so the most common transaction output was missing its fee line with no explanation.
+
+Gas amounts are formatted by a gas-specific formatter, not by `FormatHeight()`. `FormatHeight()` renders `-` for any value `<= 0` because block height zero does not exist; gas zero does, and reusing the height formatter for gas is a comma-grouping coincidence rather than a semantic fit.
 
 The section header is `Transaction`, rendered with `Section()` (bold + underline).
 
@@ -5025,16 +5414,15 @@ type TxPrettyFormatterFunc struct {
 
 #### 10.11.4 Dispatch Flow
 
-`PrintTxResult(cmd, cctx, txResponse)` is called by all `tx` commands after broadcast:
+`PrintTxResult(cmd, cctx, txResponse)` is called by all `tx` commands after broadcast. The broadcaster returns `interface{}`, so dispatch is by concrete type first and by `--output` second:
 
-1. Read `--output` flag.
-2. If `json` → `cctx.PrintProto(txResponse)`.
-3. If `yaml` → `cctx.PrintProto(txResponse)` with YAML format.
-4. If `pretty`:
-   a. Render Section 1 (common summary) from `TxResponse` fields.
-   b. Decode `TxResponse.Tx` to extract messages.
-   c. For each message, look up `TxPrettyFormatter` by proto type.
-   d. Render Section 2 for each message (registered formatter or JSON fallback).
+1. Read the `--output` flag.
+2. `[]byte` (a `--generate-only` transaction body) → print the encoded transaction verbatim (JSON) or re-encoded (YAML).
+3. `*tx.SimulateResponse` (a `--dry-run` simulation) → render the simulation result ([§10.11.7](#10117-simulation-results-dry-run)).
+4. `*sdk.TxResponse`:
+   a. `json`/`yaml` → build the structured document ([§10.11.6](#10116-machine-readable-transaction-result)) and emit it with `FprintJSONSemantics()`.
+   b. `pretty` → render Section 1 (common summary) from `TxResponse` fields; decode `TxResponse.Tx` to extract messages; for each message look up a `TxPrettyFormatter` by proto type; render Section 2 for each message (registered formatter or JSON fallback). A `pending` result carries no body, so only Section 1 renders.
+5. Anything else → `PrintProto()` (proto messages) or `PrintObjectLegacy()` (amino values).
 
 #### 10.11.5 Per-Module Message Formatter Specification
 
@@ -5072,6 +5460,14 @@ type TxPrettyFormatterFunc struct {
 |---|---|---|
 | Owner | Message | Full address |
 | DSEQ | `MsgUpdateDeployment.ID.DSeq` | Bold |
+
+`MsgUpdateDeployment` carries only the deployment ID and the new SDL hash, so a
+successful transaction changes the chain record and nothing else. The formatter
+therefore closes with a dim note stating that providers keep serving the
+previous manifest until it is delivered, naming the two commands that deliver
+it (`akt update`, `akt provider send-manifest`) with the DSEQ filled in. This
+is the single place a user of the bare `tx` command learns that the running
+workload is untouched.
 
 **`MsgCloseDeployment`** — Title: "Deployment Closed"
 
@@ -5509,27 +5905,158 @@ Same fields as MsgInstantiateContract, plus:
 
 ##### BME
 
-**`MsgBurnMint`** — Title: "Burn Mint"
+A BME conversion is **not** executed by the transaction that carries it. The
+chain writes a pending ledger record and settles it in a later block, once the
+oracle price is available and the circuit breaker allows
+(`LEDGER_RECORD_STATUS_PENDING` → `EXECUTED`, or `CANCELED` with funds
+returned). The `Status: success` line of §10.11.2 therefore reports acceptance
+of the *request*, not completion of the conversion. All three BME message
+formatters must say so explicitly — without it the burned balance appears to
+vanish with no explanation of where it went.
+
+All three render the same block, produced by
+`pretty.RenderBMEPendingConversion(owner, coinsToBurn, denomToMint)`:
 
 | Field | Source | Format |
 |---|---|---|
-| Sender | Message | Full address |
-| Burned | Message | `FormatCoins()` |
-| Minted Denom | Message | |
+| Sender | Message `Owner` | Full address |
+| Burned | Message `CoinsToBurn` | `FormatCoin()` |
+| Minted Denom | Destination denom (per message, below) | Raw denom |
+| Conversion | Constant | `pending` (yellow) + "settles in a later block" |
+| Minted Amount | — | "not known yet" — the amount is set by the oracle price at settlement, which is exactly why a pending ledger row (§10.10 BME) can only show a destination denom |
 
-**`MsgMintACT`** — Title: "Mint ACT"
+followed by an indented note stating that the burned amount has already left the
+balance while the minted amount has not arrived, and the concrete follow-up
+command:
+
+```
+akt q bme ledger --owner <sender> --status ledger_record_status_pending
+```
+
+Destination denom per message:
+
+| Message | Title | Destination denom |
+|---|---|---|
+| `MsgBurnMint` | "Burn Mint" | `DenomToMint` (carried by the message) |
+| `MsgMintACT` | "Mint ACT" | `uact` — the message mints ACT by definition |
+| `MsgBurnACT` | "Burn ACT" | `uakt` — the message burns ACT to mint/remint AKT |
+
+The same deferred-settlement wording, and the same follow-up command, appear in
+the `Long`/`Example` help of `akt tx bme burn-mint`, `mint-act` and `burn-act`.
+
+#### 10.11.6 Machine-Readable Transaction Result
+
+`--output json` and `--output yaml` emit one structured document per transaction, built from the `sdk.TxResponse` rather than marshalled from it directly. Fields whose value is unknown because the transaction has not been confirmed are **absent**, never zero.
+
+| Field | Type | Presence |
+|---|---|---|
+| `txhash` | string | Always |
+| `status` | string | Always — `confirmed`, `pending` or `failed` ([§10.11.1](#broadcast-confirmation-state)) |
+| `confirmed` | bool | Always — `true` iff `Height > 0` |
+| `code` | uint32 | Always (`0` on success) |
+| `codespace` | string | When non-empty |
+| `height` | int64 | **Only when `Height > 0`** |
+| `gas_used` | int64 | **Only when `GasUsed > 0`** |
+| `gas_wanted` | int64 | **Only when `GasWanted > 0`** |
+| `timestamp` | string | When non-empty |
+| `data` | string | When non-empty |
+| `info` | string | When non-empty |
+| `raw_log` | string | When non-empty |
+| `logs` | array | When non-empty |
+| `events` | array | When non-empty |
+| `tx` | object | When the response carries the transaction body |
+
+`logs`, `events` and `tx` are carried through verbatim from the codec's proto-JSON encoding of the response so that interface fields (`Any`) resolve to their concrete types. They are dropped when the client context has no codec.
+
+A pending transaction therefore serializes as:
+
+```json
+{
+  "txhash": "9F3C...",
+  "status": "pending",
+  "confirmed": false,
+  "code": 0
+}
+```
+
+The same rule applies to every other machine-readable surface that reports a transaction height:
+
+- **Action log** ([§5.4](#54-log-entry-format)): `height` and `gas_used` are only recorded when the broadcast reported them, and `status` is `pending` for an accepted-but-unconfirmed transaction.
+- **Workflow JSONL** ([§2.3.8](#238-execution-modes)): the `height` key is omitted from a tx object when the step's transaction has not been confirmed.
+
+`PrintTxResults()` (used when one logical action is intentionally split across several transactions) emits a JSON array of these documents, applying the same rules to each element.
+
+#### 10.11.7 Simulation Results (`--dry-run`)
+
+`--dry-run` sets `client.Context.Simulate`, and the chain client returns a `*tx.SimulateResponse` — **not** an `sdk.TxResponse`. The response's `GasInfo.GasWanted` echoes back the gas limit that was sent with the simulated transaction, which for a dry run is the internal placeholder `0` that the CLI substitutes for the `--gas` flag. `gas_wanted` MUST NOT be surfaced from a simulation in any output mode.
+
+The adjusted gas estimate is computed by the chain client but discarded on the simulate-only path, so the renderer recomputes it from the same inputs:
+
+```
+gas_estimate  = uint64(--gas-adjustment * GasInfo.GasUsed)
+estimated_fee = --fees, when set
+              = ceil(--gas-prices[i] * gas_estimate) per denom, otherwise
+```
+
+This matches `tx.Factory.BuildUnsignedTx`, so the estimate the dry run reports is the fee the real broadcast would attach.
+
+**Pretty output** renders a single `Simulation` section:
 
 | Field | Source | Format |
 |---|---|---|
-| Sender | Message | Full address |
-| Burned | Message | `FormatCoins()` |
+| Gas Used | `GasInfo.GasUsed` | Comma-grouped |
+| Gas Adjustment | `--gas-adjustment` | Decimal, trailing zeros stripped |
+| Gas Estimate | Computed above | Comma-grouped |
+| Estimated Fee | Computed above | `FormatCoins()` (micro-denom scaling); `unknown (no --fees or --gas-prices set)` when neither flag provides a basis |
+| Status | — | Yellow `simulated` + dim `(not broadcast)` |
 
-**`MsgBurnACT`** — Title: "Burn ACT"
+**`json`/`yaml` output** emits:
 
-| Field | Source | Format |
+| Field | Type | Presence |
 |---|---|---|
-| Sender | Message | Full address |
-| Burned | Message | `FormatCoins()` |
+| `simulated` | bool | Always `true` |
+| `gas_used` | uint64 | Always |
+| `gas_adjustment` | float64 | Always |
+| `gas_estimate` | uint64 | Always |
+| `estimated_fee` | array of coins | When a fee basis is available |
+
+### 10.12 Table and Key-Value Layout
+
+**Table rendering engine.** `internal/output/pretty` is the canonical table
+engine for pretty output. It measures every cell with `lipgloss.Width`, so ANSI
+styling never breaks alignment, and it supports per-column alignment
+(`ColDef.Align`). Renderers write tables through exactly four entry points:
+
+| Helper | Use |
+|---|---|
+| `WriteTable(w, headers, rows)` | All columns left-aligned. |
+| `WriteTableCols(w, cols, rows)` | Per-column alignment. |
+| `WriteTableOrEmpty(w, headers, rows, emptyMsg)` | As `WriteTable`, with a caller-named empty message. |
+| `WriteTableColsOrEmpty(w, cols, rows, emptyMsg)` | As `WriteTableCols`, with a caller-named empty message. |
+
+The `*OrEmpty` forms are the default choice for list renderers, because every
+list can come back empty. The plain forms carry the same guarantee as a
+backstop: given no rows they print the generic `(no results)` instead of a bare
+header, so no code path can regress to a header-only table.
+
+`internal/output.PrintTable` is a second, legacy engine built on
+`text/tabwriter`. It is not ANSI-aware and has no per-column alignment, and it
+survives only for the remaining `output.PrintData` callers that render plain,
+unstyled config rows (`akt context list`, `akt context history`,
+`akt context keys list`). It carries the same empty-result guard. New pretty
+output must use the `pretty` engine; `akt sdl list` keeps its own local
+`tabwriter` for a two-column scaffold listing. Converging the two engines is
+tracked separately -- until then, `output.PrintTable` is frozen: no new callers.
+
+**Key-value column invariant.** `KV` indents keys by 2 and pads the key column
+to 20; `SubKV` indents by 6 and pads to 16. Both therefore start their value at
+column 23, so a nested block lines up with the block that contains it. The
+padding helpers never truncate: a key longer than its column pushes its own
+value out of line rather than being cut. A view whose keys do not fit the
+defaults widens **both** columns together through `KVWidth` and `SubKVWidth`,
+keeping `subWidth == width - 4`. `akt context show` does this: its capability
+labels ("Chain transactions") do not fit the default column, so it renders at
+`width 23 / subWidth 19` and every value in the view still lands in one column.
 
 ---
 

@@ -44,8 +44,37 @@ steps:
       delay: "5s"
     on-error: abort
 
+  # The update transaction records a new SDL hash on chain and nothing more.
+  # Report what send-manifest actually delivered instead of asserting an
+  # unconditional success: zero active leases is a successful no-op, and a
+  # provider that receives an unchanged manifest restarts nothing.
   - name: display-result
     type: output
     template: |
-      Deployment updated!
+      {{- $manifest := index .Steps "send-manifest" -}}
+      {{- if not $manifest -}}
+      Deployment updated.
         DSEQ: {{ .Params.dseq }}
+        Manifest delivery: handled by the Console API.
+
+        Note: a provider restarts a service only when its image reference or
+        configuration actually changed; re-applying an identical manifest
+        leaves the running workload as it is.
+      {{- else if gt (index $manifest "count") 0 -}}
+      Deployment updated.
+        DSEQ: {{ .Params.dseq }}
+        Manifest sent to {{ index $manifest "count" }} provider(s):
+      {{ range index $manifest "providers" }}    {{ . }}
+      {{ end }}
+        Note: a provider restarts a service only when its image reference or
+        configuration actually changed; re-applying an identical manifest
+        leaves the running workload as it is.
+      {{- else -}}
+      Deployment updated on chain, but nothing was redeployed.
+        DSEQ: {{ .Params.dseq }}
+
+        WARNING: this deployment has no active leases, so the new manifest was
+        not sent to any provider. Only the SDL hash changed on chain; no
+        running workload was updated.
+        List leases with "akt query market lease {{ .Params.dseq }} active".
+      {{- end -}}

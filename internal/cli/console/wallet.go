@@ -136,7 +136,7 @@ func walletSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 					return fmt.Errorf("update wallet settings: %w", err)
 				}
 
-				return printJSON(cmd, settings)
+				return printJSON(cmd, renderWalletSettings(settings))
 			}
 
 			settings, err := cl.GetWalletSettings(cmd.Context())
@@ -155,7 +155,7 @@ func walletSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return fmt.Errorf("get wallet settings: %w", err)
 			}
 
-			return printJSON(cmd, settings)
+			return printJSON(cmd, renderWalletSettings(settings))
 		},
 	}
 
@@ -165,6 +165,20 @@ func walletSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	// cmd.Flags().String("auto-reload", "", "Enable or disable automatic top-up (true|false)")
 
 	return cmd
+}
+
+// renderWalletSettings formats wallet settings for display, in the same shape
+// the never-configured (404) branch reports, so `wallet settings` answers with
+// one object whatever path produced it — the sibling `deployment settings`
+// does the same through renderSettings.
+func renderWalletSettings(s *console.WalletSettings) any {
+	return struct {
+		AutoReloadEnabled bool `json:"autoReloadEnabled"`
+		Configured        bool `json:"configured"`
+	}{
+		AutoReloadEnabled: s.AutoReloadEnabled,
+		Configured:        true,
+	}
 }
 
 func walletCostCmd(mgrFn func() *aktctx.Manager) *cobra.Command {

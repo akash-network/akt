@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,8 @@ import (
 
 	"pkg.akt.dev/akt/internal/capability"
 	aktctx "pkg.akt.dev/akt/internal/context"
+	sstore "pkg.akt.dev/akt/internal/store"
+	"pkg.akt.dev/akt/internal/store/bbolt"
 	wf "pkg.akt.dev/akt/internal/workflow"
 	"pkg.akt.dev/akt/internal/workflow/builtin"
 )
@@ -542,6 +545,50 @@ func TestExecuteConsoleDeployEndToEnd(t *testing.T) {
 	}
 	if strings.Contains(out, "send-manifest  ") {
 		t.Errorf("send-manifest must not run for console auth:\n%s", out)
+	}
+
+	// SPEC §6.6: the run records its own outcome. Before this, a fully
+	// successful deploy left `akt store status` reporting an empty store.
+	st, err := bbolt.OpenContext(context.Background(), home, "console")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	dep, err := st.GetDeployment(context.Background(), "o", 4242)
+	if err != nil {
+		t.Fatalf("GetDeployment: %v", err)
+	}
+	if dep == nil {
+		t.Fatal("a completed deploy left the local store empty")
+	}
+	if dep.State != "active" || dep.SDLPath != sdlPath {
+		t.Errorf("stored deployment = %+v, want active with the deployed SDL path", dep)
+	}
+
+	storedLeases, err := st.ListLeases(context.Background(), sstore.LeaseFilter{Owner: "o", DSeq: 4242})
+	if err != nil {
+		t.Fatalf("ListLeases: %v", err)
+	}
+	if len(storedLeases) != 1 || storedLeases[0].ID.Provider != "akash1cheap" {
+		t.Errorf("stored leases = %+v, want the won lease", storedLeases)
+	}
+
+	bids, err := st.ListBids(context.Background(), sstore.BidFilter{Owner: "o", DSeq: 4242})
+	if err != nil {
+		t.Fatalf("ListBids: %v", err)
+	}
+	if len(bids) != 2 {
+		t.Fatalf("stored bids = %d, want every bid seen", len(bids))
+	}
+	for _, b := range bids {
+		want := "lost"
+		if b.ID.Provider == "akash1cheap" {
+			want = "matched"
+		}
+		if b.State != want {
+			t.Errorf("bid from %s = %q, want %q", b.ID.Provider, b.State, want)
+		}
 	}
 }
 

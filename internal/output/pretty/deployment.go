@@ -45,7 +45,7 @@ func RenderDeploymentList(res *dvbeta.QueryDeploymentsResponse) string {
 		})
 	}
 
-	WriteTableCols(&buf, cols, rows)
+	WriteTableColsOrEmpty(&buf, cols, rows, "(no deployments)")
 	return buf.String()
 }
 
@@ -129,6 +129,13 @@ func formatGroupDetail(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg p
 // Used by both CLI pretty output and TUI views.
 func RenderGroupsList(groups dvbeta.Groups) string {
 	var buf strings.Builder
+
+	// A deployment with no groups printed nothing at all, which is
+	// indistinguishable from a command that failed silently.
+	if len(groups) == 0 {
+		fmt.Fprintln(&buf, Dim("(no groups)"))
+		return buf.String()
+	}
 
 	for i, g := range groups {
 		if i > 0 {
