@@ -5644,6 +5644,11 @@ Cobra provides this feature via `Command.SuggestionsMinimumDistance` and `Comman
 | 1.15 | Shell completion      | bash, zsh, fish completion scripts                                                                                                                                                          | Tab completion works for commands, flags, and context/network names                                     |
 | 1.16 | E2E test suite        | Core test coverage for context, network, tx, query                                                                                                                                          | Tests pass in CI against a local testnet                                                                |
 
+GitHub-hosted CI and release workflows pin third-party actions to maintained
+major versions. Action-major upgrades must pass `actionlint`, every required PR
+check, and the release workflow's manual `check` mode before merge. Tool
+versions remain explicitly pinned where reproducible results require them.
+
 ### Phase 2: Store + Workflow Commands
 
 **Duration**: ~4-6 weeks

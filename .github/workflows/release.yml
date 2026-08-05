@@ -34,7 +34,7 @@ jobs:
       # packages and checksums to it.
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # The version baked into the binary comes from `git describe`, so the
           # single-commit default checkout is not enough.
@@ -45,7 +45,7 @@ jobs:
         # and goreleaser needs the annotation to build the changelog.
         run: git fetch --force --tags
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
           go-version-file: go.mod
 
@@ -106,7 +106,7 @@ jobs:
 
       - name: Upload artifacts
         if: github.event_name == 'workflow_dispatch' && inputs.mode != 'check'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: akt-${{ inputs.mode }}
           path: |
