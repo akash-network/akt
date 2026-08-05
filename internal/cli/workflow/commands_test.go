@@ -110,6 +110,7 @@ steps:
 	cmd := findCommand(Commands(homeFn, ctxNameFn), "foo")
 	if cmd == nil {
 		t.Fatalf("Commands() did not surface %q after its workflow was written", "foo")
+		return
 	}
 	if cmd.Short != "A user-defined workflow" {
 		t.Fatalf("foo command Short = %q, want %q", cmd.Short, "A user-defined workflow")
@@ -172,6 +173,7 @@ func TestCommandFromDefClose(t *testing.T) {
 	dseq := cmd.Flags().Lookup("dseq")
 	if dseq == nil {
 		t.Fatal("close command missing --dseq flag")
+		return
 	}
 	if dseq.Value.Type() != "int" {
 		t.Fatalf("--dseq flag type = %q, want %q", dseq.Value.Type(), "int")
@@ -241,6 +243,7 @@ steps:
 	cmd := findCommand(Commands(homeFn, ctxNameFn), "close")
 	if cmd == nil {
 		t.Fatal("Commands() did not surface close")
+		return
 	}
 	if cmd.Short != "Custom close override" {
 		t.Fatalf("close Short = %q, want the user override %q", cmd.Short, "Custom close override")
@@ -267,6 +270,7 @@ func TestCommandFromDefTxFlags(t *testing.T) {
 	dryRun := cmd.Flags().Lookup("dry-run")
 	if dryRun == nil {
 		t.Fatal("close command missing --dry-run flag")
+		return
 	}
 	if !strings.Contains(dryRun.Usage, "execution plan") {
 		t.Errorf("--dry-run usage = %q, want the workflow meaning, not the tx simulate meaning", dryRun.Usage)
@@ -561,6 +565,7 @@ func TestExecuteConsoleDeployEndToEnd(t *testing.T) {
 	}
 	if dep == nil {
 		t.Fatal("a completed deploy left the local store empty")
+		return
 	}
 	if dep.State != "active" || dep.SDLPath != sdlPath {
 		t.Errorf("stored deployment = %+v, want active with the deployed SDL path", dep)

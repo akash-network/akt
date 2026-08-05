@@ -118,6 +118,7 @@ func TestPersistDeployRecordsWhatTheRunObserved(t *testing.T) {
 	}
 	if dep == nil {
 		t.Fatal("a completed deploy recorded no deployment")
+		return
 	}
 	if dep.State != "active" {
 		t.Errorf("state = %q, want active", dep.State)

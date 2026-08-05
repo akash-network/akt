@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- **Fresh lint runs reported possible nil dereferences in tests**: the tests
+  already stopped with `t.Fatal` when a required command, flag, or stored value
+  was absent, but staticcheck does not treat that call as terminating control
+  flow. The guards now return explicitly before every dereference, keeping a
+  cold-cache golangci-lint run clean without suppressing SA5011.
+
 - **Collateral ratios still rendered at full width**: stripping trailing zeros
   only helps a value that has them, so a real on-chain ratio such as
   `1.495209570451729242` kept all eighteen decimals beside a `0.95` threshold.

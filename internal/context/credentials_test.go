@@ -188,6 +188,7 @@ func TestAuthMethodRoundTripsThroughConfig(t *testing.T) {
 	ctx := m2.GetContext("console")
 	if ctx == nil {
 		t.Fatal("context not found after reload")
+		return
 	}
 	if ctx.AuthMethod != aktctx.AuthMethodConsoleAPI {
 		t.Errorf("auth method after reload = %q, want console-api", ctx.AuthMethod)

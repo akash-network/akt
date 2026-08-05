@@ -197,6 +197,7 @@ func TestMonitorInsecureFlagDefaultsToFalse(t *testing.T) {
 		flag := candidate.Flags().Lookup("insecure")
 		if flag == nil {
 			t.Fatalf("%s has no --insecure flag", candidate.CommandPath())
+			return
 		}
 		if flag.DefValue != "false" {
 			t.Errorf("%s --insecure default = %q, want false", candidate.CommandPath(), flag.DefValue)

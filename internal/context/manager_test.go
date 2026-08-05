@@ -36,6 +36,7 @@ func TestCreateNetworkFromTemplate(t *testing.T) {
 	net := m.GetNetwork("mainnet")
 	if net == nil {
 		t.Fatal("expected network to exist")
+		return
 	}
 
 	if net.ChainID != "akashnet-2" {
@@ -59,6 +60,7 @@ func TestCreateNetworkFromTemplate_CustomName(t *testing.T) {
 	net := m.GetNetwork("my-main")
 	if net == nil {
 		t.Fatal("expected network with custom name")
+		return
 	}
 
 	if net.Name != "my-main" {
@@ -115,6 +117,7 @@ func TestForkNetwork(t *testing.T) {
 	fork := m.GetNetwork("mainnet-fork")
 	if fork == nil {
 		t.Fatal("expected fork to exist")
+		return
 	}
 
 	orig := m.GetNetwork("mainnet")

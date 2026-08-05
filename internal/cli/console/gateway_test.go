@@ -554,6 +554,7 @@ func TestShellStdinOverrideDefaultsToAutomaticSelection(t *testing.T) {
 	flag := cmd.Flags().Lookup("stdin")
 	if flag == nil {
 		t.Fatal("console shell has no --stdin override")
+		return
 	}
 	if flag.DefValue != "false" {
 		t.Fatalf("--stdin default = %q, want false force-override default", flag.DefValue)

@@ -94,6 +94,7 @@ func TestAdoptedOutputHelpMatchesEnforcedEnum(t *testing.T) {
 	flag := states.Flags().Lookup("output")
 	if flag == nil {
 		t.Fatal("query ibc client states output flag not found")
+		return
 	}
 	if flag.Usage != "Output format (pretty|json|yaml)" {
 		t.Fatalf("output help = %q", flag.Usage)

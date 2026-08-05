@@ -100,6 +100,7 @@ func TestCreateRequiresNetworkUnlessConsole(t *testing.T) {
 	c := m.GetContext("managed")
 	if c == nil {
 		t.Fatal("network-less console-api context was not created")
+		return
 	}
 	if c.AuthMethod != aktctx.AuthMethodConsoleAPI {
 		t.Errorf("auth method = %q, want console-api", c.AuthMethod)
@@ -613,6 +614,7 @@ func TestEditForksAndEditsTheSelectedNetwork(t *testing.T) {
 	fork := m.GetNetwork("mainnet-prod")
 	if fork == nil {
 		t.Fatal("forked network was not created")
+		return
 	}
 	if len(fork.Endpoints.RPC) != 1 || fork.Endpoints.RPC[0] != "https://private.example:443" {
 		t.Errorf("fork RPC = %v", fork.Endpoints.RPC)

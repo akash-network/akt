@@ -184,6 +184,7 @@ func TestDeployRecoveryAdviceSurfacesPaidPartialState(t *testing.T) {
 	advice := deployRecoveryAdvice(state, errors.New("send manifest failed"))
 	if advice == nil {
 		t.Fatal("deploy failure after create-deployment returned no recovery advice")
+		return
 	}
 	if advice.DSeq != 4242 || advice.Provider != "akash1provider" {
 		t.Fatalf("partial state = %+v, want dseq 4242 and provider", advice)
