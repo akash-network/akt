@@ -32,11 +32,9 @@ func ToolListDeployments() mcp.Tool {
 // HandleListDeployments returns the handler for listing deployments.
 func HandleListDeployments(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		owner := marshal.OptionalString(req, "owner")
-		if owner == "" {
-			if addr := cl.ClientContext().GetFromAddress(); !addr.Empty() {
-				owner = addr.String()
-			}
+		owner, err := marshal.AddressOrDefault(cl.ClientContext(), marshal.OptionalString(req, "owner"))
+		if err != nil {
+			return marshal.ErrResultf("failed to resolve owner address: %v", err), nil
 		}
 
 		if owner == "" {
@@ -77,11 +75,9 @@ func ToolGetDeployment() mcp.Tool {
 // HandleGetDeployment returns the handler for getting a deployment.
 func HandleGetDeployment(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		owner := marshal.OptionalString(req, "owner")
-		if owner == "" {
-			if addr := cl.ClientContext().GetFromAddress(); !addr.Empty() {
-				owner = addr.String()
-			}
+		owner, err := marshal.AddressOrDefault(cl.ClientContext(), marshal.OptionalString(req, "owner"))
+		if err != nil {
+			return marshal.ErrResultf("failed to resolve owner address: %v", err), nil
 		}
 		if owner == "" {
 			return marshal.ErrResult("owner address is required"), nil
@@ -129,11 +125,9 @@ func ToolGetGroup() mcp.Tool {
 // HandleGetGroup returns the handler for getting a deployment group.
 func HandleGetGroup(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		owner := marshal.OptionalString(req, "owner")
-		if owner == "" {
-			if addr := cl.ClientContext().GetFromAddress(); !addr.Empty() {
-				owner = addr.String()
-			}
+		owner, err := marshal.AddressOrDefault(cl.ClientContext(), marshal.OptionalString(req, "owner"))
+		if err != nil {
+			return marshal.ErrResultf("failed to resolve owner address: %v", err), nil
 		}
 		if owner == "" {
 			return marshal.ErrResult("owner address is required"), nil
@@ -184,9 +178,17 @@ func HandleCloseDeployment(cl v1beta3.Client) mcpserver.ToolHandlerFunc {
 			return marshal.ErrResultf("%v", err), nil
 		}
 
+		owner, err := marshal.AddressOrDefault(cl.ClientContext(), "")
+		if err != nil {
+			return marshal.ErrResultf("failed to resolve owner address: %v", err), nil
+		}
+		if owner == "" {
+			return marshal.ErrResult("owner address is required: configure a default account"), nil
+		}
+
 		msg := &dtypes.MsgCloseDeployment{
 			ID: dv1.DeploymentID{
-				Owner: cl.ClientContext().GetFromAddress().String(),
+				Owner: owner,
 				DSeq:  dseq,
 			},
 		}

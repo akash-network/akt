@@ -73,6 +73,19 @@ func ContextWorkflowsDir(root, name string) string {
 	return filepath.Join(root, "contexts", name, "workflows")
 }
 
+const (
+	// KeyringServiceName is the service name akt registers with the OS
+	// keyring backend (Keychain on macOS, libsecret on Linux). The service
+	// name is the lookup key, which is why akt cannot see entries written
+	// by the legacy CLI and vice versa (SPEC §1.12).
+	KeyringServiceName = "akt"
+
+	// LegacyKeyringServiceName is the service name used by the legacy
+	// akash / provider-services CLIs. It exists so the first-run wizard can
+	// explain the mismatch; akt never opens a keyring under this name.
+	LegacyKeyringServiceName = "akash"
+)
+
 // KeyringDir returns the directory for a named keyring.
 func KeyringDir(root string, kr Keyring) string {
 	if kr.Dir != "" {

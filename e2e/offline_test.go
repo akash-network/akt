@@ -714,6 +714,12 @@ func TestAllCommandsHelp(t *testing.T) {
 		{"context", "network", "list"},
 		{"context", "network", "show"},
 
+		// context keyring
+		{"context", "keyring"},
+		{"context", "keyring", "create"},
+		{"context", "keyring", "list"},
+		{"context", "keyring", "set"},
+
 		// context keys
 		{"context", "keys"},
 		{"context", "keys", "add"},
@@ -868,6 +874,162 @@ func TestConfigFreeCommandsSkipBootstrap(t *testing.T) {
 				t.Fatalf("akt %s wrote a config on an unconfigured machine", name)
 			}
 		})
+	}
+}
+
+// TestOfflineCommandsDoNotUnlockTheKeyring is the sibling of
+// TestConfigFreeCommandsSkipBootstrap for a machine that *is* configured. The
+// commands documented to run entirely locally (SPEC §2.11, §2.6) must stay
+// that way when the active context carries a file-backed keyring and a named
+// default-account: turning that name into an address means unlocking the
+// keyring, which asks for a passphrase the command has no use for.
+//
+// The home is deliberately seeded with a keyring that has never been created,
+// so any attempt to read it prompts. stdin is empty, so the prompt shows up on
+// stderr rather than hanging.
+func TestOfflineCommandsDoNotUnlockTheKeyring(t *testing.T) {
+	home := t.TempDir()
+	initHomeWithLockedKeyring(t, home)
+
+	sdlPath := filepath.Join(home, "deploy.yaml")
+	writeFile(t, sdlPath, minimalSDL)
+
+	commands := [][]string{
+		{"sdl", "validate", sdlPath},
+		{"context", "show"},
+		{"version"},
+	}
+
+	for _, path := range commands {
+		name := strings.Join(path, " ")
+		t.Run(name, func(t *testing.T) {
+			stdout, stderr, exitCode := runAkt(t, home, path...)
+
+			if exitCode != 0 {
+				t.Fatalf("akt %s exited %d\nstdout: %s\nstderr: %s", name, exitCode, stdout, stderr)
+			}
+			if strings.Contains(stderr, "keyring passphrase") {
+				t.Fatalf("akt %s prompted for the keyring passphrase\nstderr: %s", name, stderr)
+			}
+		})
+	}
+}
+
+// initHomeWithLockedKeyring writes a config whose active context uses a
+// file-backed keyring and a default-account given by name.
+func initHomeWithLockedKeyring(t *testing.T, home string) {
+	t.Helper()
+
+	cfg := `---
+version: 1
+current-context: locked
+networks:
+  - name: mainnet
+    chain-id: akashnet-2
+    endpoints:
+      rpc:
+        - https://rpc.example.test:443
+    gas-prices: 0.025uakt
+    gas-adjustment: "1.5"
+keyrings:
+  - name: locked
+    backend: file
+contexts:
+  - name: locked
+    network: mainnet
+    keyring: locked
+    default-account: alice
+defaults:
+  output: pretty
+  broadcast-mode: sync
+`
+	if err := os.WriteFile(filepath.Join(home, "config.yaml"), []byte(cfg), 0o644); err != nil {
+		t.Fatalf("failed to write config.yaml: %v", err)
+	}
+}
+
+const minimalSDL = `---
+version: "2.0"
+services:
+  web:
+    image: nginx:1.27
+    expose:
+      - port: 80
+        as: 80
+        to:
+          - global: true
+profiles:
+  compute:
+    web:
+      resources:
+        cpu:
+          units: 0.5
+        memory:
+          size: 512Mi
+        storage:
+          size: 512Mi
+  placement:
+    dcloud:
+      pricing:
+        web:
+          denom: uact
+          amount: 10000
+deployment:
+  web:
+    dcloud:
+      profile: web
+      count: 1
+`
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatalf("write %s: %v", path, err)
+	}
+}
+
+// TestContextKeyringSetPersistsTheBackend covers the persistent remedy for a
+// host whose configured backend is unavailable: before this command the only
+// way to change key storage after first run was to hand-edit config.yaml.
+func TestContextKeyringSetPersistsTheBackend(t *testing.T) {
+	home := t.TempDir()
+	initHomeWithLockedKeyring(t, home)
+
+	stdout, stderr, exitCode := runAkt(t, home, "context", "keyring", "set", "locked", "test")
+	if exitCode != 0 {
+		t.Fatalf("keyring set exited %d\nstdout: %s\nstderr: %s", exitCode, stdout, stderr)
+	}
+	if !strings.Contains(stdout, "not migrated") {
+		t.Errorf("expected a warning that keys are not migrated, got:\n%s", stdout)
+	}
+
+	stdout, stderr, exitCode = runAkt(t, home, "context", "keyring", "list", "--output", "json")
+	if exitCode != 0 {
+		t.Fatalf("keyring list exited %d\nstdout: %s\nstderr: %s", exitCode, stdout, stderr)
+	}
+
+	var keyrings []struct {
+		Name      string `json:"name"`
+		Backend   string `json:"backend"`
+		Effective string `json:"effective"`
+		Available bool   `json:"available"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &keyrings); err != nil {
+		t.Fatalf("decode keyring list: %v\n%s", err, stdout)
+	}
+	if len(keyrings) != 1 {
+		t.Fatalf("expected 1 keyring, got %d: %s", len(keyrings), stdout)
+	}
+	if keyrings[0].Backend != "test" {
+		t.Errorf("backend = %q, want the persisted override", keyrings[0].Backend)
+	}
+	if keyrings[0].Effective != "test" || !keyrings[0].Available {
+		t.Errorf("effective = %q available = %v, want (test, true)", keyrings[0].Effective, keyrings[0].Available)
+	}
+
+	if _, _, exitCode := runAkt(t, home, "context", "keyring", "set", "locked", "nonsense"); exitCode == 0 {
+		t.Error("an unknown backend must be rejected")
 	}
 }
 

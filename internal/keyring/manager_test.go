@@ -34,6 +34,17 @@ func TestGetTestKeyring(t *testing.T) {
 	if kr.Backend() != sdkkeyring.BackendTest {
 		t.Errorf("backend = %q, want %q", kr.Backend(), sdkkeyring.BackendTest)
 	}
+
+	// kr.Backend() only echoes what was asked for -- it would report "os" on a
+	// host where the SDK had silently opened a file keyring instead. Assert
+	// the store this host actually provides as well (SPEC §1.5).
+	effective, available := mgr.EffectiveBackend("default")
+	if !available {
+		t.Fatal("the test backend must be available on every host")
+	}
+	if effective != sdkkeyring.BackendTest {
+		t.Errorf("effective backend = %q, want %q", effective, sdkkeyring.BackendTest)
+	}
 }
 
 func TestGetCached(t *testing.T) {
@@ -104,6 +115,10 @@ func TestGetByName(t *testing.T) {
 
 	if kr.Backend() != sdkkeyring.BackendTest {
 		t.Errorf("backend = %q, want %q", kr.Backend(), sdkkeyring.BackendTest)
+	}
+
+	if effective, available := mgr.EffectiveBackend("mykr"); !available || effective != sdkkeyring.BackendTest {
+		t.Errorf("effective backend = (%q, %v), want (%q, true)", effective, available, sdkkeyring.BackendTest)
 	}
 }
 
@@ -225,6 +240,33 @@ func TestInMemoryKeyring(t *testing.T) {
 
 	if kr.Backend() != sdkkeyring.BackendMemory {
 		t.Errorf("backend = %q, want %q", kr.Backend(), sdkkeyring.BackendMemory)
+	}
+}
+
+// TestReloadAppliesOverriddenBackend covers the per-invocation
+// --keyring-backend override reaching the manager: a context configured for
+// "os" must open the overridden store, which is what makes `akt context keys`
+// usable on a host that cannot provide the configured one.
+func TestReloadAppliesOverriddenBackend(t *testing.T) {
+	root := t.TempDir()
+	cdc := aktcodec.MakeEncodingConfig().Codec
+
+	configured := []aktctx.Keyring{{Name: "default", Backend: sdkkeyring.BackendOS}}
+
+	mgr := aktkeyring.NewManager(root, aktkeyring.ApplyOverrides(configured, sdkkeyring.BackendTest, ""), cdc)
+	mgr.SetInput(strings.NewReader(""))
+
+	kr, err := mgr.Get("default")
+	if err != nil {
+		t.Fatalf("Get with an overridden backend: %v", err)
+	}
+
+	if kr.Backend() != sdkkeyring.BackendTest {
+		t.Errorf("backend = %q, want the override %q", kr.Backend(), sdkkeyring.BackendTest)
+	}
+
+	if effective, available := mgr.EffectiveBackend("default"); !available || effective != sdkkeyring.BackendTest {
+		t.Errorf("effective backend = (%q, %v), want (%q, true)", effective, available, sdkkeyring.BackendTest)
 	}
 }
 

@@ -260,6 +260,51 @@ such as `tcp://localhost:26657` must never replace a resolved endpoint. Local
 transaction leaves use the same pre-run boundary; a leaf that needs codecs or
 clients cannot reach its handler without that initialization.
 
+Step 2 assigns one of three identity modes: none, on demand, or required.
+"Resolve the context" and "open the user's key store" are separate decisions
+because opening a backend can prompt, fail on a headless host, or request an OS
+unlock. None supplies no keyring. On demand supplies a deferred keyring whose
+backend opens on the first real key operation. Required opens and resolves the
+signer during startup. The decision lives next to `requiresConfig` and
+`requiresContext` as `localIdentityMode`; the root passes the typed result down
+rather than making the client layer infer behavior from command names.
+
+Queries, public provider status, and MCP startup use the deferred form. A named
+default account resolves only when an omitted owner or protected gateway call
+needs it, so network-wide and explicitly scoped reads never open a key store.
+Address-based transaction generation and simulation also stay deferred; the SDK
+can build or simulate from the bech32 address without proving that the key is
+local. Signing transactions, executing workflows, and protected provider calls
+remain eager. `mcp --enable-writes` promotes a keyring context to eager so its
+advertised chain writes are usable, but a Console-only context remains
+keyring-free. Purely local commands and workflow dry-runs receive no keyring.
+
+#### 3.1.2.1 Keyring Backend Resolution
+
+The Cosmos SDK asks `github.com/99designs/keyring` to open the `os` backend
+without pinning `AllowedBackends`, and that library walks its registered
+backends and skips any whose opener errors. On a headless Linux host neither
+Secret Service nor KWallet registers (no session bus) and the kernel keyring
+opener fails, so the walk reaches `pass` — or, failing that, the file backend,
+which always registers and never errors. The user asked for the system keyring
+and got an encrypted file, while the config and `akt context show` kept
+reporting `os`.
+
+akt therefore resolves the backend itself before handing the request to the
+SDK. `internal/keyring` maps `os` to the platform's system store (Keychain,
+Windows Credential Manager, Secret Service/KWallet) and opens *only* that store,
+with `AllowedBackends` pinned to it. Because the library's own preference order
+puts every OS-specific backend ahead of `pass` and `file`, a pinned probe that
+succeeds proves the SDK's unpinned open would select the same store — so the
+probe is a check, not a second implementation of the choice. A pinned probe
+that fails is a fail-fast error naming the platform store that was missing and
+the two remedies (`--keyring-backend file` for one invocation,
+`akt context keyring set` to persist). Never a substitution.
+
+The same resolver answers the display question without opening anything a
+second time, which is how `akt context show` can report an *effective* backend
+instead of echoing the configured one back at the user.
+
 #### 3.1.3 Live Reload
 
 The context is **live-reloadable**. The config file is watched for changes (via fsnotify or polling):
@@ -571,7 +616,7 @@ pkg.akt.dev/akt/                         # module path (repo: github.com/akash-n
 │   │   └── theme/                       # Unified color palette and base styles
 │   ├── glyphs/                          # ASCII-safe glyph registry (§3.2)
 │   ├── context/                         # Context management core
-│   ├── bootstrap/                       # First-run config initialization wizard
+│   ├── bootstrap/                       # First-run config initialization wizard (§7.4)
 │   ├── capability/                      # Feature set derived from the context (§3.6)
 │   ├── transport/                       # Action-to-rail translation layer (§3.5)
 │   ├── actionlog/                       # Action log (unique per context)
@@ -1062,3 +1107,49 @@ These remain in their respective repositories:
 - `provider-services migrate-*` -- all migration commands
 - `provider-services sdl-to-manifest` -- SDL conversion utility (provider-internal)
 - `provider-services show-cluster-ns` -- Kubernetes namespace utility
+
+### 7.4 First Run Is a Migration, Not an Installation
+
+The command mappings above describe what a returning `akash` user types. They do
+not describe what that user's machine already contains, and the first-run wizard
+is where the two meet. Three properties follow from treating first run as a
+migration step rather than a fresh install.
+
+**The destination is announced before anything is asked.** The akt home resolves
+through a four-step chain (`--home`, `AKT_HOME`, `$XDG_CONFIG_HOME/akt`,
+`~/.config/akt`), and a returning user is exactly the person likely to have one
+of those set from another tool. Printing the resolved root only in the closing
+summary means a user who abandons the wizard, or who is diagnosing why akt "did
+not find" their config, never learns which of the four won. The wizard therefore
+states the root and the overrides up front and notes that nothing is written
+until the prompts complete, so the announcement is informative rather than a
+claim about what already exists.
+
+**The active network is chosen, never inherited.** Creating a context per
+selected network is cheap and reversible; deciding which one is
+`current-context` is neither. The wizard used to prefer mainnet silently, which
+made "press Enter three times" — the path of least resistance for someone
+evaluating a new tool — produce a configuration whose very next transaction
+spends real AKT. That is the wrong direction for a default to fail in. The
+choice is now an explicit prompt whose cursor starts on a test network, with
+mainnet one keystroke away. The selection logic is a pure function over the
+selected networks so it can be tested; the surrounding raw-mode prompt cannot
+be, and should not be where the safety property lives.
+
+**What does not carry over is stated, not discovered.** Keys and client
+certificates in `~/.akash` are invisible to akt for three independent reasons
+(keyring service name, keyring directory, and client home directory — see
+SPEC §1.12). Silence here reads as data loss: the user sees an empty key list
+and concludes akt broke something. The wizard therefore detects the legacy home
+and says plainly what happened and what to do about it — recover the account
+from its mnemonic, and either copy the existing PEM or regenerate the
+certificate — including the fact that the on-chain certificate is still valid
+and that the recovered address is unchanged.
+
+akt deliberately stops at the notice rather than importing. An importer would
+have to open a legacy keyring, which means prompting for a passphrase and
+writing key material on a path the user did not ask for, during a wizard they
+ran to look around. Detection is therefore restricted to `os.Stat` and a
+filename glob: akt never reads, moves, modifies, or deletes anything under
+`~/.akash`, and the notice says so, because a tool that has just told you your
+keys are elsewhere has not yet earned the benefit of the doubt.

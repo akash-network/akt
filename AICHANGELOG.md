@@ -4,6 +4,98 @@
 
 ### Fixed
 
+- **Strict keyring validation blocked commands that never used a key**: the
+  startup identity boundary now distinguishes no access, deferred access, and
+  required access. Public queries, provider status, MCP startup, workflow
+  dry-runs, and address-only transaction generation/simulation no longer open
+  an unavailable OS backend. Owner-defaulting and authenticated calls still
+  resolve named accounts at the first operation that needs them.
+
+- **Network-wide queries unlocked the configured keyring unnecessarily**:
+  query initialization now carries a named default account without resolving
+  it. Only an omitted owner filter that needs the account opens the keyring;
+  network-wide reads and explicitly scoped queries remain non-interactive.
+
+- **Offline commands asked for the wallet passphrase**: startup resolved the
+  context's named `default-account` for every command, and resolving a name
+  means unlocking the keyring — so `akt sdl validate` and `akt monitor`, both
+  documented to run entirely locally, prompted for a file passphrase or an OS
+  keychain unlock. Whether an invocation needs the local signing identity is
+  now an explicit decision (`requiresLocalIdentity`, alongside
+  `requiresConfig`/`requiresContext`) that the root passes down to the client
+  context builder. Commands defined to run without a signer neither open a
+  keyring nor resolve a named account; an address-valued default still
+  resolves, because parsing bech32 costs nothing.
+
+- **A configured `os` keyring silently became a different store**: the Cosmos
+  SDK opens the `os` backend without pinning the backend list, and the
+  underlying library skips past any backend whose opener fails — so a headless
+  host with no session bus landed on `pass` or, failing that, an encrypted
+  file keyring, while `config.yaml` and `akt context show` went on reporting
+  `os`. That is also where the mysterious passphrase prompt came from. akt now
+  resolves `os` to the platform's system credential store itself (Keychain,
+  Windows Credential Manager, Secret Service/KWallet) with the backend list
+  pinned, and fails fast when the host has none, naming both remedies instead
+  of substituting a store the user never chose. `akt context show` and
+  `akt context keyring list` report the *effective* backend next to the
+  configured one, and the first-run wizard no longer offers `os` on a host
+  that cannot provide it.
+
+- **Key storage could not be chosen where it mattered**: `--keyring-backend`
+  and `--keyring-dir` existed only on `tx` commands, so the documented
+  `AKT_KEYRING_BACKEND`/`AKT_KEYRING_DIR` variables did nothing and there was
+  no way to add a key to a `file` keyring on a box whose context said `os`.
+  Both flags are now global, bound to Viper so the environment variables work,
+  and applied to every keyring the invocation opens — including the one behind
+  `akt context keys`. The transaction-local duplicates are removed: they
+  shadowed the global flag, and their non-empty `os` default stood ready to
+  override a context's persisted backend. A new `akt context keyring`
+  group (`create`, `list`, `set`) makes the change persistent, which until now
+  required hand-editing `config.yaml`.
+
+- **First run left users on mainnet, in an unnamed directory, without their
+  existing keys**: the bootstrap wizard silently preferred mainnet for
+  `current-context`, so the shortest path through setup — Enter, Enter — armed
+  the next transaction to spend real AKT on a network the user was never asked
+  about. Choosing the active context is now an explicit prompt whose cursor
+  starts on a test network (`sandbox`, else `testnet`, else any non-mainnet
+  selection), with mainnet one keystroke away and each row stating in plain
+  language what transacting there costs. The preference is a pure
+  `pickInitialContext` helper so the safety property is testable, which nothing
+  in the wizard's interactive body previously was.
+
+  The wizard also never said where it was writing until the closing summary, so
+  anyone who abandoned it, or who had `AKT_HOME`/`XDG_CONFIG_HOME` set by
+  another tool, could not tell which of the four resolution steps had won. The
+  resolved config root and config file path are now announced before the first
+  prompt, together with the `--home` and `AKT_HOME` overrides and a note that
+  nothing is written until the prompts complete. The closing summary grew from
+  two lines to the full set of locations — config file, active context with its
+  chain ID, context directory, store, action log, and keyring — using the same
+  labels as `akt context show`, marking directories that do not exist yet as
+  created on first use, and naming the system keyring service instead of a
+  directory for the `os` backend. No generated context gets a
+  `default-account`, so the summary now ends with the `akt context keys add`
+  commands that make the configuration usable.
+
+  Finally, nothing told users of the legacy `akash` CLI that their keys and
+  certificates do not carry over. A read-only detector (`os.Stat` plus a `*.pem`
+  glob — akt never reads, moves, modifies, or deletes anything under `~/.akash`)
+  now triggers a notice naming all three reasons the legacy state is invisible:
+  the OS keyring service name (`akash` vs `akt`), the keyring directory, and the
+  client home directory used to locate `<address>.pem`. The notice states that
+  the account is recoverable with `akt context keys add <name> --recover` at the
+  same address, that the published certificate remains valid on chain
+  (`akt query cert list <address>`), and that copying
+  `~/.akash/<address>.pem` into the akt home restores mTLS for free — its
+  password is derived from a keyring signature over the address — while
+  regenerating with `akt tx cert generate client` / `akt tx cert publish client`
+  costs a transaction.
+
+  All wizard rendering — prompts, progress, summary, and the Console onboarding
+  prompts — moved from stdout to stderr as SPEC §3.9.2 and §10.1.1 require; the
+  wizard now writes nothing to stdout.
+
 - **CI and release workflows used outdated GitHub Actions runtimes**:
   checkout, Go setup, and artifact upload now use their maintained v7
   releases, while golangci-lint uses the v9 action with the repository's lint

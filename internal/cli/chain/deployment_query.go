@@ -61,7 +61,10 @@ the command fails if the deployment is in a different one.`,
 				return err
 			}
 
-			defaultOwner := cl.ClientContext().GetFromAddress().String()
+			defaultOwner, err := defaultOwnerForQueryArg(cl.ClientContext(), args)
+			if err != nil {
+				return err
+			}
 
 			if len(args) > 0 {
 				af, err := cflags.DepFiltersFromArg(args[0], defaultOwner)
@@ -94,6 +97,12 @@ the command fails if the deployment is in a different one.`,
 
 			// Default owner fallback when no arg and no --owner flag.
 			if dfilters.Owner == "" {
+				if defaultOwner == "" {
+					defaultOwner, err = resolveDefaultAccountAddress(cl.ClientContext())
+					if err != nil {
+						return err
+					}
+				}
 				if defaultOwner == "" {
 					return requireOwnerScope("deployment filter")
 				}
@@ -170,7 +179,10 @@ func GetQueryDeploymentGroupCmd() *cobra.Command {
 				gseq  uint32
 			)
 
-			defaultOwner := cl.ClientContext().GetFromAddress().String()
+			defaultOwner, err := defaultOwnerForQueryArg(cl.ClientContext(), args)
+			if err != nil {
+				return err
+			}
 
 			if len(args) == 1 {
 				parsed, fullySpecified, err := cflags.GroupIDFromArg(args[0], defaultOwner)

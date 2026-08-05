@@ -16,11 +16,23 @@ import (
 
 	aktctx "pkg.akt.dev/akt/internal/context"
 	"pkg.akt.dev/akt/internal/glyphs"
+	aktkeyring "pkg.akt.dev/akt/internal/keyring"
 )
 
 const (
 	netRepoAPI = "https://api.github.com/repos/akash-network/net/contents"
 	netRepoRaw = "https://raw.githubusercontent.com/akash-network/net/main"
+
+	// defaultKeyringName is the name of the single keyring the wizard
+	// creates. Every generated context references it.
+	defaultKeyringName = "default"
+
+	// pendingSuffix marks a path the wizard reports but does not create.
+	// SaveConfig creates only the config root, so the context, store, and
+	// action log directories do not exist when the summary prints; naming
+	// them without this would be a claim about the filesystem that is not
+	// yet true.
+	pendingSuffix = "  (created on first use)"
 )
 
 type githubEntry struct {
@@ -65,10 +77,20 @@ func Run(cfgRoot string) error {
 		return nil
 	}
 
-	fmt.Println("Welcome to akt! No configuration found.")
-	fmt.Println()
-	fmt.Println("Fetching available networks from github.com/akash-network/net ...")
-	fmt.Println()
+	// Every byte the wizard emits is a prompt, progress, or a report about
+	// them -- never data (SPEC §3.9.2, §10.1.1). stdout stays empty.
+	out := os.Stderr
+
+	fmt.Fprintln(out, "Welcome to akt! No configuration found.")
+	fmt.Fprintln(out)
+
+	// Say where this is going before asking anything. Someone who abandons
+	// the wizard, or who has AKT_HOME/XDG_CONFIG_HOME set by another tool,
+	// must not have to finish setup to learn which path won (SPEC §2.0a).
+	writeDestination(out, cfgRoot)
+
+	fmt.Fprintln(out, "Fetching available networks from github.com/akash-network/net ...")
+	fmt.Fprintln(out)
 
 	networks, err := fetchAllNetworks()
 	if err != nil {
@@ -82,28 +104,23 @@ func Run(cfgRoot string) error {
 	// Interactive multi-select.
 	selected := multiSelect(networks)
 	if len(selected) == 0 {
-		fmt.Println("No networks selected. Aborted.")
+		fmt.Fprintln(out, "No networks selected. Aborted.")
 		os.Exit(0)
 	}
 
 	// Keyring backend selection.
 	backend := selectKeyringBackend()
 
-	// Pick current-context: prefer mainnet, else first selected.
-	currentCtx := selected[0].Name
-	for _, n := range selected {
-		if n.Name == "mainnet" || strings.Contains(n.Name, "mainnet") {
-			currentCtx = n.Name
-			break
-		}
-	}
+	// Which context is active is asked, never assumed: the answer decides
+	// whether the user's first transaction spends real AKT (SPEC §2.0d).
+	currentCtx := selectActiveContext(selected)
 
 	cfg := &aktctx.Config{
 		Version:        aktctx.ConfigVersion,
 		CurrentContext: currentCtx,
 		Networks:       selected,
 		Keyrings: []aktctx.Keyring{
-			{Name: "default", Backend: backend},
+			{Name: defaultKeyringName, Backend: backend},
 		},
 		Defaults: aktctx.Defaults{
 			Output:        "pretty",
@@ -115,7 +132,7 @@ func Run(cfgRoot string) error {
 		cfg.Contexts = append(cfg.Contexts, aktctx.Context{
 			Name:    n.Name,
 			Network: aktctx.Network{Name: n.Name},
-			Keyring: aktctx.Keyring{Name: "default"},
+			Keyring: aktctx.Keyring{Name: defaultKeyringName},
 			Gas:     "auto",
 			ProviderDefaults: aktctx.ProviderDefaults{
 				AuthType: "jwt",
@@ -143,13 +160,110 @@ func Run(cfgRoot string) error {
 			return fmt.Errorf("store console api key: %w", err)
 		}
 
-		fmt.Printf("Console API key stored for context %q.\n", currentCtx)
+		fmt.Fprintf(out, "Console API key stored for context %q.\n", currentCtx)
 	}
 
-	fmt.Printf("\nConfig written to %s\n", aktctx.ConfigPath(cfgRoot))
-	fmt.Printf("Active context: %s\n\n", currentCtx)
+	writeSummary(out, cfgRoot, currentCtx, chainIDOf(selected, currentCtx), backend)
+
+	// Last, so it is still on screen when the user goes looking for the
+	// keys the legacy CLI left behind (SPEC §1.12, §2.0g). A failure to
+	// resolve the home directory only means no notice -- never an error.
+	if home, err := os.UserHomeDir(); err == nil {
+		writeLegacyNotice(out, detectLegacyHome(home), cfgRoot, backend)
+	}
 
 	return nil
+}
+
+// writeDestination announces the resolved config root and the overrides that
+// relocate it, before the first prompt (SPEC §2.0a).
+func writeDestination(w io.Writer, cfgRoot string) {
+	for _, line := range destinationLines(cfgRoot) {
+		fmt.Fprintln(w, line)
+	}
+
+	fmt.Fprintln(w)
+}
+
+// destinationLines is the announcement body. It is separated from rendering
+// so its content -- the part that has to name the right path and the right
+// overrides -- is assertable without a terminal.
+func destinationLines(cfgRoot string) []string {
+	return []string{
+		"Configuration directory:  " + cfgRoot,
+		"Config file to write:     " + aktctx.ConfigPath(cfgRoot),
+		"",
+		"Override the location with --home <dir> or AKT_HOME=<dir>",
+		"(resolution order: --home, AKT_HOME, $XDG_CONFIG_HOME/akt, ~/.config/akt).",
+		"Nothing is written until the prompts below are complete.",
+	}
+}
+
+// writeSummary reports what was written and where the rest of this context's
+// state will live (SPEC §2.0f).
+func writeSummary(w io.Writer, cfgRoot, currentCtx, chainID, backend string) {
+	fmt.Fprintln(w)
+	fmt.Fprintln(w, ansiBold+"Setup complete"+ansiReset)
+	fmt.Fprintln(w)
+
+	for _, line := range summaryLines(cfgRoot, currentCtx, chainID, backend) {
+		fmt.Fprintln(w, line)
+	}
+
+	fmt.Fprintln(w)
+}
+
+// summaryLines renders the closing summary as plain text. Labels match
+// `akt context show` so the two describe the same thing the same way.
+//
+// No generated context gets a default-account, so the summary ends with the
+// step that makes the configuration usable rather than leaving the user to
+// discover the gap on their first command.
+func summaryLines(cfgRoot, currentCtx, chainID, backend string) []string {
+	active := currentCtx
+	if chainID != "" {
+		active = fmt.Sprintf("%s (%s)", currentCtx, chainID)
+	}
+
+	kv := func(label, value string) string {
+		return fmt.Sprintf("  %-16s %s", label, value)
+	}
+
+	return []string{
+		kv("Config", aktctx.ConfigPath(cfgRoot)),
+		kv("Active Context", active),
+		kv("Context Dir", aktctx.ContextDir(cfgRoot, currentCtx)+pendingSuffix),
+		kv("Store", aktctx.StoreDir(cfgRoot, currentCtx)+pendingSuffix),
+		kv("Action Log", aktctx.ActionLogPath(cfgRoot, currentCtx)+pendingSuffix),
+		kv("Keyring", keyringLocation(cfgRoot, backend)),
+		"",
+		"No account is configured yet. Next:",
+		"  akt context keys add <name>              create a new account",
+		"  akt context keys add <name> --recover    import an existing mnemonic",
+		"  akt context show                         review this context",
+	}
+}
+
+// keyringLocation describes where the chosen backend keeps its keys. The os
+// backend uses no directory at all, so naming one would send the user looking
+// in the wrong place.
+func keyringLocation(cfgRoot, backend string) string {
+	if backend == "os" {
+		return fmt.Sprintf("system keyring, service %q", aktctx.KeyringServiceName)
+	}
+
+	return aktctx.KeyringDir(cfgRoot, aktctx.Keyring{Name: defaultKeyringName}) + pendingSuffix
+}
+
+// chainIDOf returns the chain ID of the named network, or "" if it is absent.
+func chainIDOf(networks []aktctx.Network, name string) string {
+	for _, n := range networks {
+		if n.Name == name {
+			return n.ChainID
+		}
+	}
+
+	return ""
 }
 
 // ANSI escape helpers.
@@ -237,7 +351,7 @@ func multiSelect(networks []aktctx.Network) []aktctx.Network {
 		b.WriteString("\r\n")
 		b.WriteString(ansiDim + "  q quit" + ansiReset + "\r\n")
 
-		os.Stdout.WriteString(b.String())
+		os.Stderr.WriteString(b.String())
 	}
 
 	// Total rendered lines: header(1) + blank(1) + select-all(1) + blank(1) + networks(n) + blank(1) + hint(1) = n+6
@@ -245,7 +359,7 @@ func multiSelect(networks []aktctx.Network) []aktctx.Network {
 
 	clearLines := func() {
 		for i := 0; i < renderLines; i++ {
-			os.Stdout.WriteString("\033[A\033[2K")
+			os.Stderr.WriteString("\033[A\033[2K")
 		}
 	}
 
@@ -272,7 +386,7 @@ func multiSelect(networks []aktctx.Network) []aktctx.Network {
 				}
 				render()
 			case '\r', '\n':
-				os.Stdout.WriteString("\r\n")
+				os.Stderr.WriteString("\r\n")
 				_ = term.Restore(int(os.Stdin.Fd()), oldState)
 
 				var result []aktctx.Network
@@ -291,9 +405,9 @@ func multiSelect(networks []aktctx.Network) []aktctx.Network {
 				cursor = (cursor - 1 + totalItems) % totalItems
 				render()
 			case 'q', 3:
-				os.Stdout.WriteString("\r\n")
+				os.Stderr.WriteString("\r\n")
 				_ = term.Restore(int(os.Stdin.Fd()), oldState)
-				fmt.Println("Aborted.")
+				fmt.Fprintln(os.Stderr, "Aborted.")
 				os.Exit(0)
 			}
 		} else if nr == 3 && buf[0] == 27 && buf[1] == 91 {
@@ -326,66 +440,231 @@ func allSelected(checked []bool) bool {
 	return true
 }
 
-// keyringOption describes one selectable keyring backend.
-type keyringOption struct {
+// selectOption describes one row of a single-select menu.
+type selectOption struct {
 	value string
 	label string
 	desc  string
+
+	// unavailable marks a row this host cannot provide. It is still listed,
+	// so the absence is visible rather than silent, but the cursor skips it
+	// and it can never be chosen.
+	unavailable bool
 }
 
 // selectKeyringBackend presents a single-select menu for keyring backend.
 // Returns the selected backend string (e.g. "os", "file", "test").
+//
+// "os" is offered only where a platform credential store actually answers.
+// Offering it on a host without one is how a headless server ended up with
+// keys in an encrypted file while the context went on reporting "os"
+// (SPEC §1.5, §3.9.1).
 func selectKeyringBackend() string {
-	options := []keyringOption{
-		{value: "os", label: "os", desc: "System keyring (recommended)"},
-		{value: "file", label: "file", desc: "File-based encrypted keyring"},
-		{value: "test", label: "test", desc: "Unencrypted test keyring (development only)"},
+	systemKeyring := aktkeyring.SystemKeyringAvailable()
+
+	osDesc := "System keyring (recommended)"
+	if !systemKeyring {
+		osDesc = "System keyring — unavailable on this host"
 	}
 
-	cursor := 0 // default to "os"
+	return singleSelect("Select keyring backend", []selectOption{
+		{value: "os", label: "os", desc: osDesc, unavailable: !systemKeyring},
+		{value: "file", label: "file", desc: "File-based encrypted keyring"},
+		{value: "test", label: "test", desc: "Unencrypted test keyring (development only)"},
+	}, 0)
+}
+
+// selectActiveContext asks which of the newly created contexts becomes
+// current-context (SPEC §2.0d).
+//
+// The wizard used to prefer mainnet silently, so the shortest path through
+// setup produced a configuration whose next transaction spent real AKT. The
+// cursor now starts on a test network; mainnet is one keystroke away but is
+// never what pressing enter selects.
+func selectActiveContext(networks []aktctx.Network) string {
+	if len(networks) == 0 {
+		return ""
+	}
+
+	preferred := pickInitialContext(networks)
+
+	options := make([]selectOption, 0, len(networks))
+	initial := 0
+
+	for i, n := range networks {
+		if n.Name == preferred {
+			initial = i
+		}
+
+		options = append(options, selectOption{
+			value: n.Name,
+			label: n.Name,
+			desc:  strings.TrimSpace(fmt.Sprintf("%-14s %s", n.ChainID, networkRisk(n.Name))),
+		})
+	}
+
+	return singleSelect("Select the active context", options, initial)
+}
+
+// pickInitialContext returns the network that the active-context prompt
+// starts on: the safest of the selected networks.
+//
+// Preference runs safest-first -- sandbox, then testnet, then any other
+// non-mainnet network -- and falls back to the first selection only when
+// every option is mainnet. Selection lives here, rather than inside the
+// raw-mode prompt, because this is the part that decides whether a mistake
+// costs money and so is the part that has to be testable.
+func pickInitialContext(networks []aktctx.Network) string {
+	if len(networks) == 0 {
+		return ""
+	}
+
+	for _, want := range []string{"sandbox", "testnet", "test"} {
+		for _, n := range networks {
+			if isMainnetName(n.Name) {
+				continue
+			}
+
+			if strings.Contains(strings.ToLower(n.Name), want) {
+				return n.Name
+			}
+		}
+	}
+
+	// No recognizable test network was selected. Anything that is not
+	// mainnet is still the safer place to start.
+	for _, n := range networks {
+		if !isMainnetName(n.Name) {
+			return n.Name
+		}
+	}
+
+	return networks[0].Name
+}
+
+// isMainnetName reports whether a network name identifies the live network.
+func isMainnetName(name string) bool {
+	return strings.Contains(strings.ToLower(name), "mainnet")
+}
+
+// networkRisk states, in plain language, what transacting on a network costs.
+// That distinction is the entire reason the prompt exists, so it belongs on
+// the row rather than in a footnote.
+func networkRisk(name string) string {
+	lower := strings.ToLower(name)
+
+	switch {
+	case isMainnetName(lower):
+		return "live network - transactions spend real AKT"
+	case strings.Contains(lower, "sandbox"),
+		strings.Contains(lower, "testnet"),
+		strings.Contains(lower, "test"):
+		return "test network - tokens have no value"
+	default:
+		return ""
+	}
+}
+
+// renderSingleSelect draws a single-select menu with cursor on row `cursor`.
+// It is a pure function so the frame the user actually sees can be asserted
+// without a terminal; singleSelect only decides when to draw it.
+func renderSingleSelect(title string, options []selectOption, cursor int) string {
+	g := glyphs.G()
+
+	labelWidth := 10
+	for _, opt := range options {
+		if n := len(opt.label); n > labelWidth {
+			labelWidth = n
+		}
+	}
+
+	var b strings.Builder
+
+	b.WriteString(ansiBold + title + ansiReset + ansiDim + "  ↑↓ move  enter confirm" + ansiReset + "\r\n")
+	b.WriteString("\r\n")
+
+	for i, opt := range options {
+		icon := ansiDim + g.CheckboxOff + ansiReset
+		nameStyle := ansiDim
+		prefix := "  "
+		rowStart := ""
+		rowEnd := ""
+
+		if opt.unavailable {
+			// Listed so the absence is visible, never highlighted as a
+			// choice: the cursor cannot rest here.
+			b.WriteString(fmt.Sprintf("  %s%s %s  %s%s %s%s\r\n",
+				prefix, ansiDim+g.CheckboxOff, ansiReset+ansiDim,
+				fmt.Sprintf("%-*s", labelWidth, opt.label),
+				ansiDim, opt.desc, ansiReset))
+
+			continue
+		}
+
+		if i == cursor {
+			icon = ansiGreen + g.CheckboxOn + ansiReset
+			nameStyle = ansiReset
+			prefix = ansiYellow + g.Cursor + " " + ansiReset
+			rowStart = ansiBgSel
+			rowEnd = ansiReset
+		}
+
+		b.WriteString(fmt.Sprintf("  %s%s %s  %s%s%s %s%s%s\r\n",
+			rowStart, prefix, icon,
+			nameStyle, fmt.Sprintf("%-*s", labelWidth, opt.label), ansiReset,
+			ansiDim, opt.desc+ansiReset, rowEnd))
+	}
+
+	b.WriteString("\r\n")
+
+	return b.String()
+}
+
+// singleSelect presents a single-select menu and returns the chosen value.
+// initial positions the cursor.
+//
+// When stdin cannot be put in raw mode (a pipe, a CI runner) the initial
+// option is returned rather than blocking on a read that will never be
+// answered -- so every caller's documented default is also its fallback.
+func singleSelect(title string, options []selectOption, initial int) string {
+	if len(options) == 0 {
+		return ""
+	}
+
+	if initial < 0 || initial >= len(options) {
+		initial = 0
+	}
+
+	cursor := initial
+
+	// Never start on a row this host cannot provide.
+	for i := 0; i < len(options) && options[cursor].unavailable; i++ {
+		cursor = (cursor + 1) % len(options)
+	}
+
+	if options[cursor].unavailable {
+		// Every option is unavailable; there is nothing to choose.
+		return ""
+	}
 
 	oldState, err := term.MakeRaw(int(os.Stdin.Fd()))
 	if err != nil {
-		return "os" // fallback
+		// Non-TTY fallback (SPEC §3.9.3): the default option, which is the
+		// first selectable one — never a row this host cannot provide.
+		return options[cursor].value
 	}
 	defer func() { _ = term.Restore(int(os.Stdin.Fd()), oldState) }()
 
 	render := func() {
-		g := glyphs.G()
-		var b strings.Builder
-
-		b.WriteString(ansiBold + "Select keyring backend" + ansiReset + ansiDim + "  ↑↓ move  enter confirm" + ansiReset + "\r\n")
-		b.WriteString("\r\n")
-
-		for i, opt := range options {
-			icon := ansiDim + g.CheckboxOff + ansiReset
-			nameStyle := ansiDim
-			prefix := "  "
-			rowStart := ""
-			rowEnd := ""
-			if i == cursor {
-				icon = ansiGreen + g.CheckboxOn + ansiReset
-				nameStyle = ansiReset
-				prefix = ansiYellow + g.Cursor + " " + ansiReset
-				rowStart = ansiBgSel
-				rowEnd = ansiReset
-			}
-
-			b.WriteString(fmt.Sprintf("  %s%s %s  %s%-10s %s%s%s\r\n",
-				rowStart, prefix, icon, nameStyle, opt.label+ansiReset,
-				ansiDim, opt.desc+ansiReset, rowEnd))
-		}
-
-		b.WriteString("\r\n")
-		os.Stdout.WriteString(b.String())
+		os.Stderr.WriteString(renderSingleSelect(title, options, cursor))
 	}
 
-	// header(1) + blank(1) + options(3) + blank(1) = 6
+	// header(1) + blank(1) + options(n) + blank(1)
 	renderLines := len(options) + 3
 
 	clearLines := func() {
 		for i := 0; i < renderLines; i++ {
-			os.Stdout.WriteString("\033[A\033[2K")
+			os.Stderr.WriteString("\033[A\033[2K")
 		}
 	}
 
@@ -393,6 +672,18 @@ func selectKeyringBackend() string {
 
 	buf := make([]byte, 3)
 	totalItems := len(options)
+
+	// step advances the cursor past any row this host cannot provide, so an
+	// unavailable option can never be selected.
+	step := func(delta int) {
+		for i := 0; i < totalItems; i++ {
+			cursor = (cursor + delta + totalItems) % totalItems
+			if !options[cursor].unavailable {
+				return
+			}
+		}
+	}
+
 	for {
 		nr, err := os.Stdin.Read(buf)
 		if err != nil {
@@ -402,30 +693,30 @@ func selectKeyringBackend() string {
 		if nr == 1 {
 			switch buf[0] {
 			case '\r', '\n':
-				os.Stdout.WriteString("\r\n")
+				os.Stderr.WriteString("\r\n")
 				_ = term.Restore(int(os.Stdin.Fd()), oldState)
 				return options[cursor].value
 			case 'j':
 				clearLines()
-				cursor = (cursor + 1) % totalItems
+				step(1)
 				render()
 			case 'k':
 				clearLines()
-				cursor = (cursor - 1 + totalItems) % totalItems
+				step(-1)
 				render()
 			case 'q', 3:
-				os.Stdout.WriteString("\r\n")
+				os.Stderr.WriteString("\r\n")
 				_ = term.Restore(int(os.Stdin.Fd()), oldState)
-				fmt.Println("Aborted.")
+				fmt.Fprintln(os.Stderr, "Aborted.")
 				os.Exit(0)
 			}
 		} else if nr == 3 && buf[0] == 27 && buf[1] == 91 {
 			clearLines()
 			switch buf[2] {
 			case 65: // Up
-				cursor = (cursor - 1 + totalItems) % totalItems
+				step(-1)
 			case 66: // Down
-				cursor = (cursor + 1) % totalItems
+				step(1)
 			}
 			render()
 		}

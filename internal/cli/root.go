@@ -167,6 +167,15 @@ the deployment is created.`,
 				_ = v.BindPFlag(cflags.FlagFrom, fromFlag)
 			}
 
+			// Keyring overrides. The env names are bound explicitly rather
+			// than left to AutomaticEnv, which would look for
+			// AKT_KEYRING-BACKEND and never find the documented
+			// AKT_KEYRING_BACKEND (SPEC §1.9).
+			_ = v.BindPFlag(cflags.FlagKeyringBackend, cmd.Flags().Lookup(cflags.FlagKeyringBackend))
+			_ = v.BindPFlag(cflags.FlagKeyringDir, cmd.Flags().Lookup(cflags.FlagKeyringDir))
+			_ = v.BindEnv(cflags.FlagKeyringBackend, "AKT_KEYRING_BACKEND")
+			_ = v.BindEnv(cflags.FlagKeyringDir, "AKT_KEYRING_DIR")
+
 			// Verbosity validation: -q and -v are mutually exclusive.
 			if v.GetBool("quiet") && v.GetInt("verbose") > 0 {
 				return fmt.Errorf("--quiet and --verbose are mutually exclusive")
@@ -211,12 +220,25 @@ the deployment is created.`,
 				return err
 			}
 
-			// Initialize the keyring manager with all keyring configs.
+			// Initialize the keyring manager with all keyring configs, with
+			// the per-invocation --keyring-backend/--keyring-dir overrides
+			// applied so every keyring this run opens agrees (SPEC §3.1).
+			keyringBackend := v.GetString(cflags.FlagKeyringBackend)
+			if err := aktkeyring.ValidateBackend(keyringBackend); err != nil {
+				return err
+			}
+
 			cfg := mgr.Config()
-			krMgr = aktkeyring.NewManager(cfgRoot, cfg.Keyrings, encCfg.Codec)
+			krMgr = aktkeyring.NewManager(
+				cfgRoot,
+				aktkeyring.ApplyOverrides(cfg.Keyrings, keyringBackend, v.GetString(cflags.FlagKeyringDir)),
+				encCfg.Codec,
+			)
 
 			// 3. If an akt context is active, enrich the SDK client.Context
 			//    with context-specific values (chain-id, RPC, keyring, etc.).
+			//    The keyring is opened only when this command can need the
+			//    local signing identity (SPEC §1.7).
 			resolved, err := aktclient.MustResolveAndInit(
 				cmd,
 				mgr,
@@ -224,6 +246,7 @@ the deployment is created.`,
 				encCfg,
 				v.GetString("context"),
 				v.GetString(cflags.FlagFrom),
+				localIdentityMode(cmd),
 			)
 			if err != nil {
 				return err
@@ -347,6 +370,15 @@ the deployment is created.`,
 	// not captured into Go variables.
 	root.PersistentFlags().String("home", "", "Home directory for config, contexts, and keyrings (default: $AKT_HOME or ~/.config/akt)")
 	root.PersistentFlags().String("context", "", "Active context name (overrides current-context in config)")
+	// Key storage is a property of the invocation, not of signing: listing and
+	// adding keys need the same override a transaction does, and on a host
+	// whose configured backend is unavailable it is the only way in. Empty
+	// defaults so that leaving them unset never shadows the context's stored
+	// keyring (SPEC §3.1).
+	root.PersistentFlags().String(cflags.FlagKeyringBackend, "",
+		"Keyring backend for this invocation: "+strings.Join(aktkeyring.Backends(), "|")+" (default: the context's keyring backend)")
+	root.PersistentFlags().String(cflags.FlagKeyringDir, "",
+		"Keyring directory for this invocation (default: the context's keyring directory)")
 	root.PersistentFlags().VarP(output.NewFormatFlag("pretty"), "output", "o", "Output format: pretty, json, yaml")
 	// Local, not persistent: launching the TUI is only meaningful at the root.
 	// As a persistent flag it was advertised on all ~400 subcommands and
@@ -571,6 +603,94 @@ func requiresConfig(cmd *cobra.Command) bool {
 	}
 
 	return true
+}
+
+// localIdentityMode decides whether startup supplies no keyring, a deferred
+// keyring, or an immediately opened signing identity (SPEC §1.7). It is the
+// third and narrowest startup predicate after requiresConfig/requiresContext.
+//
+// The distinction matters because opening a keyring and resolving a named
+// account are interactive: a file backend prompts for its passphrase and an
+// os backend asks the desktop to unlock. Doing that for `akt sdl validate`
+// broke the group's documented promise to run entirely locally (SPEC §2.11),
+// and did the same to `akt monitor` (SPEC §2.6). Commands listed here are
+// defined to work without a signer, so they must not trigger either.
+func localIdentityMode(cmd *cobra.Command) aktclient.LocalIdentityMode {
+	path := cmd.CommandPath()
+
+	switch {
+	// The root command itself only prints help.
+	case path == "akt":
+		return aktclient.LocalIdentityNone
+	// SDL authoring is entirely local: parsing, scaffolding, and linting
+	// never touch a network or a credential.
+	case strings.HasPrefix(path, "akt sdl"):
+		return aktclient.LocalIdentityNone
+	// Monitoring reads public chain state over RPC.
+	case strings.HasPrefix(path, "akt monitor"):
+		return aktclient.LocalIdentityNone
+	// Build metadata and completion scripts come from the binary alone.
+	case strings.HasPrefix(path, "akt version"),
+		strings.HasPrefix(path, "akt completion"):
+		return aktclient.LocalIdentityNone
+	// Context, network, and keyring management edits config.yaml. The keys
+	// subgroup does need keys, and gets them from the getKeyring closure at
+	// the point it uses them -- which is also what lets `akt context keys`
+	// fix a context whose configured backend this host cannot open.
+	case strings.HasPrefix(path, "akt context"):
+		return aktclient.LocalIdentityNone
+	// The store is a local bbolt database.
+	case strings.HasPrefix(path, "akt store"):
+		return aktclient.LocalIdentityNone
+	// The Console rail authenticates with an API key; its contexts may have
+	// no keyring at all.
+	case strings.HasPrefix(path, "akt console"):
+		return aktclient.LocalIdentityNone
+	// Queries may need a named default account, but only when an omitted owner
+	// reaches the command handler.
+	case strings.HasPrefix(path, "akt query"):
+		return aktclient.LocalIdentityOnDemand
+	// Provider status is the gateway's public endpoint. Protected provider
+	// operations still preflight their signing identity before network work.
+	case path == "akt provider status":
+		return aktclient.LocalIdentityNone
+	case strings.HasPrefix(path, "akt provider"):
+		if boolFlag(cmd, cflags.FlagDryRun) {
+			return aktclient.LocalIdentityOnDemand
+		}
+		return aktclient.LocalIdentityRequired
+	// MCP reads defer identity until an owner-defaulting tool is invoked.
+	// Explicitly enabling writes opts a keyring context into eager resolution;
+	// MustResolveAndInit keeps Console-only contexts keyring-free.
+	case strings.HasPrefix(path, "akt mcp"):
+		if boolFlag(cmd, "enable-writes") {
+			return aktclient.LocalIdentityRequired
+		}
+		return aktclient.LocalIdentityOnDemand
+	// Unsigned construction and simulation accept a bech32 signer without a
+	// local key. A signer name resolves through the deferred keyring later.
+	case strings.HasPrefix(path, "akt tx"):
+		if boolFlag(cmd, cflags.FlagGenerateOnly) || boolFlag(cmd, cflags.FlagDryRun) {
+			return aktclient.LocalIdentityOnDemand
+		}
+		return aktclient.LocalIdentityRequired
+	// Workflow dry-runs validate and print a plan without selecting a transport
+	// client or local signer.
+	case boolFlag(cmd, cflags.FlagDryRun):
+		return aktclient.LocalIdentityNone
+	}
+
+	return aktclient.LocalIdentityRequired
+}
+
+func boolFlag(cmd *cobra.Command, name string) bool {
+	flag := cmd.Flags().Lookup(name)
+	if flag == nil {
+		return false
+	}
+
+	value, err := cmd.Flags().GetBool(name)
+	return err == nil && value
 }
 
 // requiresContext returns true if the command needs a fully resolved akt

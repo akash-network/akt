@@ -7,7 +7,9 @@ package client
 
 import (
 	"context"
+	"fmt"
 	"os"
+	"strings"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
@@ -23,6 +25,16 @@ import (
 	"pkg.akt.dev/go/sdkutil"
 )
 
+// LocalIdentityMode controls when command startup may open the selected
+// context's keyring (SPEC §1.7).
+type LocalIdentityMode uint8
+
+const (
+	LocalIdentityNone LocalIdentityMode = iota
+	LocalIdentityOnDemand
+	LocalIdentityRequired
+)
+
 // BuildClientContext constructs a fully populated Cosmos SDK client.Context
 // from the akt context. This bridges our context system to the SDK.
 func BuildClientContext(
@@ -30,6 +42,16 @@ func BuildClientContext(
 	kr sdkkeyring.Keyring,
 	enc sdkutil.EncodingConfig,
 	fromOverride string,
+) sdkclient.Context {
+	return buildClientContext(rc, kr, enc, fromOverride, true)
+}
+
+func buildClientContext(
+	rc *aktctx.Context,
+	kr sdkkeyring.Keyring,
+	enc sdkutil.EncodingConfig,
+	fromOverride string,
+	resolveNamedAccount bool,
 ) sdkclient.Context {
 	cctx := sdkclient.Context{}.
 		WithCodec(enc.Codec).
@@ -43,18 +65,23 @@ func BuildClientContext(
 		WithChainID(rc.Network.ChainID).
 		WithKeyringDir(aktctx.KeyringDir(rc.Root, rc.Keyring))
 
-	// Resolve the invocation signer before downstream tx/query hooks run.
+	// Carry the invocation account before downstream tx/query hooks run.
 	//
 	// WithFrom records the name only; FromName and FromAddress stay empty
-	// until something resolves the name against the keyring. Tx commands do
-	// that themselves, queries never do -- so every query that falls back to
-	// the default account saw no address and reported "no default account
-	// set" on a context that had one configured and displayed. Resolve it
-	// here so both paths agree.
+	// until something resolves the name against the keyring. Commands that
+	// need a signer resolve it here. Query initialization deliberately leaves
+	// a named account unresolved so network-wide and explicitly scoped reads
+	// never unlock the keyring; owner-defaulting query handlers resolve it only
+	// when they actually need its address.
 	//
-	// A name that is not in the keyring is left as the bare From value rather
+	// A name that is not resolved is left as the bare From value rather
 	// than failing: the context is built for every command, including the
 	// keys and context commands someone would use to fix it.
+	//
+	// kr is nil for commands that declare no local identity (SPEC §1.7). A
+	// named account then stays unresolved -- resolving it would open the
+	// keyring and prompt -- while an address-valued default still resolves,
+	// because parsing bech32 costs nothing.
 	from := fromOverride
 	if from == "" {
 		from = rc.DefaultAccount
@@ -62,18 +89,13 @@ func BuildClientContext(
 	if from != "" {
 		cctx = cctx.WithFrom(from)
 
-		resolvedName := false
-		if kr != nil {
+		if addr, err := sdk.AccAddressFromBech32(from); err == nil {
+			cctx = cctx.WithFromAddress(addr)
+		} else if resolveNamedAccount && kr != nil {
 			if rec, err := kr.Key(from); err == nil {
 				if addr, err := rec.GetAddress(); err == nil {
 					cctx = cctx.WithFromName(from).WithFromAddress(addr)
-					resolvedName = true
 				}
-			}
-		}
-		if !resolvedName {
-			if addr, err := sdk.AccAddressFromBech32(from); err == nil {
-				cctx = cctx.WithFromAddress(addr)
 			}
 		}
 	}
@@ -94,6 +116,40 @@ func BuildClientContext(
 	return cctx
 }
 
+// ResolveAccountAddress resolves the account carried by cctx. Address-valued
+// accounts are parsed without consulting the keyring; named accounts trigger
+// the first key operation on an on-demand keyring.
+func ResolveAccountAddress(cctx sdkclient.Context) (sdk.AccAddress, error) {
+	if addr := cctx.GetFromAddress(); !addr.Empty() {
+		return addr, nil
+	}
+
+	from := strings.TrimSpace(cctx.From)
+	if from == "" {
+		return nil, nil
+	}
+
+	if addr, err := sdk.AccAddressFromBech32(from); err == nil {
+		return addr, nil
+	}
+
+	if cctx.Keyring == nil {
+		return nil, fmt.Errorf("resolve account %q: keyring is unavailable", from)
+	}
+
+	record, err := cctx.Keyring.Key(from)
+	if err != nil {
+		return nil, fmt.Errorf("resolve account %q: %w", from, err)
+	}
+
+	addr, err := record.GetAddress()
+	if err != nil {
+		return nil, fmt.Errorf("resolve account %q address: %w", from, err)
+	}
+
+	return addr, nil
+}
+
 // InitClientContext initializes the Cosmos SDK client context on a cobra command.
 // This must be called in the root PersistentPreRunE before any chain-sdk CLI
 // commands execute. It stores the client.Context in the cobra context the same
@@ -105,7 +161,18 @@ func InitClientContext(
 	enc sdkutil.EncodingConfig,
 	fromOverride string,
 ) error {
-	cctx := BuildClientContext(rc, kr, enc, fromOverride)
+	return initClientContext(cmd, rc, kr, enc, fromOverride, true)
+}
+
+func initClientContext(
+	cmd *cobra.Command,
+	rc *aktctx.Context,
+	kr sdkkeyring.Keyring,
+	enc sdkutil.EncodingConfig,
+	fromOverride string,
+	resolveNamedAccount bool,
+) error {
+	cctx := buildClientContext(rc, kr, enc, fromOverride, resolveNamedAccount)
 
 	// Store address codecs in the context for chain-sdk commands.
 	ctx := cmd.Context()
@@ -131,6 +198,10 @@ func InitClientContext(
 // MustResolveAndInit is a convenience that resolves the context, gets the
 // keyring, and initializes the SDK client context on the command. Used in
 // the root PersistentPreRunE. Returns true if a context was resolved.
+//
+// identityMode is the caller's explicit decision about when this invocation
+// may open the local signing identity (SPEC §1.7). The client layer does not
+// infer that policy from command names.
 func MustResolveAndInit(
 	cmd *cobra.Command,
 	mgr *aktctx.Manager,
@@ -138,6 +209,7 @@ func MustResolveAndInit(
 	enc sdkutil.EncodingConfig,
 	contextOverride string,
 	fromOverride string,
+	identityMode LocalIdentityMode,
 ) (bool, error) {
 	ctxName := contextOverride
 	if ctxName == "" {
@@ -159,15 +231,35 @@ func MustResolveAndInit(
 		return false, err
 	}
 
-	krName := rc.Keyring.Name
-	if krName == "" {
-		krName = "default"
+	// Console contexts never use a local wallet. Even a command that can write
+	// selects the managed rail and must not turn that capability into a local
+	// keyring requirement.
+	if rc.AuthMethod == aktctx.AuthMethodConsoleAPI {
+		identityMode = LocalIdentityNone
 	}
 
-	kr, err := krMgr.Get(krName)
-	if err != nil {
-		return false, err
+	// A nil keyring is a deliberate, complete answer for commands that declare
+	// no local identity. On-demand commands receive a proxy that opens the
+	// backend only when a key operation is actually requested.
+	var kr sdkkeyring.Keyring
+	resolveNamedAccount := false
+	if identityMode != LocalIdentityNone {
+		krName := rc.Keyring.Name
+		if krName == "" {
+			krName = "default"
+		}
+
+		switch identityMode {
+		case LocalIdentityOnDemand:
+			kr = krMgr.Deferred(krName)
+		case LocalIdentityRequired:
+			kr, err = krMgr.Get(krName)
+			if err != nil {
+				return false, err
+			}
+			resolveNamedAccount = true
+		}
 	}
 
-	return true, InitClientContext(cmd, rc, kr, enc, fromOverride)
+	return true, initClientContext(cmd, rc, kr, enc, fromOverride, resolveNamedAccount)
 }

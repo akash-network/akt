@@ -18,6 +18,7 @@ import (
 	clinetwork "pkg.akt.dev/akt/internal/cli/network"
 	"pkg.akt.dev/akt/internal/cliutil"
 	aktctx "pkg.akt.dev/akt/internal/context"
+	aktkeyring "pkg.akt.dev/akt/internal/keyring"
 	"pkg.akt.dev/akt/internal/output"
 	"pkg.akt.dev/akt/internal/output/pretty"
 )
@@ -41,6 +42,7 @@ func Commands(mgr func() *aktctx.Manager, getKeyring func() (sdkkeyring.Keyring,
 		renameCmd(mgr),
 		logCmd(mgr),
 		clinetwork.Commands(mgr),
+		keyringCommands(mgr),
 		clikeys.Commands(getKeyring),
 	)
 
@@ -260,11 +262,16 @@ func currentCmd(mgr func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
+			// Which credential store actually serves the configured backend
+			// on this host (SPEC §1.5). Inspection only -- showing a context
+			// never opens a keyring.
+			effective, available := aktkeyring.EffectiveBackend(m.Root(), rc.Keyring)
+
 			if f := output.FormatFromCmd(cmd); f != output.FormatTable {
-				return output.Fprint(cmd.OutOrStdout(), f, newContextDetails(rc))
+				return output.Fprint(cmd.OutOrStdout(), f, newContextDetails(rc, effective, available))
 			}
 
-			_, err = fmt.Fprint(output.TerminalAwareWriter(cmd.OutOrStdout()), pretty.RenderContextShow(*rc))
+			_, err = fmt.Fprint(output.TerminalAwareWriter(cmd.OutOrStdout()), pretty.RenderContextShow(*rc, effective))
 			return err
 		},
 	}
@@ -281,6 +288,8 @@ type contextDetails struct {
 	Name                    string                  `json:"name"                       yaml:"name"`
 	Network                 aktctx.Network          `json:"network"                    yaml:"network"`
 	Keyring                 aktctx.Keyring          `json:"keyring"                    yaml:"keyring"`
+	KeyringBackendEffective string                  `json:"keyring_backend_effective"  yaml:"keyring_backend_effective"`
+	KeyringBackendAvailable bool                    `json:"keyring_backend_available"  yaml:"keyring_backend_available"`
 	AuthMethod              string                  `json:"auth_method"                yaml:"auth_method"`
 	ConsoleAPIURL           string                  `json:"console_api_url"            yaml:"console_api_url"`
 	ConsoleAPIKeyConfigured bool                    `json:"console_api_key_configured" yaml:"console_api_key_configured"`
@@ -296,12 +305,14 @@ type contextDetails struct {
 	Capabilities            contextCapabilities     `json:"capabilities"               yaml:"capabilities"`
 }
 
-func newContextDetails(rc *aktctx.Context) contextDetails {
+func newContextDetails(rc *aktctx.Context, effectiveKeyringBackend string, keyringBackendAvailable bool) contextDetails {
 	set := capability.Resolve(rc)
 	return contextDetails{
 		Name:                    rc.Name,
 		Network:                 rc.Network,
 		Keyring:                 rc.Keyring,
+		KeyringBackendEffective: effectiveKeyringBackend,
+		KeyringBackendAvailable: keyringBackendAvailable,
 		AuthMethod:              rc.AuthMethod,
 		ConsoleAPIURL:           rc.ConsoleAPIURL,
 		ConsoleAPIKeyConfigured: rc.ConsoleAPIKey != "",

@@ -5,8 +5,10 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/require"
 
 	"pkg.akt.dev/akt/internal/capability"
+	aktclient "pkg.akt.dev/akt/internal/client"
 )
 
 func gatedTree() (*cobra.Command, *cobra.Command, *cobra.Command) {
@@ -184,5 +186,78 @@ func TestRequiresContextExemptsOfflineGroups(t *testing.T) {
 	root.AddCommand(tx)
 	if !requiresContext(tx) {
 		t.Error("tx must still require a context")
+	}
+}
+
+// TestLocalIdentityModes pins the three-way startup boundary from SPEC §1.7.
+// Public reads may need a default owner later, but that must not make startup
+// open a keyring that the invocation never uses.
+func TestLocalIdentityModes(t *testing.T) {
+	root := &cobra.Command{Use: "akt"}
+
+	if got := localIdentityMode(root); got != aktclient.LocalIdentityNone {
+		t.Error("the root command prints help and must not open a keyring")
+	}
+
+	for _, group := range []string{"sdl", "monitor", "version", "completion", "context", "store", "console"} {
+		g := &cobra.Command{Use: group}
+		root.AddCommand(g)
+
+		if got := localIdentityMode(g); got != aktclient.LocalIdentityNone {
+			t.Errorf("%s must not open a keyring", group)
+		}
+
+		// Leaves inherit the group's answer -- `akt sdl validate` is the
+		// invocation that actually reported the bug.
+		leaf := &cobra.Command{Use: "validate"}
+		g.AddCommand(leaf)
+		if got := localIdentityMode(leaf); got != aktclient.LocalIdentityNone {
+			t.Errorf("%s validate must not open a keyring", group)
+		}
+	}
+
+	for _, group := range []string{"query"} {
+		g := &cobra.Command{Use: group}
+		root.AddCommand(g)
+		if got := localIdentityMode(g); got != aktclient.LocalIdentityOnDemand {
+			t.Errorf("%s mode = %v, want on demand", group, got)
+		}
+	}
+
+	mcp := &cobra.Command{Use: "mcp"}
+	mcp.Flags().Bool("enable-writes", false, "")
+	root.AddCommand(mcp)
+	if got := localIdentityMode(mcp); got != aktclient.LocalIdentityOnDemand {
+		t.Errorf("read-only mcp mode = %v, want on demand", got)
+	}
+	require.NoError(t, mcp.Flags().Set("enable-writes", "true"))
+	if got := localIdentityMode(mcp); got != aktclient.LocalIdentityRequired {
+		t.Errorf("write-enabled mcp mode = %v, want required", got)
+	}
+
+	provider := &cobra.Command{Use: "provider"}
+	status := &cobra.Command{Use: "status"}
+	leaseStatus := &cobra.Command{Use: "lease-status"}
+	provider.AddCommand(status, leaseStatus)
+	root.AddCommand(provider)
+	if got := localIdentityMode(status); got != aktclient.LocalIdentityNone {
+		t.Errorf("provider status mode = %v, want none", got)
+	}
+	if got := localIdentityMode(leaseStatus); got != aktclient.LocalIdentityRequired {
+		t.Errorf("provider lease-status mode = %v, want required", got)
+	}
+
+	tx := &cobra.Command{Use: "tx"}
+	send := &cobra.Command{Use: "send"}
+	send.Flags().Bool("generate-only", false, "")
+	send.Flags().Bool("dry-run", false, "")
+	tx.AddCommand(send)
+	root.AddCommand(tx)
+	if got := localIdentityMode(send); got != aktclient.LocalIdentityRequired {
+		t.Errorf("ordinary tx mode = %v, want required", got)
+	}
+	require.NoError(t, send.Flags().Set("generate-only", "true"))
+	if got := localIdentityMode(send); got != aktclient.LocalIdentityOnDemand {
+		t.Errorf("generate-only tx mode = %v, want on demand", got)
 	}
 }

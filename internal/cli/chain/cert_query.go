@@ -48,7 +48,6 @@ akt query cert list revoked`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)
-			defaultOwner := cl.ClientContext().GetFromAddress().String()
 
 			pageReq, err := ReadPageRequest(cmd.Flags())
 			if err != nil {
@@ -84,6 +83,10 @@ akt query cert list revoked`,
 			}
 
 			if params.Filter.Owner == "" {
+				defaultOwner, err := resolveDefaultAccountAddress(cl.ClientContext())
+				if err != nil {
+					return err
+				}
 				if defaultOwner == "" {
 					return requireOwnerScope("certificate filter")
 				}

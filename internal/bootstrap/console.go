@@ -22,22 +22,25 @@ func consoleOnboarding(ctxName string) (key string, routeDeployments bool) {
 		return "", false
 	}
 
-	fmt.Println(ansiBold + "Akash Console (optional)" + ansiReset)
-	fmt.Println(ansiDim + "A Console API key enables managed deployments, USD billing, and the" + ansiReset)
-	fmt.Println(ansiDim + "akt console commands. Keys: console.akash.network > Settings > API Keys." + ansiReset)
-	fmt.Println()
+	// Prompt and progress rendering is stderr-only (SPEC §3.9.2, §10.1.1).
+	out := os.Stderr
+
+	fmt.Fprintln(out, ansiBold+"Akash Console (optional)"+ansiReset)
+	fmt.Fprintln(out, ansiDim+"A Console API key enables managed deployments, USD billing, and the"+ansiReset)
+	fmt.Fprintln(out, ansiDim+"akt console commands. Keys: console.akash.network > Settings > API Keys."+ansiReset)
+	fmt.Fprintln(out)
 
 	if !promptYesNo(fmt.Sprintf("Configure a Console API key for context %q?", ctxName), false) {
-		fmt.Println(ansiDim + "Skipped. You can add one later with: akt console login" + ansiReset)
-		fmt.Println()
+		fmt.Fprintln(out, ansiDim+"Skipped. You can add one later with: akt console login"+ansiReset)
+		fmt.Fprintln(out)
 
 		return "", false
 	}
 
 	key = promptSecret("Console API key: ")
 	if key == "" {
-		fmt.Println(ansiYellow + "No key entered; skipping Console setup." + ansiReset)
-		fmt.Println()
+		fmt.Fprintln(out, ansiYellow+"No key entered; skipping Console setup."+ansiReset)
+		fmt.Fprintln(out)
 
 		return "", false
 	}
@@ -45,7 +48,7 @@ func consoleOnboarding(ctxName string) (key string, routeDeployments bool) {
 	validateConsoleKey(key)
 
 	routeDeployments = promptYesNo("Route deployments through Console for this context (managed wallet, USD)?", false)
-	fmt.Println()
+	fmt.Fprintln(out)
 
 	return key, routeDeployments
 }
@@ -58,11 +61,11 @@ func validateConsoleKey(key string) {
 
 	user, err := console.New("", key).GetUser(ctx)
 	if err != nil {
-		fmt.Printf(ansiYellow+"Could not validate the key (%v); storing anyway. Verify later with: akt console whoami"+ansiReset+"\n", err)
+		fmt.Fprintf(os.Stderr, ansiYellow+"Could not validate the key (%v); storing anyway. Verify later with: akt console whoami"+ansiReset+"\n", err)
 		return
 	}
 
-	fmt.Printf(ansiGreen+"Authenticated as %s"+ansiReset+"\n", user.Username)
+	fmt.Fprintf(os.Stderr, ansiGreen+"Authenticated as %s"+ansiReset+"\n", user.Username)
 }
 
 // promptYesNo asks a yes/no question on stdin. Empty input selects def.
@@ -72,7 +75,7 @@ func promptYesNo(question string, def bool) bool {
 		suffix = " [Y/n]: "
 	}
 
-	fmt.Print(question + suffix)
+	fmt.Fprint(os.Stderr, question+suffix)
 
 	line, err := bufio.NewReader(os.Stdin).ReadString('\n')
 	if err != nil {
@@ -97,10 +100,11 @@ func parseYesNo(input string, def bool) bool {
 
 // promptSecret reads a line without echoing it to the terminal.
 func promptSecret(prompt string) string {
-	fmt.Print(prompt)
+	fmt.Fprint(os.Stderr, prompt)
 
 	data, err := term.ReadPassword(int(os.Stdin.Fd()))
-	fmt.Println()
+
+	fmt.Fprintln(os.Stderr)
 
 	if err != nil {
 		return ""

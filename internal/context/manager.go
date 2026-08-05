@@ -558,6 +558,44 @@ func (m *Manager) CreateKeyring(kr Keyring) error {
 	return m.save()
 }
 
+// UpdateKeyring mutates an existing keyring definition in place. Without it
+// the only way to change where a context stores its keys after first run was
+// to hand-edit config.yaml (SPEC §2.2.2).
+func (m *Manager) UpdateKeyring(name string, apply func(*Keyring) error) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	kr := m.getKeyring(name)
+	if kr == nil {
+		return fmt.Errorf("keyring %q not found", name)
+	}
+
+	if err := apply(kr); err != nil {
+		return err
+	}
+
+	return m.save()
+}
+
+// KeyringUsers returns the names of contexts referencing the named keyring.
+func (m *Manager) KeyringUsers(name string) []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	var users []string
+	for _, ctx := range m.cfg.Contexts {
+		krName := ctx.Keyring.Name
+		if krName == "" {
+			krName = "default"
+		}
+		if krName == name {
+			users = append(users, ctx.Name)
+		}
+	}
+
+	return users
+}
+
 // ---------------------------------------------------------------------------
 // Resolution (compose a full effective context from config + env + flags)
 // ---------------------------------------------------------------------------

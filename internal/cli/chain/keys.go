@@ -9,6 +9,16 @@ import (
 
 // KeysCmds registers a sub-tree of commands to interact with
 // local private key storage.
+//
+// NOTE: this tree is NOT registered on the akt root command -- `akt context
+// keys` (internal/cli/keys) is the key-management surface, and it takes its
+// keyring from the context system rather than from flags. KeysCmds is kept as
+// a clean copy of the upstream subtree for reference and for the commands
+// below that other trees reuse; it therefore registers its own keyring flags,
+// which the root's global --keyring-backend/--keyring-dir (SPEC §3.1) would
+// otherwise provide. Wiring it up would give akt two key-management trees with
+// different resolution rules, so it stays unregistered until there is a reason
+// to expose it.
 func KeysCmds() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "keys",

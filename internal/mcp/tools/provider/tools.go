@@ -13,6 +13,7 @@ import (
 	ptypes "pkg.akt.dev/go/node/provider/v1beta4"
 	rest "pkg.akt.dev/go/provider/client"
 
+	aktclient "pkg.akt.dev/akt/internal/client"
 	"pkg.akt.dev/akt/internal/mcp/marshal"
 	aktprovider "pkg.akt.dev/akt/internal/provider"
 )
@@ -316,6 +317,10 @@ func gatewayClient(
 	authType string,
 ) (rest.Client, error) {
 	cctx := cl.ClientContext()
-	addr := cctx.GetFromAddress()
+	addr, err := aktclient.ResolveAccountAddress(cctx)
+	if err != nil {
+		return nil, err
+	}
+	cctx = cctx.WithFromAddress(addr)
 	return aktprovider.NewGatewayClient(ctx, cctx, addr, providerURL, authType, cctx.Keyring)
 }

@@ -229,6 +229,36 @@ Keyrings are shared wallet storage. Adding a key to a keyring makes it immediate
 | `backend` | string | no       | `"os"`  | Backend type: `os`, `file`, `test`, `kwallet`, `pass`  |
 | `dir`     | string | no       | `""`    | Keyring directory (default: `<root>/keyrings/<name>/`) |
 
+**Backend resolution is pinned.** The configured `backend` names the credential
+store that akt will use, not a preference to be negotiated. `file`, `test`,
+`kwallet`, and `pass` each resolve to exactly that store. `os` resolves to the
+platform's system credential store and to nothing else:
+
+| Platform  | System store for `os`             |
+| --------- | ---------------------------------- |
+| `darwin`  | Keychain                           |
+| `windows` | Windows Credential Manager         |
+| `linux`   | Secret Service (or KWallet)        |
+
+akt MUST NOT substitute a different store when the configured one is
+unavailable. In particular, a headless host with no session bus MUST NOT fall
+back to an encrypted file keyring, a `pass` store, or the kernel keyring while
+the configuration and `akt context show` continue to report `os`: that
+silently changes where the user's keys live and prompts for a passphrase the
+user never knowingly set. Opening a keyring whose configured backend cannot be
+provided is a normal, fail-fast error (§2.10) that names the backend, the
+platform store it needed, and the remedy — rerun with
+`--keyring-backend file`, or persist the change with
+`akt context keyring set <name> file`.
+
+**Effective backend.** Because `os` is an alias, akt distinguishes the
+*configured* backend from the *effective* one — the concrete store that serves
+it on this host (`keychain`, `wincred`, `secret-service`, `kwallet`). Every
+surface that reports a keyring reports both whenever they differ, and reports
+the backend as unavailable rather than claiming a store that is not there.
+Resolution is inspection only: determining the effective backend MUST NOT read
+a key, unlock a store, or prompt.
+
 ### 1.6 Config Management (Viper)
 
 Configuration is managed via [Viper](https://github.com/spf13/viper). Viper handles config file reading/writing, environment variable binding, flag binding, and live-reload (via fsnotify built into Viper).
@@ -256,6 +286,30 @@ The context is resolved once at application startup and propagated through the e
 4. Built-in defaults
 
 The resolved context is injected into every service: chain client, provider gateway, sync engine, store, action log, and TUI models.
+
+**Local identity is resolved only where it is needed.** Identity access has
+three modes, selected at the command boundary:
+
+- **none** — the command never receives a keyring. SDL authoring (§2.11),
+  monitoring (§2.6), version, completion, store, context management, the
+  Console rail, and workflow dry-runs use this mode.
+- **on demand** — the client context receives a deferred keyring that does not
+  open its configured backend until an operation actually asks for a key. Chain
+  queries, read-only MCP startup, public provider status, and address-based
+  transaction construction or simulation use this mode.
+- **required** — startup opens the keyring and resolves a named account before
+  execution. Transactions that sign, workflow execution, and authenticated
+  provider operations use this mode.
+
+Opening a file or OS keyring can itself prompt, fail on a headless host, or ask
+the desktop to unlock. An on-demand command therefore MUST NOT open the backend
+merely because `default-account` is configured. A named default account is
+resolved only when an omitted owner or an authenticated operation needs its
+address. Network-wide queries, explicitly scoped queries, `akt provider
+status`, and MCP startup MUST run without any keyring access. An address-valued
+`default-account` or `--from` is parsed directly and never requires keyring
+access for `--generate-only` or `--dry-run`; a signer name opens the deferred
+keyring when it is resolved.
 
 ### 1.8 Live Reload
 
@@ -291,8 +345,8 @@ All environment variables use the `AKT_` prefix. When set, they override the cor
 | `AKT_NODE`            | `networks[*].endpoints.rpc[0]` (via context's network)  | `https://rpc.akt.dev:443/rpc` |
 | `AKT_GRPC_ADDR`       | `networks[*].endpoints.grpc[0]` (via context's network) | `grpc.akashnet.net:443`        |
 | `AKT_FROM`            | `contexts[*].default-account`                           | `alice`                        |
-| `AKT_KEYRING_BACKEND` | `keyrings[*].backend` (via context's keyring)           | `os`                           |
-| `AKT_KEYRING_DIR`     | `keyrings[*].dir` (via context's keyring)               | `/path/to/keyring`             |
+| `AKT_KEYRING_BACKEND` | `keyrings[*].backend` (via context's keyring); same value as `--keyring-backend` (§3.1) | `os`                           |
+| `AKT_KEYRING_DIR`     | `keyrings[*].dir` (via context's keyring); same value as `--keyring-dir` (§3.1) | `/path/to/keyring`             |
 | `AKT_GAS`             | `contexts[*].gas`                                       | `auto`                         |
 | `AKT_GAS_PRICES`      | `networks[*].gas-prices` (via context's network)        | `0.025uakt`                    |
 | `AKT_GAS_ADJUSTMENT`  | `networks[*].gas-adjustment` (via context's network)    | `1.5`                          |
@@ -373,6 +427,46 @@ gas-adjustment: "1.5"
 | `DotFilled` | `*` | Selected version dot |
 | `DotOpen` | `o` | Unselected version dot |
 
+### 1.12 Legacy `akash` Home
+
+The legacy `akash` and `provider-services` CLIs keep their state in `~/.akash`.
+`akt` uses its own home (§1.1) and **never** reads, writes, moves, or deletes
+anything under `~/.akash`. Nothing carries over implicitly, and there is no
+importer.
+
+Three concrete incompatibilities make the legacy home unusable as-is:
+
+| Artifact | Legacy location | `akt` location | Why it does not carry over |
+|---|---|---|---|
+| `os` keyring entries | Keychain/libsecret service `akash` | Keychain/libsecret service `akt` | The service name is the lookup key; entries written under `akash` are invisible to `akt`. |
+| `file` / `test` keyring | `~/.akash/keyring-file`, `~/.akash/keyring-test` | `<home>/keyrings/<keyring-name>` (§1.5) | Different directory; `akt` never scans outside its own home. |
+| Client mTLS certificate | `~/.akash/<address>.pem` | `<home>/<address>.pem` | The chain client's home directory is the `akt` home, so the PEM is looked up there. |
+
+What this costs the user, precisely:
+
+- **An account is recoverable, not lost.** `akt context keys add <name>
+  --recover` with the original mnemonic reproduces the same address and the same
+  on-chain identity. Nothing on chain changes.
+- **A published certificate is not lost.** The certificate is on-chain state and
+  remains valid and queryable with `akt query cert list <address>`. Only the
+  local PEM half is in the wrong directory. Its encryption password is derived
+  deterministically from a keyring signature over the account address, so once
+  the same key is present in the `akt` keyring, copying
+  `~/.akash/<address>.pem` to `<home>/<address>.pem` restores it byte-for-byte
+  with no re-publish and no transaction. Regenerating instead
+  (`akt tx cert generate client` then `akt tx cert publish client`) costs a
+  transaction.
+
+**Detection.** The first-run wizard (§2.0) detects a legacy home so the user is
+told this up front instead of discovering it as a missing key. Detection is
+read-only and strictly bounded to three operations: `os.Stat` on `~/.akash`, a
+`*.pem` filename glob inside it, and `os.Stat` on `keyring-file/` and
+`keyring-test/`. File contents are never read and legacy keyrings are never
+opened. The notice is emitted only when the directory exists **and** at least
+one of those artifacts is present; a bare or unrelated `~/.akash` produces no
+output. The notice states explicitly that nothing in `~/.akash` is read,
+modified, or deleted.
+
 ---
 
 ## 2. CLI Command Reference
@@ -423,7 +517,23 @@ it emits no human plan text.
 
 When `akt` is invoked with no subcommand, the following flow determines what happens:
 
-1. **No config exists** (first run): The bootstrap wizard runs (§1.11, `internal/bootstrap/wizard.go`). It prompts the user to select networks, select a keyring backend (`os`, `file`, or `test`; default: `os`), and configure an initial context. It then offers optional Akash Console onboarding: the user may enter a Console API key (validated best-effort against `/v1/user/me`, stored as the initial context's per-context credential per §7.1) and choose whether deployments for that context should be routed through Console (`auth-method: console-api`). Both prompts default to "no" and are skipped entirely in non-interactive runs. The wizard runs only when stdin is a terminal: in headless environments it declines to bootstrap (no network fetch, no config written) and prints guidance to create a config via `akt context network create` / `akt context create`; the root command then continues to step 2 without a config. After bootstrap completes, the root command continues to step 2.
+1. **No config exists** (first run): The bootstrap wizard runs (`internal/bootstrap/`; glyphs per §1.11, prompt rendering per §3.9). The wizard runs only when stdin is a terminal: in headless environments it declines to bootstrap (no network fetch, no config written) and prints guidance to create a config via `akt context network create` / `akt context create`; the root command then continues to step 2 without a config. After bootstrap completes, the root command continues to step 2.
+
+In a terminal the wizard performs the following steps, in order. All of its output — announcements, prompts, progress, and the closing summary — goes to stderr (§3.9.2, §10.1.1); the wizard writes nothing to stdout.
+
+**a. Announce the destination.** *Before the first prompt*, the wizard prints the resolved config root and the `config.yaml` path it will write, and names the `--home` flag and the `AKT_HOME` environment variable as the overrides that relocate them (full resolution order in §1.1). It states that nothing is written until the prompts complete. A user who abandons the wizard, or who is unsure whether `AKT_HOME`/`XDG_CONFIG_HOME` is in effect, MUST still learn where akt would place its files without having to finish setup. Printing the destination only in the closing summary does not satisfy this.
+
+**b. Select networks.** A multi-select over the network definitions fetched from `github.com/akash-network/net`, with every network pre-selected. One context is created per selected network, named after that network.
+
+**c. Select the keyring backend.** Single-select over `os`, `file`, and `test`; default `os`.
+
+**d. Select the active context.** The wizard asks explicitly which of the created contexts becomes `current-context`. It MUST NOT choose one silently. The cursor starts on a test network — `sandbox` if it was selected, otherwise `testnet`, otherwise any other non-mainnet selection — so that accepting the default lands on a network where a mistake costs nothing. Mainnet is always present in the list and reachable in a single keystroke, but is never the pre-selected row: the first command a new user runs must not be able to spend real AKT because the active network was inherited from a default rather than chosen. The prompt is shown even when only one network was selected, so the active network is always something the user saw and confirmed.
+
+**e. Optional Akash Console onboarding.** The user may enter a Console API key (validated best-effort against `/v1/user/me`, stored as the initial context's per-context credential per §7.1) and choose whether deployments for that context should be routed through Console (`auth-method: console-api`). Both prompts default to "no" and are skipped entirely in non-interactive runs.
+
+**f. Summary.** After the config is written the wizard prints the config file path; the active context with its chain ID; and that context's context directory, store, action log, and keyring location, using the same labels as `akt context show` (`Store`, `Action Log`). `SaveConfig` creates only the home directory, so paths that do not exist yet are described as where they *will* be created rather than presented as existing. For the `os` backend the keyring line names the system keychain and the `akt` service name rather than a directory, because no directory is used. No context receives a `default-account`, so the summary closes with the next steps that make the configuration usable: `akt context keys add <name>` for a new account, `akt context keys add <name> --recover` for an existing mnemonic, and `akt context show`.
+
+**g. Legacy Akash CLI notice.** Last, the wizard prints the legacy-home notice of §1.12 when — and only when — a legacy `~/.akash` with recoverable artifacts is detected. It is printed after the summary so it is the last thing on screen when the user goes looking for their existing keys.
 > **TUI shell status (2026-07): DISABLED pending UX feedback.** Bare `akt` prints the help text and `--interactive`/`-i` reports that the TUI is disabled. The launch path remains compiled behind `AKT_EXPERIMENTAL_TUI=1` for feedback sessions, and `akt monitor` (§2.6) is unaffected. Steps 2–5 below describe the behavior that resumes when the TUI is re-enabled.
 
 The root help introduction describes `akt` as the unified Akash Network CLI.
@@ -456,6 +566,10 @@ akt
 │   │   ├── edit <name>                  # Edit network definition
 │   │   ├── list                         # List all networks (show which contexts use each)
 │   │   └── show <name>                  # Show network details
+│   ├── keyring                          # Keyring definition management (shared resource)
+│   │   ├── create <name> <backend>      # Create a new keyring definition
+│   │   ├── list                         # List keyrings (configured + effective backend)
+│   │   └── set <name> <backend>         # Change a keyring's stored backend/dir
 │   └── keys                             # Key management
 │       ├── add <name>                   # Add key (mnemonic, ledger, or multisig)
 │       ├── delete <name>                # Delete key
@@ -778,6 +892,14 @@ output includes the fully resolved network and keyring, effective gas/provider
 settings, capability booleans, `store_path`, and `action_log_path`; it never
 includes the Console API key.
 
+The keyring line reports the *configured* backend. When that backend is an
+alias for a platform store — `os` (§1.5) — the concrete store that serves it is
+reported on an `Effective` sub-line, and a configured backend the host cannot
+provide is reported as unavailable together with its remedy. Structured output
+carries the same two facts as `keyring_backend_effective` (empty when
+unavailable) and `keyring_backend_available`. Rendering this view never opens a
+key store and never prompts.
+
 ```bash
 $ akt context show
 Context:         prod
@@ -789,6 +911,7 @@ Network:         mainnet
   Gas Prices:    0.025uakt
   Gas Adj:       1.5
 Keyring:         default (backend: os)
+  Effective:     keychain
 Default Account: alice
 Gas:             auto
 Fees:            (none)
@@ -939,7 +1062,60 @@ $ akt context network list
 
 Show full network details.
 
-### 2.2.2 Keys Commands
+### 2.2.2 Keyring Commands
+
+Keyrings are a shared resource (§1.5), managed independently of the contexts
+that reference them. Without these commands the only way to change where a
+context stores its keys after first run is to hand-edit `config.yaml`.
+
+#### `akt context keyring create <name> <backend>`
+
+Create a new keyring definition. `<backend>` is one of `os`, `file`, `test`,
+`kwallet`, `pass`, `memory`; any other value is a usage error.
+
+| Flag    | Type   | Default | Description                                                |
+| ------- | ------ | ------- | ---------------------------------------------------------- |
+| `--dir` | string | `""`    | Keyring directory (empty = `<root>/keyrings/<name>/`)      |
+
+```bash
+akt context keyring create headless file
+```
+
+#### `akt context keyring list`
+
+List every configured keyring with its configured backend, the effective
+backend on this host (§1.5), its directory, and the contexts that reference it.
+A configured backend that cannot be provided here is reported as
+`unavailable`, never as if it were in use.
+
+```bash
+$ akt context keyring list
+  NAME       BACKEND   EFFECTIVE   DIR                        USED BY
+  default    os        keychain    ~/.config/akt/keyrings/default   prod
+  headless   file      file        ~/.config/akt/keyrings/headless  (none)
+```
+
+#### `akt context keyring set <name> <backend>`
+
+Change a keyring's stored backend, and optionally its directory. This is the
+persistent counterpart of the per-invocation `--keyring-backend` /
+`--keyring-dir` overrides (§3.1) and is the remedy named by the fail-fast error
+raised when a configured backend is unavailable (§1.5).
+
+Changing the backend does **not** migrate existing keys: each backend has its
+own store, so keys added under the previous backend remain there. The command
+says so on stdout.
+
+| Flag    | Type   | Default   | Description                                            |
+| ------- | ------ | --------- | ------------------------------------------------------ |
+| `--dir` | string | unchanged | Keyring directory (empty string is not "unchanged" only when the flag is set) |
+
+```bash
+akt context keyring set default file
+akt context keyring set default file --dir /mnt/secure/keys
+```
+
+### 2.2.3 Keys Commands
 
 #### `akt context keys add <name>`
 
@@ -1771,7 +1947,7 @@ describe both controls as one ambiguous "switch tabs" action.
 An embedded monitor receives exactly the height remaining after the shell's
 chrome; the parent MUST NOT size it for one height and clip it to another.
 
-**Standalone operation**: `akt monitor` (and all subcommands) requires only an RPC endpoint. It does not require a keyring, default account, or chain-id. A monitoring-only context (with no `default-account`) or a bare `--rpc` flag is sufficient, making it usable by anyone observing the network.
+**Standalone operation**: `akt monitor` (and all subcommands) requires only an RPC endpoint. It does not require a keyring, default account, or chain-id. A monitoring-only context (with no `default-account`) or a bare `--rpc` flag is sufficient, making it usable by anyone observing the network. The group declares no local identity (§1.7): a context that *does* carry a keyring and a named `default-account` must not cause the monitor to open that keyring or prompt for it.
 
 #### `akt monitor network [rpc-endpoint]`
 
@@ -1976,6 +2152,14 @@ observing these process signals.
 
 **Default account handling:** Tools that accept an `owner` parameter (e.g., `akash_list_deployments`, `akash_list_leases`) default to the context's `default-account` when the parameter is omitted. If no `default-account` is configured (e.g., a monitoring-only context), the `owner` parameter is **required** — the tool returns an error explaining that the owner must be specified explicitly when no default account is available.
 
+Starting the MCP server is an on-demand identity operation (§1.7). Listing
+tools and invoking public or explicitly scoped read tools MUST NOT open the
+configured keyring. A read tool that omits its owner resolves a named
+`default-account` when that call is handled. On a keyring context,
+`--enable-writes` explicitly opts into resolving the signer during startup so
+every advertised chain/provider write tool is usable. Enabling writes on a
+Console-only context does not make that context require a local keyring.
+
 **Numeric argument contract:** Sequence identifiers (`dseq`, `gseq`, and
 `oseq`) are positive whole numbers. Pagination values (`skip` and `limit`) are
 non-negative whole numbers; zero retains the documented default behavior.
@@ -2157,7 +2341,7 @@ Example: a network-less `console-api` context (API key only) lists and runs only
 
 ### 2.11 SDL Commands
 
-Transport-independent SDL authoring, ported from console-axi (`src/sdl/templates`, `src/sdl/lint.ts`). All `akt sdl` subcommands run entirely locally: no context, key, or RPC endpoint is required, and the group declares no capability requirements.
+Transport-independent SDL authoring, ported from console-axi (`src/sdl/templates`, `src/sdl/lint.ts`). All `akt sdl` subcommands run entirely locally: no context, key, or RPC endpoint is required, and the group declares no capability requirements. The group declares no local identity either (§1.7), so a configured keyring is never opened and a named `default-account` is never resolved — `akt sdl validate` on a context with a `file` or `os` keyring must not prompt for a passphrase or an OS unlock.
 
 #### `akt sdl scaffolds`
 
@@ -2287,10 +2471,24 @@ Applied to every command via the root command's `PersistentFlags()`.
 | ----------- | ----- | ------ | ------------------------ | ---------------------------------------------------------------- |
 | `--home`    |       | string | `$AKT_HOME` or XDG default | Home directory for config, contexts, and keyrings             |
 | `--context` |       | string | config `current-context` | Active context name (overrides AKT_CONTEXT)                      |
+| `--keyring-backend` |  | string | context's keyring `backend` | Keyring backend for this invocation: `os`, `file`, `test`, `kwallet`, `pass`, `memory` (overrides AKT_KEYRING_BACKEND) |
+| `--keyring-dir` |     | string | context's keyring `dir`  | Keyring directory for this invocation (overrides AKT_KEYRING_DIR) |
 | `--output`  | `-o`  | string | `"pretty"`               | Output format: `pretty`, `json`, `yaml`. For workflows, also accepts `jsonl` (see 2.3.8). |
 | `--interactive` | `-i` | bool | `false`              | Force interactive mode even when `defaults.interactive` is `false` in config or no TTY is detected. Has no effect when interactive mode is already enabled (the default). **Two effects**: (1) Workflow commands (`deploy`, `update`, `close`) use TUI progress display instead of JSONL. (2) Commands that auto-suppress prompts and spinners in non-TTY contexts will show them. Does **not** launch the root TUI application. |
 | `--verbose` | `-v`  | count  | `0`                      | Increase output verbosity. Stacks: `-v` (level 1) shows operational detail (gas estimates, endpoint selection, config resolution); `-vv` (level 2) adds debug diagnostics (RPC request/response dumps, full stack traces). Default (no flag) shows progress/status messages. Mutually exclusive with `--quiet`. |
 | `--quiet`   | `-q`  | bool   | `false`                  | Suppress all informational output (progress messages, status lines, confirmations). Only data output (query results, transaction results) and errors are emitted. Useful for scripting. Mutually exclusive with `-v`. |
+
+`--keyring-backend` and `--keyring-dir` are **global**, not transaction-local.
+Key storage is a property of the invocation, not of signing: listing, adding,
+exporting, and querying keys need the same override that a transaction does,
+and on a host whose configured backend is unavailable (§1.5) the override is
+the only way to reach the keys at all. They are registered once on the root
+command, carry an empty default so that leaving them unset never shadows the
+context's persisted `keyrings[*].backend` / `keyrings[*].dir`, and are bound to
+Viper so `AKT_KEYRING_BACKEND` / `AKT_KEYRING_DIR` (§1.9) resolve through the
+normal flag > env > config > default chain. An unknown backend value is a usage
+error. A supplied override applies to every keyring the invocation opens,
+including the one behind `akt context keys`.
 
 #### 3.1.1 Confirmation and Override Conventions
 
@@ -2316,8 +2514,6 @@ Added to all `tx` commands via `AddTxFlagsToCmd()`.
 | `--fees`             |       | string   | `""`                        | Fixed fees (overrides gas-prices)                             |
 | `--broadcast-mode`   | `-b`  | string   | `"sync"`                    | `sync`, `async`, or `block`                                   |
 | `--sign-mode`        |       | string   | `"direct"`                  | Signing mode: `direct`, `amino-json`, `direct-aux`, `eip-191` |
-| `--keyring-backend`  |       | string   | context default             | Keyring backend override                                      |
-| `--keyring-dir`      |       | string   | context default             | Keyring directory override                                    |
 | `--note`             |       | string   | `""`                        | Transaction memo/note                                         |
 | `--timeout-height`   |       | uint64   | `0`                         | Block height timeout                                          |
 | `--timeout-duration` |       | duration | `0`                         | Time-based timeout                                            |
@@ -2331,6 +2527,13 @@ Added to all `tx` commands via `AddTxFlagsToCmd()`.
 | `--yes`              | `-y`  | bool     | `false`                     | Skip confirmation prompts                                     |
 | `--ledger`           |       | bool     | `false`                     | Use Ledger hardware wallet                                    |
 | `--unordered`        |       | bool     | `false`                     | Unordered transaction                                         |
+
+Key storage is selected by the global `--keyring-backend` / `--keyring-dir`
+flags (§3.1), which every command inherits. Transaction commands do not
+register their own copies: a transaction-local duplicate shadowed the global
+flag, so the documented `AKT_KEYRING_BACKEND` / `AKT_KEYRING_DIR` environment
+variables never reached a `tx` invocation, and its non-empty `os` default
+stood ready to override the context's persisted backend.
 
 `--sign-mode` and `--broadcast-mode` are closed enums: values outside their
 advertised sets are usage errors. For online construction, simulation, and
@@ -2360,7 +2563,10 @@ never an SDK panic.
 
 `--generate-only` accepts a signer address that is not stored in the local
 keyring. The address identifies the unsigned message and does not imply a
-signing-key lookup. A signer name still resolves through the selected keyring.
+signing-key lookup or even opening the configured backend. `--dry-run` has the
+same address-only identity contract because simulation does not sign. A signer
+name still resolves through the selected keyring on demand. A transaction that
+will sign opens and validates its keyring during startup.
 Multisign assembly accepts only a legacy amino multisig record and validates
 that each signature batch contains an entry for every transaction before
 indexing it; ordinary keys and short batches are normal input errors, never
@@ -2646,6 +2852,14 @@ Select keyring backend  ↑↓ move  enter confirm
     [ ]  test        Unencrypted test keyring (development only)
 ```
 
+An option the host cannot provide is not offered as if it could be. When the
+platform has no system credential store (§1.5) the `os` row is annotated as
+unavailable, is not selectable, and is not the default cursor position — the
+first selectable option is. The non-TTY fallback follows the same rule: it
+resolves to `os` only where `os` is actually available, and to `file`
+otherwise. Offering `os` on a host that will silently store keys elsewhere is
+the bug this rule exists to prevent.
+
 **Multi-select prompt**: The user toggles items on/off and confirms the batch. Space toggles; Enter confirms. A "Select all" row is the first item. Used for network selection during bootstrap.
 
 ```
@@ -2658,6 +2872,16 @@ Select networks  ↑↓ move  space toggle  enter confirm
     [x]  sandbox             sandbox-2         [1 rpc, 1 api, 1 grpc]
 
   q quit
+```
+
+**Active-context prompt**: A single-select over the contexts just created, used at the end of network selection during bootstrap (§2.0 step d). The cursor starts on a test network, never on mainnet, and each row states in plain language what transacting on that network costs.
+
+```
+Select the active context  ↑↓ move  enter confirm
+
+  > [x]  sandbox     sandbox-2    test network - tokens have no value
+    [ ]  testnet     testnet-02   test network - tokens have no value
+    [ ]  mainnet     akashnet-2   live network - transactions spend real AKT
 ```
 
 **Value input prompt**: Free-form text or numeric input with an optional default. Used for deposit amounts, gas overrides, or custom names. Input is validated before acceptance.

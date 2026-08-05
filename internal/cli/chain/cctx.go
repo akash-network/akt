@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -82,6 +83,51 @@ func GetClientQueryContext(cmd *cobra.Command) (sdkclient.Context, error) {
 func GetClientTxContext(cmd *cobra.Command) (sdkclient.Context, error) {
 	ctx := GetClientContextFromCmd(cmd)
 	return ReadTxCommandFlags(ctx, cmd.Flags())
+}
+
+// resolveDefaultAccountAddress resolves the configured query account only at
+// the point where an omitted owner filter needs it. Query initialization keeps
+// named accounts unresolved so unrelated reads never unlock the keyring.
+func resolveDefaultAccountAddress(cctx sdkclient.Context) (string, error) {
+	if addr := cctx.GetFromAddress(); !addr.Empty() {
+		return addr.String(), nil
+	}
+
+	from := strings.TrimSpace(cctx.From)
+	if from == "" {
+		return "", nil
+	}
+
+	if addr, err := sdk.AccAddressFromBech32(from); err == nil {
+		return addr.String(), nil
+	}
+
+	if cctx.Keyring == nil {
+		return "", fmt.Errorf("resolve default account %q: keyring is unavailable", from)
+	}
+
+	addr, _, _, err := sdkclient.GetFromFields(cctx, cctx.Keyring, from)
+	if err != nil {
+		return "", fmt.Errorf("resolve default account %q: %w", from, err)
+	}
+
+	return addr.String(), nil
+}
+
+// defaultOwnerForQueryArg resolves the default account only for numeric
+// shorthand such as 12345[/1]. Explicit addresses, state keywords, and invalid
+// input can all be parsed without touching the keyring.
+func defaultOwnerForQueryArg(cctx sdkclient.Context, args []string) (string, error) {
+	if len(args) == 0 {
+		return "", nil
+	}
+
+	first := strings.SplitN(args[0], "/", 2)[0]
+	if _, err := strconv.ParseUint(first, 10, 64); err == nil {
+		return resolveDefaultAccountAddress(cctx)
+	}
+
+	return "", nil
 }
 
 // ReadQueryCommandFlags returns an updated Context with fields set based on flags
@@ -187,17 +233,15 @@ func ReadPersistentCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) 
 		cctx = cctx.WithChainID(chainID)
 	}
 
-	if cctx.Keyring == nil || flagSet.Changed(cflags.FlagKeyringBackend) {
-		keyringBackend, _ := flagSet.GetString(cflags.FlagKeyringBackend)
-		if keyringBackend != "" {
-			kr, err := sdkclient.NewKeyringFromBackend(cctx, keyringBackend)
-			if err != nil {
-				return cctx, err
-			}
-
-			cctx = cctx.WithKeyring(kr)
-		}
-	}
+	// --keyring-backend is deliberately NOT turned into a keyring here.
+	//
+	// It is an akt global flag (SPEC §3.1), applied to the keyring
+	// configuration the root command hands to internal/keyring before any
+	// leaf runs -- which is also where an "os" backend is checked against the
+	// platform's credential stores. Rebuilding a keyring from the raw flag
+	// value would bypass that check and, because this runs from the root's
+	// own pre-run on every command, would open a key store for commands that
+	// declare no local identity at all (SPEC §1.7).
 
 	nodeChanged := flagSet.Lookup(cflags.FlagNode) != nil && flagSet.Changed(cflags.FlagNode)
 	if cctx.Client == nil || nodeChanged {
