@@ -20,10 +20,6 @@ func init() {
 // RenderDelegationTotalRewards renders delegation rewards as a styled string.
 func RenderDelegationTotalRewards(res *distrtypes.QueryDelegationTotalRewardsResponse) string {
 	var buf strings.Builder
-	if len(res.Rewards) == 0 {
-		fmt.Fprintln(&buf, Dim("(no rewards)"))
-		return buf.String()
-	}
 	headers := []string{"VALIDATOR", "REWARD"}
 	rows := make([][]string, 0, len(res.Rewards))
 	for _, r := range res.Rewards {
@@ -33,7 +29,7 @@ func RenderDelegationTotalRewards(res *distrtypes.QueryDelegationTotalRewardsRes
 		}
 		rows = append(rows, []string{r.ValidatorAddress, reward})
 	}
-	WriteTable(&buf, headers, rows)
+	WriteTableOrEmpty(&buf, headers, rows, "(no rewards)")
 	if len(res.Total) > 0 {
 		Newline(&buf)
 		KV(&buf, "Total", Bold(FormatDecCoins(res.Total)))

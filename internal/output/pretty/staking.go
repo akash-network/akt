@@ -39,7 +39,7 @@ func RenderValidatorList(res *stakingtypes.QueryValidatorsResponse) string {
 			commission,
 		})
 	}
-	WriteTable(&buf, headers, rows)
+	WriteTableOrEmpty(&buf, headers, rows, "(no validators)")
 	return buf.String()
 }
 
@@ -105,7 +105,7 @@ func RenderDelegatorDelegations(res *stakingtypes.QueryDelegatorDelegationsRespo
 			Bold(FormatCoin(d.Balance)),
 		})
 	}
-	WriteTable(&buf, headers, rows)
+	WriteTableOrEmpty(&buf, headers, rows, "(no delegations)")
 	return buf.String()
 }
 

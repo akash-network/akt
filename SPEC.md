@@ -1069,14 +1069,21 @@ Delete a network definition. Fails if any context references it. Use `--force` t
 
 List all networks and which contexts reference each.
 
+Pretty output is rendered by `pretty.RenderNetworkList`, the same renderer the
+TUI network list uses (§10.8). RPC endpoints are printed in full -- never
+truncated -- with a `(+N)` suffix counting the backups that are not shown.
+
 ```bash
 $ akt context network list
-  NAME              CHAIN-ID       RPC                          USED BY
-  mainnet           akashnet-2     rpc.akt.dev:443/rpc          prod, monitoring
-  testnet           testnet-02     rpc.testnet-02.aksh.pw:443   staging
-  sandbox           sandbox-2      rpc.sandbox-2.aksh.pw:443
-  mainnet-custom    akashnet-2     my-private-rpc:443           (none)
+NAME     CHAIN-ID    RPC                                 USED BY
+mainnet  akashnet-2  https://rpc.akt.dev:443/rpc (+2)    prod, monitoring
+testnet  testnet-02  https://rpc.testnet-02.aksh.pw:443  staging
+sandbox  sandbox-2   https://rpc.sandbox-2.aksh.pw:443   (none)
 ```
+
+With no networks configured, the pretty path prints the remedy
+(`No networks configured. Create one with: akt context network create <name> --template mainnet`);
+`--output json`/`yaml` print an empty array (§10.3).
 
 #### `akt context network show <name>`
 
@@ -2454,7 +2461,7 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | ----------------------------- | ---------------------------- | ---------------------------------------------------------------- |
 | `akt console wallet list`     |                              | List managed wallets. `creditAmount` is dollar-scale per the `/v1/wallets` contract (shown as `$X.XX`, no µ scaling), with the wallet's `denom` when the API reports one. |
 | `akt console wallet balance`  |                              | Available / in-deployment / total balance in USD.                |
-| `akt console wallet settings [true\|false]` | `--auto-reload true\|false` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Show settings when no value is given; set auto-reload otherwise. |
+| `akt console wallet settings [true\|false]` | `--auto-reload true\|false` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Show settings when no value is given; set auto-reload otherwise. Reports `{ autoReloadEnabled, configured }` on every path — after a write, after a read, and for an account that has never configured auto-reload (the API's 404, which reports `configured: false` plus a `note` naming the command that enables it). The raw API record is never printed: like `deployment settings`, the command reshapes it so one command has one output shape. |
 | `akt console wallet cost`     |                              | Estimated weekly cost in USD.                                    |
 | `akt console usage [from] [to]` | `--from`, `--to` (YYYY-MM-DD, alternatives) — **disabled pending feedback** (positional only, 2026-07) | Daily spend history for the managed wallet. `totalSpent` is the spend within the requested range (sum of the daily values, order-independent); `lifetimeSpent` is the API's cumulative figure as of the range end, omitted when the range is empty. Omitted dates use the API defaults (last 30 days). |
 
@@ -4895,6 +4902,7 @@ Default when `--output pretty` (or omitted).
 **List results** use tabwriter-aligned columns:
 
 - Headers in bold (lipgloss).
+- **A header is aligned exactly like the column it labels**: right-aligned columns get right-aligned headers, left-aligned columns get left-aligned headers. A header is never centered independently of its data.
 - State columns color-coded (see 10.6).
 - Key identifiers (DSEQ, moniker, proposal ID) in bold.
 - Addresses always displayed in full. Never truncated -- addresses are machine-parseable identifiers and truncation risks ambiguity.
@@ -4907,6 +4915,17 @@ Default when `--output pretty` (or omitted).
   12345      akash1abcdefghijklmnopqrstuvwxyz012345678901    active   2       1,234,567
   12346      akash1abcdefghijklmnopqrstuvwxyz012345678901    closed   1       1,234,500
 ```
+
+**Empty results** are stated, never implied. A query that matches nothing must
+print a dim line naming what is missing -- `(no deployments)`, `(no bids)`,
+`(no networks)` -- and must never print a bare column header with no rows: a
+lone header reads as a rendering failure, not as "zero results". The rule holds
+for every table in pretty output, including tables nested inside a larger
+detail view.
+
+This applies to the pretty/table path only. `--output json` and `--output yaml`
+still emit an empty array (§10.1.1); an empty result must never turn structured
+output into prose.
 
 **Single-item results** use grouped key-value pairs with section headers:
 
@@ -6000,6 +6019,44 @@ This matches `tx.Factory.BuildUnsignedTx`, so the estimate the dry run reports i
 | `gas_adjustment` | float64 | Always |
 | `gas_estimate` | uint64 | Always |
 | `estimated_fee` | array of coins | When a fee basis is available |
+
+### 10.12 Table and Key-Value Layout
+
+**Table rendering engine.** `internal/output/pretty` is the canonical table
+engine for pretty output. It measures every cell with `lipgloss.Width`, so ANSI
+styling never breaks alignment, and it supports per-column alignment
+(`ColDef.Align`). Renderers write tables through exactly four entry points:
+
+| Helper | Use |
+|---|---|
+| `WriteTable(w, headers, rows)` | All columns left-aligned. |
+| `WriteTableCols(w, cols, rows)` | Per-column alignment. |
+| `WriteTableOrEmpty(w, headers, rows, emptyMsg)` | As `WriteTable`, with a caller-named empty message. |
+| `WriteTableColsOrEmpty(w, cols, rows, emptyMsg)` | As `WriteTableCols`, with a caller-named empty message. |
+
+The `*OrEmpty` forms are the default choice for list renderers, because every
+list can come back empty. The plain forms carry the same guarantee as a
+backstop: given no rows they print the generic `(no results)` instead of a bare
+header, so no code path can regress to a header-only table.
+
+`internal/output.PrintTable` is a second, legacy engine built on
+`text/tabwriter`. It is not ANSI-aware and has no per-column alignment, and it
+survives only for the remaining `output.PrintData` callers that render plain,
+unstyled config rows (`akt context list`, `akt context history`,
+`akt context keys list`). It carries the same empty-result guard. New pretty
+output must use the `pretty` engine; `akt sdl list` keeps its own local
+`tabwriter` for a two-column scaffold listing. Converging the two engines is
+tracked separately -- until then, `output.PrintTable` is frozen: no new callers.
+
+**Key-value column invariant.** `KV` indents keys by 2 and pads the key column
+to 20; `SubKV` indents by 6 and pads to 16. Both therefore start their value at
+column 23, so a nested block lines up with the block that contains it. The
+padding helpers never truncate: a key longer than its column pushes its own
+value out of line rather than being cut. A view whose keys do not fit the
+defaults widens **both** columns together through `KVWidth` and `SubKVWidth`,
+keeping `subWidth == width - 4`. `akt context show` does this: its capability
+labels ("Chain transactions") do not fit the default column, so it renders at
+`width 23 / subWidth 19` and every value in the view still lands in one column.
 
 ---
 

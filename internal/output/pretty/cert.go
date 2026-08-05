@@ -24,7 +24,7 @@ func RenderCertificateList(res *ctypes.QueryCertificatesResponse) string {
 	for _, c := range res.Certificates {
 		rows = append(rows, []string{c.Serial, ColorState(c.Certificate.State.String())})
 	}
-	WriteTable(&buf, headers, rows)
+	WriteTableOrEmpty(&buf, headers, rows, "(no certificates)")
 	return buf.String()
 }
 

@@ -48,6 +48,72 @@ func TestWalletListShowsDollarScaleCredits(t *testing.T) {
 	}
 }
 
+// TestWalletSettingsReportsOneShape pins `wallet settings` to the shaped
+// {autoReloadEnabled, configured} object on both success paths. The read and
+// write paths used to hand the raw API record to the printer, so the same
+// command answered with a different shape depending on which branch ran —
+// and never reported "configured", which only the 404 branch produced.
+func TestWalletSettingsReportsOneShape(t *testing.T) {
+	m := newTestManager(t)
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
+		t.Fatalf("SetConsoleAPIKey: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/wallet-settings" {
+			t.Errorf("unexpected request %s", r.URL.Path)
+			return
+		}
+		writeJSON(t, w, `{"data":{"autoReloadEnabled":true}}`)
+	}))
+	defer srv.Close()
+
+	for name, args := range map[string][]string{
+		"Read":  {"wallet", "settings"},
+		"Write": {"wallet", "settings", "true"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			out, err := execConsole(t, m, srv.URL, args...)
+			if err != nil {
+				t.Fatalf("wallet settings: %v", err)
+			}
+
+			if !strings.Contains(out, `"autoReloadEnabled": true`) {
+				t.Errorf("wallet settings should report autoReloadEnabled, got %q", out)
+			}
+			if !strings.Contains(out, `"configured": true`) {
+				t.Errorf("wallet settings should report configured, got %q", out)
+			}
+		})
+	}
+}
+
+// TestWalletSettingsUnconfiguredReportsSameShape pins the 404 path to the same
+// object, plus the note naming the command that configures it.
+func TestWalletSettingsUnconfiguredReportsSameShape(t *testing.T) {
+	m := newTestManager(t)
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
+		t.Fatalf("SetConsoleAPIKey: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	out, err := execConsole(t, m, srv.URL, "wallet", "settings")
+	if err != nil {
+		t.Fatalf("wallet settings: %v", err)
+	}
+
+	if !strings.Contains(out, `"autoReloadEnabled": false`) || !strings.Contains(out, `"configured": false`) {
+		t.Errorf("unconfigured settings should report the defaults, got %q", out)
+	}
+	if !strings.Contains(out, "akt console wallet settings true") {
+		t.Errorf("unconfigured settings should name the remedy, got %q", out)
+	}
+}
+
 // usageTestServer serves the three endpoints the usage command touches, with
 // the history body swappable between calls.
 func usageTestServer(t *testing.T, historyBody *string) *httptest.Server {

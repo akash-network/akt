@@ -45,11 +45,6 @@ func formatSigningInfo(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg p
 func formatSigningInfos(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
 	res := msg.(*slashingtypes.QuerySigningInfosResponse)
 
-	if len(res.Info) == 0 {
-		fmt.Fprintln(w, Dim("(no signing infos)"))
-		return nil
-	}
-
 	cols := []ColDef{
 		{Header: "ADDRESS"},
 		{Header: "START HEIGHT", Align: AlignRight},
@@ -74,7 +69,7 @@ func formatSigningInfos(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg 
 		})
 	}
 
-	WriteTableCols(w, cols, rows)
+	WriteTableColsOrEmpty(w, cols, rows, "(no signing infos)")
 	return nil
 }
 
@@ -103,11 +98,6 @@ func formatUpgradePlan(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg p
 func formatModuleVersions(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
 	res := msg.(*upgradetypes.QueryModuleVersionsResponse)
 
-	if len(res.ModuleVersions) == 0 {
-		fmt.Fprintln(w, Dim("(no module versions)"))
-		return nil
-	}
-
 	cols := []ColDef{
 		{Header: "MODULE"},
 		{Header: "VERSION", Align: AlignRight},
@@ -121,6 +111,6 @@ func formatModuleVersions(w io.Writer, _ *cobra.Command, _ sdkclient.Context, ms
 		})
 	}
 
-	WriteTableCols(w, cols, rows)
+	WriteTableColsOrEmpty(w, cols, rows, "(no module versions)")
 	return nil
 }

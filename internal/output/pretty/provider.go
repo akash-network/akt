@@ -25,7 +25,7 @@ func RenderProviderList(res *ptypes.QueryProvidersResponse) string {
 	for _, p := range res.Providers {
 		rows = append(rows, []string{p.Owner, p.HostURI, p.Info.EMail, p.Info.Website})
 	}
-	WriteTable(&buf, headers, rows)
+	WriteTableOrEmpty(&buf, headers, rows, "(no providers)")
 	return buf.String()
 }
 

@@ -22,10 +22,6 @@ func init() {
 // RenderCoinsTable renders a coins list as a styled string.
 func RenderCoinsTable(coins sdk.Coins) string {
 	var buf strings.Builder
-	if len(coins) == 0 {
-		fmt.Fprintln(&buf, Dim("(no balances)"))
-		return buf.String()
-	}
 	cols := []ColDef{
 		{Header: "BALANCES", Align: AlignRight},
 	}
@@ -33,7 +29,7 @@ func RenderCoinsTable(coins sdk.Coins) string {
 	for _, coin := range coins {
 		rows = append(rows, []string{Bold(FormatCoin(coin))})
 	}
-	WriteTableCols(&buf, cols, rows)
+	WriteTableColsOrEmpty(&buf, cols, rows, "(no balances)")
 	return buf.String()
 }
 

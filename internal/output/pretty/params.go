@@ -73,7 +73,10 @@ func formatStakingParams(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg
 
 // RenderGovParams renders governance module parameters as a pretty string.
 func RenderGovParams(res *govv1.QueryParamsResponse) string {
-	const w = 18 // max: "Deposit Prevote:" = 17 (under "Burn" header)
+	// The "Expedited" and "Burn" blocks below are SubKV entries, which render
+	// at SubKVKeyWidth; this column must stay SubKVIndentDelta wider or the
+	// two blocks stop sharing a value column (SPEC §10.12).
+	const w = KVKeyWidth
 	var buf strings.Builder
 	fmt.Fprintln(&buf, Section("Governance Parameters"))
 
@@ -437,7 +440,10 @@ func renderGovParamsJSON(raw json.RawMessage) (string, error) {
 	}
 	p := resp.Params
 
-	const w = 18
+	// The "Expedited" and "Burn" blocks below are SubKV entries, which render
+	// at SubKVKeyWidth; this column must stay SubKVIndentDelta wider or the
+	// two blocks stop sharing a value column (SPEC §10.12).
+	const w = KVKeyWidth
 	var buf strings.Builder
 	fmt.Fprintln(&buf, Section("Governance Parameters"))
 	KVWidth(&buf, w, "Voting Period", FormatDurationString(p.VotingPeriod))

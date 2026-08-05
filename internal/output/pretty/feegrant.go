@@ -19,10 +19,6 @@ func init() {
 // RenderFeeGrants renders a fee grants list as a styled string.
 func RenderFeeGrants(grants []*feegrant.Grant) string {
 	var buf strings.Builder
-	if len(grants) == 0 {
-		fmt.Fprintln(&buf, Dim("(no grants)"))
-		return buf.String()
-	}
 	headers := []string{"GRANTER", "GRANTEE", "ALLOWANCE TYPE"}
 	rows := make([][]string, 0, len(grants))
 	for _, g := range grants {
@@ -32,7 +28,7 @@ func RenderFeeGrants(grants []*feegrant.Grant) string {
 		}
 		rows = append(rows, []string{g.Granter, g.Grantee, allowanceType})
 	}
-	WriteTable(&buf, headers, rows)
+	WriteTableOrEmpty(&buf, headers, rows, "(no grants)")
 	return buf.String()
 }
 

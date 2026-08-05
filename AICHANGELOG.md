@@ -305,6 +305,41 @@
   the ledger status vocabulary, the BME transaction output, and the oracle
   denom normalization and error contract.
 
+- **A search that found nothing printed a bare table header**: every pretty
+  list renderer now states the empty result — `(no deployments)`, `(no bids)`,
+  `(no networks)` — through the shared `WriteTableOrEmpty` /
+  `WriteTableColsOrEmpty` helpers, replacing thirteen ad-hoc guards and
+  fourteen renderers that had none. The plain table writers carry the same
+  guarantee as a backstop, so no path can regress to a header with no rows, and
+  `internal/output.PrintTable` is guarded too. Structured output is unchanged:
+  `-o json` and `-o yaml` still emit an empty array, never prose, and
+  `akt context network list` no longer replaces its JSON array with a sentence
+  when no networks exist.
+
+- **Column headers floated in the middle of their columns**: a table header is
+  now padded exactly like the column it labels, so right-aligned headers such
+  as `BALANCES` in `akt query bank total` sit over their amounts instead of
+  drifting to the middle of a wide column. Every table in pretty output was
+  affected; the centering helper is gone.
+
+- **Capability labels pushed their values out of line in `akt context show`**:
+  the view's key columns are widened together — `SubKVWidth` is now the
+  documented counterpart of `KVWidth` — so `Chain transactions` and
+  `Provider gateway` no longer overflow a fixed 16-column key field and every
+  value in the view lands in one column. The governance parameters view had the
+  same mismatch between its `KV` and `SubKV` blocks and is aligned to the same
+  rule.
+
+- **`akt console wallet settings` returned the raw API record**: both success
+  paths now report the same `{autoReloadEnabled, configured}` object the
+  never-configured path already returned, matching how the sibling
+  `akt console deployment settings` shapes its output.
+
+- **`akt context network list` ignored its own renderer**: pretty output now
+  goes through `pretty.RenderNetworkList` — previously the only unused renderer
+  in the package — so the CLI and the TUI network list stay identical, and RPC
+  endpoints are printed in full instead of being truncated at 40 characters.
+
 - **CI and release workflows used outdated GitHub Actions runtimes**:
   checkout, Go setup, and artifact upload now use their maintained v7
   releases, while golangci-lint uses the v9 action with the repository's lint

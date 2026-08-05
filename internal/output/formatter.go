@@ -166,8 +166,23 @@ func jsonValueYAMLNode(value any) (*yaml.Node, error) {
 	}
 }
 
+// EmptyTableMessage is what PrintTable writes when it has no rows.
+const EmptyTableMessage = "(no results)"
+
 // PrintTable writes rows as an aligned table.
+//
+// With no rows it writes EmptyTableMessage instead of a header on its own: a
+// lone header reads as a rendering failure rather than as an empty result
+// (SPEC §10.3). Callers that can name what is missing should say so themselves
+// and skip this call. This is the legacy tabwriter engine, kept for the
+// remaining PrintData callers; pretty output uses
+// pretty.WriteTableOrEmpty (SPEC §10.12).
 func PrintTable(w io.Writer, columns []Column, rows [][]string) {
+	if len(rows) == 0 {
+		fmt.Fprintln(w, EmptyTableMessage)
+		return
+	}
+
 	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
 
 	// Header.

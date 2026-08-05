@@ -77,6 +77,51 @@ func TestRenderContextShow(t *testing.T) {
 	}
 }
 
+// Every value in the view lands in one column, including the capability labels
+// ("Chain transactions:") that are wider than the default key column and used
+// to push their own values out of line (SPEC §10.12).
+func TestRenderContextShowValuesShareOneColumn(t *testing.T) {
+	rc := aktctx.Context{
+		Name: "production",
+		Network: aktctx.Network{
+			Name:      "mainnet",
+			ChainID:   "akashnet-2",
+			Endpoints: aktctx.Endpoints{RPC: []string{"https://rpc.akash.network:443"}},
+		},
+		Keyring:        aktctx.Keyring{Name: "default", Backend: "os"},
+		DefaultAccount: "deployer",
+		Gas:            "auto",
+		Root:           "/home/user/.akt",
+	}
+
+	var (
+		column = -1
+		source string
+	)
+
+	// "os" is both configured and effective here, so no divergence sub-line
+	// appears and the column check stays about the capability labels.
+	for _, line := range plainLines(RenderContextShow(rc, "os")) {
+		got, ok := valueColumnOf(line)
+		if !ok {
+			continue
+		}
+
+		if column == -1 {
+			column, source = got, line
+			continue
+		}
+
+		if got != column {
+			t.Errorf("value column %d in %q, want %d as in %q", got, line, column, source)
+		}
+	}
+
+	if column == -1 {
+		t.Fatal("rendered no key-value lines")
+	}
+}
+
 // TestRenderContextShowReportsUnavailableKeyring pins the honest form of the
 // keyring line: a configured backend the host cannot provide is reported as
 // unavailable, never echoed back as if it were in use (SPEC §1.5).
