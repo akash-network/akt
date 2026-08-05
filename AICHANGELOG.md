@@ -4,6 +4,11 @@
 
 ### Fixed
 
+- **CI and release workflows used outdated GitHub Actions runtimes**:
+  checkout, Go setup, and artifact upload now use their maintained v7
+  releases, while golangci-lint uses the v9 action with the repository's lint
+  binary still pinned at v2.11.4 for reproducible results.
+
 - **Root help described deployment as the whole CLI**: the introduction now
   presents akt as the unified interface for chain queries and transactions,
   deployments on either payment rail, provider operations, context and key
