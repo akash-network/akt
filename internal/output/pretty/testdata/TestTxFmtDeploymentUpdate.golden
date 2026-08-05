@@ -1,0 +1,7 @@
+  [38;2;113;113;122mOwner:[m               akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu
+  [38;2;113;113;122mDSEQ:[m                [1m12345678[m
+
+[38;2;161;161;170m  Only the on-chain SDL hash changed. Providers keep serving the previous[m
+[38;2;161;161;170m  manifest until it is sent to them:[m
+[38;2;161;161;170m    akt update <sdl-file> 12345678[m
+[38;2;161;161;170m    akt provider send-manifest <sdl-file> --dseq 12345678 --provider <address>[m

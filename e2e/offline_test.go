@@ -381,6 +381,70 @@ func TestContextLogRecordsContextActions(t *testing.T) {
 	}
 }
 
+// TestContextLogRecordsKeyManagement covers the keyring half of the action
+// log: creating a key used to leave no trace at all, while every other
+// mutation was recorded.
+func TestContextLogRecordsKeyManagement(t *testing.T) {
+	home := setupContextHome(t)
+
+	mustRunAkt(t, home, "context", "keys", "add", "alice", "--recover", "--source", writeMnemonicFile(t))
+	address := strings.TrimSpace(stripANSI(mustRunAkt(t, home, "context", "keys", "show", "alice", "-a")))
+	if address != testMnemonicAddr {
+		t.Fatalf("recovered address = %q, want %q", address, testMnemonicAddr)
+	}
+
+	// Export moves private key material out of the keyring and is recorded as
+	// a security event (SPEC §2.2.2).
+	if _, stderr, exitCode := runAktStdin(t, home, "passphrase123\n",
+		"context", "keys", "export", "alice"); exitCode != 0 {
+		t.Fatalf("keys export failed (exit %d): %s", exitCode, stderr)
+	}
+
+	mustRunAkt(t, home, "context", "keys", "rename", "alice", "alice-main")
+	mustRunAkt(t, home, "context", "keys", "delete", "alice-main", "--yes")
+
+	stdout := stripANSI(mustRunAkt(t, home, "context", "log", "--type", "context"))
+	for _, action := range []string{"keys.recover", "keys.export", "keys.rename", "keys.delete"} {
+		if !strings.Contains(stdout, action) {
+			t.Fatalf("expected action log to contain %q, got:\n%s", action, stdout)
+		}
+	}
+	// Addresses are never shortened.
+	if !strings.Contains(stdout, testMnemonicAddr) {
+		t.Fatalf("expected the full key address in the log, got:\n%s", stdout)
+	}
+	// Reads are not state changes and are not recorded.
+	if strings.Contains(stdout, "keys.show") || strings.Contains(stdout, "keys.list") {
+		t.Fatalf("read-only key commands must not be recorded, got:\n%s", stdout)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(home, "contexts", "prod", "actions.log"))
+	if err != nil {
+		t.Fatalf("read action log: %v", err)
+	}
+	for _, word := range strings.Fields(testMnemonic) {
+		if strings.Contains(string(raw), word) {
+			t.Fatalf("mnemonic word %q reached the action log:\n%s", word, raw)
+		}
+	}
+	if strings.Contains(string(raw), "passphrase123") {
+		t.Fatalf("the export passphrase reached the action log:\n%s", raw)
+	}
+}
+
+// writeMnemonicFile stores the deterministic test mnemonic in a temp file so
+// `keys add --recover` can read it without a terminal.
+func writeMnemonicFile(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "mnemonic.txt")
+	if err := os.WriteFile(path, []byte(testMnemonic+"\n"), 0o600); err != nil {
+		t.Fatalf("write mnemonic file: %v", err)
+	}
+
+	return path
+}
+
 func TestContextRenameRecordsAction(t *testing.T) {
 	home := setupContextHome(t)
 
@@ -596,6 +660,91 @@ func TestTxDeploymentClosePositionalArgsOffline(t *testing.T) {
 	}
 	if !strings.Contains(combined, "127.0.0.1") {
 		t.Fatalf("expected a connection-stage error, got:\n%s", combined)
+	}
+}
+
+// TestQueryProviderPositionalArgOffline pins the positional-primary form
+// documented in README.md, SPEC §3.8.5, and DESIGN §7.1. The group used to
+// carry no positional at all, so the documented `akt query provider
+// akash1prov...` failed with `unknown command "akash1..." for "provider"`.
+// The `list`/`get` subcommands must keep working alongside it.
+func TestQueryProviderPositionalArgOffline(t *testing.T) {
+	home := setupContextHome(t)
+
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{"positional address", []string{"query", "provider", testMnemonicAddr, "--node", unreachableNode}},
+		{"no argument lists", []string{"query", "provider", "--node", unreachableNode}},
+		{"get subcommand", []string{"query", "provider", "get", testMnemonicAddr, "--node", unreachableNode}},
+		{"list subcommand", []string{"query", "provider", "list", "--node", unreachableNode}},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout, stderr, exitCode := runAkt(t, home, tc.args...)
+			combined := stdout + stderr
+
+			if exitCode == 0 {
+				t.Fatalf("expected non-zero exit against unreachable node, got 0:\n%s", combined)
+			}
+			if strings.Contains(combined, "unknown command") || strings.Contains(combined, "accepts at most") {
+				t.Fatalf("the documented form was rejected by cobra args validation:\n%s", combined)
+			}
+			if !strings.Contains(combined, "127.0.0.1") {
+				t.Fatalf("expected a connection-stage error mentioning the node address, got:\n%s", combined)
+			}
+		})
+	}
+}
+
+// TestProviderLeaseCommandsBlameTheMissingDSeqOffline pins the honest guard
+// order on the provider gateway commands. Every one of them used to report
+// `provider address is required (positional argument or --provider flag)` for
+// any missing input — false advice, since none takes a positional provider and
+// four of them use that slot for the dseq. The deployment sequence is what the
+// provider is now resolved from, so it must be reported first and with the
+// form the command actually accepts.
+func TestProviderLeaseCommandsBlameTheMissingDSeqOffline(t *testing.T) {
+	home := setupContextHome(t)
+
+	cases := []struct {
+		name   string
+		args   []string
+		remedy string
+	}{
+		{"lease-status", []string{"provider", "lease-status"}, "positional argument"},
+		{"lease-logs", []string{"provider", "lease-logs"}, "positional argument"},
+		{"lease-events", []string{"provider", "lease-events"}, "positional argument"},
+		{"get-manifest", []string{"provider", "get-manifest"}, "positional argument"},
+		{"lease-shell", []string{"provider", "lease-shell", "--", "/bin/sh"}, "--dseq"},
+		{"send-manifest", []string{"provider", "send-manifest", "does-not-exist.yaml"}, "--dseq"},
+		{"migrate-hostnames", []string{"provider", "migrate-hostnames", "--hostnames", "a.example.com"}, "--dseq"},
+		{"migrate-endpoints", []string{"provider", "migrate-endpoints", "--endpoints", "ep1"}, "--dseq"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			stdout, stderr, exitCode := runAkt(t, home, tc.args...)
+			combined := stdout + stderr
+
+			if exitCode == 0 {
+				t.Fatalf("expected non-zero exit for a missing dseq, got 0:\n%s", combined)
+			}
+			if !strings.Contains(combined, "dseq is required") {
+				t.Fatalf("expected the dseq guard error, got:\n%s", combined)
+			}
+			if !strings.Contains(combined, tc.remedy) {
+				t.Fatalf("expected the remedy to offer %q, got:\n%s", tc.remedy, combined)
+			}
+			if strings.Contains(combined, "provider address is required") {
+				t.Fatalf("error still blames the provider:\n%s", combined)
+			}
+			if strings.Contains(combined, "positional argument or --provider") {
+				t.Fatalf("error advertises a positional provider that does not exist:\n%s", combined)
+			}
+		})
 	}
 }
 
@@ -816,6 +965,8 @@ func TestAllCommandsHelp(t *testing.T) {
 		{"query", "oracle"},
 		{"query", "params"},
 		{"query", "provider"},
+		{"query", "provider", "get"},
+		{"query", "provider", "list"},
 		{"query", "slashing"},
 		{"query", "staking"},
 		{"query", "tx"},

@@ -1,0 +1,8 @@
+[1;4;4mT[m[1;4;4mr[m[1;4;4ma[m[1;4;4mn[m[1;4;4ms[m[1;4;4ma[m[1;4;4mc[m[1;4;4mt[m[1;4;4mi[m[1;4;4mo[m[1;4;4mn[m
+  [38;2;113;113;122mHash:[m                [1m9F3C0A2E7B1D4F6089AC5321EE7740B8D2C619F5A48037BC12ED5A9F60B3417D[m
+  [38;2;113;113;122mHeight:[m              [38;2;161;161;170mnot yet confirmed[m
+  [38;2;113;113;122mGas Used:[m            [38;2;161;161;170mnot yet confirmed[m
+  [38;2;113;113;122mFee:[m                 [38;2;161;161;170mnot reported by a sync broadcast (query the tx to see it)[m
+  [38;2;113;113;122mStatus:[m              [38;2;234;179;8mpending[m [38;2;161;161;170m(accepted into the mempool, not yet in a block)[m
+  [38;2;113;113;122mConfirm With:[m        akt query tx 9F3C0A2E7B1D4F6089AC5321EE7740B8D2C619F5A48037BC12ED5A9F60B3417D
+  [38;2;113;113;122mTip:[m                 [38;2;161;161;170mbroadcast with --broadcast-mode block to wait for inclusion[m

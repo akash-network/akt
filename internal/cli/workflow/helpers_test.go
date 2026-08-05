@@ -132,6 +132,30 @@ func TestEmitJSONLSkipsMissingResults(t *testing.T) {
 	}
 }
 
+// TestEmitJSONLOmitsUnconfirmedHeight pins the honesty rule of SPEC §2.3.8:
+// under the default sync broadcast mode a step's transaction is only in the
+// mempool, so the height key must be absent rather than emitted as 0 — which a
+// consumer could not tell apart from a real height.
+func TestEmitJSONLOmitsUnconfirmedHeight(t *testing.T) {
+	state := wf.NewRunState("run-1", "deploy", "akash1owner", nil)
+	state.SetStepResult("create", &wf.StepResult{
+		Name:   "create",
+		Status: "success",
+		TxHash: "ABC123",
+	})
+
+	var buf bytes.Buffer
+	emitJSONL(&buf, state, nil)
+
+	line := strings.TrimSpace(buf.String())
+	if !strings.Contains(line, `"hash":"ABC123"`) {
+		t.Fatalf("tx hash missing from %q", line)
+	}
+	if strings.Contains(line, `"height"`) {
+		t.Errorf("unconfirmed tx must not report a height: %q", line)
+	}
+}
+
 func TestDeployRecoveryAdviceSurfacesPaidPartialState(t *testing.T) {
 	state := wf.NewRunState("run-1", "deploy", "akash1owner", map[string]any{
 		"sdl-file": "/tmp/my deployment.yaml",
@@ -160,6 +184,7 @@ func TestDeployRecoveryAdviceSurfacesPaidPartialState(t *testing.T) {
 	advice := deployRecoveryAdvice(state, errors.New("send manifest failed"))
 	if advice == nil {
 		t.Fatal("deploy failure after create-deployment returned no recovery advice")
+		return
 	}
 	if advice.DSeq != 4242 || advice.Provider != "akash1provider" {
 		t.Fatalf("partial state = %+v, want dseq 4242 and provider", advice)

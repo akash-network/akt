@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
+	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
 	aktcodec "pkg.akt.dev/akt/internal/codec"
@@ -35,10 +36,41 @@ func testKeyring(t *testing.T) sdkkeyring.Keyring {
 	return kr
 }
 
+// recordedAction is one action-log write captured from a keys command.
+type recordedAction struct {
+	action  string
+	err     error
+	details map[string]string
+}
+
+// runKeysCommand runs a keys command with no recorder attached, which is what
+// happens when no context is selected: recording is skipped and the command
+// behaves exactly the same.
 func runKeysCommand(t *testing.T, kr sdkkeyring.Keyring, args ...string) (string, error) {
 	t.Helper()
 
-	cmd := Commands(func() (sdkkeyring.Keyring, error) { return kr, nil })
+	return runKeysCommandWith(t, kr, nil, args...)
+}
+
+// runKeysCommandRecorded runs a keys command with a capturing recorder and
+// returns what it recorded alongside the command result.
+func runKeysCommandRecorded(t *testing.T, kr sdkkeyring.Keyring, args ...string) (string, []recordedAction, error) {
+	t.Helper()
+
+	var recorded []recordedAction
+	recorder := Recorder(func(_ *cobra.Command, action string, actionErr error, details map[string]string) {
+		recorded = append(recorded, recordedAction{action: action, err: actionErr, details: details})
+	})
+
+	out, err := runKeysCommandWith(t, kr, recorder, args...)
+
+	return out, recorded, err
+}
+
+func runKeysCommandWith(t *testing.T, kr sdkkeyring.Keyring, recorder Recorder, args ...string) (string, error) {
+	t.Helper()
+
+	cmd := Commands(func() (sdkkeyring.Keyring, error) { return kr, nil }, recorder)
 	cmd.PersistentFlags().VarP(output.NewFormatFlag("pretty"), "output", "o", "Output format: pretty, json, yaml")
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
@@ -48,6 +80,7 @@ func runKeysCommand(t *testing.T, kr sdkkeyring.Keyring, args ...string) (string
 	cmd.SetArgs(args)
 
 	err := cmd.Execute()
+
 	return out.String(), err
 }
 
@@ -208,5 +241,178 @@ func TestKeysParseStructuredOutput(t *testing.T) {
 	addresses, ok := hexValue["addresses"].(map[string]any)
 	if !ok || len(addresses) != 3 {
 		t.Errorf("hex YAML addresses = %#v", hexValue["addresses"])
+	}
+}
+
+// only returns the single recorded action, failing when a command recorded a
+// different number of them.
+func only(t *testing.T, recorded []recordedAction) recordedAction {
+	t.Helper()
+
+	if len(recorded) != 1 {
+		t.Fatalf("recorded %d actions, want exactly 1: %+v", len(recorded), recorded)
+	}
+
+	return recorded[0]
+}
+
+// TestKeyMutationsAreRecorded covers the action-log coverage rule for the
+// keyring (SPEC §2.2.2): every mutation reports itself, with the key type and
+// the full address, under its own dotted action name.
+func TestKeyMutationsAreRecorded(t *testing.T) {
+	source := filepath.Join(t.TempDir(), "mnemonic.txt")
+	if err := os.WriteFile(source, []byte("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\n"), 0o600); err != nil {
+		t.Fatalf("write mnemonic fixture: %v", err)
+	}
+
+	kr := aktkeyring.NewInMemory(aktcodec.MakeEncodingConfig().Codec)
+
+	// add: a generated local key.
+	_, recorded, err := runKeysCommandRecorded(t, kr, "add", "alice")
+	if err != nil {
+		t.Fatalf("add alice: %v", err)
+	}
+	entry := only(t, recorded)
+	if entry.action != actionKeysAdd || entry.err != nil {
+		t.Errorf("add recorded %q (err %v), want %q with no error", entry.action, entry.err, actionKeysAdd)
+	}
+	if entry.details["name"] != "alice" || entry.details["type"] != keyTypeLocal {
+		t.Errorf("add details = %v", entry.details)
+	}
+
+	address, err := runKeysCommand(t, kr, "show", "alice", "--address")
+	if err != nil {
+		t.Fatalf("show alice: %v", err)
+	}
+	address = strings.TrimSpace(address)
+	if entry.details["address"] != address {
+		t.Errorf("add recorded address %q, want the full address %q", entry.details["address"], address)
+	}
+
+	// Reading a key is not a state change and records nothing.
+	if _, recorded, _ = runKeysCommandRecorded(t, kr, "list"); len(recorded) != 0 {
+		t.Errorf("read-only list recorded %+v", recorded)
+	}
+	if _, recorded, _ = runKeysCommandRecorded(t, kr, "show", "alice"); len(recorded) != 0 {
+		t.Errorf("read-only show recorded %+v", recorded)
+	}
+
+	// add --recover: a distinct action, so an audit reader can tell an
+	// imported identity from a freshly generated one.
+	_, recorded, err = runKeysCommandRecorded(t, kr, "add", "recovered", "--recover", "--source", source)
+	if err != nil {
+		t.Fatalf("recover key: %v", err)
+	}
+	entry = only(t, recorded)
+	if entry.action != actionKeysRecover || entry.details["name"] != "recovered" {
+		t.Errorf("recover recorded %q with %v", entry.action, entry.details)
+	}
+	if !strings.HasPrefix(entry.details["address"], "akash1") {
+		t.Errorf("recover recorded address %q", entry.details["address"])
+	}
+
+	// rename records both names.
+	_, recorded, err = runKeysCommandRecorded(t, kr, "rename", "alice", "alice-main")
+	if err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+	entry = only(t, recorded)
+	if entry.action != actionKeysRename || entry.details["from"] != "alice" || entry.details["to"] != "alice-main" {
+		t.Errorf("rename recorded %q with %v", entry.action, entry.details)
+	}
+
+	// delete records the address of the key that is now gone.
+	_, recorded, err = runKeysCommandRecorded(t, kr, "delete", "alice-main", "--yes")
+	if err != nil {
+		t.Fatalf("delete: %v", err)
+	}
+	entry = only(t, recorded)
+	if entry.action != actionKeysDelete || entry.details["address"] != address {
+		t.Errorf("delete recorded %q with %v, want the deleted address %q", entry.action, entry.details, address)
+	}
+}
+
+// TestFailedKeyMutationIsRecorded covers the failure path: a mutation that
+// does not happen is still part of the audit trail, and carries its error.
+func TestFailedKeyMutationIsRecorded(t *testing.T) {
+	kr := aktkeyring.NewInMemory(aktcodec.MakeEncodingConfig().Codec)
+
+	_, recorded, err := runKeysCommandRecorded(t, kr, "rename", "ghost", "ghost-main")
+	if err == nil {
+		t.Fatal("renaming a missing key must fail")
+	}
+	entry := only(t, recorded)
+	if entry.action != actionKeysRename || entry.err == nil {
+		t.Errorf("failed rename recorded %q with err %v", entry.action, entry.err)
+	}
+
+	// A rejected confirmation changes nothing and must record nothing.
+	if _, _, err := kr.NewMnemonic("bob", sdkkeyring.English, "m/44'/118'/0'/0/0", "", aktkeyring.DefaultAlgo()); err != nil {
+		t.Fatalf("seed key: %v", err)
+	}
+	if _, recorded, _ = runKeysCommandRecorded(t, kr, "delete", "nosuchkey"); len(recorded) != 0 {
+		t.Errorf("a lookup failure before the mutation recorded %+v", recorded)
+	}
+}
+
+// TestKeyRecordingNeverCarriesSecrets is the keyring counterpart of the
+// context credential rule: the log records that a key changed, never the
+// material that would let someone reproduce it.
+func TestKeyRecordingNeverCarriesSecrets(t *testing.T) {
+	mnemonic := "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+	source := filepath.Join(t.TempDir(), "mnemonic.txt")
+	if err := os.WriteFile(source, []byte(mnemonic+"\n"), 0o600); err != nil {
+		t.Fatalf("write mnemonic fixture: %v", err)
+	}
+
+	kr := aktkeyring.NewInMemory(aktcodec.MakeEncodingConfig().Codec)
+
+	out, recorded, err := runKeysCommandRecorded(t, kr, "add", "generated")
+	if err != nil {
+		t.Fatalf("add generated key: %v", err)
+	}
+	// The generated mnemonic is printed for backup, so the printed value is
+	// the exact secret that must not have been recorded.
+	generated := strings.TrimSpace(out[strings.LastIndex(out, "\n\n")+1:])
+	if len(strings.Fields(generated)) < 12 {
+		t.Fatalf("could not read the generated mnemonic back from %q", out)
+	}
+
+	_, recoveredEntries, err := runKeysCommandRecorded(t, kr, "add", "recovered", "--recover", "--source", source)
+	if err != nil {
+		t.Fatalf("recover key: %v", err)
+	}
+
+	tests := []struct {
+		entry  recordedAction
+		action string
+		name   string
+	}{
+		{entry: only(t, recorded), action: actionKeysAdd, name: "generated"},
+		{entry: only(t, recoveredEntries), action: actionKeysRecover, name: "recovered"},
+	}
+
+	for _, test := range tests {
+		entry := test.entry
+		if entry.action != test.action || entry.err != nil {
+			t.Errorf("recorded action = %q with err %v, want %q with no error", entry.action, entry.err, test.action)
+		}
+		if len(entry.details) != 3 {
+			t.Errorf("action %q recorded %d details, want 3: %v", entry.action, len(entry.details), entry.details)
+		}
+		if got := entry.details["name"]; got != test.name {
+			t.Errorf("action %q recorded name %q, want %q", entry.action, got, test.name)
+		}
+		if got := entry.details["type"]; got != keyTypeLocal {
+			t.Errorf("action %q recorded type %q, want %q", entry.action, got, keyTypeLocal)
+		}
+		if got := entry.details["address"]; !strings.HasPrefix(got, "akash1") {
+			t.Errorf("action %q recorded invalid address %q", entry.action, got)
+		}
+		for key, value := range entry.details {
+			if strings.Contains(value, mnemonic) || strings.Contains(value, generated) {
+				t.Errorf("action %q recorded mnemonic material in %q", entry.action, key)
+			}
+		}
 	}
 }

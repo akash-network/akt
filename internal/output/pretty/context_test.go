@@ -35,13 +35,14 @@ func TestRenderContextShow(t *testing.T) {
 					Name:    "default",
 					Backend: "os",
 				},
-				DefaultAccount: "deployer",
-				Gas:            "auto",
-				Fees:           "5000uakt",
-				GasPrices:      "0.025uakt",
-				GasAdjustment:  "1.5",
-				AuthType:       "certificate",
-				Root:           "/home/user/.akt",
+				DefaultAccount:  "deployer",
+				TrackedAccounts: []string{"deployer", "akash1zn43lm"},
+				Gas:             "auto",
+				Fees:            "5000uakt",
+				GasPrices:       "0.025uakt",
+				GasAdjustment:   "1.5",
+				AuthType:        "certificate",
+				Root:            "/home/user/.akt",
 			},
 		},
 		"Minimal": {
@@ -73,6 +74,51 @@ func TestRenderContextShow(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			golden.RequireEqual(t, RenderContextShow(tc.ctx, tc.effective))
 		})
+	}
+}
+
+// Every value in the view lands in one column, including the capability labels
+// ("Chain transactions:") that are wider than the default key column and used
+// to push their own values out of line (SPEC §10.12).
+func TestRenderContextShowValuesShareOneColumn(t *testing.T) {
+	rc := aktctx.Context{
+		Name: "production",
+		Network: aktctx.Network{
+			Name:      "mainnet",
+			ChainID:   "akashnet-2",
+			Endpoints: aktctx.Endpoints{RPC: []string{"https://rpc.akash.network:443"}},
+		},
+		Keyring:        aktctx.Keyring{Name: "default", Backend: "os"},
+		DefaultAccount: "deployer",
+		Gas:            "auto",
+		Root:           "/home/user/.akt",
+	}
+
+	var (
+		column = -1
+		source string
+	)
+
+	// "os" is both configured and effective here, so no divergence sub-line
+	// appears and the column check stays about the capability labels.
+	for _, line := range plainLines(RenderContextShow(rc, "os")) {
+		got, ok := valueColumnOf(line)
+		if !ok {
+			continue
+		}
+
+		if column == -1 {
+			column, source = got, line
+			continue
+		}
+
+		if got != column {
+			t.Errorf("value column %d in %q, want %d as in %q", got, line, column, source)
+		}
+	}
+
+	if column == -1 {
+		t.Fatal("rendered no key-value lines")
 	}
 }
 

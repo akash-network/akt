@@ -1,0 +1,6 @@
+[1;4;4mT[m[1;4;4mr[m[1;4;4ma[m[1;4;4mn[m[1;4;4ms[m[1;4;4ma[m[1;4;4mc[m[1;4;4mt[m[1;4;4mi[m[1;4;4mo[m[1;4;4mn[m
+  [38;2;113;113;122mHash:[m                [1m9F3C0A2E7B1D4F6089AC5321EE7740B8D2C619F5A48037BC12ED5A9F60B3417D[m
+  [38;2;113;113;122mHeight:[m              [38;2;161;161;170mnot included in a block[m
+  [38;2;113;113;122mGas Used:[m            [38;2;161;161;170mnot reported[m
+  [38;2;113;113;122mFee:[m                 [38;2;161;161;170munknown (transaction body not returned)[m
+  [38;2;113;113;122mStatus:[m              [38;2;255;65;54mfailed: out of gas in location: WritePerByte; gasWanted: 200000, gasUsed: 201045[m

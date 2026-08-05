@@ -19,15 +19,6 @@ import (
 	"github.com/cosmos/cosmos-sdk/types/tx/signing"
 )
 
-// GasEstimateResponse defines a response definition for tx gas estimation.
-type GasEstimateResponse struct {
-	GasEstimate uint64 `json:"gas_estimate" yaml:"gas_estimate"`
-}
-
-func (gr GasEstimateResponse) String() string {
-	return fmt.Sprintf("gas estimate: %d", gr.GasEstimate)
-}
-
 // SignTx signs a transaction managed by the TxBuilder using a `name` key stored in Keybase.
 // The new signature is appended to the TxBuilder when overwrite=false or overwritten otherwise.
 // Don't perform online validation or lookups if offline is true.

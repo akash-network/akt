@@ -38,7 +38,7 @@ func RenderBidList(res *mvbeta.QueryBidsResponse) string {
 			ColorState(bid.State.String()),
 		})
 	}
-	WriteTableCols(&buf, cols, rows)
+	WriteTableColsOrEmpty(&buf, cols, rows, "(no bids)")
 	return buf.String()
 }
 
@@ -93,7 +93,7 @@ func RenderLeaseList(res *mvbeta.QueryLeasesResponse) string {
 			ColorState(lease.State.String()),
 		})
 	}
-	WriteTableCols(&buf, cols, rows)
+	WriteTableColsOrEmpty(&buf, cols, rows, "(no leases)")
 	return buf.String()
 }
 
@@ -143,7 +143,7 @@ func RenderOrderList(res *mvbeta.QueryOrdersResponse) string {
 			FormatHeight(order.CreatedAt),
 		})
 	}
-	WriteTableCols(&buf, cols, rows)
+	WriteTableColsOrEmpty(&buf, cols, rows, "(no orders)")
 	return buf.String()
 }
 

@@ -269,15 +269,16 @@ signer during startup. The decision lives next to `requiresConfig` and
 `requiresContext` as `localIdentityMode`; the root passes the typed result down
 rather than making the client layer infer behavior from command names.
 
-Queries, public provider status, and MCP startup use the deferred form. A named
-default account resolves only when an omitted owner or protected gateway call
-needs it, so network-wide and explicitly scoped reads never open a key store.
-Address-based transaction generation and simulation also stay deferred; the SDK
-can build or simulate from the bech32 address without proving that the key is
-local. Signing transactions, executing workflows, and protected provider calls
-remain eager. `mcp --enable-writes` promotes a keyring context to eager so its
-advertised chain writes are usable, but a Console-only context remains
-keyring-free. Purely local commands and workflow dry-runs receive no keyring.
+Queries, `store sync`, public provider status, and MCP startup use the deferred
+form. A named default account resolves only when an omitted owner, tracked
+account, or protected gateway call needs it, so network-wide and explicitly
+scoped reads never open a key store. Address-based transaction generation and
+simulation also stay deferred; the SDK can build or simulate from the bech32
+address without proving that the key is local. Signing transactions, executing
+workflows, and protected provider calls remain eager. `mcp --enable-writes`
+promotes a keyring context to eager so its advertised chain writes are usable,
+but a Console-only context remains keyring-free. Purely local commands and
+workflow dry-runs receive no keyring.
 
 #### 3.1.2.1 Keyring Backend Resolution
 
@@ -364,6 +365,8 @@ A `console-api` context has no wallet, yet the operations users reach for most a
 4. The standard provider REST client is constructed against that gateway — `rest.NewClient(ctx, providerAddr, rest.WithProviderURL(hostUri), rest.WithAuthToken(token))` — and the call proceeds exactly as it would on a keyring context.
 
 **Why this shape**: Akash Console fronts provider gateways with a server-side `provider-proxy` websocket relay. `akt` is a native client that can reach the gateway directly, so it deliberately does **not** reimplement that relay. Step 4 hands off to the same provider client and the same streaming code paths that back `akt provider lease-status`, `lease-logs`, `lease-events`, and `lease-shell` — one implementation of log streaming, event streaming, and PTY handling, exercised by both rails. The Console-minted JWT simply substitutes for the wallet-signed JWT a keyring context would present, so `akt console status|logs|events|shell` and their `akt provider` counterparts cannot drift apart.
+
+Step 1 — resolving the deployment to its active lease, and from that lease to a provider — is a **rail-independent** identification, not a Console feature. The keyring rail performs the same resolution against the chain's market module (`internal/cli/provider`): the leases owned by the context's default account for the given `dseq` are queried, and the single active one supplies the provider address plus its `gseq`/`oseq`. `akt console status 12345` and `akt provider lease-status 12345` therefore address the same deployment with the same arguments, and `--provider` exists only to disambiguate a multi-provider deployment or to override the resolution. Making a user restate a provider that `akt` itself selected during `akt deploy` would be per-rail behavior leaking into the command layer, which the transport rule forbids.
 
 The shared gateway boundary also normalizes protocol details that providers do
 not implement uniformly. It resolves a provider address to the on-chain host
@@ -477,6 +480,24 @@ graph LR
 **Startup behavior**: On first launch for a context, the sync engine performs a full reconciliation by querying all deployments owned by accounts in the context. Subsequent launches use incremental sync from the last known block height.
 
 **Reconnection**: On WebSocket disconnect, the engine uses exponential backoff (1s, 2s, 4s, ... up to 60s) with jitter. Missed blocks are reconciled by querying the range between last-synced height and current height.
+
+**Why the CLI does not rely on it.** Subscription-driven sync assumes a session
+that outlives the transactions it watches. A CLI invocation does not: `akt
+deploy` broadcasts, prints, and exits, so the events its own transactions
+produce arrive after the process is gone. Two paths cover the CLI instead, and
+both are deliberate rather than a fallback:
+
+- A workflow run writes its own outcome to the store as its last act
+  (SPEC §6.6). It is the only component that saw the run, and it writes
+  best-effort: the deployment is already on chain, so a store failure warns and
+  leaves the exit code alone.
+- `akt store sync` (SPEC §2.5) runs the same full reconciliation the engine
+  would run at startup, over the context's tracked accounts. It is the user's
+  escape hatch for everything a single run cannot see — pre-existing
+  deployments, escrow balances that move every block, leases a provider closed.
+
+The subscription path remains the design for long-lived sessions; it is not the
+mechanism the one-shot CLI depends on.
 
 ### 3.5 Transport Translation Layer
 
@@ -1050,7 +1071,7 @@ never handle.
 | `akash query market orders`             | `akt query market order [filter]`            | Filter: `[owner/]dseq[/gseq/oseq]`                        |
 | `akash query market bids`               | `akt query market bid [filter]`              | Filter: `[owner/]dseq[/…/provider]`; `--by provider` reverses hierarchy |
 | `akash query market leases`             | `akt query market lease [filter]`            | Filter: `[owner/]dseq[/…/provider]`; `--by provider` reverses hierarchy |
-| `akash query provider list`/`get`       | `akt query provider [address]`               | Optional positional arg (unchanged)                        |
+| `akash query provider list`/`get`       | `akt query provider [address]`               | Address → one provider; no arg → list. `list`/`get` remain as aliases |
 | `akash query cert list`                 | `akt query cert [owner]`                     | Filter by owner; no arg → default account                  |
 | `akash query audit list`/`get`          | `akt query audit [owner]`                    | Filter by owner; no arg → list all                         |
 | `akash query escrow accounts`           | `akt query escrow [filter]`                  | Filter: `[owner[/dseq]]`                                   |
@@ -1071,14 +1092,14 @@ never handle.
 | Current (`provider-services`)         | New (`akt`)                      | Notes              |
 | ------------------------------------- | -------------------------------- | ------------------ |
 | `provider-services status`            | `akt provider status`            | Identical behavior |
-| `provider-services lease-status`      | `akt provider lease-status`      | Identical behavior |
-| `provider-services lease-logs`        | `akt provider lease-logs`        | Identical behavior |
-| `provider-services lease-events`      | `akt provider lease-events`      | Identical behavior |
-| `provider-services lease-shell`       | `akt provider lease-shell`       | Identical behavior |
-| `provider-services send-manifest`     | `akt provider send-manifest`     | Identical behavior |
-| `provider-services get-manifest`      | `akt provider get-manifest`      | Identical behavior |
-| `provider-services migrate-hostnames` | `akt provider migrate-hostnames` | Identical behavior |
-| `provider-services migrate-endpoints` | `akt provider migrate-endpoints` | Identical behavior |
+| `provider-services lease-status`      | `akt provider lease-status`      | `--provider` optional: resolved from the deployment's active lease |
+| `provider-services lease-logs`        | `akt provider lease-logs`        | `--provider` optional: resolved from the deployment's active lease |
+| `provider-services lease-events`      | `akt provider lease-events`      | `--provider` optional: resolved from the deployment's active lease |
+| `provider-services lease-shell`       | `akt provider lease-shell`       | `--provider` optional: resolved from the deployment's active lease |
+| `provider-services send-manifest`     | `akt provider send-manifest`     | `--provider` optional: defaults to every provider with an active lease |
+| `provider-services get-manifest`      | `akt provider get-manifest`      | `--provider` optional: resolved from the deployment's active lease |
+| `provider-services migrate-hostnames` | `akt provider migrate-hostnames` | `--provider` optional: resolved from the destination deployment's active lease |
+| `provider-services migrate-endpoints` | `akt provider migrate-endpoints` | `--provider` optional: resolved from the destination deployment's active lease |
 
 
 ### 7.3 Commands NOT Migrated

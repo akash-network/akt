@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
@@ -22,6 +23,66 @@ import (
 	aktkeyring "pkg.akt.dev/akt/internal/keyring"
 	"pkg.akt.dev/akt/internal/output"
 )
+
+// Action identifiers recorded in the action log. They are namespaced under
+// "keys." so `akt context log --type context` keeps key management readable
+// and distinct from the bare create/delete/rename context actions
+// (SPEC §2.2.2).
+const (
+	actionKeysAdd     = "keys.add"
+	actionKeysRecover = "keys.recover"
+	actionKeysDelete  = "keys.delete"
+	actionKeysRename  = "keys.rename"
+	actionKeysImport  = "keys.import"
+	actionKeysExport  = "keys.export"
+)
+
+// Key types as recorded in the action log when the keyring cannot report one
+// itself, i.e. when the mutation failed.
+const (
+	keyTypeLocal  = "local"
+	keyTypeLedger = "ledger"
+	keyTypeMulti  = "multi"
+)
+
+// Recorder records one key-management action in the action log of the context
+// the command is running against (SPEC §2.2.2, §5.6). A nil actionErr records
+// a successful mutation, a non-nil one records the failed attempt.
+//
+// The keys commands cannot open that log themselves: it belongs to a context,
+// and internal/cli/context — which owns the single write path for context
+// entries — imports this package, so the dependency can only run the other
+// way. The recorder is therefore injected. A nil Recorder disables recording.
+//
+// Secret material (mnemonics, BIP39 passphrases, armor passphrases, armored
+// keys) is never passed to a Recorder.
+type Recorder func(cmd *cobra.Command, action string, actionErr error, details map[string]string)
+
+func (r Recorder) record(cmd *cobra.Command, action string, actionErr error, details map[string]string) {
+	if r == nil {
+		return
+	}
+
+	r(cmd, action, actionErr, details)
+}
+
+// keyMutationDetails builds the parameters recorded for a key mutation. When
+// the keyring returned a record, it supplies the authoritative key type and
+// the full address (never truncated); a failed mutation records only the name
+// and the requested type.
+func keyMutationDetails(name, keyType string, rec *sdkkeyring.Record) map[string]string {
+	details := map[string]string{"name": name, "type": keyType}
+
+	if rec != nil {
+		details["type"] = rec.GetType().String()
+
+		if addr, err := rec.GetAddress(); err == nil {
+			details["address"] = addr.String()
+		}
+	}
+
+	return details
+}
 
 type keyDetails struct {
 	Name    string `json:"name"    yaml:"name"`
@@ -57,8 +118,9 @@ func (value quotedMachineScalar) MarshalYAML() (any, error) {
 	}, nil
 }
 
-// Commands returns the "keys" command tree.
-func Commands(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
+// Commands returns the "keys" command tree. recorder receives every keyring
+// mutation for the action log (SPEC §2.2.2); it may be nil.
+func Commands(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "keys",
 		RunE:  sdkclient.ValidateCmd,
@@ -67,13 +129,13 @@ func Commands(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 	}
 
 	cmd.AddCommand(
-		addCmd(getKeyring),
-		deleteCmd(getKeyring),
+		addCmd(getKeyring, recorder),
+		deleteCmd(getKeyring, recorder),
 		listCmd(getKeyring),
 		showCmd(getKeyring),
-		exportCmd(getKeyring),
-		importCmd(getKeyring),
-		renameCmd(getKeyring),
+		exportCmd(getKeyring, recorder),
+		importCmd(getKeyring, recorder),
+		renameCmd(getKeyring, recorder),
 		mnemonicCmd(),
 		parseCmd(),
 	)
@@ -81,7 +143,7 @@ func Commands(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 	return cmd
 }
 
-func addCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
+func addCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "add <name>",
 		Short: "Add a new key or recover an existing one",
@@ -113,7 +175,7 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 			multisigKeys, _ := cmd.Flags().GetString("multisig")
 			if multisigKeys != "" {
 				threshold, _ := cmd.Flags().GetInt("multisig-threshold")
-				return addMultisig(cmd, kr, name, multisigKeys, threshold)
+				return addMultisig(cmd, kr, recorder, name, multisigKeys, threshold)
 			}
 
 			coinType, _ := cmd.Flags().GetUint32("coin-type")
@@ -130,6 +192,8 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 			useLedger, _ := cmd.Flags().GetBool("ledger")
 			if useLedger {
 				record, err := kr.SaveLedgerKey(name, algo, "cosmos", coinType, account, index)
+				recorder.record(cmd, actionKeysAdd, err, keyMutationDetails(name, keyTypeLedger, record))
+
 				if err != nil {
 					return fmt.Errorf("add ledger key: %w", err)
 				}
@@ -185,6 +249,17 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 			}
 
 			record, err := kr.NewAccount(name, mnemonic, bip39Passphrase, path, algo)
+
+			// Recovering an existing key and generating a new one are
+			// different events for an audit reader; neither records the
+			// mnemonic or the BIP39 passphrase.
+			addAction := actionKeysAdd
+			if recoverKey || source != "" {
+				addAction = actionKeysRecover
+			}
+
+			recorder.record(cmd, addAction, err, keyMutationDetails(name, keyTypeLocal, record))
+
 			if err != nil {
 				return fmt.Errorf("create key: %w", err)
 			}
@@ -226,7 +301,7 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 	return cmd
 }
 
-func addMultisig(cmd *cobra.Command, kr sdkkeyring.Keyring, name, keyNames string, threshold int) error {
+func addMultisig(cmd *cobra.Command, kr sdkkeyring.Keyring, recorder Recorder, name, keyNames string, threshold int) error {
 	names := strings.Split(keyNames, ",")
 	pks := make([]cryptotypes.PubKey, 0, len(names))
 
@@ -248,6 +323,12 @@ func addMultisig(cmd *cobra.Command, kr sdkkeyring.Keyring, name, keyNames strin
 	pk := multisig.NewLegacyAminoPubKey(threshold, pks)
 
 	record, err := kr.SaveMultisig(name, pk)
+
+	multisigDetails := keyMutationDetails(name, keyTypeMulti, record)
+	multisigDetails["threshold"] = strconv.Itoa(threshold)
+	multisigDetails["pubkeys"] = strconv.Itoa(len(pks))
+	recorder.record(cmd, actionKeysAdd, err, multisigDetails)
+
 	if err != nil {
 		return fmt.Errorf("save multisig: %w", err)
 	}
@@ -291,7 +372,7 @@ func printAddedKey(cmd *cobra.Command, result keyAddResult) error {
 	return nil
 }
 
-func deleteCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
+func deleteCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "delete <name>",
 		Short:   "Delete a key from the keyring",
@@ -305,7 +386,11 @@ func deleteCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 
 			name := args[0]
 
-			if _, err := kr.Key(name); err != nil {
+			// Read the record before deleting it: afterwards its type and
+			// address are gone, and they are what identifies the deleted key
+			// in the log.
+			record, err := kr.Key(name)
+			if err != nil {
 				return fmt.Errorf("key %q not found", name)
 			}
 
@@ -316,13 +401,18 @@ func deleteCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 				var answer string
 				_, _ = fmt.Scanln(&answer)
 
+				// A declined confirmation changes nothing, so it is not an
+				// action to record.
 				if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
 					fmt.Println("Cancelled.")
 					return nil
 				}
 			}
 
-			return kr.Delete(name)
+			deleteErr := kr.Delete(name)
+			recorder.record(cmd, actionKeysDelete, deleteErr, keyMutationDetails(name, keyTypeLocal, record))
+
+			return deleteErr
 		},
 	}
 
@@ -476,7 +566,7 @@ func showCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 	return cmd
 }
 
-func exportCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
+func exportCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *cobra.Command {
 	return &cobra.Command{
 		Use:     "export <name>",
 		Short:   "Export a private key (encrypted armor)",
@@ -501,6 +591,13 @@ func exportCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 			}
 
 			armor, err := kr.ExportPrivKeyArmor(name, passphrase)
+
+			// Export changes no state, but it is the one command that moves
+			// private key material out of the keyring, so it is recorded as a
+			// security event (SPEC §2.2.2). Only the key name is recorded --
+			// never the passphrase or the armor.
+			recorder.record(cmd, actionKeysExport, err, map[string]string{"name": name})
+
 			if err != nil {
 				return fmt.Errorf("export key %q: %w", name, err)
 			}
@@ -512,7 +609,7 @@ func exportCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 	}
 }
 
-func importCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
+func importCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *cobra.Command {
 	return &cobra.Command{
 		Use:     "import <name> <keyfile>",
 		Short:   "Import a private key from encrypted armor file",
@@ -538,8 +635,19 @@ func importCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 			passphrase, _ := reader.ReadString('\n')
 			passphrase = strings.TrimSpace(passphrase)
 
-			if err := kr.ImportPrivKey(name, string(data), passphrase); err != nil {
-				return fmt.Errorf("import key: %w", err)
+			importErr := kr.ImportPrivKey(name, string(data), passphrase)
+
+			// The imported record carries the address the log needs; neither
+			// the armor nor the passphrase is ever recorded.
+			var record *sdkkeyring.Record
+			if importErr == nil {
+				record, _ = kr.Key(name)
+			}
+
+			recorder.record(cmd, actionKeysImport, importErr, keyMutationDetails(name, keyTypeLocal, record))
+
+			if importErr != nil {
+				return fmt.Errorf("import key: %w", importErr)
 			}
 
 			fmt.Printf("Key %q imported successfully.\n", name)
@@ -549,7 +657,7 @@ func importCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 	}
 }
 
-func renameCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
+func renameCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *cobra.Command {
 	return &cobra.Command{
 		Use:     "rename <old> <new>",
 		Short:   "Rename a key",
@@ -561,8 +669,11 @@ func renameCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 				return err
 			}
 
-			if err := kr.Rename(args[0], args[1]); err != nil {
-				return fmt.Errorf("rename key: %w", err)
+			renameErr := kr.Rename(args[0], args[1])
+			recorder.record(cmd, actionKeysRename, renameErr, map[string]string{"from": args[0], "to": args[1]})
+
+			if renameErr != nil {
+				return fmt.Errorf("rename key: %w", renameErr)
 			}
 
 			fmt.Printf("Key renamed from %q to %q.\n", args[0], args[1])

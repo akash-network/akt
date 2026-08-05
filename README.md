@@ -90,7 +90,7 @@ Subcommands for direct access: `akt monitor network`, `akt monitor provider`, `a
 
 ### Action Log
 
-Per-context append-only JSONL log recording every mutating operation: tx, workflow, provider, context, and console actions. Read-only queries are not recorded by design. `akt context log` reads entries newest-first with `--type`, `--since`, and `--limit` filters. Automatic rotation at 10 MB (up to 5 rotated files kept).
+Per-context append-only JSONL log recording every mutating operation: tx, workflow, provider, context, key management, and console actions. Read-only queries are not recorded by design, the one exception being `context keys export`, which is recorded as a security event because it moves private key material out of the keyring. Secrets themselves -- mnemonics, passphrases, key material, API keys -- are never written to the log. `akt context log` reads entries newest-first with `--type`, `--workflow-id`, `--since`, and `--limit` filters, summarizing each entry by what identifies it (the step and run of a workflow, the deployment of a transaction, the parameters of a context change). Automatic rotation at 10 MB (up to 5 rotated files kept).
 
 ### Output Formatting
 
@@ -450,6 +450,9 @@ akt context log
 
 # Filter by type and limit
 akt context log --type tx --limit 10
+
+# Follow one deploy run step by step (the run id shown in SUMMARY)
+akt context log --workflow-id 9f2c1ab34d55e017
 
 # Show actions since a duration or timestamp
 akt context log --since 1h

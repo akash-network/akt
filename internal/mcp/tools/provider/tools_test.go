@@ -121,6 +121,7 @@ func TestProtectedProviderGatewayHandlersAuthenticate(t *testing.T) {
 			}
 			if result == nil {
 				t.Fatal("handler returned no result")
+				return
 			}
 			if result.IsError {
 				t.Fatalf("handler returned an MCP error: %s", resultText(result))

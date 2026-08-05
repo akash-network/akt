@@ -2,7 +2,6 @@ package network
 
 import (
 	"fmt"
-	"strings"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
@@ -168,52 +167,39 @@ func listCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			m := mgr()
 			nets := m.ListNetworks()
 
+			// Structured output is a list, empty or not: an empty result
+			// must not turn a JSON array into prose (SPEC §10.3).
+			if f := output.FormatFromCmd(cmd); f != output.FormatTable {
+				type networkRow struct {
+					Name    string   `json:"name"     yaml:"name"`
+					ChainID string   `json:"chain_id" yaml:"chain-id"`
+					RPC     []string `json:"rpc"      yaml:"rpc"`
+					UsedBy  []string `json:"used_by"  yaml:"used-by"`
+				}
+
+				data := make([]networkRow, 0, len(nets))
+				for _, n := range nets {
+					data = append(data, networkRow{
+						Name:    n.Name,
+						ChainID: n.ChainID,
+						RPC:     n.Endpoints.RPC,
+						UsedBy:  m.NetworkUsers(n.Name),
+					})
+				}
+
+				return output.Fprint(cmd.OutOrStdout(), f, data)
+			}
+
 			if len(nets) == 0 {
-				fmt.Println("No networks configured. Create one with: akt context network create <name> --template mainnet")
-				return nil
+				_, err := fmt.Fprintln(cmd.OutOrStdout(),
+					"No networks configured. Create one with: akt context network create <name> --template mainnet")
+				return err
 			}
 
-			type networkRow struct {
-				Name    string   `json:"name"     yaml:"name"`
-				ChainID string   `json:"chain_id" yaml:"chain-id"`
-				RPC     []string `json:"rpc"      yaml:"rpc"`
-				UsedBy  []string `json:"used_by"  yaml:"used-by"`
-			}
-
-			data := make([]networkRow, 0, len(nets))
-			columns := []output.Column{
-				{Header: "NAME"},
-				{Header: "CHAIN-ID"},
-				{Header: "RPC"},
-				{Header: "USED BY"},
-			}
-
-			rows := make([][]string, 0, len(nets))
-			for _, n := range nets {
-				rpcDisplay := ""
-				if len(n.Endpoints.RPC) > 0 {
-					rpcDisplay = truncate(n.Endpoints.RPC[0], 40)
-					if len(n.Endpoints.RPC) > 1 {
-						rpcDisplay += fmt.Sprintf(" (+%d)", len(n.Endpoints.RPC)-1)
-					}
-				}
-
-				users := m.NetworkUsers(n.Name)
-				usedBy := "(none)"
-				if len(users) > 0 {
-					usedBy = strings.Join(users, ", ")
-				}
-
-				rows = append(rows, []string{n.Name, n.ChainID, rpcDisplay, usedBy})
-				data = append(data, networkRow{
-					Name:    n.Name,
-					ChainID: n.ChainID,
-					RPC:     n.Endpoints.RPC,
-					UsedBy:  users,
-				})
-			}
-
-			return output.PrintData(cmd, columns, rows, data)
+			// Pretty output goes through the shared renderer, so the CLI and
+			// the TUI network list stay identical (SPEC §10.8).
+			_, err := fmt.Fprint(output.TerminalAwareWriter(cmd.OutOrStdout()), pretty.RenderNetworkList(nets, m.NetworkUsers))
+			return err
 		},
 	}
 }
@@ -243,12 +229,4 @@ func showCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			return err
 		},
 	}
-}
-
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-
-	return s[:maxLen-3] + "..."
 }

@@ -21,6 +21,7 @@ func mustBool(t *testing.T, field string, p *bool) bool {
 
 	if p == nil {
 		t.Fatalf("%s is unset; the MCP default would apply instead", field)
+		return false
 	}
 
 	return *p

@@ -3,6 +3,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"pkg.akt.dev/akt/internal/cliutil"
+	aktctx "pkg.akt.dev/akt/internal/context"
 	"pkg.akt.dev/akt/internal/output"
 	"pkg.akt.dev/akt/internal/output/pretty"
 	sstore "pkg.akt.dev/akt/internal/store"
@@ -19,16 +21,17 @@ import (
 )
 
 // Commands returns the `akt store` command group.
-func Commands(homeFn func() string, ctxNameFn func() string) *cobra.Command {
+func Commands(homeFn func() string, ctxNameFn func() string, mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "store",
 		RunE:  sdkclient.ValidateCmd,
 		Short: "Manage the local deployment store",
-		Long:  "View store status, export records, and import from backups.",
+		Long:  "View store status, sync with the chain, export records, and import from backups.",
 	}
 
 	cmd.AddCommand(
 		statusCmd(homeFn, ctxNameFn),
+		syncCmd(homeFn, ctxNameFn, mgrFn),
 		exportCmd(homeFn, ctxNameFn),
 		importCmd(homeFn, ctxNameFn),
 	)
@@ -36,19 +39,15 @@ func Commands(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 	return cmd
 }
 
+// storePath resolves the context's store database through the shared path
+// helper, so every consumer (this group, the workflow persistence of SPEC
+// §6.6) is guaranteed to open the same file.
 func storePath(homeFn func() string, ctxNameFn func() string) string {
-	return filepath.Join(homeFn(), "contexts", ctxNameFn(), "store", "deployments.db")
+	return aktctx.StoreDBPath(homeFn(), ctxNameFn())
 }
 
-func openStore(homeFn func() string, ctxNameFn func() string) (sstore.Store, error) {
-	p := storePath(homeFn, ctxNameFn)
-
-	// Ensure the directory exists.
-	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
-		return nil, fmt.Errorf("create store directory: %w", err)
-	}
-
-	return bbolt.Open(p)
+func openStore(ctx context.Context, homeFn func() string, ctxNameFn func() string) (sstore.Store, error) {
+	return bbolt.OpenContext(ctx, homeFn(), ctxNameFn())
 }
 
 func statusCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
@@ -59,13 +58,13 @@ func statusCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 		Example: `  # Show store status for the current context
   akt store status`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, err := openStore(homeFn, ctxNameFn)
+			ctx := cmd.Context()
+
+			s, err := openStore(ctx, homeFn, ctxNameFn)
 			if err != nil {
 				return fmt.Errorf("open store: %w", err)
 			}
 			defer func() { _ = s.Close() }()
-
-			ctx := cmd.Context()
 
 			stats, err := s.Stats(ctx)
 			if err != nil {
@@ -140,7 +139,7 @@ func exportCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
   # Export to a file as JSON
   akt store export -o json --file backup.json`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			s, err := openStore(homeFn, ctxNameFn)
+			s, err := openStore(cmd.Context(), homeFn, ctxNameFn)
 			if err != nil {
 				return fmt.Errorf("open store: %w", err)
 			}
@@ -204,7 +203,7 @@ func importCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 				return nil
 			}
 
-			s, err := openStore(homeFn, ctxNameFn)
+			s, err := openStore(cmd.Context(), homeFn, ctxNameFn)
 			if err != nil {
 				return fmt.Errorf("open store: %w", err)
 			}

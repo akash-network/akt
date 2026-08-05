@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -16,6 +17,8 @@ import (
 
 	"pkg.akt.dev/akt/internal/capability"
 	aktctx "pkg.akt.dev/akt/internal/context"
+	sstore "pkg.akt.dev/akt/internal/store"
+	"pkg.akt.dev/akt/internal/store/bbolt"
 	wf "pkg.akt.dev/akt/internal/workflow"
 	"pkg.akt.dev/akt/internal/workflow/builtin"
 )
@@ -107,6 +110,7 @@ steps:
 	cmd := findCommand(Commands(homeFn, ctxNameFn), "foo")
 	if cmd == nil {
 		t.Fatalf("Commands() did not surface %q after its workflow was written", "foo")
+		return
 	}
 	if cmd.Short != "A user-defined workflow" {
 		t.Fatalf("foo command Short = %q, want %q", cmd.Short, "A user-defined workflow")
@@ -169,6 +173,7 @@ func TestCommandFromDefClose(t *testing.T) {
 	dseq := cmd.Flags().Lookup("dseq")
 	if dseq == nil {
 		t.Fatal("close command missing --dseq flag")
+		return
 	}
 	if dseq.Value.Type() != "int" {
 		t.Fatalf("--dseq flag type = %q, want %q", dseq.Value.Type(), "int")
@@ -238,6 +243,7 @@ steps:
 	cmd := findCommand(Commands(homeFn, ctxNameFn), "close")
 	if cmd == nil {
 		t.Fatal("Commands() did not surface close")
+		return
 	}
 	if cmd.Short != "Custom close override" {
 		t.Fatalf("close Short = %q, want the user override %q", cmd.Short, "Custom close override")
@@ -264,6 +270,7 @@ func TestCommandFromDefTxFlags(t *testing.T) {
 	dryRun := cmd.Flags().Lookup("dry-run")
 	if dryRun == nil {
 		t.Fatal("close command missing --dry-run flag")
+		return
 	}
 	if !strings.Contains(dryRun.Usage, "execution plan") {
 		t.Errorf("--dry-run usage = %q, want the workflow meaning, not the tx simulate meaning", dryRun.Usage)
@@ -542,6 +549,51 @@ func TestExecuteConsoleDeployEndToEnd(t *testing.T) {
 	}
 	if strings.Contains(out, "send-manifest  ") {
 		t.Errorf("send-manifest must not run for console auth:\n%s", out)
+	}
+
+	// SPEC §6.6: the run records its own outcome. Before this, a fully
+	// successful deploy left `akt store status` reporting an empty store.
+	st, err := bbolt.OpenContext(context.Background(), home, "console")
+	if err != nil {
+		t.Fatalf("open store: %v", err)
+	}
+	defer func() { _ = st.Close() }()
+
+	dep, err := st.GetDeployment(context.Background(), "o", 4242)
+	if err != nil {
+		t.Fatalf("GetDeployment: %v", err)
+	}
+	if dep == nil {
+		t.Fatal("a completed deploy left the local store empty")
+		return
+	}
+	if dep.State != "active" || dep.SDLPath != sdlPath {
+		t.Errorf("stored deployment = %+v, want active with the deployed SDL path", dep)
+	}
+
+	storedLeases, err := st.ListLeases(context.Background(), sstore.LeaseFilter{Owner: "o", DSeq: 4242})
+	if err != nil {
+		t.Fatalf("ListLeases: %v", err)
+	}
+	if len(storedLeases) != 1 || storedLeases[0].ID.Provider != "akash1cheap" {
+		t.Errorf("stored leases = %+v, want the won lease", storedLeases)
+	}
+
+	bids, err := st.ListBids(context.Background(), sstore.BidFilter{Owner: "o", DSeq: 4242})
+	if err != nil {
+		t.Fatalf("ListBids: %v", err)
+	}
+	if len(bids) != 2 {
+		t.Fatalf("stored bids = %d, want every bid seen", len(bids))
+	}
+	for _, b := range bids {
+		want := "lost"
+		if b.ID.Provider == "akash1cheap" {
+			want = "matched"
+		}
+		if b.State != want {
+			t.Errorf("bid from %s = %q, want %q", b.ID.Provider, b.State, want)
+		}
 	}
 }
 

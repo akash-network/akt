@@ -426,7 +426,7 @@ the deployment is created.`,
 	}
 
 	root.AddCommand(cliconsole.Commands(mgrFn))
-	root.AddCommand(clistore.Commands(homeFn, ctxNameFn))
+	root.AddCommand(clistore.Commands(homeFn, ctxNameFn, mgrFn))
 
 	// Workflow commands are discovered dynamically from workflow definitions.
 	// Only workflows that exist (built-in or user-defined YAML) produce commands.
@@ -639,7 +639,10 @@ func localIdentityMode(cmd *cobra.Command) aktclient.LocalIdentityMode {
 	// fix a context whose configured backend this host cannot open.
 	case strings.HasPrefix(path, "akt context"):
 		return aktclient.LocalIdentityNone
-	// The store is a local bbolt database.
+	// Store reconciliation queries chain state and may resolve a named tracked
+	// or default account. Other store operations only touch local bbolt data.
+	case path == "akt store sync":
+		return aktclient.LocalIdentityOnDemand
 	case strings.HasPrefix(path, "akt store"):
 		return aktclient.LocalIdentityNone
 	// The Console rail authenticates with an API key; its contexts may have

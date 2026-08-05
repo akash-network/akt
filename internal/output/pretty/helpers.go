@@ -208,6 +208,30 @@ func TrimDecTrailingZeros(s string) string {
 	return s
 }
 
+// priceDecimals is the precision every price is reported at. The oracle
+// publishes its source prices with 8 decimal places (`0.53598949`), but values
+// the chain derives from them — a TWAP, a remint credit price — are LegacyDecs
+// carrying all 18 (`0.536004234885265376`). Reporting both as they arrive puts
+// two widths on the same quantity in the same view. Rounding derived prices to
+// the oracle's own precision loses nothing real and makes them comparable.
+const priceDecimals = 8
+
+// FormatPriceDec formats a decimal price at priceDecimals with trailing zeros
+// stripped, guarding the nil Dec proto3 leaves for an unset field.
+//
+// Prices are rounded far finer than ratios: they are quoted in whole units, so
+// AKT near `0.003125` must survive intact.
+func FormatPriceDec(d math.LegacyDec) string {
+	return TrimDecTrailingZeros(roundDec(DecOrZero(d), priceDecimals).String())
+}
+
+// roundDec rounds a decimal to places decimal places, half away from zero.
+func roundDec(d math.LegacyDec, places int64) math.LegacyDec {
+	scale := math.LegacyNewDec(10).Power(uint64(places))
+
+	return math.LegacyNewDecFromInt(d.Mul(scale).RoundInt()).Quo(scale)
+}
+
 // FormatHeight formats a block height with comma grouping.
 func FormatHeight(height int64) string {
 	if height <= 0 {
@@ -274,16 +298,33 @@ func Section(title string) string {
 	return StyleSection.Render(title)
 }
 
+// Key column geometry for KV/SubKV (SPEC §10.12).
+//
+// SubKV is indented SubKVIndentDelta columns deeper than KV, so its key column
+// is that much narrower and both land their values in the same column. Padding
+// never truncates, so a key wider than its column pushes its own value out of
+// line: a section whose keys do not fit the defaults must widen BOTH columns
+// together, via KVWidth and SubKVWidth, keeping the delta.
+const (
+	// KVKeyWidth is the default KV key column width.
+	KVKeyWidth = 20
+	// SubKVIndentDelta is how much deeper SubKV indents than KV.
+	SubKVIndentDelta = 4
+	// SubKVKeyWidth is the SubKV key column width matching KVKeyWidth.
+	SubKVKeyWidth = KVKeyWidth - SubKVIndentDelta
+)
+
 // KV writes a key-value pair with consistent alignment.
 // The key is rendered in the dim/faint style with a trailing colon.
 // Padding is ANSI-aware so styled keys align correctly.
 func KV(w io.Writer, key, value string) {
-	styled := StyleKey.Render(key + ":")
-	fmt.Fprintf(w, "  %s %s\n", padRight(styled, 20), value)
+	KVWidth(w, KVKeyWidth, key, value)
 }
 
 // KVWidth writes a key-value pair like KV but with a custom key column width.
-// Use this when the default KV width (20) is too narrow for the keys in a section.
+// Use this when the default KV width (KVKeyWidth) is too narrow for the keys in
+// a section; pair it with SubKVWidth(width-SubKVIndentDelta) for any SubKV
+// entries in the same section.
 func KVWidth(w io.Writer, width int, key, value string) {
 	styled := StyleKey.Render(key + ":")
 	fmt.Fprintf(w, "  %s %s\n", padRight(styled, width), value)
@@ -300,8 +341,16 @@ func KVHeader(w io.Writer, key string) {
 // Uses 6-space indent (vs KV's 2-space) with a narrower key column
 // so that values align with parent KV entries at the same column.
 func SubKV(w io.Writer, key, value string) {
+	SubKVWidth(w, SubKVKeyWidth, key, value)
+}
+
+// SubKVWidth writes a sub-key-value pair like SubKV but with a custom key
+// column width. It is the SubKV counterpart of KVWidth: a section that widens
+// its KV column to width must widen its SubKV column to
+// width-SubKVIndentDelta, or the two stop sharing a value column.
+func SubKVWidth(w io.Writer, width int, key, value string) {
 	styled := StyleKey.Render(key + ":")
-	fmt.Fprintf(w, "      %s %s\n", padRight(styled, 16), value)
+	fmt.Fprintf(w, "      %s %s\n", padRight(styled, width), value)
 }
 
 // FormatResourceBytes formats a byte count (from ResourceValue) as a
@@ -391,34 +440,61 @@ func padLeft(s string, width int) string {
 	return strings.Repeat(" ", width-dw) + s
 }
 
-// padCenter centers a string within width based on its display width (ANSI-aware).
-// Extra padding goes to the right when the space is odd.
-func padCenter(s string, width int) string {
-	dw := displayWidth(s)
-	if dw >= width {
-		return s
+// DefaultEmptyMessage is what a table prints when it has no rows and the
+// caller did not name what is missing. Callers should name it — see
+// WriteTableOrEmpty.
+const DefaultEmptyMessage = "(no results)"
+
+// colDefs converts plain string headers into left-aligned column definitions.
+func colDefs(headers []string) []ColDef {
+	cols := make([]ColDef, len(headers))
+	for i, h := range headers {
+		cols[i] = ColDef{Header: h}
 	}
-	total := width - dw
-	left := total / 2
-	right := total - left
-	return strings.Repeat(" ", left) + s + strings.Repeat(" ", right)
+	return cols
 }
 
 // WriteTable writes a table with headers and rows to w using simple string headers.
 // All columns are left-aligned. For right-aligned columns use WriteTableCols.
+//
+// With no rows it writes DefaultEmptyMessage rather than a bare header; prefer
+// WriteTableOrEmpty, which names what is missing.
 func WriteTable(w io.Writer, headers []string, rows [][]string) {
-	cols := make([]ColDef, len(headers))
-	for i, h := range headers {
-		cols[i] = ColDef{Header: h}
+	WriteTableCols(w, colDefs(headers), rows)
+}
+
+// WriteTableOrEmpty writes a table like WriteTable, or emptyMsg (dimmed) when
+// there are no rows. emptyMsg names what was searched for — "(no deployments)",
+// "(no bids)" — because a table header with nothing under it reads as a
+// rendering failure rather than as an empty result (SPEC §10.3).
+func WriteTableOrEmpty(w io.Writer, headers []string, rows [][]string, emptyMsg string) {
+	WriteTableColsOrEmpty(w, colDefs(headers), rows, emptyMsg)
+}
+
+// WriteTableColsOrEmpty is WriteTableOrEmpty for tables with column
+// definitions (supporting alignment).
+func WriteTableColsOrEmpty(w io.Writer, cols []ColDef, rows [][]string, emptyMsg string) {
+	if len(rows) == 0 {
+		fmt.Fprintln(w, Dim(emptyMsg))
+		return
 	}
 	WriteTableCols(w, cols, rows)
 }
 
 // WriteTableCols writes a table with column definitions (supporting alignment)
 // and rows to w. Column widths are computed based on display width (stripping
-// ANSI escape codes) so that styled text does not break alignment.
+// ANSI escape codes) so that styled text does not break alignment. Each header
+// is aligned like the column it labels.
+//
+// With no rows it writes DefaultEmptyMessage rather than a bare header; prefer
+// WriteTableColsOrEmpty, which names what is missing.
 func WriteTableCols(w io.Writer, cols []ColDef, rows [][]string) {
 	const colGap = 2
+
+	if len(rows) == 0 {
+		fmt.Fprintln(w, Dim(DefaultEmptyMessage))
+		return
+	}
 
 	// Style headers.
 	styledHeaders := make([]string, len(cols))
@@ -441,12 +517,17 @@ func WriteTableCols(w io.Writer, cols []ColDef, rows [][]string) {
 		}
 	}
 
-	// Print header (always centered within column width).
+	// Print header. A header is padded exactly like the column it labels, so
+	// it sits over its own data instead of floating mid-column.
 	for i, h := range styledHeaders {
 		if i > 0 {
 			fmt.Fprint(w, strings.Repeat(" ", colGap))
 		}
-		fmt.Fprint(w, padCenter(h, colWidths[i]))
+		if cols[i].Align == AlignRight {
+			fmt.Fprint(w, padLeft(h, colWidths[i]))
+		} else {
+			fmt.Fprint(w, padRight(h, colWidths[i]))
+		}
 	}
 	fmt.Fprintln(w)
 

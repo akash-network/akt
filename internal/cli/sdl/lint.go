@@ -87,12 +87,18 @@ func invalidImageReferenceIssue(service, image string, err error) *Issue {
 	}
 }
 
-// lintPricing checks placement pricing denoms. This deliberately softens the
-// reference rule: console-axi hard-rejects anything but "uact" because it
-// only talks to the managed Console API, whereas akt serves both rails —
-// "uakt" is perfectly valid for on-chain deployments. So "uact" passes,
-// "uakt" produces a warning (managed console-api contexts price in uact),
-// and any other denom is an error, matching the reference.
+// lintPricing checks placement pricing denoms. "uact" is the deployment pricing
+// denom on both rails: akt auto-resolves the deposit to "uact" on the chain rail
+// (DetectDeploymentDeposit scans Params.MinDeposits for "uact" only) and on the
+// console rail alike, and the chain requires a group's price denom to equal the
+// deposit denom — MsgCreateDeployment.ValidateBasic rejects a mismatch with
+// "Mismatched denominations (uact != uakt)". A "uakt"-priced SDL therefore fails
+// at deploy time unless the user also passes an explicitly matching
+// "--deposit <amount>uakt".
+//
+// This deliberately softens the reference rule, which hard-rejects anything but
+// "uact": that explicit-deposit escape hatch is legitimate, so "uakt" warns
+// rather than errors. Any other denom is an error, matching the reference.
 func lintPricing(groups dtypes.GroupSpecs) (errs, warns []Issue) {
 	for _, g := range groups {
 		seen := make(map[string]struct{})
@@ -113,8 +119,8 @@ func lintPricing(groups dtypes.GroupSpecs) (errs, warns []Issue) {
 			if denom == "uakt" {
 				warns = append(warns, Issue{
 					Path:    path,
-					Message: `pricing denom "uakt" is on-chain only; managed (console-api) deployments are priced in "uact" (micro-ACT, 1:1 USD)`,
-					Hint:    `keep "uakt" for on-chain deployments, or switch to "uact" before deploying through a console-api context`,
+					Message: `pricing denom "uakt" does not match the deposit; deployments are priced in "uact" (micro-ACT, 1:1 USD) on both the on-chain and managed (console-api) rails, and the chain rejects a group whose price denom differs from the deposit denom`,
+					Hint:    `switch the pricing denom to "uact", or pass a matching --deposit <amount>uakt when you deploy`,
 				})
 
 				continue
@@ -122,7 +128,7 @@ func lintPricing(groups dtypes.GroupSpecs) (errs, warns []Issue) {
 
 			errs = append(errs, Issue{
 				Path:    path,
-				Message: fmt.Sprintf("pricing denom %q is not accepted; use \"uact\" (managed) or \"uakt\" (on-chain)", denom),
+				Message: fmt.Sprintf("pricing denom %q is not accepted; use \"uact\", the deployment pricing denom on both rails", denom),
 				Hint:    `change the denom to "uact"`,
 			})
 		}

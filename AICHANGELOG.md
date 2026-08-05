@@ -4,6 +4,116 @@
 
 ### Fixed
 
+- **Fresh lint runs reported possible nil dereferences in tests**: the tests
+  already stopped with `t.Fatal` when a required command, flag, or stored value
+  was absent, but staticcheck does not treat that call as terminating control
+  flow. The guards now return explicitly before every dereference, keeping a
+  cold-cache golangci-lint run clean without suppressing SA5011.
+
+- **Collateral ratios still rendered at full width**: stripping trailing zeros
+  only helps a value that has them, so a real on-chain ratio such as
+  `1.495209570451729242` kept all eighteen decimals beside a `0.95` threshold.
+  Ratios and thresholds now round to three decimal places before stripping, the
+  precision SPEC §8.3.12 already illustrated. Oracle prices are deliberately
+  exempt and keep full precision, because rounding AKT's `0.003125` to a ratio's
+  precision would erase it. Prices instead report at the 8 decimal places the
+  oracle itself publishes, so a derived TWAP (`0.536004234885265376`) no longer
+  sits at twice the width of the source median (`0.53598949`) it is derived
+  from. Every price in the BME and oracle views routes through one formatter.
+
+- **Completion reports overstated what actually happened**: `akt sdl validate`
+  documented only exit `0` and `1` while an unreadable file exited `2`, and an
+  unreadable stdin exited `1` for the same class of failure. The command's help
+  and SPEC §2.11 now carry a three-row exit-code table (`0` valid, `1` invalid,
+  `2` the document could not be read), and a failed stdin read is a usage error
+  so both input paths agree — nothing was parsed, so there is no validity
+  verdict to report. `akt update` no longer prints an unconditional "Deployment
+  updated!": the result reads the `send-manifest` step output it was already
+  discarding, names each provider that accepted the new manifest, warns
+  explicitly that nothing was redeployed when the deployment has no active
+  leases, and states that a provider restarts a service only when its image
+  reference or configuration actually changed. The bare
+  `akt tx deployment update` result now says that only the on-chain SDL hash
+  changed and names the two commands that deliver the manifest.
+
+- **Key creation was missing from the activity log and a deployment appeared
+  as six identical entries**: keyring mutations are now recorded like every
+  other state change. `context keys add`, `--recover`, `--ledger`,
+  `--multisig`, `delete`, `rename`, and `import` each write a `type=context`
+  entry under a dotted `keys.*` action with the key name, type, and full
+  address, on failure as well as success; `keys export` is recorded as a
+  security event because it moves private key material out of the keyring,
+  while the read-only `list`, `show`, `parse`, and `mnemonic` stay unrecorded.
+  Mnemonics, BIP39 and armor passphrases, and key material never reach the
+  log. Secret-leak regression coverage now checks the exact documented
+  `name`, `type`, and `address` fields instead of treating a randomly generated
+  mnemonic containing an ordinary metadata word such as `local` as a leak.
+  The keys package cannot open a context's log — `internal/cli/context`
+  imports it — so the single write path is injected as a recorder instead of
+  duplicated. `akt context log` now renders the specified `SUMMARY` column
+  instead of a bare action: workflow rows carry their step name and run id, so
+  the six steps of a deploy are distinguishable and a failed middle step is
+  identifiable; transaction, provider, console, and context rows carry their
+  deployment, full provider address, and recorded parameters. `--workflow-id`
+  isolates a single run, and the entry `step` index is no longer dropped from
+  machine output for the first step of every run.
+
+- **A successful deploy left the local store empty**: `akt store status`
+  reported zero deployments, leases, and bids immediately after `akt deploy`
+  completed against a live network, and no command existed to populate it.
+  Nothing outside the disabled TUI ever wrote to the store: workflows relied on
+  a sync engine picking up chain events, which a one-shot CLI process exits
+  before receiving, and its reconciler had no chain-backed implementation at
+  all. A workflow run now records its own outcome — the deployment with its
+  SDL path and hash, the lease it won, and every bid it saw, marked matched or
+  lost — writing it best-effort so a bookkeeping failure warns instead of
+  turning a real deployment into a failed command. New `akt store sync
+  [account]` reconciles the store against chain state for the context's
+  `tracked-accounts` (previously a specified config key no code read),
+  filling in the escrow balances, transferred amounts, and provider-side state
+  a single run cannot observe, and preserving the local-only fields the chain
+  does not carry. Stores are now opened through one helper that resolves the
+  path from the context and applies pending schema migrations, and
+  `akt context show` reports the tracked accounts. Reconciliation uses deferred
+  identity access: an explicit address never opens the keyring, while a named
+  tracked/default account resolves only when synchronization actually needs it.
+
+- **Provider commands demanded a provider `akt` had already chosen, and
+  suggested a shortcut that did not work**: every lease-scoped `akt provider`
+  command now resolves the provider from the deployment's active lease on
+  chain, exactly as `akt console status <dseq>` already does, so `akt provider
+  lease-status 12345` needs no `--provider` for a deployment `akt` set up
+  itself. `--provider` remains an optional override for choosing between
+  several active leases, and never became a required flag. Ambiguity is refused
+  rather than guessed: the error distinguishes a deployment with no leases,
+  with no *active* lease (listing the states that exist), and with several
+  active leases (listing every provider address in full), and points at `akt
+  query market lease <dseq>`. The resolved lease also supplies `gseq`/`oseq`
+  unless they were named explicitly, so a lease on a re-ordered group is
+  reachable. `send-manifest` without `--provider` now delivers to every
+  provider with an active lease, the behavior the spec had documented but never
+  implemented. The guard order was inverted so a command missing everything
+  reports the missing deployment sequence instead of blaming the provider, and
+  the eight lease commands no longer advertise a positional provider argument
+  that none of them accepts — on four of them that positional slot is the
+  `dseq`, so following the old hint produced a second, more confusing parse
+  error.
+
+- **The documented provider lookup command did not exist**: `akt query
+  provider <address>` — the form printed in README.md, SPEC §3.8.5, and
+  DESIGN §7.1 — failed with `unknown command "akash1..." for "provider"`
+  because the group carried no positional argument. The provider query is now
+  positional-primary like `query deployment` and `query market lease`: an
+  address returns that provider, no argument lists them all, and the `list` and
+  `get` subcommands keep working unchanged.
+
+- **Provider spec documented flags that did not exist**: `--from` was listed on
+  every lease command but registered nowhere in the provider tree (the owner
+  comes from the context's `default-account`), and `migrate-hostnames` /
+  `migrate-endpoints` documented a `--destination-dseq` that has no
+  counterpart in the gateway API, which addresses the destination lease alone.
+  SPEC §2.4 now matches the command surface.
+
 - **Strict keyring validation blocked commands that never used a key**: the
   startup identity boundary now distinguishes no access, deferred access, and
   required access. Public queries, provider status, MCP startup, workflow
@@ -95,6 +205,146 @@
   All wizard rendering — prompts, progress, summary, and the Console onboarding
   prompts — moved from stdout to stderr as SPEC §3.9.2 and §10.1.1 require; the
   wizard now writes nothing to stdout.
+
+- **Transaction results presented an unconfirmed broadcast as a finished
+  transaction**: akt broadcasts with `--broadcast-mode sync` by default, so the
+  usual response is a CheckTx result — the transaction is in the mempool with no
+  height, no gas accounting and no body — yet every output surface reported it
+  as complete. Machine-readable output is now built from a structured result
+  document instead of the raw `TxResponse`: it carries an explicit
+  `status` (`confirmed`/`pending`/`failed`) plus `confirmed`, and omits
+  `height`, `gas_used` and `gas_wanted` entirely rather than emitting the `"0"`
+  that `PrintProto`'s `EmitDefaults` produced and that a script could not tell
+  apart from a real reading. The same rule now applies to the action log (height
+  and gas recorded only when reported; status `pending` until a height exists)
+  and to workflow JSONL (the `height` key is dropped for an unconfirmed step).
+  Pretty output no longer prints a bare `-`, `0 / 0` and a green `success` for a
+  transaction that has only entered the mempool: it labels the state `pending`
+  in yellow, says why height and gas are unknown, and points at
+  `akt query tx <hash>` and `--broadcast-mode block`. The `Fee:` row is also no
+  longer silently dropped when the body cannot be decoded — it is always
+  emitted, and it now actually resolves a fee from a returned body, which it
+  never could before (`cosmos.tx.v1beta1.Tx` does not satisfy `sdk.FeeTx`, so
+  the old `UnpackAny` route always failed). Gas amounts use a gas formatter
+  rather than the block-height formatter they were borrowing. SPEC.md §10.11.1,
+  §10.11.2, §10.11.4, §10.11.6, §2.3.8, §5.4 and §5.6 updated.
+
+- **A simulated transaction printed raw proto with a placeholder gas number**:
+  `--dry-run` returns a `tx.SimulateResponse`, not a `TxResponse`, so it missed
+  the pretty renderer entirely and fell through to a raw proto JSON dump. That
+  dump included `gas_wanted: 0` — the placeholder the CLI substitutes for
+  `--gas` on dry runs, echoed back by the node — while the adjusted gas estimate
+  the dry run exists to produce was computed by the chain client and then
+  discarded. Simulations now render a `Simulation` section (or a structured
+  document under `-o json`/`-o yaml`) with the gas used, the gas adjustment, the
+  recomputed gas estimate, and the estimated fee derived the same way
+  `tx.Factory` derives it (`--fees`, else `ceil(--gas-prices × estimate)`),
+  formatted through `FormatCoin`. Gas wanted is never surfaced from a
+  simulation. The dead `GasEstimateResponse` type in
+  `internal/cli/chain/auth_flags.go`, which upstream cosmos-sdk uses to print
+  this line on a code path akt bypasses, was removed in favor of the new
+  renderer. SPEC.md §10.11.7 added.
+
+- **Currency guidance sent deployments to the denom the chain rejects**: `akt
+  sdl validate` warned that `uakt` was "on-chain only" and hinted "keep `uakt`
+  for on-chain deployments". That is backwards. `akt` auto-resolves the
+  deployment deposit to `uact` on both rails (`DetectDeploymentDeposit`, and
+  the console adapter), and the chain requires a group's price denom to equal
+  the deposit denom, so following the hint produced `Mismatched denominations
+  (uact != uakt)` and the deployment failed. The warning now says `uact` is the
+  pricing denom on both rails and hints at switching to it (or passing a
+  matching `--deposit <amount>uakt`); the unknown-denom error no longer
+  advertises `uakt` as the on-chain alternative. SPEC §2.11 carried the same
+  inverted claim and was corrected first.
+
+- **BME conversions reported success while the funds were still in flight**:
+  `akt tx bme mint-act|burn-act|burn-mint` printed `Status: success` and a bare
+  sender/amount pair, but the chain does not execute the swap in that
+  transaction — it records a pending ledger entry and settles it in a later
+  block, so the burned amount had left the balance and nothing had arrived
+  yet. The three message formatters now render a shared pending-conversion
+  block (`pretty.RenderBMEPendingConversion`) that states the conversion is
+  pending, names the destination denom, says the minted amount is not knowable
+  until the oracle price is applied at settlement, and prints the follow-up
+  query `akt q bme ledger --owner <signer> --status
+  ledger_record_status_pending`. The three commands' help text says the same.
+
+- **Ledger status codes were undocumented single letters**: `akt q bme ledger`
+  wrote `e`, `p` and `c:<reason>` into STATUS, defined nowhere in the help,
+  the spec, or a legend, while the neighbouring BME mint status already
+  spelled its enum out. Statuses now render as `Executed`, `Pending` and
+  `Canceled (insufficient funds)` in the same colors, and `q bme ledger` gained
+  help describing each state; `--status` help lists the canceled filter it had
+  omitted.
+
+- **Oracle prices needed a denom spelling the rest of the tool never uses**:
+  `akt q oracle aggregated-price` passed its positional straight through, so
+  the `uakt` its own help and example advertised produced a raw gRPC status
+  error — the network keys prices by base denom (`akt`), which is what the
+  tool's production caller passes. The positional is now normalized (`akt`,
+  `AKT`, `mAKT`, `uakt` → `akt`; the ACT family → `act`; anything else
+  untouched), the example and `--asset-denom` help use the base denom, and
+  every oracle query error is wrapped in the `Error:/Context:/Suggestion:`
+  contract naming the denom tried and pointing at `akt q oracle prices`.
+
+- **BME amounts were formatted three different ways in one table**: the BME
+  status panel printed raw `LegacyDec` strings (`Collateral Ratio:
+  1.500000000000000000`) while the oracle panel beside it on the same
+  dashboard trimmed trailing zeros; the ledger table rendered two
+  identically-typed price-carrying fields as `5 AKT @0.003125` and `5 AKT` in
+  adjacent columns, showed a bare denom where an amount belongs on pending
+  rows, and printed `-` for a zero spread. Ratios and prices now go through
+  `TrimDecTrailingZeros`, every priced amount through one `formatCoinPrice`,
+  a zero spread renders as `0 AKT`, and an amount that does not exist yet
+  renders as a dim `pending` (the destination denom is already in ROUTE). The
+  local `formatDecTrimmed` copy of the exported `TrimDecTrailingZeros` is
+  gone.
+
+- **A sparse ledger response panicked the command**: `RenderBMELedger` called
+  `Spread.IsZero()` on a `Coin` whose `Amount` proto3 omits when zero, and a
+  nil inner `Int` panics on any method call. Every coin and decimal read out
+  of a ledger record now passes through the package's existing
+  `IntOrZero`/`DecOrZero` guards, with regression coverage.
+
+  `TestRenderBMELedger` had exactly one case (empty); it now covers executed,
+  pending, canceled, zero-spread and sparse-wire records, and new tests assert
+  the ledger status vocabulary, the BME transaction output, and the oracle
+  denom normalization and error contract.
+
+- **A search that found nothing printed a bare table header**: every pretty
+  list renderer now states the empty result — `(no deployments)`, `(no bids)`,
+  `(no networks)` — through the shared `WriteTableOrEmpty` /
+  `WriteTableColsOrEmpty` helpers, replacing thirteen ad-hoc guards and
+  fourteen renderers that had none. The plain table writers carry the same
+  guarantee as a backstop, so no path can regress to a header with no rows, and
+  `internal/output.PrintTable` is guarded too. Structured output is unchanged:
+  `-o json` and `-o yaml` still emit an empty array, never prose, and
+  `akt context network list` no longer replaces its JSON array with a sentence
+  when no networks exist.
+
+- **Column headers floated in the middle of their columns**: a table header is
+  now padded exactly like the column it labels, so right-aligned headers such
+  as `BALANCES` in `akt query bank total` sit over their amounts instead of
+  drifting to the middle of a wide column. Every table in pretty output was
+  affected; the centering helper is gone.
+
+- **Capability labels pushed their values out of line in `akt context show`**:
+  the view's key columns are widened together — `SubKVWidth` is now the
+  documented counterpart of `KVWidth` — so `Chain transactions` and
+  `Provider gateway` no longer overflow a fixed 16-column key field and every
+  value in the view lands in one column. The governance parameters view had the
+  same mismatch between its `KV` and `SubKV` blocks and is aligned to the same
+  rule.
+
+- **`akt console wallet settings` returned the raw API record**: both success
+  paths now report the same `{autoReloadEnabled, configured}` object the
+  never-configured path already returned, matching how the sibling
+  `akt console deployment settings` shapes its output.
+
+- **`akt context network list` ignored its own renderer**: pretty output now
+  goes through `pretty.RenderNetworkList` — previously the only unused renderer
+  in the package — so the CLI and the TUI network list stay identical, and RPC
+  endpoints are printed in full instead of being truncated at 40 characters.
 
 - **CI and release workflows used outdated GitHub Actions runtimes**:
   checkout, Go setup, and artifact upload now use their maintained v7

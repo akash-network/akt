@@ -114,6 +114,7 @@ func TestLoadConfigOnEmptyRootReturnsDefaults(t *testing.T) {
 	}
 	if cfg == nil {
 		t.Fatal("LoadConfig returned a nil config")
+		return
 	}
 	if cfg.Version != aktctx.ConfigVersion {
 		t.Errorf("version = %d, want %d", cfg.Version, aktctx.ConfigVersion)
@@ -217,6 +218,7 @@ func TestKeyringRegistryOperations(t *testing.T) {
 	kr := m.GetKeyring("ledger-kr")
 	if kr == nil {
 		t.Fatal("created keyring not found")
+		return
 	}
 	if kr.Backend != "os" {
 		t.Errorf("backend = %q, want the os default", kr.Backend)
