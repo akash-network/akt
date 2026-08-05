@@ -291,12 +291,12 @@ The resolved context is injected into every service: chain client, provider gate
 three modes, selected at the command boundary:
 
 - **none** — the command never receives a keyring. SDL authoring (§2.11),
-  monitoring (§2.6), version, completion, store, context management, the
-  Console rail, and workflow dry-runs use this mode.
+  monitoring (§2.6), version, completion, local store inspection/import/export,
+  context management, the Console rail, and workflow dry-runs use this mode.
 - **on demand** — the client context receives a deferred keyring that does not
   open its configured backend until an operation actually asks for a key. Chain
-  queries, read-only MCP startup, public provider status, and address-based
-  transaction construction or simulation use this mode.
+  queries, `store sync`, read-only MCP startup, public provider status, and
+  address-based transaction construction or simulation use this mode.
 - **required** — startup opens the keyring and resolves a named account before
   execution. Transactions that sign, workflow execution, and authenticated
   provider operations use this mode.
@@ -981,22 +981,42 @@ Rename a context. Updates `current-context` if the renamed context was active. R
 
 View the action log for the current context.
 
-| Flag        | Type   | Default   | Description                                                         |
-| ----------- | ------ | --------- | ------------------------------------------------------------------- |
-| `--context` | string | current   | Context to view log for                                             |
-| `--limit`   | int    | `50`      | Number of entries to show                                           |
-| `--type`    | string | `""`      | Filter by action type: `tx`, `workflow`, `provider`, `context`, `console`, `error` (see §5.6) |
-| `--since`   | string | `""`      | Show entries since timestamp or duration (e.g., `1h`, `2024-01-01`) |
-| `--output`  | string | `pretty`  | Output format: `pretty` (table), `json` (raw JSONL entries, one per line) |
+| Flag            | Type   | Default   | Description                                                         |
+| --------------- | ------ | --------- | ------------------------------------------------------------------- |
+| `--context`     | string | current   | Context to view log for                                             |
+| `--limit`       | int    | `50`      | Number of entries to show                                           |
+| `--type`        | string | `""`      | Filter by action type: `tx`, `workflow`, `provider`, `context`, `console`, `error` (see §5.6) |
+| `--workflow-id` | string | `""`      | Show only the entries of one workflow run (the `run` id shown in `SUMMARY`) |
+| `--since`       | string | `""`      | Show entries since timestamp or duration (e.g., `1h`, `2024-01-01`) |
+| `--output`      | string | `pretty`  | Output format: `pretty` (table), `json` (raw JSONL entries, one per line) |
+
+The pretty table has four columns: `TIME`, `TYPE`, `SUMMARY`, and `STATUS`. The
+action name alone does not identify an entry — a single workflow run writes one
+entry per step, all under the same workflow name — so `SUMMARY` is composed per
+entry type from the fields that distinguish it:
+
+| Type              | `SUMMARY` composition                                                                        |
+| ----------------- | -------------------------------------------------------------------------------------------- |
+| `workflow`        | `<workflow>/<step-name>` plus `(run <workflow-id>)`, so every step of a run is its own row     |
+| `tx`              | Message action plus `(dseq: <n>)` when the entry carries one                                   |
+| `provider`        | Action plus ` -> <provider-address>` and `(dseq: <n>)`                                         |
+| `console`         | Action plus `(dseq: <n>)`                                                                      |
+| `context`         | Action plus the recorded parameters as `(key: value, ...)`, sorted by key                      |
+| `query`, `error`  | Action plus any recorded parameters                                                            |
+
+Addresses and workflow run ids are printed in full; only the error text shown in
+the `STATUS` column is shortened. The table is a summary view — machine output
+(`-o json|yaml`) always serializes complete entries with every field of §5.4.
 
 ```bash
-$ akt context log --limit 5
-  TIME                    TYPE      SUMMARY                                    STATUS
-  2026-03-23 10:15:32     tx        deployment create (dseq: 12345)            success
-  2026-03-23 10:15:45     tx        market lease create (dseq: 12345)          success
-  2026-03-23 10:15:50     workflow  send-manifest -> akash1prov1...            success
-  2026-03-23 10:20:01     context   edit (default-account: bob)                success
-  2026-03-23 10:25:00     tx        deployment close (dseq: 12345)             success
+$ akt context log --limit 6
+  TIME                 TYPE      SUMMARY                                                     STATUS
+  2026-03-23 10:25:00  context   keys.add (address: akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx, name: bob, type: local)  success
+  2026-03-23 10:20:01  context   edit (default-account: bob)                                 success
+  2026-03-23 10:15:50  workflow  deploy/send-manifest (run 9f2c1ab34d55e017)                 error: provider gateway unreachable
+  2026-03-23 10:15:47  workflow  deploy/create-lease (run 9f2c1ab34d55e017)                  success
+  2026-03-23 10:15:45  workflow  deploy/wait-for-bids (run 9f2c1ab34d55e017)                 success
+  2026-03-23 10:15:32  tx        deployment.MsgCreateDeployment (dseq: 12345)                success
 ```
 
 ### 2.2.1 Network Commands
@@ -1152,6 +1172,38 @@ Parse an address and render its canonical uppercase hex form plus full bech32
 forms for the `akash`, `cosmos`, and `osmo` prefixes. JSON/YAML output contains
 `format`, optional `hrp`, `hex`, and an `addresses` object; pretty output keeps
 the aligned human-readable form.
+
+#### Key management in the action log
+
+Keyring mutations are state changes and are recorded in the active context's
+action log (§5.6) as `type=context` entries under a dotted `keys.*` action, so
+`akt context log --type context` shows key changes next to context changes
+without colliding with the bare `create`/`delete`/`rename` context actions. The
+entry is written after the keyring call returns, with `status=success`, or
+`status=failed` plus the error text when the mutation failed, so an unsuccessful
+attempt is auditable too. Commands run without a selected context (no
+`current-context` and no `--context`) have no log to write to; the command
+itself is unaffected.
+
+| Command                                  | Action          | Recorded parameters                                                                          |
+| ---------------------------------------- | --------------- | -------------------------------------------------------------------------------------------- |
+| `keys add <name>`                        | `keys.add`      | `name`, `type` (`local`, `ledger`, `multi`), `address`; multisig adds `threshold` and `pubkeys` |
+| `keys add <name> --recover` / `--source` | `keys.recover`  | `name`, `type`, `address`                                                                      |
+| `keys delete <name>`                     | `keys.delete`   | `name`, `type`, `address`                                                                      |
+| `keys rename <old> <new>`                | `keys.rename`   | `from`, `to`                                                                                   |
+| `keys import <name> <keyfile>`           | `keys.import`   | `name`, `type`, `address`                                                                      |
+| `keys export <name>`                     | `keys.export`   | `name`                                                                                         |
+
+`keys export` changes no state, but it is the one command that moves private key
+material out of the keyring. It is recorded as a security event and is the only
+deliberate exception to the rule that read-only commands are not logged (§5.6).
+The read-only `keys list`, `keys show`, `keys parse`, and `keys mnemonic` are
+never recorded, and a cancelled `keys delete` confirmation records nothing.
+
+Secrets never reach the log: mnemonics, BIP39 passphrases, export and import
+passphrases, and armored key material are never recorded as parameters — the
+same rule that makes `context edit` record `console-api-key: updated` instead of
+the credential (§7.1). Addresses are recorded in full.
 
 ### 2.3 Workflow Engine
 
@@ -1466,8 +1518,33 @@ steps:
   - name: display-result
     type: output
     template: |
-      Deployment updated!
+      {{- $manifest := index .Steps "send-manifest" -}}
+      {{- if not $manifest -}}
+      Deployment updated.
         DSEQ: {{ .Params.dseq }}
+        Manifest delivery: handled by the Console API.
+
+        Note: a provider restarts a service only when its image reference or
+        configuration actually changed; re-applying an identical manifest
+        leaves the running workload as it is.
+      {{- else if gt (index $manifest "count") 0 -}}
+      Deployment updated.
+        DSEQ: {{ .Params.dseq }}
+        Manifest sent to {{ index $manifest "count" }} provider(s):
+      {{ range index $manifest "providers" }}    {{ . }}
+      {{ end }}
+        Note: a provider restarts a service only when its image reference or
+        configuration actually changed; re-applying an identical manifest
+        leaves the running workload as it is.
+      {{- else -}}
+      Deployment updated on chain, but nothing was redeployed.
+        DSEQ: {{ .Params.dseq }}
+
+        WARNING: this deployment has no active leases, so the new manifest was
+        not sent to any provider. Only the SDL hash changed on chain; no
+        running workload was updated.
+        List leases with "akt query market lease {{ .Params.dseq }} active".
+      {{- end -}}
 ```
 
 On the chain rail, `send-manifest-to-active-leases` queries every page of active
@@ -1477,6 +1554,12 @@ delivery attempts to the remaining providers, but the step fails unless every
 provider accepts the update. No active leases is a successful no-op. The
 operation is safe to retry. Console API contexts omit the provider step because
 `PUT /v1/deployments/{dseq}` handles manifest delivery internally.
+
+The step records `{"providers": [...], "count": N}`, and `display-result` MUST
+read it rather than reporting an unconditional success: the update transaction
+only records a new SDL hash on chain, so "updated" is a claim about the chain,
+never a claim that a running workload changed. The three result forms are
+specified under `akt update` below.
 
 **Close workflow definition:**
 
@@ -1616,6 +1699,54 @@ akt update deployment.yaml 12345 --yes
 # CI/CD pipeline
 akt update deployment.yaml 12345 --yes -o jsonl
 ```
+
+**Result output.** The update transaction records a new SDL hash on chain; it
+does not by itself change anything a provider is running. The result therefore
+reports what the `send-manifest` step actually delivered, and never claims more
+than that. There are exactly three forms.
+
+Manifest delivered to one or more providers (chain rail):
+
+```
+Deployment updated.
+  DSEQ: 12345
+  Manifest sent to 2 provider(s):
+    akash1prov1...
+    akash1prov2...
+
+  Note: a provider restarts a service only when its image reference or
+  configuration actually changed; re-applying an identical manifest
+  leaves the running workload as it is.
+```
+
+No active leases — the step is a successful no-op, so nothing was redeployed:
+
+```
+Deployment updated on chain, but nothing was redeployed.
+  DSEQ: 12345
+
+  WARNING: this deployment has no active leases, so the new manifest was not
+  sent to any provider. Only the SDL hash changed on chain; no running
+  workload was updated.
+  List leases with "akt query market lease 12345 active".
+```
+
+Console API context — the provider step is filtered out because
+`PUT /v1/deployments/{dseq}` delivers the manifest:
+
+```
+Deployment updated.
+  DSEQ: 12345
+  Manifest delivery: handled by the Console API.
+
+  Note: a provider restarts a service only when its image reference or
+  configuration actually changed; re-applying an identical manifest
+  leaves the running workload as it is.
+```
+
+The bare transaction command `akt tx deployment update` sends no manifest at
+all, and its pretty output says so
+([§10.11](#1011-transaction-result-formatting)).
 
 **JSONL mode:**
 ```bash
@@ -1898,6 +2029,44 @@ Import records from a previously exported file.
 | `--merge`   | bool | `true`  | Merge with existing records (default) |
 | `--replace` | bool | `false` | Replace entire store contents         |
 | `--dry-run` | bool | `false` | Show what would be imported           |
+
+#### `akt store sync [account]`
+
+Reconcile the local store against on-chain state for the context's tracked
+accounts (§6.7), then record the chain height reached in the sync state.
+
+Workflow commands record their own results (§6.6), but a single run can only
+observe what passed through it. `akt store sync` is the escape hatch for
+everything else: deployments created before `akt` was used or from another
+machine, escrow balances and transferred amounts that move every block, leases
+closed by a provider rather than by the user, and any run whose best-effort
+store write failed.
+
+```
+$ akt store sync
+Store Sync
+  Accounts:     1
+      Owner:    akash1zn43lmk4dmvcjmfhtaqk4wa9zpuru3xy0kzupu
+  Deployments:  3
+  Leases:       3
+  Bids:         7
+  Height:       18,234,567
+```
+
+Every reconciled account is listed in full; addresses are never abbreviated.
+
+The optional positional `account` reconciles a single account instead of the
+context's tracked accounts. Accounts are resolved the way `--from` is: a bech32
+address is used as-is, any other value is looked up in the context's keyring.
+
+Reconciliation is the §6.4 full reconciliation, run on demand: every deployment
+owned by a tracked account, then that deployment's leases and bids, are queried
+and written to the store. Existing records for the same keys are overwritten
+with chain state; local-only metadata that the chain does not carry (`labels`,
+`notes`, `tags`, `sdl_path`, `sdl_hash`) is preserved from the existing record.
+
+Requires a chain RPC endpoint (capability `chain-query`, §2.10). A
+`console-api` context without a network cannot run it.
 
 ### 2.6 Monitor Command
 
@@ -2428,7 +2597,17 @@ Validate an SDL offline (`-` reads stdin). Parsing and schema/relational validat
 - **Unpinned image** (error): every service image must carry an explicit tag or `@sha256:` digest; untagged images and `:latest` are rejected as non-reproducible.
 - **Pricing denom**: `uact` passes; `uakt` produces a **warning**, not an error — a deliberate deviation from the reference, which hard-rejects `uakt` because it only serves the managed Console API. akt serves both rails: `uakt` is valid on-chain, but console-api (managed) contexts price in `uact`. Any other denom is an error, matching the reference.
 
-Exit `0` when valid, printing a summary (`valid: N service(s), M group(s), K warning(s)`) plus any warnings; exit `1` when invalid, listing every parse/lint error.
+The command has three outcomes, and each one has its own exit code:
+
+| Exit | Outcome                | Output                                                                              |
+| ---- | ---------------------- | ----------------------------------------------------------------------------------- |
+| `0`  | Valid (warnings allowed) | Summary on stdout (`valid: N service(s), M group(s), K warning(s)`) plus any warnings |
+| `1`  | Invalid                | Every parse/lint error on stderr                                                     |
+| `2`  | The document could not be read | Usage error on stderr ([§11.2](#112-exit-codes)); nothing was validated        |
+
+Exit `2` covers both input paths uniformly: a missing or unreadable `<file>` and
+a failed read of stdin for `-` are the same class of usage error, and neither is
+reported as an invalid SDL — nothing was parsed, so there is no verdict to give.
 
 With `--output json` or `--output yaml`, the command writes one structured result
 to stdout with the following stable shape, then preserves the same exit-status
@@ -3258,6 +3437,11 @@ meta/
 - Each version has a corresponding migration function: `func migrateV<N>(tx *bbolt.Tx) error`.
 - On `Store.Migrate()`, all pending migrations are applied in order within a single bbolt transaction.
 - Migrations are forward-only. Downgrade is not supported; use `import` from a prior export.
+- Every code path that opens a context's store — `akt store *` and the
+  workflow persistence of §6.6 — opens it through one helper that resolves the
+  path from the context root (§1.1) and calls `Migrate()`. A store opened
+  without migrating would be read and written at whatever schema it was last
+  left at, which is exactly the drift the versioning exists to prevent.
 
 ### 4.6 Export Format
 
@@ -3318,7 +3502,7 @@ Each context has its own action log at:
 | `query`    | A chain query                              | Query path, parameters, result summary, duration                      |
 | `workflow` | A multi-step workflow (e.g., `akt deploy`) | Workflow name, step sequence, each step's type and result             |
 | `provider` | A provider gateway operation               | Operation (send-manifest, lease-logs, etc.), provider address, result |
-| `context`  | A context management operation             | Operation (switch, edit, etc.), old/new values                        |
+| `context`  | A context or keyring management operation  | Operation (switch, edit, `keys.add`, etc.), old/new values            |
 | `console`  | A state-changing Console API operation     | Operation (create-deployment, close-deployment, etc.), dseq, result   |
 | `error`    | A failed operation                         | Original action type, error message, context                          |
 
@@ -3330,10 +3514,16 @@ Each log entry is a single JSON line (JSONL format) for easy parsing:
 {"ts":"2026-03-23T10:15:32Z","type":"tx","action":"deployment.MsgCreateDeployment","dseq":12345,"tx_hash":"ABC123...","height":18234567,"gas_used":200000,"code":0}
 {"ts":"2026-03-23T10:15:45Z","type":"tx","action":"market.MsgCreateLease","dseq":12345,"provider":"akash1prov1...","tx_hash":"DEF456...","height":18234568,"gas_used":150000,"code":0}
 {"ts":"2026-03-23T10:15:50Z","type":"provider","action":"send-manifest","dseq":12345,"provider":"akash1prov1...","status":"success"}
+{"ts":"2026-03-23T10:16:00Z","type":"workflow","action":"deploy","workflow_id":"9f2c1ab34d55e017","step":0,"step_name":"create-deployment","status":"success"}
+{"ts":"2026-03-23T10:16:40Z","type":"workflow","action":"deploy","workflow_id":"9f2c1ab34d55e017","step":4,"step_name":"send-manifest","status":"failed","error":"provider gateway unreachable"}
 {"ts":"2026-03-23T10:20:01Z","type":"query","action":"deployment.deployments","params":{"dseq":12345},"duration_ms":120}
+{"ts":"2026-03-23T10:22:00Z","type":"context","action":"keys.add","params":{"address":"akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx","name":"bob","type":"local"},"status":"success"}
 {"ts":"2026-03-23T10:25:00Z","type":"tx","action":"deployment.MsgCloseDeployment","dseq":12345,"tx_hash":"GHI789...","height":18234600,"gas_used":100000,"code":0}
 {"ts":"2026-03-23T10:30:00Z","type":"error","action":"tx.bank.send","error":"insufficient funds","account":"alice"}
 ```
+
+`step` is written on every entry, including entries that are not workflow steps
+(§5.4); the lines above elide it where it carries no meaning.
 
 ### 5.4 Action Entry Schema
 
@@ -3363,7 +3553,7 @@ type ActionEntry struct {
 
     // Workflow fields (type=workflow)
     WorkflowID string          `json:"workflow_id,omitempty"` // groups steps of a single workflow
-    Step       int             `json:"step,omitempty"`
+    Step       int             `json:"step"`                  // 0-based index within the run; always emitted
     StepName   string          `json:"step_name,omitempty"`
 
     // Error fields (type=error, or on any failed action)
@@ -3371,6 +3561,13 @@ type ActionEntry struct {
     Status     string          `json:"status,omitempty"`   // success, failed, timeout
 }
 ```
+
+`step` is the one field written unconditionally. With `omitempty` the first step
+of every workflow run (index 0) disappeared from machine output, so the entry
+that records where a run started was indistinguishable from an entry that has no
+step at all; entries that are not workflow steps carry `"step":0` as a
+consequence. Entries written before this rule simply have no `step` key and
+decode to `0`.
 
 ### 5.5 Log Interface
 
@@ -3390,11 +3587,12 @@ type ActionLog interface {
 }
 
 type ActionFilter struct {
-    Type    ActionType    // filter by action type (empty = all)
-    Since   time.Time     // entries after this time
-    Limit   int           // max entries to return (0 = no limit)
-    DSeq    uint64        // filter by deployment sequence
-    Account string        // filter by account
+    Type       ActionType // filter by action type (empty = all)
+    Since      time.Time  // entries after this time
+    Limit      int        // max entries to return (0 = no limit)
+    DSeq       uint64     // filter by deployment sequence
+    Account    string     // filter by account
+    WorkflowID string     // filter by workflow run id (isolates one run of a workflow)
 }
 ```
 
@@ -3406,9 +3604,11 @@ The action log records entries for the following command categories:
 |---|---|---|---|
 | `tx *` | Always | `tx` | After broadcast (success or failure). On success: includes tx hash, height, gas used. On failure: includes error message and result code. |
 | `query *` | Never by default | `query` | Read-only queries are not state changes and are not recorded by default (see verbose row below). |
-| Workflow commands (`deploy`, `update`, `close`) | Always | `workflow` | One entry per workflow step. Each entry includes the step name, result, and workflow run ID. |
+| Workflow commands (`deploy`, `update`, `close`) | Always | `workflow` | One entry per workflow step. Each entry includes the step name, step index, result, and workflow run ID, and `akt context log` renders the step and run in `SUMMARY` so the steps of a run stay distinguishable and a failed step is identifiable (§2.2). |
 | `provider *` (state-changing: `send-manifest`, `migrate-hostnames`, `migrate-endpoints`, `lease-shell`) | Always | `provider` | After the provider gateway operation completes (success or failure). Read-only provider queries (`status`, `lease-status`, `lease-logs`, `lease-events`, `get-manifest`) are not recorded. |
 | `context *` | Always | `context` | After context management operation (switch, edit, create, delete). |
+| `context keys *` (state-changing: `add`, `add --recover`, `delete`, `rename`, `import`) | Always | `context` | After the keyring mutation returns (success or failure), under a dotted `keys.*` action. Secrets — mnemonics, BIP39 and armor passphrases, key material — are never recorded (§2.2.2). Read-only `list`, `show`, `parse`, and `mnemonic` are not recorded. |
+| `context keys export` | Always | `context` | The single exception to the read-only rule: exporting private key material is recorded as a security event, with the key name only and never the armor or passphrase (§2.2.2). |
 | Console API state changes (create/update/close deployment, create lease, deposit) | Always | `console` | After the Console API call completes (success or failure). Read-only Console queries are not recorded. |
 | All commands | On failure | `error` | When any command fails. Includes original action type and error message. |
 | `query` (read-only, no side effects) | When `-v` is set (future) | `query` | Verbose-mode query logging for debugging is planned but not yet implemented. Internal queries (e.g. by the sync engine) are never logged. |
@@ -3472,7 +3672,10 @@ On first launch for a context (no `SyncState` in store):
 1. Query all deployments for each tracked account: `query deployment --owner <addr>`.
 2. For each deployment, query leases: `query market lease --owner <addr> --dseq <dseq>`.
 3. For each deployment, query bids: `query market bid --owner <addr> --dseq <dseq>`.
-4. Store all records.
+4. Store all records. Chain state overwrites the on-chain fields of an existing
+   record; local-only metadata the chain does not carry (`labels`, `notes`,
+   `tags`, `sdl_path`, `sdl_hash`) is preserved from the record already in the
+   store, so reconciling never discards what a workflow run recorded (§6.6).
 5. Set `SyncState.LastBlockHeight` to the current chain height.
 
 On subsequent launches (existing `SyncState`):
@@ -3480,6 +3683,10 @@ On subsequent launches (existing `SyncState`):
 1. Query the current chain height.
 2. If `current_height - last_block_height > 1000`, perform a full reconciliation.
 3. Otherwise, query transaction events in the missed block range and apply them.
+
+`akt store sync` (§2.5) runs this same reconciliation on demand. It is the only
+way a one-shot CLI session reconciles, because no CLI invocation lives long
+enough to hold a subscription (§6.6).
 
 ### 6.5 Reconnection Strategy
 
@@ -3499,23 +3706,78 @@ On reconnection, the engine reconciles all blocks missed during the disconnectio
 
 ### 6.6 Workflow-to-Store Integration
 
-Workflow commands (`akt deploy`, `akt update`, `akt close`) do **not** write to the local store directly. Instead, the sync engine detects the on-chain events produced by workflow transactions and updates the store through the normal event processing pipeline (§6.3).
+A workflow run (`akt deploy`, `akt update`, `akt close`) persists its own
+outcome to the local store when the run finishes.
 
-This means there is a brief delay (typically 1-2 seconds) between a workflow completing and the store reflecting the new state. The workflow's output (DSEQ, lease details, endpoint URLs) is displayed directly from the transaction results and provider responses — it does not depend on the store.
+Chain events alone cannot populate the store. A CLI invocation is one-shot: it
+broadcasts its transactions and exits, before any subscription that would carry
+the resulting events could deliver them, and there is no daemon left behind to
+receive them afterwards. An event-driven-only model therefore leaves the store
+empty after a fully successful `akt deploy` — the local deployment record, one
+of the main things that distinguishes `akt` from the older tooling, never gets
+written. The run itself is the only component that observes the outcome while
+it is still running, so the run is what records it.
 
-If the sync engine is not running (e.g., no WebSocket connection), the store is reconciled on the next startup (§6.4).
+Persistence is **best-effort and never changes the command's outcome**. By the
+time the store is written the deployment is already real on chain; a
+bookkeeping failure must not be reported as a deployment failure. A store error
+is reported as a `warning:` line on stderr and the exit code is unchanged.
+Machine-readable output is unaffected: warnings go to stderr, so `--output
+jsonl` stdout stays pure.
+
+Records are written from the steps that actually succeeded, so a partially
+failed run still records the deployment it created — the same DSEQ the recovery
+advice (§2.3.6) tells the user to close.
+
+| Workflow | Source step         | Store effect                                                                                                                                                          |
+| -------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `deploy` | `create-deployment` | `DeploymentRecord`, state `active`, `created_height` from the transaction height, `sdl_path` from the `sdl-file` parameter, `sdl_hash` = `sha256:<hex>` of the SDL file |
+| `deploy` | `wait-for-bids`     | One `BidRecord` per bid observed, with its price; the winning provider's bid is `matched`, every other bid is `lost`                                                     |
+| `deploy` | `create-lease`      | `LeaseRecord` for the won lease (full lease ID), state `active`, price from `select-bid`                                                                                 |
+| `update` | `update-deployment` | Existing `DeploymentRecord` updated with the new `sdl_path`/`sdl_hash` and `updated_at`                                                                                  |
+| `close`  | `close-deployment`  | `DeploymentRecord` set to `closed` with `closed_at`; that deployment's leases are set to `closed`                                                                        |
+
+Fields a workflow run cannot observe — escrow balance, transferred amount,
+provider gateway URI, service endpoints, provider audit status — are left at
+their zero values rather than guessed. `akt store sync` (§2.5) fills them in
+from chain state.
+
+`deposit` is recorded only when the parameter names an explicit amount. `auto`
+resolves to a chain-queried minimum that the workflow never reports back, so
+the field is left empty instead of storing the literal word `auto`.
+
+The owner is taken from the transaction result, falling back to the bid or
+lease identity returned by the market, and finally to the context's
+`default-account` when that is an address rather than a keyring name. If no
+owner address can be determined — a rail whose deployment response omits it and
+no address-form default account — the store write is **skipped with a warning**
+rather than writing a record under an empty owner. Records are keyed
+`<owner>:<dseq>` (§4.4), so an empty owner would corrupt the key space and
+produce a record no lookup could find.
 
 ### 6.7 Multi-Account Tracking
 
-The sync engine tracks accounts configured in the context's `tracked-accounts` setting. By default, only the context's `default-account` is tracked. Users can add additional accounts to track deployments across multiple wallets within a single context.
+Reconciliation (§6.4, `akt store sync`) covers the accounts configured in the
+context's `tracked-accounts` setting. By default, only the context's
+`default-account` is tracked. Users can add further accounts to track
+deployments across multiple wallets within a single context.
 
 | Field | Type | Default | Description |
 |-------|------|---------|-------------|
 | `tracked-accounts` | []string | `["<default-account>"]` | List of account names or addresses to sync. Default: only the default account. Set to `"*"` to track all accounts in the context's keyring. |
 
-When `tracked-accounts` is `["*"]`, the sync engine tracks all accounts present in the current context's keyring. When a new key is added, the engine re-reconciles to pick up deployments from the new account.
+Entries are resolved the way `--from` is: a bech32 address is used as-is, any
+other value is looked up in the context's keyring and resolved to its address.
+An entry that resolves to nothing is an error naming the entry, not a silently
+skipped account.
+
+When `tracked-accounts` is `["*"]`, every account present in the current
+context's keyring is tracked, so a newly added key is picked up by the next
+reconciliation.
 
 The `tracked-accounts` field is context-specific (not shared via keyring or network). Each context can track a different subset of accounts.
+
+`akt context show` reports the configured value.
 
 ---
 
@@ -5117,6 +5379,14 @@ type TxPrettyFormatterFunc struct {
 |---|---|---|
 | Owner | Message | Full address |
 | DSEQ | `MsgUpdateDeployment.ID.DSeq` | Bold |
+
+`MsgUpdateDeployment` carries only the deployment ID and the new SDL hash, so a
+successful transaction changes the chain record and nothing else. The formatter
+therefore closes with a dim note stating that providers keep serving the
+previous manifest until it is delivered, naming the two commands that deliver
+it (`akt update`, `akt provider send-manifest`) with the DSEQ filled in. This
+is the single place a user of the bare `tx` command learns that the running
+workload is untouched.
 
 **`MsgCloseDeployment`** — Title: "Deployment Closed"
 

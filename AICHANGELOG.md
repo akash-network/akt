@@ -4,6 +4,63 @@
 
 ### Fixed
 
+- **Completion reports overstated what actually happened**: `akt sdl validate`
+  documented only exit `0` and `1` while an unreadable file exited `2`, and an
+  unreadable stdin exited `1` for the same class of failure. The command's help
+  and SPEC §2.11 now carry a three-row exit-code table (`0` valid, `1` invalid,
+  `2` the document could not be read), and a failed stdin read is a usage error
+  so both input paths agree — nothing was parsed, so there is no validity
+  verdict to report. `akt update` no longer prints an unconditional "Deployment
+  updated!": the result reads the `send-manifest` step output it was already
+  discarding, names each provider that accepted the new manifest, warns
+  explicitly that nothing was redeployed when the deployment has no active
+  leases, and states that a provider restarts a service only when its image
+  reference or configuration actually changed. The bare
+  `akt tx deployment update` result now says that only the on-chain SDL hash
+  changed and names the two commands that deliver the manifest.
+
+- **Key creation was missing from the activity log and a deployment appeared
+  as six identical entries**: keyring mutations are now recorded like every
+  other state change. `context keys add`, `--recover`, `--ledger`,
+  `--multisig`, `delete`, `rename`, and `import` each write a `type=context`
+  entry under a dotted `keys.*` action with the key name, type, and full
+  address, on failure as well as success; `keys export` is recorded as a
+  security event because it moves private key material out of the keyring,
+  while the read-only `list`, `show`, `parse`, and `mnemonic` stay unrecorded.
+  Mnemonics, BIP39 and armor passphrases, and key material never reach the
+  log. Secret-leak regression coverage now checks the exact documented
+  `name`, `type`, and `address` fields instead of treating a randomly generated
+  mnemonic containing an ordinary metadata word such as `local` as a leak.
+  The keys package cannot open a context's log — `internal/cli/context`
+  imports it — so the single write path is injected as a recorder instead of
+  duplicated. `akt context log` now renders the specified `SUMMARY` column
+  instead of a bare action: workflow rows carry their step name and run id, so
+  the six steps of a deploy are distinguishable and a failed middle step is
+  identifiable; transaction, provider, console, and context rows carry their
+  deployment, full provider address, and recorded parameters. `--workflow-id`
+  isolates a single run, and the entry `step` index is no longer dropped from
+  machine output for the first step of every run.
+
+- **A successful deploy left the local store empty**: `akt store status`
+  reported zero deployments, leases, and bids immediately after `akt deploy`
+  completed against a live network, and no command existed to populate it.
+  Nothing outside the disabled TUI ever wrote to the store: workflows relied on
+  a sync engine picking up chain events, which a one-shot CLI process exits
+  before receiving, and its reconciler had no chain-backed implementation at
+  all. A workflow run now records its own outcome — the deployment with its
+  SDL path and hash, the lease it won, and every bid it saw, marked matched or
+  lost — writing it best-effort so a bookkeeping failure warns instead of
+  turning a real deployment into a failed command. New `akt store sync
+  [account]` reconciles the store against chain state for the context's
+  `tracked-accounts` (previously a specified config key no code read),
+  filling in the escrow balances, transferred amounts, and provider-side state
+  a single run cannot observe, and preserving the local-only fields the chain
+  does not carry. Stores are now opened through one helper that resolves the
+  path from the context and applies pending schema migrations, and
+  `akt context show` reports the tracked accounts. Reconciliation uses deferred
+  identity access: an explicit address never opens the keyring, while a named
+  tracked/default account resolves only when synchronization actually needs it.
+
 - **Provider commands demanded a provider `akt` had already chosen, and
   suggested a shortcut that did not work**: every lease-scoped `akt provider`
   command now resolves the provider from the deployment's active lease on

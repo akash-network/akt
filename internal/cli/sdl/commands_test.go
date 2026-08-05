@@ -3,6 +3,8 @@ package sdl
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,6 +22,14 @@ import (
 func runSDL(t *testing.T, stdin string, args ...string) (stdout, stderr string, err error) {
 	t.Helper()
 
+	return runSDLReader(t, strings.NewReader(stdin), args...)
+}
+
+// runSDLReader is runSDL with an arbitrary stdin, so a reader that always
+// fails can stand in for a stdin that cannot be drained.
+func runSDLReader(t *testing.T, stdin io.Reader, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+
 	cmd := Commands()
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
@@ -28,7 +38,7 @@ func runSDL(t *testing.T, stdin string, args ...string) (stdout, stderr string, 
 	var out, errBuf bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&errBuf)
-	cmd.SetIn(strings.NewReader(stdin))
+	cmd.SetIn(stdin)
 	cmd.SetArgs(args)
 
 	err = cmd.Execute()
@@ -496,6 +506,70 @@ func TestValidateMissingFile(t *testing.T) {
 	_, _, err := runSDL(t, "", "validate", filepath.Join(t.TempDir(), "does-not-exist.yaml"))
 	require.Error(t, err)
 	require.Equal(t, cliutil.ExitUsage, cliutil.ExitCode(err))
+}
+
+// errReader fails every read, standing in for a stdin that cannot be drained
+// (a closed pipe, a revoked descriptor).
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, errors.New("stdin is gone") }
+
+// TestValidateExitCodeContract pins every documented exit code of
+// "akt sdl validate" — the Long text and SPEC §2.11 list exactly these three
+// rows, and an unreadable input must not be reported as an invalid SDL.
+func TestValidateExitCodeContract(t *testing.T) {
+	missing := filepath.Join(t.TempDir(), "does-not-exist.yaml")
+
+	tests := []struct {
+		name  string
+		setup func(t *testing.T) (stdin io.Reader, arg string)
+		want  int
+	}{
+		{
+			name: "valid file",
+			setup: func(t *testing.T) (io.Reader, string) {
+				return strings.NewReader(""), writeFixture(t, validSDL)
+			},
+			want: cliutil.ExitSuccess,
+		},
+		{
+			name: "invalid file",
+			setup: func(t *testing.T) (io.Reader, string) {
+				return strings.NewReader(""),
+					writeFixture(t, strings.Replace(validSDL, "image: nginx:1.27", "image: nginx", 1))
+			},
+			want: cliutil.ExitGeneral,
+		},
+		{
+			name: "missing file",
+			setup: func(*testing.T) (io.Reader, string) {
+				return strings.NewReader(""), missing
+			},
+			want: cliutil.ExitUsage,
+		},
+		{
+			name: "unreadable stdin",
+			setup: func(*testing.T) (io.Reader, string) {
+				return errReader{}, "-"
+			},
+			want: cliutil.ExitUsage,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			stdin, arg := tc.setup(t)
+
+			_, _, err := runSDLReader(t, stdin, "validate", arg)
+			if tc.want == cliutil.ExitSuccess {
+				require.NoError(t, err)
+				return
+			}
+
+			require.Error(t, err)
+			require.Equal(t, tc.want, cliutil.ExitCode(err))
+		})
+	}
 }
 
 func TestDigestPinnedImagePasses(t *testing.T) {

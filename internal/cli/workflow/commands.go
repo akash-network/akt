@@ -371,6 +371,11 @@ func executeWorkflow(
 	state, runErr := engine.Run(cmd.Context(), rtDef, account, params)
 	recovery := deployRecoveryAdvice(state, runErr)
 
+	// Record the outcome locally before reporting it (SPEC §6.6). A one-shot
+	// CLI run exits before any chain event it produced could be observed, so
+	// the run itself is the only thing that can populate the store.
+	recordWorkflowOutcome(cmd, rc, state)
+
 	if jsonl {
 		emitJSONL(out, state, recovery)
 	} else {

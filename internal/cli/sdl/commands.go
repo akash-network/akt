@@ -261,7 +261,11 @@ func validateCmd() *cobra.Command {
 the same parser as "akt deploy" and the chain tx commands, then apply
 best-practice lint rules (pinned image references, pricing denoms).
 
-Exits 0 when the SDL is valid (warnings allowed) and 1 when it is not.`,
+Exit codes:
+
+  0  valid (warnings allowed)
+  1  invalid: the document parsed or linted with errors
+  2  the document could not be read at all, so nothing was validated`,
 		Args: cobra.ExactArgs(1),
 		Example: `  # Validate a file
   akt sdl validate deploy.yaml
@@ -340,11 +344,20 @@ func printIssues(w io.Writer, kind string, issues []Issue) {
 
 // readFileOrStdin reads the SDL bytes from a path, or from stdin when the
 // argument is "-". The returned name is used in error context.
+//
+// Both input paths fail as usage errors (exit 2). A document that could not be
+// read was never validated, so it must not exit 1 and be mistaken for an
+// invalid SDL — and the two input forms must not disagree about which code
+// that is.
 func readFileOrStdin(cmd *cobra.Command, arg string) (data []byte, name string, err error) {
 	if arg == "-" {
 		data, err = io.ReadAll(cmd.InOrStdin())
 		if err != nil {
-			return nil, "", fmt.Errorf("read stdin: %w", err)
+			return nil, "", &cliutil.CLIError{
+				Code:    cliutil.ExitUsage,
+				Message: "cannot read SDL from stdin",
+				Cause:   err,
+			}
 		}
 
 		return data, "stdin", nil

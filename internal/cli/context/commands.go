@@ -43,10 +43,26 @@ func Commands(mgr func() *aktctx.Manager, getKeyring func() (sdkkeyring.Keyring,
 		logCmd(mgr),
 		clinetwork.Commands(mgr),
 		keyringCommands(mgr),
-		clikeys.Commands(getKeyring),
+		clikeys.Commands(getKeyring, keysRecorder(mgr)),
 	)
 
 	return cmd
+}
+
+// keysRecorder hands the keys package the single write path for key-management
+// entries (AGENTS.md action log coverage, SPEC §2.2.2). The keys package cannot
+// import this one — this package imports it — so the recorder is injected
+// instead, and it resolves the affected context per invocation because
+// --context and AKT_CONTEXT may redirect it.
+func keysRecorder(mgr func() *aktctx.Manager) clikeys.Recorder {
+	return func(cmd *cobra.Command, action string, actionErr error, details map[string]string) {
+		m := mgr()
+		if m == nil {
+			return
+		}
+
+		recordContextResult(m.Root(), activeContextFromCmd(cmd, m), action, actionErr, details)
+	}
 }
 
 func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
@@ -294,6 +310,7 @@ type contextDetails struct {
 	ConsoleAPIURL           string                  `json:"console_api_url"            yaml:"console_api_url"`
 	ConsoleAPIKeyConfigured bool                    `json:"console_api_key_configured" yaml:"console_api_key_configured"`
 	DefaultAccount          string                  `json:"default_account,omitempty"  yaml:"default_account,omitempty"`
+	TrackedAccounts         []string                `json:"tracked_accounts,omitempty" yaml:"tracked_accounts,omitempty"`
 	Gas                     string                  `json:"gas"                        yaml:"gas"`
 	Fees                    string                  `json:"fees,omitempty"             yaml:"fees,omitempty"`
 	GasPrices               string                  `json:"gas_prices"                 yaml:"gas_prices"`
@@ -317,6 +334,7 @@ func newContextDetails(rc *aktctx.Context, effectiveKeyringBackend string, keyri
 		ConsoleAPIURL:           rc.ConsoleAPIURL,
 		ConsoleAPIKeyConfigured: rc.ConsoleAPIKey != "",
 		DefaultAccount:          rc.DefaultAccount,
+		TrackedAccounts:         rc.TrackedAccounts,
 		Gas:                     rc.Gas,
 		Fees:                    rc.Fees,
 		GasPrices:               rc.GasPrices,
@@ -659,6 +677,9 @@ func logCmd(mgr func() *aktctx.Manager) *cobra.Command {
   # Show only transaction entries from the last hour
   akt context log --type tx --since 1h
 
+  # Show every step of one deploy run (the run id shown in SUMMARY)
+  akt context log --workflow-id 9f2c1ab34d55e017
+
   # Show last 10 entries
   akt context log --limit 10`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -683,13 +704,15 @@ func logCmd(mgr func() *aktctx.Manager) *cobra.Command {
 
 			limit, _ := cmd.Flags().GetInt("limit")
 			actionType, _ := cmd.Flags().GetString("type")
+			workflowID, _ := cmd.Flags().GetString("workflow-id")
 			since, _ := cmd.Flags().GetString("since")
 			if !validActionType(actionType) {
 				return fmt.Errorf("invalid --type %q: must be tx, workflow, provider, context, console, or error", actionType)
 			}
 
 			filter := actionlog.Filter{
-				Limit: limit,
+				Limit:      limit,
+				WorkflowID: workflowID,
 			}
 
 			if actionType != "" {
@@ -737,7 +760,7 @@ func logCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			columns := []output.Column{
 				{Header: "TIME"},
 				{Header: "TYPE"},
-				{Header: "ACTION"},
+				{Header: "SUMMARY"},
 				{Header: "STATUS"},
 			}
 
@@ -749,7 +772,7 @@ func logCmd(mgr func() *aktctx.Manager) *cobra.Command {
 					status = "error: " + truncate(e.Error, 40)
 				}
 
-				rows = append(rows, []string{ts, string(e.Type), e.Action, status})
+				rows = append(rows, []string{ts, string(e.Type), entrySummary(e), status})
 			}
 
 			return output.PrintData(cmd, columns, rows, entries)
@@ -758,6 +781,7 @@ func logCmd(mgr func() *aktctx.Manager) *cobra.Command {
 
 	cmd.Flags().Int("limit", 50, "Number of entries to show")
 	cmd.Flags().String("type", "", "Filter by action type: tx, workflow, provider, context, console, error")
+	cmd.Flags().String("workflow-id", "", "Show only the entries of one workflow run")
 	cmd.Flags().String("since", "", "Show entries since duration (1h) or date (2006-01-02)")
 
 	return cmd

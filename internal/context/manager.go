@@ -659,6 +659,7 @@ func (m *Manager) Resolve(name string) (*Context, error) {
 		AuthMethod:       authMethod,
 		ConsoleAPIURL:    consoleURL,
 		DefaultAccount:   ctx.DefaultAccount,
+		TrackedAccounts:  ctx.TrackedAccounts,
 		Gas:              ctx.Gas,
 		Fees:             ctx.Fees,
 		ProviderDefaults: providerDefaults,

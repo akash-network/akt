@@ -62,6 +62,10 @@ type ProviderDefaults struct {
 // reference top-level network and keyring definitions. After resolution via
 // Manager.Resolve(), the full Network and Keyring objects are populated with
 // all their fields.
+//
+// TrackedAccounts names the accounts store reconciliation covers (SPEC §6.7):
+// empty means the default account alone, ["*"] every account in the context's
+// keyring.
 type Context struct {
 	Name             string           `yaml:"-"                           json:"name"`
 	Network          Network          `yaml:"-"                           json:"network"`
@@ -69,6 +73,7 @@ type Context struct {
 	AuthMethod       string           `yaml:"auth-method,omitempty"       json:"auth_method,omitempty"`
 	ConsoleAPIURL    string           `yaml:"console-api-url,omitempty"   json:"console_api_url,omitempty"`
 	DefaultAccount   string           `yaml:"default-account,omitempty"   json:"default_account,omitempty"`
+	TrackedAccounts  []string         `yaml:"tracked-accounts,omitempty"  json:"tracked_accounts,omitempty"`
 	Gas              string           `yaml:"gas,omitempty"               json:"gas,omitempty"`
 	Fees             string           `yaml:"fees,omitempty"              json:"fees,omitempty"`
 	ProviderDefaults ProviderDefaults `yaml:"provider-defaults,omitempty" json:"provider_defaults,omitempty"`
@@ -92,6 +97,7 @@ type contextYAML struct {
 	AuthMethod       string           `yaml:"auth-method,omitempty"`
 	ConsoleAPIURL    string           `yaml:"console-api-url,omitempty"`
 	DefaultAccount   string           `yaml:"default-account,omitempty"`
+	TrackedAccounts  []string         `yaml:"tracked-accounts,omitempty"`
 	Gas              string           `yaml:"gas,omitempty"`
 	Fees             string           `yaml:"fees,omitempty"`
 	ProviderDefaults ProviderDefaults `yaml:"provider-defaults,omitempty"`
@@ -106,6 +112,7 @@ func (c Context) MarshalYAML() (interface{}, error) {
 		AuthMethod:       c.AuthMethod,
 		ConsoleAPIURL:    c.ConsoleAPIURL,
 		DefaultAccount:   c.DefaultAccount,
+		TrackedAccounts:  c.TrackedAccounts,
 		Gas:              c.Gas,
 		Fees:             c.Fees,
 		ProviderDefaults: c.ProviderDefaults,
@@ -127,6 +134,7 @@ func (c *Context) UnmarshalYAML(value *yaml.Node) error {
 	c.AuthMethod = raw.AuthMethod
 	c.ConsoleAPIURL = raw.ConsoleAPIURL
 	c.DefaultAccount = raw.DefaultAccount
+	c.TrackedAccounts = raw.TrackedAccounts
 	c.Gas = raw.Gas
 	c.Fees = raw.Fees
 	c.ProviderDefaults = raw.ProviderDefaults

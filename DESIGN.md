@@ -269,15 +269,16 @@ signer during startup. The decision lives next to `requiresConfig` and
 `requiresContext` as `localIdentityMode`; the root passes the typed result down
 rather than making the client layer infer behavior from command names.
 
-Queries, public provider status, and MCP startup use the deferred form. A named
-default account resolves only when an omitted owner or protected gateway call
-needs it, so network-wide and explicitly scoped reads never open a key store.
-Address-based transaction generation and simulation also stay deferred; the SDK
-can build or simulate from the bech32 address without proving that the key is
-local. Signing transactions, executing workflows, and protected provider calls
-remain eager. `mcp --enable-writes` promotes a keyring context to eager so its
-advertised chain writes are usable, but a Console-only context remains
-keyring-free. Purely local commands and workflow dry-runs receive no keyring.
+Queries, `store sync`, public provider status, and MCP startup use the deferred
+form. A named default account resolves only when an omitted owner, tracked
+account, or protected gateway call needs it, so network-wide and explicitly
+scoped reads never open a key store. Address-based transaction generation and
+simulation also stay deferred; the SDK can build or simulate from the bech32
+address without proving that the key is local. Signing transactions, executing
+workflows, and protected provider calls remain eager. `mcp --enable-writes`
+promotes a keyring context to eager so its advertised chain writes are usable,
+but a Console-only context remains keyring-free. Purely local commands and
+workflow dry-runs receive no keyring.
 
 #### 3.1.2.1 Keyring Backend Resolution
 
@@ -479,6 +480,24 @@ graph LR
 **Startup behavior**: On first launch for a context, the sync engine performs a full reconciliation by querying all deployments owned by accounts in the context. Subsequent launches use incremental sync from the last known block height.
 
 **Reconnection**: On WebSocket disconnect, the engine uses exponential backoff (1s, 2s, 4s, ... up to 60s) with jitter. Missed blocks are reconciled by querying the range between last-synced height and current height.
+
+**Why the CLI does not rely on it.** Subscription-driven sync assumes a session
+that outlives the transactions it watches. A CLI invocation does not: `akt
+deploy` broadcasts, prints, and exits, so the events its own transactions
+produce arrive after the process is gone. Two paths cover the CLI instead, and
+both are deliberate rather than a fallback:
+
+- A workflow run writes its own outcome to the store as its last act
+  (SPEC §6.6). It is the only component that saw the run, and it writes
+  best-effort: the deployment is already on chain, so a store failure warns and
+  leaves the exit code alone.
+- `akt store sync` (SPEC §2.5) runs the same full reconciliation the engine
+  would run at startup, over the context's tracked accounts. It is the user's
+  escape hatch for everything a single run cannot see — pre-existing
+  deployments, escrow balances that move every block, leases a provider closed.
+
+The subscription path remains the design for long-lived sessions; it is not the
+mechanism the one-shot CLI depends on.
 
 ### 3.5 Transport Translation Layer
 

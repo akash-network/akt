@@ -58,6 +58,14 @@ func StoreDir(root, name string) string {
 	return filepath.Join(root, "contexts", name, "store")
 }
 
+// StoreDBPath returns the deployment store database path for a named context.
+// It is the single source of truth for where a context's store lives; every
+// opener must go through it so `akt store status` and a workflow's own
+// persistence (SPEC §6.6) can never disagree about which file they mean.
+func StoreDBPath(root, name string) string {
+	return filepath.Join(StoreDir(root, name), "deployments.db")
+}
+
 // ActionLogPath returns the action log file path for a named context.
 func ActionLogPath(root, name string) string {
 	return filepath.Join(root, "contexts", name, "actions.log")

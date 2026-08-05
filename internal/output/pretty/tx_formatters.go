@@ -175,10 +175,20 @@ func fmtDeploymentCreate(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg
 	return nil
 }
 
+// fmtDeploymentUpdate reports the transaction for what it is. The message
+// carries only the deployment ID and the new SDL hash, so a successful
+// broadcast changes the chain record and leaves every provider serving the
+// previous manifest. Printing Owner and DSEQ alone reads as "the deployment
+// was updated", which is the one thing that has not happened yet.
 func fmtDeploymentUpdate(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
 	m := msg.(*dv1beta.MsgUpdateDeployment)
 	KV(w, "Owner", m.ID.Owner)
 	KV(w, "DSEQ", Bold(fmt.Sprintf("%d", m.ID.DSeq)))
+	Newline(w)
+	fmt.Fprintln(w, Dim("  Only the on-chain SDL hash changed. Providers keep serving the previous"))
+	fmt.Fprintln(w, Dim("  manifest until it is sent to them:"))
+	fmt.Fprintln(w, Dim(fmt.Sprintf("    akt update <sdl-file> %d", m.ID.DSeq)))
+	fmt.Fprintln(w, Dim(fmt.Sprintf("    akt provider send-manifest <sdl-file> --dseq %d --provider <address>", m.ID.DSeq)))
 	return nil
 }
 

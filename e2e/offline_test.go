@@ -381,6 +381,70 @@ func TestContextLogRecordsContextActions(t *testing.T) {
 	}
 }
 
+// TestContextLogRecordsKeyManagement covers the keyring half of the action
+// log: creating a key used to leave no trace at all, while every other
+// mutation was recorded.
+func TestContextLogRecordsKeyManagement(t *testing.T) {
+	home := setupContextHome(t)
+
+	mustRunAkt(t, home, "context", "keys", "add", "alice", "--recover", "--source", writeMnemonicFile(t))
+	address := strings.TrimSpace(stripANSI(mustRunAkt(t, home, "context", "keys", "show", "alice", "-a")))
+	if address != testMnemonicAddr {
+		t.Fatalf("recovered address = %q, want %q", address, testMnemonicAddr)
+	}
+
+	// Export moves private key material out of the keyring and is recorded as
+	// a security event (SPEC §2.2.2).
+	if _, stderr, exitCode := runAktStdin(t, home, "passphrase123\n",
+		"context", "keys", "export", "alice"); exitCode != 0 {
+		t.Fatalf("keys export failed (exit %d): %s", exitCode, stderr)
+	}
+
+	mustRunAkt(t, home, "context", "keys", "rename", "alice", "alice-main")
+	mustRunAkt(t, home, "context", "keys", "delete", "alice-main", "--yes")
+
+	stdout := stripANSI(mustRunAkt(t, home, "context", "log", "--type", "context"))
+	for _, action := range []string{"keys.recover", "keys.export", "keys.rename", "keys.delete"} {
+		if !strings.Contains(stdout, action) {
+			t.Fatalf("expected action log to contain %q, got:\n%s", action, stdout)
+		}
+	}
+	// Addresses are never shortened.
+	if !strings.Contains(stdout, testMnemonicAddr) {
+		t.Fatalf("expected the full key address in the log, got:\n%s", stdout)
+	}
+	// Reads are not state changes and are not recorded.
+	if strings.Contains(stdout, "keys.show") || strings.Contains(stdout, "keys.list") {
+		t.Fatalf("read-only key commands must not be recorded, got:\n%s", stdout)
+	}
+
+	raw, err := os.ReadFile(filepath.Join(home, "contexts", "prod", "actions.log"))
+	if err != nil {
+		t.Fatalf("read action log: %v", err)
+	}
+	for _, word := range strings.Fields(testMnemonic) {
+		if strings.Contains(string(raw), word) {
+			t.Fatalf("mnemonic word %q reached the action log:\n%s", word, raw)
+		}
+	}
+	if strings.Contains(string(raw), "passphrase123") {
+		t.Fatalf("the export passphrase reached the action log:\n%s", raw)
+	}
+}
+
+// writeMnemonicFile stores the deterministic test mnemonic in a temp file so
+// `keys add --recover` can read it without a terminal.
+func writeMnemonicFile(t *testing.T) string {
+	t.Helper()
+
+	path := filepath.Join(t.TempDir(), "mnemonic.txt")
+	if err := os.WriteFile(path, []byte(testMnemonic+"\n"), 0o600); err != nil {
+		t.Fatalf("write mnemonic file: %v", err)
+	}
+
+	return path
+}
+
 func TestContextRenameRecordsAction(t *testing.T) {
 	home := setupContextHome(t)
 

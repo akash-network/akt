@@ -97,6 +97,15 @@ func RenderContextShow(rc aktctx.Context, effectiveKeyringBackend string) string
 		KV(w, "Default Account", Dim("(not set)"))
 	}
 
+	// Which accounts `akt store sync` reconciles (SPEC §6.7). Empty means the
+	// default account alone, which is what the dimmed hint says rather than
+	// leaving the reader to guess.
+	if len(rc.TrackedAccounts) > 0 {
+		KV(w, "Tracked Accounts", strings.Join(rc.TrackedAccounts, ", "))
+	} else {
+		KV(w, "Tracked Accounts", Dim("(default account)"))
+	}
+
 	KV(w, "Gas", rc.Gas)
 
 	if rc.Fees != "" {

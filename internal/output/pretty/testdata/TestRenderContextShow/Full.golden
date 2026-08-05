@@ -13,6 +13,7 @@
   [38;2;113;113;122mKeyring:[m             default (backend: os)
       [38;2;113;113;122mEffective:[m       keychain
   [38;2;113;113;122mDefault Account:[m     deployer
+  [38;2;113;113;122mTracked Accounts:[m    deployer, akash1zn43lm
   [38;2;113;113;122mGas:[m                 auto
   [38;2;113;113;122mFees:[m                5000uakt
   [38;2;113;113;122mProvider Auth:[m       certificate

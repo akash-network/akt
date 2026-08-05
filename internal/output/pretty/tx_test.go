@@ -114,6 +114,28 @@ func TestTxFmtDeploymentCreate(t *testing.T) {
 	golden.RequireEqual(t, buf.Bytes())
 }
 
+// TestTxFmtDeploymentUpdate pins the caveat: MsgUpdateDeployment changes only
+// the chain record, so the result must say the providers have not seen it yet.
+func TestTxFmtDeploymentUpdate(t *testing.T) {
+	ensureFormattersRegistered()
+
+	msg := &dv1beta.MsgUpdateDeployment{
+		ID: dv1.DeploymentID{
+			Owner: "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5lzv7xu",
+			DSeq:  12345678,
+		},
+	}
+
+	f, ok := LookupTx(msg)
+	require.True(t, ok, "formatter should be registered for MsgUpdateDeployment")
+
+	var buf bytes.Buffer
+	err := f.FormatTx(&buf, nil, sdkclient.Context{}, msg, &sdk.TxResponse{}, 0)
+	require.NoError(t, err)
+
+	golden.RequireEqual(t, buf.Bytes())
+}
+
 func TestTxFmtDelegate(t *testing.T) {
 	ensureFormattersRegistered()
 

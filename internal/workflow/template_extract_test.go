@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	wf "pkg.akt.dev/akt/internal/workflow"
+	"pkg.akt.dev/akt/internal/workflow/builtin"
 )
 
 func newState() *wf.RunState {
@@ -266,6 +267,130 @@ func TestStepOutputMissingKeys(t *testing.T) {
 	}
 	if got := state.StepOutput("nooutput", "dseq"); got != nil {
 		t.Errorf("step without outputs = %v, want nil", got)
+	}
+}
+
+// builtinStepTemplate loads a built-in workflow and returns the template of
+// the named step, so the shipped definition is exercised rather than a copy.
+func builtinStepTemplate(t *testing.T, workflow, step string) string {
+	t.Helper()
+
+	def, err := wf.NewLoader(t.TempDir(), "", builtin.Workflows()).Load(workflow)
+	if err != nil {
+		t.Fatalf("load builtin %q: %v", workflow, err)
+	}
+
+	for _, s := range def.Steps {
+		if s.Name == step {
+			return s.Template
+		}
+	}
+
+	t.Fatalf("builtin %q has no step %q", workflow, step)
+
+	return ""
+}
+
+// updateResultState builds the run state the update workflow's display-result
+// step sees: the send-manifest step reports which providers accepted the new
+// manifest and how many there were.
+func updateResultState(providers []string) *wf.RunState {
+	state := wf.NewRunState("wf-1", "update", "akash1owner", map[string]any{"dseq": "12345"})
+	state.SetStepResult("update-deployment", &wf.StepResult{
+		Name:   "update-deployment",
+		Type:   wf.StepTx,
+		Status: "success",
+		TxHash: "ABCD1234",
+	})
+	state.SetStepResult("send-manifest", &wf.StepResult{
+		Name:   "send-manifest",
+		Type:   wf.StepProvider,
+		Status: "success",
+		Output: map[string]any{"providers": providers, "count": len(providers)},
+	})
+
+	return state
+}
+
+// TestBuiltinUpdateResultReportsManifestDelivery covers the chain rail with at
+// least one active lease: the result names every provider that took the new
+// manifest, and still warns that an unchanged image reference redeploys
+// nothing.
+func TestBuiltinUpdateResultReportsManifestDelivery(t *testing.T) {
+	tmpl := builtinStepTemplate(t, "update", "display-result")
+
+	rendered, err := wf.ResolveTemplate(tmpl, updateResultState([]string{"akash1prov1", "akash1prov2"}))
+	if err != nil {
+		t.Fatalf("ResolveTemplate: %v", err)
+	}
+
+	for _, want := range []string{
+		"Deployment updated.",
+		"DSEQ: 12345",
+		"Manifest sent to 2 provider(s):",
+		"    akash1prov1",
+		"    akash1prov2",
+		"a provider restarts a service only when its image reference or",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("result does not contain %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "WARNING") {
+		t.Errorf("delivered manifest must not warn:\n%s", rendered)
+	}
+}
+
+// TestBuiltinUpdateResultWarnsWhenNoProviderReceivedTheManifest covers the
+// zero-lease no-op: SendManifestToActiveLeases succeeds with an empty provider
+// set, so the step is "success" while nothing was redeployed. The result must
+// say so instead of printing an unconditional "Deployment updated!".
+func TestBuiltinUpdateResultWarnsWhenNoProviderReceivedTheManifest(t *testing.T) {
+	tmpl := builtinStepTemplate(t, "update", "display-result")
+
+	rendered, err := wf.ResolveTemplate(tmpl, updateResultState(nil))
+	if err != nil {
+		t.Fatalf("ResolveTemplate: %v", err)
+	}
+
+	for _, want := range []string{
+		"nothing was redeployed",
+		"DSEQ: 12345",
+		"WARNING: this deployment has no active leases",
+		"akt query market lease 12345 active",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("result does not contain %q:\n%s", want, rendered)
+		}
+	}
+	if strings.Contains(rendered, "Manifest sent to") {
+		t.Errorf("no provider received the manifest, result claims otherwise:\n%s", rendered)
+	}
+}
+
+// TestBuiltinUpdateResultOnConsoleRail covers the Console context, where
+// filterProviderSteps removes the provider step entirely: with no send-manifest
+// result in state the template must not read that as "zero providers".
+func TestBuiltinUpdateResultOnConsoleRail(t *testing.T) {
+	tmpl := builtinStepTemplate(t, "update", "display-result")
+
+	state := wf.NewRunState("wf-1", "update", "akash1owner", map[string]any{"dseq": "12345"})
+	state.SetStepResult("update-deployment", &wf.StepResult{
+		Name:   "update-deployment",
+		Type:   wf.StepTx,
+		Status: "success",
+	})
+
+	rendered, err := wf.ResolveTemplate(tmpl, state)
+	if err != nil {
+		t.Fatalf("ResolveTemplate: %v", err)
+	}
+
+	if !strings.Contains(rendered, "handled by the Console API") {
+		t.Errorf("console result does not name the Console API:\n%s", rendered)
+	}
+	if strings.Contains(rendered, "WARNING") {
+		t.Errorf("console manifest delivery must not warn:\n%s", rendered)
 	}
 }
 

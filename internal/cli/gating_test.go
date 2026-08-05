@@ -199,7 +199,7 @@ func TestLocalIdentityModes(t *testing.T) {
 		t.Error("the root command prints help and must not open a keyring")
 	}
 
-	for _, group := range []string{"sdl", "monitor", "version", "completion", "context", "store", "console"} {
+	for _, group := range []string{"sdl", "monitor", "version", "completion", "context", "console"} {
 		g := &cobra.Command{Use: group}
 		root.AddCommand(g)
 
@@ -214,6 +214,18 @@ func TestLocalIdentityModes(t *testing.T) {
 		if got := localIdentityMode(leaf); got != aktclient.LocalIdentityNone {
 			t.Errorf("%s validate must not open a keyring", group)
 		}
+	}
+
+	store := &cobra.Command{Use: "store"}
+	storeStatus := &cobra.Command{Use: "status"}
+	storeSync := &cobra.Command{Use: "sync"}
+	store.AddCommand(storeStatus, storeSync)
+	root.AddCommand(store)
+	if got := localIdentityMode(storeStatus); got != aktclient.LocalIdentityNone {
+		t.Errorf("store status mode = %v, want none", got)
+	}
+	if got := localIdentityMode(storeSync); got != aktclient.LocalIdentityOnDemand {
+		t.Errorf("store sync mode = %v, want on demand", got)
 	}
 
 	for _, group := range []string{"query"} {
