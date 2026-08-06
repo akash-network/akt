@@ -339,8 +339,13 @@ func TestShowResolvesTheActiveContext(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("context show: %v", err)
 	}
+	mainnet := m.GetNetwork("mainnet")
+	if mainnet == nil {
+		t.Fatal("mainnet network missing from test config")
+		return
+	}
 	out := stdout.String()
-	if !strings.Contains(out, "prod") || !strings.Contains(out, "akashnet-2") {
+	if !strings.Contains(out, "prod") || !strings.Contains(out, mainnet.ChainID) {
 		t.Errorf("show output should name the context and resolved chain, got %q", out)
 	}
 }

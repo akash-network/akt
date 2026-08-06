@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- **Mainnet identity was duplicated in command code and context tests**:
+  startup now reads the mainnet chain ID from the configured `mainnet` network,
+  which first-run setup populates from `github.com/akash-network/net`, and
+  passes that value to downstream monitor endpoint selection. Context tests
+  assert against the configured chain ID instead of repeating a concrete
+  mainnet identifier.
+
 - **Context details rendered the network twice**: pretty `context show` output
   printed the shared network name and then immediately opened another nested
   `Network` section. The redundant name row is gone, leaving one section with
