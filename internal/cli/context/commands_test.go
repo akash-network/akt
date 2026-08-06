@@ -340,8 +340,8 @@ func TestShowResolvesTheActiveContext(t *testing.T) {
 		t.Fatalf("context show: %v", err)
 	}
 	out := stdout.String()
-	if !strings.Contains(out, "prod") || !strings.Contains(out, "mainnet") {
-		t.Errorf("show output should name the context and its network, got %q", out)
+	if !strings.Contains(out, "prod") || !strings.Contains(out, "akashnet-2") {
+		t.Errorf("show output should name the context and resolved chain, got %q", out)
 	}
 }
 

@@ -222,6 +222,10 @@ graph TB
 - Instantiatable from built-in templates (mainnet, testnet, sandbox).
 - Built-in templates track the Akash network registry's current chain IDs and
   endpoints; the sandbox template targets the live `sandbox-2` network.
+- The human context detail view presents these resolved fields in one
+  `Network` subsection. It does not repeat the shared network object's name as
+  a separate row above that subsection; structured output retains the complete
+  network object, including its name.
 - When a shared network's config is edited within a context, two modes are offered:
   - **Edit parent**: Modify the network definition. Change applies to all contexts using it.
   - **Fork**: Create a copy of the network for this context only. The context switches to the forked copy.

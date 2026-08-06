@@ -112,8 +112,8 @@ func TestContextLifecycle(t *testing.T) {
 	if !strings.Contains(stdout, "prod") {
 		t.Fatalf("expected context show to contain 'prod', got:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "mainnet") {
-		t.Fatalf("expected context show to contain 'mainnet', got:\n%s", stdout)
+	if !strings.Contains(stdout, "akashnet-2") {
+		t.Fatalf("expected context show to contain 'akashnet-2', got:\n%s", stdout)
 	}
 
 	// Create a second context so we can delete the first

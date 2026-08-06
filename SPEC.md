@@ -890,7 +890,10 @@ Print the current context name and full details (resolved network, keyring, stor
 An explicit global `--context <name>` selects the context to show. Structured
 output includes the fully resolved network and keyring, effective gas/provider
 settings, capability booleans, `store_path`, and `action_log_path`; it never
-includes the Console API key.
+includes the Console API key. Pretty output renders the resolved network in one
+`Network` subsection. It does not repeat the shared network object's name as a
+separate `Network: <name>` row; structured output retains that name in the
+resolved network object.
 
 The keyring line reports the *configured* backend. When that backend is an
 alias for a platform store — `os` (§1.5) — the concrete store that serves it is
@@ -902,22 +905,25 @@ key store and never prompts.
 
 ```bash
 $ akt context show
-Context:         prod
-Network:         mainnet
-  Chain ID:      akashnet-2
-  RPC:           https://rpc.akt.dev:443/rpc (+2 backup)
-  API:           https://api.akashnet.net:443 (+1 backup)
-  gRPC:          grpc.akashnet.net:443
-  Gas Prices:    0.025uakt
-  Gas Adj:       1.5
-Keyring:         default (backend: os)
-  Effective:     keychain
-Default Account: alice
-Gas:             auto
-Fees:            (none)
-Provider Auth:   jwt
-Store:           ~/.config/akt/contexts/prod/store/
-Action Log:      ~/.config/akt/contexts/prod/actions.log
+Context
+  Name:             prod
+  Network:
+    Chain ID:        akashnet-2
+    RPC:             https://rpc.akt.dev:443/rpc (+2 backup)
+    API:             https://api.akashnet.net:443 (+1 backup)
+    gRPC:            grpc.akashnet.net:443
+    Gas Prices:      0.025uakt
+    Gas Adj:         1.5
+
+  Auth Method:      keyring
+  Keyring:          default (backend: os)
+    Effective:      keychain
+  Default Account:  alice
+  Gas:              auto
+  Fees:             (none)
+  Provider Auth:    jwt
+  Store:            ~/.config/akt/contexts/prod/store/
+  Action Log:       ~/.config/akt/contexts/prod/actions.log
 ```
 
 #### `akt context edit <name>`

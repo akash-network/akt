@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- **Context details rendered the network twice**: pretty `context show` output
+  printed the shared network name and then immediately opened another nested
+  `Network` section. The redundant name row is gone, leaving one section with
+  the resolved chain ID and endpoints. JSON and YAML retain the complete
+  network object, including its name.
+
 - **Fresh lint runs reported possible nil dereferences in tests**: the tests
   already stopped with `t.Fatal` when a required command, flag, or stored value
   was absent, but staticcheck does not treat that call as terminating control
