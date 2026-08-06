@@ -4,6 +4,17 @@
 
 ### Fixed
 
+- **Confirmed transactions stayed pending forever in the action log**: the
+  default sync broadcast records the honest CheckTx state before a block height
+  exists, but nothing revisited that entry after inclusion. `akt context log`
+  now best-effort resolves the pending hashes it is about to display through
+  the active context's RPC endpoint and appends terminal success or failure
+  revisions with height, gas, code, and error details. Reads collapse revisions
+  by transaction hash before applying the limit, so the on-disk audit trail
+  remains append-only while human and machine output show one current row per
+  transaction. An unavailable node leaves the row pending without breaking
+  offline log inspection.
+
 - **Fresh lint runs reported possible nil dereferences in tests**: the tests
   already stopped with `t.Fatal` when a required command, flag, or stored value
   was absent, but staticcheck does not treat that call as terminating control

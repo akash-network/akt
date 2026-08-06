@@ -2,6 +2,8 @@ package context
 
 import (
 	"bufio"
+	stdcontext "context"
+	"encoding/hex"
 	"fmt"
 	"os"
 	"strings"
@@ -9,11 +11,13 @@ import (
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
 	"pkg.akt.dev/akt/internal/actionlog"
 	"pkg.akt.dev/akt/internal/capability"
+	chaincli "pkg.akt.dev/akt/internal/cli/chain"
 	clikeys "pkg.akt.dev/akt/internal/cli/keys"
 	clinetwork "pkg.akt.dev/akt/internal/cli/network"
 	"pkg.akt.dev/akt/internal/cliutil"
@@ -21,7 +25,13 @@ import (
 	aktkeyring "pkg.akt.dev/akt/internal/keyring"
 	"pkg.akt.dev/akt/internal/output"
 	"pkg.akt.dev/akt/internal/output/pretty"
+
+	nutils "pkg.akt.dev/go/node/utils"
 )
+
+const pendingTransactionReconcileTimeout = 5 * time.Second
+
+type transactionLookupFunc func(stdcontext.Context, sdkclient.Context, []byte) (*sdk.TxResponse, error)
 
 // Commands returns the "context" command tree, including "network" and "keys" as subcommands.
 func Commands(mgr func() *aktctx.Manager, getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
@@ -742,6 +752,12 @@ func logCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if refreshPendingTransactions(cmd, logger, entries) > 0 {
+				entries, err = logger.Read(filter)
+				if err != nil {
+					return err
+				}
+			}
 
 			// The human hint is only correct for the table renderer. Emitting
 			// it under -o json handed a JSON consumer a line of prose at exit
@@ -785,6 +801,75 @@ func logCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd.Flags().String("since", "", "Show entries since duration (1h) or date (2006-01-02)")
 
 	return cmd
+}
+
+// refreshPendingTransactions resolves the active context's RPC client and
+// reconciles only the pending transactions already selected for display. Log
+// viewing remains usable offline: context resolution and lookup failures leave
+// the existing pending entries untouched.
+func refreshPendingTransactions(cmd *cobra.Command, logger *actionlog.Logger, entries []actionlog.Entry) int {
+	// Root execution injects the selected chain context before this command
+	// runs. Keep the log command usable when invoked directly (for example by
+	// unit tests) or anywhere else that deliberately has no chain context.
+	if cmd.Context() == nil || cmd.Context().Value(chaincli.ClientContextKey) == nil {
+		return 0
+	}
+
+	cctx, err := chaincli.GetClientQueryContext(cmd)
+	if err != nil || cctx.Client == nil {
+		return 0
+	}
+
+	ctx, cancel := stdcontext.WithTimeout(cmd.Context(), pendingTransactionReconcileTimeout)
+	defer cancel()
+
+	return reconcilePendingTransactions(ctx, logger, cctx, entries, nutils.QueryTx)
+}
+
+// reconcilePendingTransactions appends terminal revisions for transactions the
+// node now knows. actionlog.Read collapses those revisions by hash, so storage
+// stays append-only while callers see one current row per transaction.
+func reconcilePendingTransactions(
+	ctx stdcontext.Context,
+	logger *actionlog.Logger,
+	cctx sdkclient.Context,
+	entries []actionlog.Entry,
+	lookup transactionLookupFunc,
+) int {
+	reconciled := 0
+
+	for _, entry := range entries {
+		if entry.Type != actionlog.TypeTx || entry.Status != "pending" || entry.TxHash == "" {
+			continue
+		}
+
+		hash, err := hex.DecodeString(entry.TxHash)
+		if err != nil {
+			continue
+		}
+
+		response, err := lookup(ctx, cctx, hash)
+		if err != nil || response == nil || response.Height <= 0 {
+			continue
+		}
+
+		revision := entry
+		revision.Height = response.Height
+		revision.GasUsed = response.GasUsed
+		revision.ResultCode = response.Code
+		revision.Error = ""
+		revision.Status = "success"
+		if response.Code != 0 {
+			revision.Status = "failed"
+			revision.Error = response.RawLog
+		}
+
+		if err := logger.Log(revision); err == nil {
+			reconciled++
+		}
+	}
+
+	return reconciled
 }
 
 func validActionType(value string) bool {

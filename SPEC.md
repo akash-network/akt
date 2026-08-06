@@ -1008,6 +1008,14 @@ Addresses and workflow run ids are printed in full; only the error text shown in
 the `STATUS` column is shortened. The table is a summary view — machine output
 (`-o json|yaml`) always serializes complete entries with every field of §5.4.
 
+Before rendering, `akt context log` best-effort reconciles displayed `tx`
+entries whose status is `pending` and whose transaction hash is non-empty. Each
+hash is queried through the active context's RPC endpoint. A transaction found
+in a block is recorded as a terminal `success` or `failed` revision with its
+height, gas used, result code, and error text. A missing transaction, unavailable
+RPC endpoint, timeout, or other lookup failure leaves the entry `pending` and
+does not make this local audit command fail.
+
 ```bash
 $ akt context log --limit 6
   TIME                 TYPE      SUMMARY                                                     STATUS
@@ -3494,6 +3502,13 @@ bids:
 
 The action log is an append-only log unique to each context. It records every user action performed within the context, providing an audit trail and enabling troubleshooting.
 
+Transaction status changes do not rewrite historical bytes. A terminal lookup
+appends a revision carrying the same non-empty `tx_hash` and original timestamp.
+Readers collapse transaction revisions by hash, retaining the latest appended
+revision, before reversing and applying the requested limit. The submission
+time and one-row-per-transaction view are therefore preserved without making
+the log mutable.
+
 ### 5.1 Action Log Location
 
 Each context has its own action log at:
@@ -3611,7 +3626,7 @@ The action log records entries for the following command categories:
 
 | Command category | Logged | Entry type | When |
 |---|---|---|---|
-| `tx *` | Always | `tx` | After broadcast (success or failure). On success: includes tx hash, plus height and gas used when the broadcast mode reports them. Status is `pending` when the transaction was accepted into the mempool but not yet included in a block (the default `sync` mode), and `success` once a height is known. On failure: includes error message and result code. |
+| `tx *` | Always | `tx` | After broadcast (success or failure). On success: includes tx hash, plus height and gas used when the broadcast mode reports them. Status is `pending` when the transaction was accepted into the mempool but not yet included in a block (the default `sync` mode), and `success` once a height is known. `akt context log` reconciles displayed pending hashes and appends a terminal revision when the node reports inclusion. On failure: includes error message and result code. |
 | `query *` | Never by default | `query` | Read-only queries are not state changes and are not recorded by default (see verbose row below). |
 | Workflow commands (`deploy`, `update`, `close`) | Always | `workflow` | One entry per workflow step. Each entry includes the step name, step index, result, and workflow run ID, and `akt context log` renders the step and run in `SUMMARY` so the steps of a run stay distinguishable and a failed step is identifiable (§2.2). |
 | `provider *` (state-changing: `send-manifest`, `migrate-hostnames`, `migrate-endpoints`, `lease-shell`) | Always | `provider` | After the provider gateway operation completes (success or failure). Read-only provider queries (`status`, `lease-status`, `lease-logs`, `lease-events`, `get-manifest`) are not recorded. |
