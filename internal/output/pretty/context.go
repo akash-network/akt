@@ -38,8 +38,10 @@ func RenderContextShow(rc aktctx.Context, effectiveKeyringBackend string) string
 
 	fmt.Fprintln(w, Section("Context"))
 	ctxKV(w, "Name", Bold(rc.Name))
-	ctxKV(w, "Network", rc.Network.Name)
 
+	// The resolved fields are the useful human-facing network identity. Keep
+	// them in one subsection instead of repeating the shared network name above
+	// it; structured output still carries the complete network object.
 	KVHeader(w, "  Network")
 	ctxSubKV(w, "Chain ID", rc.Network.ChainID)
 

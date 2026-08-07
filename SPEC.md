@@ -525,6 +525,11 @@ In a terminal the wizard performs the following steps, in order. All of its outp
 
 **b. Select networks.** A multi-select over the network definitions fetched from `github.com/akash-network/net`, with every network pre-selected. One context is created per selected network, named after that network.
 
+After bootstrap, or after loading an existing config, root initialization reads
+the mainnet chain ID from the configured network named `mainnet`. Downstream
+command logic MUST use that invocation value and MUST NOT duplicate a concrete
+mainnet chain ID in command code or package-level state.
+
 **c. Select the keyring backend.** Single-select over `os`, `file`, and `test`; default `os`.
 
 **d. Select the active context.** The wizard asks explicitly which of the created contexts becomes `current-context`. It MUST NOT choose one silently. The cursor starts on a test network — `sandbox` if it was selected, otherwise `testnet`, otherwise any other non-mainnet selection — so that accepting the default lands on a network where a mistake costs nothing. Mainnet is always present in the list and reachable in a single keystroke, but is never the pre-selected row: the first command a new user runs must not be able to spend real AKT because the active network was inherited from a default rather than chosen. The prompt is shown even when only one network was selected, so the active network is always something the user saw and confirmed.
@@ -890,7 +895,10 @@ Print the current context name and full details (resolved network, keyring, stor
 An explicit global `--context <name>` selects the context to show. Structured
 output includes the fully resolved network and keyring, effective gas/provider
 settings, capability booleans, `store_path`, and `action_log_path`; it never
-includes the Console API key.
+includes the Console API key. Pretty output renders the resolved network in one
+`Network` subsection. It does not repeat the shared network object's name as a
+separate `Network: <name>` row; structured output retains that name in the
+resolved network object.
 
 The keyring line reports the *configured* backend. When that backend is an
 alias for a platform store — `os` (§1.5) — the concrete store that serves it is
@@ -902,22 +910,25 @@ key store and never prompts.
 
 ```bash
 $ akt context show
-Context:         prod
-Network:         mainnet
-  Chain ID:      akashnet-2
-  RPC:           https://rpc.akt.dev:443/rpc (+2 backup)
-  API:           https://api.akashnet.net:443 (+1 backup)
-  gRPC:          grpc.akashnet.net:443
-  Gas Prices:    0.025uakt
-  Gas Adj:       1.5
-Keyring:         default (backend: os)
-  Effective:     keychain
-Default Account: alice
-Gas:             auto
-Fees:            (none)
-Provider Auth:   jwt
-Store:           ~/.config/akt/contexts/prod/store/
-Action Log:      ~/.config/akt/contexts/prod/actions.log
+Context
+  Name:             prod
+  Network:
+    Chain ID:        akashnet-2
+    RPC:             https://rpc.akt.dev:443/rpc (+2 backup)
+    API:             https://api.akashnet.net:443 (+1 backup)
+    gRPC:            grpc.akashnet.net:443
+    Gas Prices:      0.025uakt
+    Gas Adj:         1.5
+
+  Auth Method:      keyring
+  Keyring:          default (backend: os)
+    Effective:      keychain
+  Default Account:  alice
+  Gas:              auto
+  Fees:             (none)
+  Provider Auth:    jwt
+  Store:            ~/.config/akt/contexts/prod/store/
+  Action Log:       ~/.config/akt/contexts/prod/actions.log
 ```
 
 #### `akt context edit <name>`

@@ -222,6 +222,13 @@ graph TB
 - Instantiatable from built-in templates (mainnet, testnet, sandbox).
 - Built-in templates track the Akash network registry's current chain IDs and
   endpoints; the sandbox template targets the live `sandbox-2` network.
+- After startup loads the common config, runtime code derives the mainnet chain
+  ID from the configured `mainnet` network. Command code does not duplicate the
+  registry-owned chain ID as a literal or package-level variable.
+- The human context detail view presents these resolved fields in one
+  `Network` subsection. It does not repeat the shared network object's name as
+  a separate row above that subsection; structured output retains the complete
+  network object, including its name.
 - When a shared network's config is edited within a context, two modes are offered:
   - **Edit parent**: Modify the network definition. Change applies to all contexts using it.
   - **Fork**: Create a copy of the network for this context only. The context switches to the forked copy.

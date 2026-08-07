@@ -77,8 +77,10 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	var mgr *aktctx.Manager
 	var krMgr *aktkeyring.Manager
 	var resolvedCfgRoot string
+	var mainnetChainID string
 
 	mgrFn := func() *aktctx.Manager { return mgr }
+	mainnetChainIDFn := func() string { return mainnetChainID }
 
 	// getKeyring returns the Cosmos SDK keyring for the current context.
 	getKeyring := func() (sdkkeyring.Keyring, error) {
@@ -219,6 +221,10 @@ the deployment is created.`,
 			if err != nil {
 				return err
 			}
+			mainnetChainID = ""
+			if mainnet := mgr.GetNetwork("mainnet"); mainnet != nil {
+				mainnetChainID = mainnet.ChainID
+			}
 
 			// Initialize the keyring manager with all keyring configs, with
 			// the per-invocation --keyring-backend/--keyring-dir overrides
@@ -335,6 +341,7 @@ the deployment is created.`,
 					"",
 					func() string { return resolvedCfgRoot },
 					mgrFn,
+					mainnetChainID,
 				)
 				if err != nil {
 					return err
@@ -410,7 +417,7 @@ the deployment is created.`,
 	root.AddCommand(chaincli.QueryCmd())
 
 	homeFn := func() string { return resolvedCfgRoot }
-	root.AddCommand(monitorCmd(v, homeFn, mgrFn))
+	root.AddCommand(monitorCmd(v, homeFn, mgrFn, mainnetChainIDFn))
 	root.AddCommand(mcpCmd(mgrFn))
 	root.AddCommand(cliprovider.Commands())
 	root.AddCommand(clisdl.Commands())
@@ -840,6 +847,7 @@ func resolveMonitorRuntime(
 	restEndpoint string,
 	homeFn func() string,
 	mgrFn func() *aktctx.Manager,
+	mainnetChainID string,
 ) (monitorRuntime, error) {
 	cfgRoot := homeFn()
 	if cfgRoot == "" {
@@ -866,8 +874,8 @@ func resolveMonitorRuntime(
 	if resolved != nil && rpcExplicit {
 		selectedFromContext = endpointInNetwork(rpcEndpoint, resolved.Network.Endpoints.RPC)
 	}
-	if resolved != nil && !rpcExplicit &&
-		resolved.Network.ChainID == "akashnet-2" &&
+	if resolved != nil && mainnetChainID != "" && !rpcExplicit &&
+		resolved.Network.ChainID == mainnetChainID &&
 		sameMonitorEndpoint(rpcEndpoint, "https://rpc.akashnet.net:443") {
 		if template, ok := aktctx.NetworkTemplates()["mainnet"]; ok && len(template.Endpoints.RPC) > 0 {
 			rpcEndpoint = template.Endpoints.RPC[0]
@@ -943,6 +951,7 @@ func monitorRunE(
 	dashboard string,
 	homeFn func() string,
 	mgrFn func() *aktctx.Manager,
+	mainnetChainIDFn func() string,
 ) func(*cobra.Command, []string) error {
 	return func(cmd *cobra.Command, args []string) error {
 		if err := checkInteractive(v); err != nil {
@@ -978,6 +987,7 @@ func monitorRunE(
 			restEndpoint,
 			homeFn,
 			mgrFn,
+			mainnetChainIDFn(),
 		)
 		if err != nil {
 			return err
@@ -1032,6 +1042,7 @@ func monitorCmd(
 	v *viper.Viper,
 	homeFn func() string,
 	mgrFn func() *aktctx.Manager,
+	mainnetChainIDFn func() string,
 ) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "monitor [rpc-endpoint]",
@@ -1068,15 +1079,15 @@ context. A positional argument overrides the --rpc flag.`,
 
   # Launch directly into the Provider dashboard
   akt monitor provider`,
-		RunE: monitorRunE(v, "", homeFn, mgrFn),
+		RunE: monitorRunE(v, "", homeFn, mgrFn, mainnetChainIDFn),
 	}
 
 	addMonitorFlags(cmd)
 
-	cmd.AddCommand(monitorNetworkCmd(v, homeFn, mgrFn))
-	cmd.AddCommand(monitorProviderCmd(v, homeFn, mgrFn))
-	cmd.AddCommand(monitorOracleCmd(v, homeFn, mgrFn))
-	cmd.AddCommand(monitorBMECmd(v, homeFn, mgrFn))
+	cmd.AddCommand(monitorNetworkCmd(v, homeFn, mgrFn, mainnetChainIDFn))
+	cmd.AddCommand(monitorProviderCmd(v, homeFn, mgrFn, mainnetChainIDFn))
+	cmd.AddCommand(monitorOracleCmd(v, homeFn, mgrFn, mainnetChainIDFn))
+	cmd.AddCommand(monitorBMECmd(v, homeFn, mgrFn, mainnetChainIDFn))
 
 	return cmd
 }
@@ -1085,6 +1096,7 @@ func monitorNetworkCmd(
 	v *viper.Viper,
 	homeFn func() string,
 	mgrFn func() *aktctx.Manager,
+	mainnetChainIDFn func() string,
 ) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "network [rpc-endpoint]",
@@ -1100,7 +1112,7 @@ progress, governance proposals and network parameters. Sub-tabs:
   4  Parameters  Module-by-module parameter browser`,
 		Args:    cobra.MaximumNArgs(1),
 		Example: `  akt monitor network https://rpc.akt.dev:443/rpc`,
-		RunE:    monitorRunE(v, "network", homeFn, mgrFn),
+		RunE:    monitorRunE(v, "network", homeFn, mgrFn, mainnetChainIDFn),
 	}
 
 	addMonitorFlags(cmd)
@@ -1112,6 +1124,7 @@ func monitorProviderCmd(
 	v *viper.Viper,
 	homeFn func() string,
 	mgrFn func() *aktctx.Manager,
+	mainnetChainIDFn func() string,
 ) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "provider [rpc-endpoint]",
@@ -1123,7 +1136,7 @@ visualization, provider health scanning with priority-based scheduling,
 and per-provider detail with node-level CPU/memory/GPU resources.`,
 		Args:    cobra.MaximumNArgs(1),
 		Example: `  akt monitor provider`,
-		RunE:    monitorRunE(v, "provider", homeFn, mgrFn),
+		RunE:    monitorRunE(v, "provider", homeFn, mgrFn, mainnetChainIDFn),
 	}
 
 	addMonitorFlags(cmd)
@@ -1135,6 +1148,7 @@ func monitorOracleCmd(
 	v *viper.Viper,
 	homeFn func() string,
 	mgrFn func() *aktctx.Manager,
+	mainnetChainIDFn func() string,
 ) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "oracle [rpc-endpoint]",
@@ -1146,7 +1160,7 @@ BME state (mint status, vault balances, ledger entries). This is
 the same dashboard as "akt monitor bme".`,
 		Args:    cobra.MaximumNArgs(1),
 		Example: `  akt monitor oracle`,
-		RunE:    monitorRunE(v, "oracle-bme", homeFn, mgrFn),
+		RunE:    monitorRunE(v, "oracle-bme", homeFn, mgrFn, mainnetChainIDFn),
 	}
 
 	addMonitorFlags(cmd)
@@ -1158,6 +1172,7 @@ func monitorBMECmd(
 	v *viper.Viper,
 	homeFn func() string,
 	mgrFn func() *aktctx.Manager,
+	mainnetChainIDFn func() string,
 ) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "bme [rpc-endpoint]",
@@ -1169,7 +1184,7 @@ and oracle price data (aggregated prices, TWAP, health). This is
 the same dashboard as "akt monitor oracle".`,
 		Args:    cobra.MaximumNArgs(1),
 		Example: `  akt monitor bme`,
-		RunE:    monitorRunE(v, "oracle-bme", homeFn, mgrFn),
+		RunE:    monitorRunE(v, "oracle-bme", homeFn, mgrFn, mainnetChainIDFn),
 	}
 
 	addMonitorFlags(cmd)
