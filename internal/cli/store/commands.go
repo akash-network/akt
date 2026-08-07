@@ -195,6 +195,9 @@ func exportCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 		Use:   "export",
 		Args:  cobra.NoArgs,
 		Short: "Export the local store to YAML or JSON",
+		Long: "Export the local store to YAML or JSON. The top-level version is " +
+			"the export format, schema_version is the database layout, and each " +
+			"record_version is that record's update revision.",
 		Example: `  # Export to stdout as YAML
   akt store export
 

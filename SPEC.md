@@ -3492,6 +3492,15 @@ meta/
   without migrating would be read and written at whatever schema it was last
   left at, which is exactly the drift the versioning exists to prevent.
 
+`RecordVersion` has a different scope: it is the monotonic revision of one
+deployment, lease, or bid record. A newly created local record starts at 1;
+each write over the same key advances it. Importing a record with a higher
+revision preserves that higher value, while importing an equal or older
+revision advances from the existing local value. This makes merge/import and
+future remote synchronization orderable without changing the database schema.
+Version advancement happens inside the same bbolt write transaction as the
+record update.
+
 ### 4.6 Export Format
 
 Exports include a header with metadata:
@@ -3510,6 +3519,7 @@ deployments:
   - owner: akash1abc...
     dseq: 12345
     state: active
+    record_version: 4
     sdl_hash: sha256:abc123...
     # ... full DeploymentRecord fields
 leases:
@@ -3529,6 +3539,12 @@ bids:
       provider: akash1prov...
     # ... full BidRecord fields
 ```
+
+The three version values are independent:
+
+- top-level `version` is the export-envelope format;
+- top-level `schema_version` is the bbolt layout and migration level;
+- each `record_version` is that individual record's monotonic update revision.
 
 ---
 

@@ -784,7 +784,13 @@ The deployment store is defined as a Go interface, with bbolt as the default bac
 - **Future backends**: SQLite, remote/networked stores, or other embedded databases.
 - **Import/Export**: Backends implement serialization to YAML/JSON for backup, restore, and machine portability.
 
-The store is sync-ready: every record has a `version` field (monotonically increasing) and `updated_at` timestamp. The sync engine updates records through the same interface, enabling future remote sync without changing the data model.
+The store is sync-ready: every deployment, lease, and bid has a monotonic
+`record_version`, advanced atomically with each bbolt write. An imported higher
+revision is preserved; an equal or older write advances from the local
+revision. This is deliberately separate from the database `schema_version`
+(migration level) and the export envelope `version` (file format). The sync
+engine updates records through the same interface, enabling future remote sync
+without changing the data model.
 
 Bid persistence enriches each unique provider once per workflow query or
 reconciliation pass. Self-declared attributes come from the provider record;

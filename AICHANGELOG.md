@@ -4,6 +4,12 @@
 
 ### Changed
 
+- **Exports showed every `record_version` as zero without explaining the other
+  version fields**: bbolt now assigns revision 1 to a new deployment, lease, or
+  bid and advances it atomically on later writes while preserving newer
+  imported revisions. Store documentation and export help distinguish record
+  revision, database schema version, and export-envelope format version.
+
 - **Stored bids always exported empty provider metadata**: workflow and
   reconciliation bid reads now enrich each unique provider with its advertised
   attributes and current audit presence. Console-only workflows use provider

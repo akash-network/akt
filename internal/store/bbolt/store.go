@@ -89,11 +89,18 @@ func (s *BoltStore) Close() error {
 func (s *BoltStore) PutDeployment(_ context.Context, d *store.DeploymentRecord) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketDeployments)
-		data, err := json.Marshal(d)
+		key := store.DeploymentKey(d.Owner, d.DSeq)
+		version, err := nextRecordVersion(b.Get([]byte(key)), d.RecordVersion)
+		if err != nil {
+			return fmt.Errorf("version deployment: %w", err)
+		}
+
+		record := *d
+		record.RecordVersion = version
+		data, err := json.Marshal(&record)
 		if err != nil {
 			return fmt.Errorf("marshal deployment: %w", err)
 		}
-		key := store.DeploymentKey(d.Owner, d.DSeq)
 		return b.Put([]byte(key), data)
 	})
 }
@@ -153,11 +160,18 @@ func (s *BoltStore) DeleteDeployment(_ context.Context, owner string, dseq uint6
 func (s *BoltStore) PutLease(_ context.Context, l *store.LeaseRecord) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		b := tx.Bucket(bucketLeases)
-		data, err := json.Marshal(l)
+		key := store.LeaseKey(l.ID)
+		version, err := nextRecordVersion(b.Get([]byte(key)), l.RecordVersion)
+		if err != nil {
+			return fmt.Errorf("version lease: %w", err)
+		}
+
+		record := *l
+		record.RecordVersion = version
+		data, err := json.Marshal(&record)
 		if err != nil {
 			return fmt.Errorf("marshal lease: %w", err)
 		}
-		key := store.LeaseKey(l.ID)
 		return b.Put([]byte(key), data)
 	})
 }
@@ -217,13 +231,47 @@ func (s *BoltStore) DeleteLease(_ context.Context, id store.LeaseID) error {
 func (s *BoltStore) PutBid(_ context.Context, b *store.BidRecord) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
 		bucket := tx.Bucket(bucketBids)
-		data, err := json.Marshal(b)
+		key := store.BidKey(b.ID)
+		version, err := nextRecordVersion(bucket.Get([]byte(key)), b.RecordVersion)
+		if err != nil {
+			return fmt.Errorf("version bid: %w", err)
+		}
+
+		record := *b
+		record.RecordVersion = version
+		data, err := json.Marshal(&record)
 		if err != nil {
 			return fmt.Errorf("marshal bid: %w", err)
 		}
-		key := store.BidKey(b.ID)
 		return bucket.Put([]byte(key), data)
 	})
+}
+
+type recordVersionEnvelope struct {
+	RecordVersion uint64 `json:"record_version"`
+}
+
+func nextRecordVersion(existing []byte, incoming uint64) (uint64, error) {
+	if len(existing) == 0 {
+		if incoming == 0 {
+			return 1, nil
+		}
+
+		return incoming, nil
+	}
+
+	var stored recordVersionEnvelope
+	if err := json.Unmarshal(existing, &stored); err != nil {
+		return 0, fmt.Errorf("decode stored record revision: %w", err)
+	}
+	if incoming > stored.RecordVersion {
+		return incoming, nil
+	}
+	if stored.RecordVersion == ^uint64(0) {
+		return 0, fmt.Errorf("record revision cannot advance beyond %d", stored.RecordVersion)
+	}
+
+	return stored.RecordVersion + 1, nil
 }
 
 // GetBid retrieves a bid by its ID.
