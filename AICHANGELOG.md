@@ -4,6 +4,12 @@
 
 ### Changed
 
+- **Rejected transactions buried the useful chain explanation**: terminal
+  errors now remove repeated unknown-gRPC prefixes, the Cosmos SDK message-index
+  wrapper, and trailing internal Go source locations. The specific cause, such
+  as the spendable and required balances, remains visible while action logs and
+  exit-code handling retain the original error.
+
 - **Deploy could stay silent for five minutes and then print its template
   condition**: the bid wait now reports bids received, elapsed time, and time
   remaining at useful intervals on interactive stderr. Its timeout says that

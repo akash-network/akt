@@ -6132,6 +6132,16 @@ Errors presented to users include:
 2. **Context**: What operation was being performed.
 3. **Suggestion**: An actionable next step.
 
+The process-level stderr boundary removes transport and implementation wrappers
+that add no user-facing information. In particular, nested
+`rpc error: code = Unknown desc =` prefixes, Cosmos SDK
+`failed to execute message; message index: N:` wrappers, and trailing Go source
+locations are omitted when a more specific chain explanation remains. For
+example, an insufficient-funds response ends with the spendable balance and
+required amount rather than an SDK file path. This is display-only: the
+original error remains intact for exit-code classification, action logs, and
+debugging.
+
 ```
 Error: cannot connect to RPC endpoint
 

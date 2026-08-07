@@ -884,6 +884,11 @@ error and a non-zero process status while retaining the response for
 diagnostics. Only pure construction (`--generate-only` or `--offline`) may
 carry a non-zero-shaped fixture without converting it into an execution
 failure.
+At the final terminal boundary, known redundant gRPC and Cosmos SDK execution
+wrappers are removed from the displayed text when the chain already supplied a
+specific explanation. The underlying error value is never rewritten, so
+structured action logs and exit-code classification retain the full diagnostic
+chain.
 The CLI parses fee strings and validates multisig record types and batch
 cardinality before calling SDK helpers whose invalid-input behavior includes
 panics. Unsigned construction preserves a supplied signer address without
