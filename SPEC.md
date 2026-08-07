@@ -1284,6 +1284,7 @@ steps:
       dseq: "{{ (index .Steps \"create-deployment\").dseq }}"
     timeout: "{{ index .Params \"bid-timeout\" }}"
     until: "{{ ge (len .Result.bids) 1 }}"
+    timeout-error: "no bids received (at least 1 required)"
     on-error: abort
 
   - name: select-bid
@@ -1341,7 +1342,7 @@ the same validation from their declared parameter types.
 |------------|------------------------------------------------|-----------------------------------------------|
 | `tx`       | Broadcast a transaction                        | `msg`, `params`, `output`, `on-error`         |
 | `query`    | Execute a chain query                          | `query`, `params`, `output`                   |
-| `wait`     | Poll a query until a condition is met          | `query`, `params`, `until`, `timeout`         |
+| `wait`     | Poll a query until a condition is met          | `query`, `params`, `until`, `timeout`, `timeout-error` |
 | `prompt`   | Interactive user input (bid selection, confirm) | `mode`, `data`, `display`, `output`          |
 | `provider` | Provider gateway call                          | `action`, `params`, `retry`                   |
 | `output`   | Display formatted output                       | `template`                                    |
@@ -1400,6 +1401,11 @@ Each step's `on-error` field controls behavior on failure:
 | `skip`     | Skip silently                       |
 
 Steps can also define `retry` with `max` attempts and `delay` between retries.
+Wait steps may define `timeout-error`, a user-facing explanation of what did
+not arrive. On timeout the engine appends the elapsed limit to that explanation
+and never exposes the internal `until` template. Without `timeout-error`, it
+reports that the condition was not met before the limit without printing the
+condition source.
 
 #### 2.3.6 Error Recovery and Partial State
 
@@ -1443,6 +1449,10 @@ Workflows support two execution modes:
 - `prompt` steps render interactive selection tables (e.g., bid selection).
 - `output` steps render formatted text.
 - Errors are displayed inline with the step that failed.
+- A deployment waiting for bids reports the number received, elapsed time, and
+  remaining time immediately, whenever the count changes, and at least every
+  30 seconds. Progress is informational stderr output and is suppressed by
+  `--quiet`, non-TTY execution, and structured workflow output modes.
 
 **JSONL mode** (`--output jsonl`, or auto-selected when no TTY is attached):
 - Emits one JSONL line to stdout per completed workflow step.

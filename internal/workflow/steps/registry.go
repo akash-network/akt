@@ -49,7 +49,7 @@ func NewRegistry(chain ChainClient, provider ProviderClient) *Registry {
 	// Register built-in step types.
 	r.Register(&TxExecutor{chain: chain})
 	r.Register(&QueryExecutor{chain: chain})
-	r.Register(&WaitExecutor{chain: chain})
+	r.Register(NewWaitExecutor(chain, nil))
 	r.Register(&PromptExecutor{})
 	r.Register(&ProviderExecutor{provider: provider})
 	r.Register(&OutputExecutor{})

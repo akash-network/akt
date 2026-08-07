@@ -547,6 +547,12 @@ known), and exact retry and explicit-close commands in both human and JSONL
 output. This keeps irreversible cleanup under the user's control while making
 the continuing escrow liability unmistakable.
 
+Long wait steps expose progress through an optional engine callback rather
+than writing from the workflow package. The CLI installs that callback only
+for human TTY output, keeping workflow results and JSONL stdout deterministic.
+The workflow definition owns a wait step's user-facing timeout explanation;
+the engine never substitutes its internal template condition into an error.
+
 Console mutation responses are not trusted as the only evidence of resulting
 state. A non-idempotent lease POST is never replayed after an error; the client
 instead reads the deployment back and accepts success only when every exact

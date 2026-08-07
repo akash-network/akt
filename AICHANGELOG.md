@@ -4,6 +4,12 @@
 
 ### Changed
 
+- **Deploy could stay silent for five minutes and then print its template
+  condition**: the bid wait now reports bids received, elapsed time, and time
+  remaining at useful intervals on interactive stderr. Its timeout says that
+  no bids arrived and how long it waited, while machine output stays free of
+  progress text and the internal Go-template condition is never exposed.
+
 - **Store status hid bid and lease outcomes and called untouched reconciliation
   state a fault**: record totals now break down non-zero deployment, lease, and
   bid states, including an `other` count for unfamiliar values. The former

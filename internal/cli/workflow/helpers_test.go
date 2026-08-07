@@ -6,12 +6,60 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 
 	aktctx "pkg.akt.dev/akt/internal/context"
 	wf "pkg.akt.dev/akt/internal/workflow"
+	"pkg.akt.dev/akt/internal/workflow/steps"
 )
+
+func TestBidWaitProgressReportsChangesAndThirtySecondIntervals(t *testing.T) {
+	var messages []string
+	reporter := newBidWaitProgressReporter(func(message string) {
+		messages = append(messages, message)
+	})
+
+	reporter(steps.WaitProgress{
+		Query:     "market.bids",
+		Elapsed:   0,
+		Remaining: 5 * time.Minute,
+		Result:    json.RawMessage(`{"bids":[]}`),
+	})
+	reporter(steps.WaitProgress{
+		Query:     "market.bids",
+		Elapsed:   5 * time.Second,
+		Remaining: 4*time.Minute + 55*time.Second,
+		Result:    json.RawMessage(`{"bids":[]}`),
+	})
+	reporter(steps.WaitProgress{
+		Query:     "market.bids",
+		Elapsed:   15 * time.Second,
+		Remaining: 4*time.Minute + 45*time.Second,
+		Result:    json.RawMessage(`{"bids":[{}]}`),
+	})
+	reporter(steps.WaitProgress{
+		Query:     "market.bids",
+		Elapsed:   30 * time.Second,
+		Remaining: 4*time.Minute + 30*time.Second,
+		Result:    json.RawMessage(`{"bids":[{}]}`),
+	})
+
+	want := []string{
+		"Waiting for bids: 0 received, 0s elapsed, 5m0s remaining",
+		"Waiting for bids: 1 received, 15s elapsed, 4m45s remaining",
+		"Waiting for bids: 1 received, 30s elapsed, 4m30s remaining",
+	}
+	if len(messages) != len(want) {
+		t.Fatalf("messages = %#v, want %#v", messages, want)
+	}
+	for i := range want {
+		if messages[i] != want[i] {
+			t.Errorf("message %d = %q, want %q", i, messages[i], want[i])
+		}
+	}
+}
 
 // TestResolveContextToleratesMissingManager covers every nil-safe arm of
 // resolveContext. It runs before the rail is chosen, so a panic here would

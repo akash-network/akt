@@ -59,6 +59,7 @@ steps:
       dseq: "{{ (index .Steps \"create-deployment\").dseq }}"
     timeout: "{{ index .Params \"bid-timeout\" }}"
     until: "{{ ge (len .Result.bids) 1 }}"
+    timeout-error: "no bids received (at least 1 required)"
     on-error: abort
 
   - name: select-bid
