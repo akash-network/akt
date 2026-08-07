@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Changed
+
+- **Store status hid bid and lease outcomes and called untouched reconciliation
+  state a fault**: record totals now break down non-zero deployment, lease, and
+  bid states, including an `other` count for unfamiliar values. The former
+  `Sync State: not synced` section is now `Network Reconciliation`; it reports
+  `not yet run` and points to the existing `akt store sync` command, or shows
+  the height and time of the last completed snapshot.
+
 ### Fixed
 
 - **Mainnet identity was duplicated in command code and context tests**:

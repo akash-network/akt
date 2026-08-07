@@ -2019,14 +2019,25 @@ Schema:       v3
 
 Records:
   Deployments:  47 (12 active, 35 closed)
-  Leases:       52
-  Bids:         156
+  Leases:       52 (12 active, 40 closed)
+  Bids:         156 (3 open, 12 matched, 138 lost, 3 closed)
 
-Sync State:
+Network Reconciliation:
   Last Block:   18234567
-  Last Sync:    2026-03-23 10:15:32 UTC
-  Status:       synced
+  Last Run:     2026-03-23T10:15:32Z
+  Status:       completed
 ```
+
+Record totals include a non-zero breakdown for every known state. Records with
+an unrecognized state are included as `other`, so the breakdown always accounts
+for the displayed total.
+
+Network reconciliation is separate from workflow persistence. A store that has
+records but has never run an explicit reconciliation displays `Status: not yet
+run` and `Run: akt store sync`; this is an available action, not a fault. A
+completed reconciliation reports the last chain height and run time without
+claiming that the local snapshot remains continuously synchronized after the
+one-shot command exits.
 
 #### `akt store export`
 

@@ -359,19 +359,45 @@ func (s *BoltStore) Stats(_ context.Context) (*store.StoreStats, error) {
 			return err
 		}
 
-		// Count leases.
+		// Count leases and categorize by state.
 		leaseBucket := tx.Bucket(bucketLeases)
-		if err := leaseBucket.ForEach(func(_, _ []byte) error {
+		if err := leaseBucket.ForEach(func(_, v []byte) error {
+			var lease store.LeaseRecord
+			if err := json.Unmarshal(v, &lease); err != nil {
+				return nil //nolint:nilerr // skip one unreadable row without hiding the remaining store statistics
+			}
 			stats.Leases++
+			switch lease.State {
+			case "active":
+				stats.ActiveLeases++
+			case "closed":
+				stats.ClosedLeases++
+			case "insufficient_funds":
+				stats.InsufficientFundsLeases++
+			}
 			return nil
 		}); err != nil {
 			return err
 		}
 
-		// Count bids.
+		// Count bids and categorize by state.
 		bidBucket := tx.Bucket(bucketBids)
-		if err := bidBucket.ForEach(func(_, _ []byte) error {
+		if err := bidBucket.ForEach(func(_, v []byte) error {
+			var bid store.BidRecord
+			if err := json.Unmarshal(v, &bid); err != nil {
+				return nil //nolint:nilerr // skip one unreadable row without hiding the remaining store statistics
+			}
 			stats.Bids++
+			switch bid.State {
+			case "open":
+				stats.OpenBids++
+			case "matched":
+				stats.MatchedBids++
+			case "closed":
+				stats.ClosedBids++
+			case "lost":
+				stats.LostBids++
+			}
 			return nil
 		}); err != nil {
 			return err

@@ -503,6 +503,12 @@ both are deliberate rather than a fallback:
   escape hatch for everything a single run cannot see — pre-existing
   deployments, escrow balances that move every block, leases a provider closed.
 
+`akt store status` presents this separately as **Network Reconciliation**.
+Before the first explicit reconciliation it says `not yet run` and names
+`akt store sync`; it does not describe workflow-written records as unsynced or
+faulty. After a run it reports the height and time of that snapshot, without
+implying that a one-shot CLI remains continuously synchronized.
+
 The subscription path remains the design for long-lived sessions; it is not the
 mechanism the one-shot CLI depends on.
 

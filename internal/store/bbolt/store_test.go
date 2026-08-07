@@ -262,39 +262,50 @@ func TestStats(t *testing.T) {
 		State: "closed",
 	}))
 
-	// 2 leases
-	for i := uint64(1); i <= 2; i++ {
+	// 4 leases across every known state plus one future state.
+	leaseStates := []string{"active", "closed", "insufficient_funds", "future"}
+	for i, state := range leaseStates {
 		require.NoError(t, s.PutLease(ctx, &store.LeaseRecord{
 			ID: store.LeaseID{
 				Owner:    "akash1abc",
-				DSeq:     i,
+				DSeq:     uint64(i + 1),
 				GSeq:     1,
 				OSeq:     1,
 				Provider: "akash1prov",
 			},
-			State: "active",
+			State: state,
 		}))
 	}
 
-	// 1 bid
-	require.NoError(t, s.PutBid(ctx, &store.BidRecord{
-		ID: store.BidID{
-			Owner:    "akash1abc",
-			DSeq:     1,
-			GSeq:     1,
-			OSeq:     1,
-			Provider: "akash1prov",
-		},
-		State: "open",
-	}))
+	// 5 bids across every known state plus one future state.
+	bidStates := []string{"open", "matched", "lost", "closed", "future"}
+	for i, state := range bidStates {
+		require.NoError(t, s.PutBid(ctx, &store.BidRecord{
+			ID: store.BidID{
+				Owner:    "akash1abc",
+				DSeq:     uint64(i + 1),
+				GSeq:     1,
+				OSeq:     1,
+				Provider: "akash1prov",
+			},
+			State: state,
+		}))
+	}
 
 	stats, err := s.Stats(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), stats.Deployments)
 	assert.Equal(t, int64(2), stats.ActiveDeployments)
 	assert.Equal(t, int64(1), stats.ClosedDeployments)
-	assert.Equal(t, int64(2), stats.Leases)
-	assert.Equal(t, int64(1), stats.Bids)
+	assert.Equal(t, int64(4), stats.Leases)
+	assert.Equal(t, int64(1), stats.ActiveLeases)
+	assert.Equal(t, int64(1), stats.ClosedLeases)
+	assert.Equal(t, int64(1), stats.InsufficientFundsLeases)
+	assert.Equal(t, int64(5), stats.Bids)
+	assert.Equal(t, int64(1), stats.OpenBids)
+	assert.Equal(t, int64(1), stats.MatchedBids)
+	assert.Equal(t, int64(1), stats.LostBids)
+	assert.Equal(t, int64(1), stats.ClosedBids)
 }
 
 func TestConcurrentAccess(t *testing.T) {
