@@ -223,8 +223,10 @@ func mergeBid(existing, fresh *store.BidRecord, now int64) *store.BidRecord {
 	merged := *fresh
 
 	if existing != nil {
-		merged.ProviderAttributes = existing.ProviderAttributes
-		merged.ProviderAudited = existing.ProviderAudited
+		if fresh.ProviderAttributes == nil {
+			merged.ProviderAttributes = existing.ProviderAttributes
+			merged.ProviderAudited = existing.ProviderAudited
+		}
 		merged.CreatedAt = existing.CreatedAt
 	}
 

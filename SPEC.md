@@ -3408,6 +3408,16 @@ type BidRecord struct {
 }
 ```
 
+`ProviderAttributes` is populated from the provider's current on-chain
+registration, and `ProviderAudited` is true when at least one current audit
+record exists for that provider. The deploy workflow enriches the bids it
+observes before persisting them; full reconciliation performs the same lookup
+for every unique bidding provider. A Console-only workflow may use the Console
+provider detail response when no chain query client is available. Metadata
+lookup is best-effort and must never turn an otherwise usable bid into a failed
+deployment; when a refresh cannot complete, reconciliation preserves metadata
+already stored for that bid.
+
 #### SyncState
 
 ```go

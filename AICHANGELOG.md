@@ -4,6 +4,12 @@
 
 ### Changed
 
+- **Stored bids always exported empty provider metadata**: workflow and
+  reconciliation bid reads now enrich each unique provider with its advertised
+  attributes and current audit presence. Console-only workflows use provider
+  details from the Console API, and transient metadata lookup failures preserve
+  previously stored values instead of failing the deployment.
+
 - **Rejected transactions buried the useful chain explanation**: terminal
   errors now remove repeated unknown-gRPC prefixes, the Cosmos SDK message-index
   wrapper, and trailing internal Go source locations. The specific cause, such

@@ -786,6 +786,13 @@ The deployment store is defined as a Go interface, with bbolt as the default bac
 
 The store is sync-ready: every record has a `version` field (monotonically increasing) and `updated_at` timestamp. The sync engine updates records through the same interface, enabling future remote sync without changing the data model.
 
+Bid persistence enriches each unique provider once per workflow query or
+reconciliation pass. Self-declared attributes come from the provider record;
+the audited flag means at least one current on-chain audit exists. Console-only
+workflows use the Console provider detail endpoint for the same fields. This
+metadata is ancillary: a lookup failure does not fail a deployment, and a
+reconciliation that cannot refresh it preserves the last stored values.
+
 ### 5.4 Plugin System (exec-based)
 
 Following kubectl's proven plugin model:
