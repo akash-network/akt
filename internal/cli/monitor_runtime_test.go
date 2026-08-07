@@ -12,6 +12,21 @@ import (
 	aktctx "pkg.akt.dev/akt/internal/context"
 )
 
+func requireNetworkChainID(t *testing.T, mgr *aktctx.Manager, name string) string {
+	t.Helper()
+
+	network := mgr.GetNetwork(name)
+	if network == nil {
+		t.Fatalf("network %q missing from test config", name)
+		return ""
+	}
+	if network.ChainID == "" {
+		t.Fatalf("network %q has no chain ID", name)
+	}
+
+	return network.ChainID
+}
+
 func TestResolveMonitorRuntimeHonorsHomeAndContextAPI(t *testing.T) {
 	home := t.TempDir()
 	mgr, err := aktctx.NewManager(home)
@@ -30,6 +45,7 @@ func TestResolveMonitorRuntimeHonorsHomeAndContextAPI(t *testing.T) {
 	if err := mgr.UseContext("monitoring"); err != nil {
 		t.Fatalf("UseContext: %v", err)
 	}
+	mainnetChainID := requireNetworkChainID(t, mgr, "mainnet")
 
 	v := viper.New()
 	v.Set("context", "monitoring")
@@ -40,6 +56,7 @@ func TestResolveMonitorRuntimeHonorsHomeAndContextAPI(t *testing.T) {
 		"",
 		func() string { return home },
 		func() *aktctx.Manager { return mgr },
+		mainnetChainID,
 	)
 	if err != nil {
 		t.Fatalf("resolveMonitorRuntime: %v", err)
@@ -58,6 +75,7 @@ func TestResolveMonitorRuntimeHonorsHomeAndContextAPI(t *testing.T) {
 		"https://override.example.com",
 		func() string { return home },
 		func() *aktctx.Manager { return mgr },
+		mainnetChainID,
 	)
 	if err != nil {
 		t.Fatalf("resolveMonitorRuntime override: %v", err)
@@ -85,6 +103,7 @@ func TestResolveMonitorRuntimeDoesNotMixAdHocRPCWithContextAPI(t *testing.T) {
 	if err := mgr.UseContext("monitoring"); err != nil {
 		t.Fatalf("UseContext: %v", err)
 	}
+	mainnetChainID := requireNetworkChainID(t, mgr, "mainnet")
 
 	runtime, err := resolveMonitorRuntime(
 		viper.New(),
@@ -93,6 +112,7 @@ func TestResolveMonitorRuntimeDoesNotMixAdHocRPCWithContextAPI(t *testing.T) {
 		"",
 		func() string { return home },
 		func() *aktctx.Manager { return mgr },
+		mainnetChainID,
 	)
 	if err != nil {
 		t.Fatalf("resolveMonitorRuntime: %v", err)
@@ -113,6 +133,7 @@ func TestResolveMonitorRuntimeDerivesGatewayRESTPath(t *testing.T) {
 		"",
 		func() string { return t.TempDir() },
 		func() *aktctx.Manager { return nil },
+		"",
 	)
 	if err != nil {
 		t.Fatalf("resolveMonitorRuntime: %v", err)
@@ -130,6 +151,7 @@ func TestResolveMonitorRuntimeConvertsTCPToHTTPForREST(t *testing.T) {
 		"",
 		func() string { return t.TempDir() },
 		func() *aktctx.Manager { return nil },
+		"",
 	)
 	if err != nil {
 		t.Fatalf("resolveMonitorRuntime: %v", err)
@@ -145,9 +167,19 @@ func TestResolveMonitorRuntimeUpgradesLegacyBuiltInRPC(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewManager: %v", err)
 	}
+	mainnet := aktctx.Network{
+		Name:    "mainnet",
+		ChainID: "registry-mainnet-current",
+		Endpoints: aktctx.Endpoints{
+			RPC: []string{"https://rpc.akt.dev:443/rpc"},
+		},
+	}
+	if err := mgr.CreateNetwork(mainnet); err != nil {
+		t.Fatalf("CreateNetwork(mainnet): %v", err)
+	}
 	if err := mgr.CreateNetwork(aktctx.Network{
 		Name:    "legacy-mainnet",
-		ChainID: "akashnet-2",
+		ChainID: mainnet.ChainID,
 		Endpoints: aktctx.Endpoints{
 			RPC: []string{"https://rpc.akashnet.net:443"},
 			API: []string{"https://api.akashnet.net:443"},
@@ -172,6 +204,7 @@ func TestResolveMonitorRuntimeUpgradesLegacyBuiltInRPC(t *testing.T) {
 		"",
 		func() string { return home },
 		func() *aktctx.Manager { return mgr },
+		mainnet.ChainID,
 	)
 	if err != nil {
 		t.Fatalf("resolveMonitorRuntime: %v", err)
@@ -189,6 +222,7 @@ func TestMonitorInsecureFlagDefaultsToFalse(t *testing.T) {
 		viper.New(),
 		func() string { return t.TempDir() },
 		func() *aktctx.Manager { return nil },
+		func() string { return "" },
 	)
 
 	commands := []*cobra.Command{cmd}

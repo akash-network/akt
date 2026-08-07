@@ -1,11 +1,35 @@
 package e2e
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func configuredNetworkChainID(t *testing.T, home, name string) string {
+	t.Helper()
+
+	stdout, stderr, exitCode := runAkt(t, home, "context", "network", "show", name, "--output", "json")
+	if exitCode != 0 {
+		t.Fatalf("failed to read configured %s network, exit code %d: %s", name, exitCode, stderr)
+	}
+
+	var result struct {
+		Network struct {
+			ChainID string `json:"chain_id"`
+		} `json:"network"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("decode configured %s network: %v\n%s", name, err, stdout)
+	}
+	if result.Network.ChainID == "" {
+		t.Fatalf("configured %s network has no chain ID", name)
+	}
+
+	return result.Network.ChainID
+}
 
 func TestVersion(t *testing.T) {
 	stdout, _, exitCode := runAktNoHome(t, "version")
@@ -50,6 +74,7 @@ func TestNetworkTemplates(t *testing.T) {
 	if exitCode != 0 {
 		t.Fatalf("failed to create mainnet network, exit code %d", exitCode)
 	}
+	mainnetChainID := configuredNetworkChainID(t, home, "mainnet")
 
 	// Create testnet
 	_, _, exitCode = runAkt(t, home, "context", "network", "create", "testnet", "--template", "testnet")
@@ -74,8 +99,8 @@ func TestNetworkTemplates(t *testing.T) {
 	if exitCode != 0 {
 		t.Fatalf("failed to show mainnet network, exit code %d", exitCode)
 	}
-	if !strings.Contains(stdout, "akashnet-2") {
-		t.Fatalf("expected mainnet show to contain 'akashnet-2', got:\n%s", stdout)
+	if !strings.Contains(stdout, mainnetChainID) {
+		t.Fatalf("expected mainnet show to contain configured chain ID %q, got:\n%s", mainnetChainID, stdout)
 	}
 }
 
@@ -88,6 +113,7 @@ func TestContextLifecycle(t *testing.T) {
 	if exitCode != 0 {
 		t.Fatalf("failed to create mainnet network, exit code %d", exitCode)
 	}
+	mainnetChainID := configuredNetworkChainID(t, home, "mainnet")
 
 	// Create context
 	_, _, exitCode = runAkt(t, home, "context", "create", "prod", "--network", "mainnet", "--set-current")
@@ -112,8 +138,8 @@ func TestContextLifecycle(t *testing.T) {
 	if !strings.Contains(stdout, "prod") {
 		t.Fatalf("expected context show to contain 'prod', got:\n%s", stdout)
 	}
-	if !strings.Contains(stdout, "mainnet") {
-		t.Fatalf("expected context show to contain 'mainnet', got:\n%s", stdout)
+	if !strings.Contains(stdout, mainnetChainID) {
+		t.Fatalf("expected context show to contain configured chain ID %q, got:\n%s", mainnetChainID, stdout)
 	}
 
 	// Create a second context so we can delete the first
