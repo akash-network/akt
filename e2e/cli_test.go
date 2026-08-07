@@ -228,8 +228,11 @@ func TestStoreStatusEmpty(t *testing.T) {
 	}
 
 	combined := stdout + stderr
-	if !strings.Contains(strings.ToLower(combined), "not synced") {
-		t.Fatalf("expected output to contain 'not synced', got:\n%s", combined)
+	if !strings.Contains(strings.ToLower(combined), "not yet run") {
+		t.Fatalf("expected output to contain 'not yet run', got:\n%s", combined)
+	}
+	if !strings.Contains(combined, "akt store sync") {
+		t.Fatalf("expected output to name the reconciliation command, got:\n%s", combined)
 	}
 	if !strings.Contains(combined, "0") {
 		t.Fatalf("expected output to contain '0' (zero records), got:\n%s", combined)
