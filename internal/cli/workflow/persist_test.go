@@ -340,6 +340,67 @@ func TestPersistCloseClosesTheDeploymentAndItsLeases(t *testing.T) {
 	}
 }
 
+func TestPersistConsoleCloseInfersOwnerFromUniqueStoredDSeq(t *testing.T) {
+	ctx := context.Background()
+	s := openPersistStore(t)
+	if err := persistWorkflowOutcome(ctx, s, deployRunState(t, writeSDL(t)), 1700000000); err != nil {
+		t.Fatalf("seed deploy: %v", err)
+	}
+
+	state := wf.NewRunState("run-console-close", "close", "", map[string]any{"dseq": 4649141})
+	state.SetStepResult("close-deployment", &wf.StepResult{
+		Name:   "close-deployment",
+		Status: "success",
+		Output: map[string]any{"dseq": "4649141"},
+	})
+
+	if err := persistWorkflowOutcome(ctx, s, state, 1700010000); err != nil {
+		t.Fatalf("ownerless Console close was not matched to its local deployment: %v", err)
+	}
+
+	dep, err := s.GetDeployment(ctx, persistOwner, 4649141)
+	if err != nil || dep == nil || dep.State != "closed" {
+		t.Fatalf("deployment after Console close = %+v, err %v", dep, err)
+	}
+	leases, err := s.ListLeases(ctx, sstore.LeaseFilter{Owner: persistOwner, DSeq: 4649141})
+	if err != nil {
+		t.Fatalf("ListLeases: %v", err)
+	}
+	for _, lease := range leases {
+		if lease.State != "closed" {
+			t.Errorf("lease remained %q after Console close: %+v", lease.State, lease.ID)
+		}
+	}
+}
+
+func TestPersistConsoleCloseRefusesAmbiguousStoredDSeq(t *testing.T) {
+	ctx := context.Background()
+	s := openPersistStore(t)
+	for _, owner := range []string{persistOwner, "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx"} {
+		if err := s.PutDeployment(ctx, &sstore.DeploymentRecord{Owner: owner, DSeq: 42, State: "active"}); err != nil {
+			t.Fatalf("seed deployment: %v", err)
+		}
+	}
+
+	state := wf.NewRunState("run-console-close", "close", "", map[string]any{"dseq": 42})
+	state.SetStepResult("close-deployment", &wf.StepResult{
+		Name:   "close-deployment",
+		Status: "success",
+		Output: map[string]any{"dseq": "42"},
+	})
+
+	err := persistWorkflowOutcome(ctx, s, state, 1700010000)
+	if err == nil || !strings.Contains(err.Error(), "multiple local owners") {
+		t.Fatalf("ambiguous close error = %v", err)
+	}
+	for _, owner := range []string{persistOwner, "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx"} {
+		dep, getErr := s.GetDeployment(ctx, owner, 42)
+		if getErr != nil || dep == nil || dep.State != "active" {
+			t.Fatalf("ambiguous close changed owner %s: %+v, err %v", owner, dep, getErr)
+		}
+	}
+}
+
 // TestPersistCloseRecordsUnknownDeployments covers closing a deployment this
 // store never saw (created elsewhere): recording the closure beats leaving it
 // invisible.

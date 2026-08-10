@@ -224,9 +224,9 @@ func persistUpdate(ctx context.Context, s sstore.Store, state *wf.RunState, now 
 		return fmt.Errorf("update result carries no usable dseq, so it cannot be recorded locally")
 	}
 
-	owner := runOwner(state)
-	if owner == "" {
-		return errNoOwner
+	owner, err := existingRunOwner(ctx, s, state, dseq)
+	if err != nil {
+		return err
 	}
 
 	rec, err := s.GetDeployment(ctx, owner, dseq)
@@ -267,46 +267,35 @@ func persistClose(ctx context.Context, s sstore.Store, state *wf.RunState, now i
 		return fmt.Errorf("close result carries no usable dseq, so it cannot be recorded locally")
 	}
 
-	owner := runOwner(state)
-	if owner == "" {
-		return errNoOwner
-	}
-
-	rec, err := s.GetDeployment(ctx, owner, dseq)
+	owner, err := existingRunOwner(ctx, s, state, dseq)
 	if err != nil {
-		return fmt.Errorf("read deployment %d: %w", dseq, err)
-	}
-	if rec == nil {
-		rec = &sstore.DeploymentRecord{Owner: owner, DSeq: dseq, CreatedAt: now}
+		return err
 	}
 
-	rec.State = "closed"
-	rec.ClosedAt = now
-	rec.UpdatedAt = now
-
-	if err := s.PutDeployment(ctx, rec); err != nil {
-		return fmt.Errorf("record deployment %d: %w", dseq, err)
-	}
-
-	// Closing a deployment closes its leases on chain; the local record must
-	// not keep claiming they are active.
-	leases, err := s.ListLeases(ctx, sstore.LeaseFilter{Owner: owner, DSeq: dseq})
-	if err != nil {
-		return fmt.Errorf("read leases of deployment %d: %w", dseq, err)
-	}
-
-	for _, l := range leases {
-		if l == nil || l.State == "closed" {
-			continue
-		}
-		l.State = "closed"
-		l.ClosedAt = now
-		if err := s.PutLease(ctx, l); err != nil {
-			return fmt.Errorf("record lease %s: %w", sstore.LeaseKey(l.ID), err)
-		}
+	if err := s.MarkDeploymentClosed(ctx, owner, dseq, now); err != nil {
+		return fmt.Errorf("record deployment %d close: %w", dseq, err)
 	}
 
 	return nil
+}
+
+// existingRunOwner resolves ownerless Console update/close results against
+// local state. A DSEQ is only safe as an owner lookup when exactly one local
+// account carries it.
+func existingRunOwner(ctx context.Context, s sstore.Store, state *wf.RunState, dseq uint64) (string, error) {
+	if owner := runOwner(state); owner != "" {
+		return owner, nil
+	}
+
+	owner, err := sstore.UniqueDeploymentOwner(ctx, s, dseq)
+	if err != nil {
+		return "", err
+	}
+	if owner == "" {
+		return "", errNoOwner
+	}
+
+	return owner, nil
 }
 
 // applySDL records the SDL file a run used. A file that can no longer be read

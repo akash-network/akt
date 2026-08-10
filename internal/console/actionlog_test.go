@@ -2,15 +2,52 @@ package console
 
 import (
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"pkg.akt.dev/akt/internal/actionlog"
+	"pkg.akt.dev/go/sdl"
 )
+
+const actionLogTestSDL = `version: "2.0"
+services:
+  web:
+    image: nginx:1.27-alpine
+    expose:
+      - port: 80
+        as: 80
+        to:
+          - global: true
+profiles:
+  compute:
+    web:
+      resources:
+        cpu:
+          units: 0.5
+        memory:
+          size: 512Mi
+        storage:
+          size: 512Mi
+  placement:
+    dcloud:
+      pricing:
+        web:
+          denom: uact
+          amount: 10000
+deployment:
+  web:
+    dcloud:
+      profile: web
+      count: 1
+`
 
 func openTestLog(t *testing.T) *actionlog.Logger {
 	t.Helper()
@@ -42,7 +79,7 @@ func TestConsoleMutationsRecordedInActionLog(t *testing.T) {
 	l := openTestLog(t)
 	c := New(srv.URL, "test-key").WithActionLog(l)
 
-	if _, err := c.CreateDeployment(context.Background(), "sdl", 5); err != nil {
+	if _, err := c.CreateDeployment(context.Background(), actionLogTestSDL, 5); err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
 	}
 
@@ -191,13 +228,73 @@ func TestNewMutationsRecordedInActionLog(t *testing.T) {
 }
 
 func TestConsoleWithoutActionLogIsNoop(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"data":{"deployments":[],"pagination":{"hasMore":false}}}`))
+			return
+		}
 		_, _ = w.Write([]byte(`{"data":{"dseq":"1"}}`))
 	}))
 	defer srv.Close()
 
 	c := New(srv.URL, "test-key")
-	if _, err := c.CreateDeployment(context.Background(), "sdl", 5); err != nil {
+	if _, err := c.CreateDeployment(context.Background(), actionLogTestSDL, 5); err != nil {
 		t.Fatalf("CreateDeployment without logger: %v", err)
+	}
+}
+
+func TestAmbiguousDeploymentCreateIsLoggedPending(t *testing.T) {
+	doc, err := sdl.Read([]byte(actionLogTestSDL))
+	if err != nil {
+		t.Fatalf("read SDL: %v", err)
+	}
+	version, err := doc.Version()
+	if err != nil {
+		t.Fatalf("SDL version: %v", err)
+	}
+	expectedHash := base64.StdEncoding.EncodeToString(version)
+
+	var submitted atomic.Bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			if !submitted.Load() {
+				_, _ = w.Write([]byte(`{"data":{"deployments":[],"pagination":{"hasMore":false}}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":{"deployments":[` +
+				`{"deployment":{"id":{"dseq":"11"},"hash":"` + expectedHash + `"},"leases":[]},` +
+				`{"deployment":{"id":{"dseq":"12"},"hash":"` + expectedHash + `"},"leases":[]}` +
+				`],"pagination":{"hasMore":false}}}`))
+		case http.MethodPost:
+			submitted.Store(true)
+			w.WriteHeader(http.StatusBadGateway)
+		}
+	}))
+	defer srv.Close()
+
+	l := openTestLog(t)
+	c := New(srv.URL, "test-key").WithActionLog(l)
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_, err = c.CreateDeployment(ctx, actionLogTestSDL, 5)
+	if err == nil || !strings.Contains(err.Error(), "outcome unknown") || !strings.Contains(err.Error(), "akt console deployment list") {
+		t.Fatalf("ambiguous create error = %v", err)
+	}
+
+	entries, readErr := l.Read(actionlog.Filter{Type: actionlog.TypeConsole})
+	if readErr != nil {
+		t.Fatalf("read: %v", readErr)
+	}
+	if len(entries) != 1 || entries[0].Action != "create-deployment" || entries[0].Status != "pending" {
+		t.Fatalf("pending create entry = %+v", entries)
+	}
+	var params map[string]string
+	if err := json.Unmarshal(entries[0].Params, &params); err != nil {
+		t.Fatalf("decode params: %v", err)
+	}
+	if params["versionHash"] != expectedHash {
+		t.Errorf("versionHash = %q, want %q", params["versionHash"], expectedHash)
 	}
 }

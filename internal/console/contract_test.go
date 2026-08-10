@@ -222,7 +222,7 @@ func TestClientRequestsMatchOpenAPIContract(t *testing.T) {
 		address  = "akash1xf29ao02u23nippl3ddjrec9dkjzwmz4t7g8dl"
 		provider = "akash1p"
 		uuid     = "123e4567-e89b-12d3-a456-426614174000"
-		sdl      = "version: \"2.0\"\nservices: {}\n"
+		sdl      = validUpdateSDL
 	)
 
 	// Minimal valid /v1/bid-screening resources per the vendored schema:

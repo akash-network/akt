@@ -3,6 +3,7 @@ package console
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -19,20 +20,157 @@ import (
 //
 // Wire: POST /v1/deployments, body {"data":{"sdl":..., "deposit":...}}.
 func (c *Client) CreateDeployment(ctx context.Context, sdl string, depositUSD float64) (*CreateDeploymentResult, error) {
+	versionHash, manifest, err := deploymentArtifacts(sdl)
+	if err != nil {
+		wrapped := fmt.Errorf("prepare deployment SDL: %w", err)
+		c.recordOutcome("create-deployment", "", "failed", wrapped, nil)
+		return nil, wrapped
+	}
+
+	before, err := c.listAllDeployments(ctx)
+	if err != nil {
+		wrapped := fmt.Errorf("snapshot deployments before create: %w", err)
+		c.recordOutcome("create-deployment", "", "failed", wrapped, map[string]string{"versionHash": versionHash})
+		return nil, wrapped
+	}
+	known := make(map[string]struct{}, len(before))
+	for _, item := range before {
+		known[item.Deployment.ID.DSeq.String()] = struct{}{}
+	}
+
 	body := envelope(map[string]any{
 		"sdl":     sdl,
 		"deposit": depositUSD,
 	})
 
 	var out CreateDeploymentResult
-	if err := c.doData(ctx, http.MethodPost, "/v1/deployments", body, &out); err != nil {
-		c.record("create-deployment", "", err)
+	err = c.doData(ctx, http.MethodPost, "/v1/deployments", body, &out)
+	if err == nil && validDeploymentDSeq(out.DSeq.String()) {
+		if out.Manifest == "" {
+			out.Manifest = manifest
+		}
+		c.recordOutcome("create-deployment", out.DSeq.String(), "success", nil, map[string]string{"versionHash": versionHash})
+		return &out, nil
+	}
+
+	if err == nil {
+		err = fmt.Errorf("console: POST /v1/deployments returned an invalid dseq %q", out.DSeq.String())
+	}
+	if definitiveCreateFailure(err) {
+		c.recordOutcome("create-deployment", "", "failed", err, map[string]string{"versionHash": versionHash})
 		return nil, err
 	}
 
-	c.record("create-deployment", out.DSeq.String(), nil)
+	if reconciled, ok := c.reconcileCreatedDeployment(ctx, known, versionHash, manifest); ok {
+		c.recordOutcome("create-deployment", reconciled.DSeq.String(), "success", nil, map[string]string{"versionHash": versionHash})
+		return reconciled, nil
+	}
 
-	return &out, nil
+	unknown := fmt.Errorf("deployment creation outcome unknown after one submission (%v); the request was not replayed: inspect `akt console deployment list` for SDL version %s", err, versionHash)
+	c.recordOutcome("create-deployment", "", "pending", unknown, map[string]string{"versionHash": versionHash})
+	return nil, unknown
+}
+
+func deploymentArtifacts(rawSDL string) (string, string, error) {
+	doc, err := sdl.Read([]byte(rawSDL))
+	if err != nil {
+		return "", "", err
+	}
+
+	version, err := doc.Version()
+	if err != nil {
+		return "", "", fmt.Errorf("derive version: %w", err)
+	}
+	mani, err := doc.Manifest()
+	if err != nil {
+		return "", "", fmt.Errorf("render manifest: %w", err)
+	}
+	manifestJSON, err := json.Marshal(mani)
+	if err != nil {
+		return "", "", fmt.Errorf("encode manifest: %w", err)
+	}
+
+	return base64.StdEncoding.EncodeToString(version), string(manifestJSON), nil
+}
+
+func validDeploymentDSeq(dseq string) bool {
+	n, err := strconv.ParseUint(dseq, 10, 64)
+	return err == nil && n > 0
+}
+
+func definitiveCreateFailure(err error) bool {
+	if errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrInsufficientFunds) || errors.Is(err, ErrNotFound) {
+		return true
+	}
+
+	var httpErr *HTTPError
+	return errors.As(err, &httpErr) && httpErr.StatusCode >= 400 && httpErr.StatusCode < 500 && httpErr.StatusCode != http.StatusTooManyRequests
+}
+
+func (c *Client) reconcileCreatedDeployment(
+	ctx context.Context,
+	known map[string]struct{},
+	versionHash string,
+	manifest string,
+) (*CreateDeploymentResult, bool) {
+	// Two extra reads beyond the normal retry bound allow for chain/API
+	// propagation while keeping an ambiguous CLI invocation bounded.
+	for attempt := range maxRetries + 2 {
+		items, err := c.listAllDeployments(ctx)
+		if err == nil {
+			matches := make([]string, 0, 1)
+			for _, item := range items {
+				dseq := item.Deployment.ID.DSeq.String()
+				if _, existed := known[dseq]; existed || item.Deployment.Hash != versionHash || !validDeploymentDSeq(dseq) {
+					continue
+				}
+				matches = append(matches, dseq)
+			}
+
+			if len(matches) == 1 {
+				return &CreateDeploymentResult{DSeq: FlexString(matches[0]), Manifest: manifest}, true
+			}
+			if len(matches) > 1 {
+				// Multiple matching writes are already an ambiguous outcome;
+				// waiting cannot identify which one this invocation created.
+				return nil, false
+			}
+		}
+
+		if attempt < maxRetries+1 {
+			if err := waitForRetry(ctx, attempt); err != nil {
+				return nil, false
+			}
+		}
+	}
+
+	return nil, false
+}
+
+func (c *Client) listAllDeployments(ctx context.Context) ([]DeploymentListItem, error) {
+	const pageSize = 1000
+
+	var all []DeploymentListItem
+	for skip := 0; ; {
+		page, err := c.ListDeployments(ctx, skip, pageSize)
+		if err != nil {
+			return nil, err
+		}
+		all = append(all, page.Deployments...)
+		if !page.Pagination.HasMore {
+			return all, nil
+		}
+
+		step := page.Pagination.Limit
+		if step <= 0 {
+			step = len(page.Deployments)
+		}
+		next := page.Pagination.Skip + step
+		if step <= 0 || next <= skip {
+			return nil, fmt.Errorf("console: deployment pagination did not advance from skip %d", skip)
+		}
+		skip = next
+	}
 }
 
 // ListDeployments lists deployments with pagination. Out-of-range values are

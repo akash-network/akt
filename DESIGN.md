@@ -338,7 +338,15 @@ Each context has an `auth-method` that determines how transactions are signed an
 - Authenticated via an API key (created at console.akash.network > Settings > API Keys).
 - The API key is resolved as flag > env > per-context credential: `--console-api-key` (session only), then `AKT_CONSOLE_API_KEY`, then a per-context credential file at `contexts/<name>/console-api-key` (mode 0600, managed via `akt context create/edit --console-api-key`). It is never written to config.yaml, never printed, and never logged — each context carries its own key, so switching context switches Console identity.
 - Deposits are denominated in USD (not uakt) -- the Console handles the conversion.
-- For `tx` commands and workflows, only deployment lifecycle operations route through the Console API (create, update, close, bids, leases, deposit). Chain query commands still work directly against chain RPC. The broader Console surface (wallets, usage, provider/GPU/template catalogs, API keys, provider-scoped JWTs) is exposed by the dedicated `akt console` command group.
+- Raw `akt tx` commands never route through the Console API: that tree constructs
+  and signs arbitrary chain messages and therefore requires `keyring` auth. The
+  shared `akt deploy`, `akt update`, and `akt close` workflows route their
+  abstract deployment-lifecycle steps through the Console rail, and the
+  step-by-step managed-wallet surface lives under `akt console`. Chain query
+  commands still work directly against chain RPC when the context has one.
+- Successful Console deployment acknowledgements and the shared `akt deploy`
+  result expose the Console's default daily auto top-up plus its exact disable
+  command. Chain workflow output omits that Console-only setting.
 - No keyring, default-account, or provider-defaults are used. The context only needs a network (for query commands) and the API key.
 
 A context uses **one** auth method. Users who need both can create separate contexts (e.g., `prod` with keyring auth and `console` with console-api auth), potentially sharing the same network definition.
@@ -503,6 +511,21 @@ both are deliberate rather than a fallback:
   escape hatch for everything a single run cannot see — pre-existing
   deployments, escrow balances that move every block, leases a provider closed.
 
+For a managed-wallet context with no tracked or default account, on-demand
+reconciliation derives its owner set from the full addresses already attached
+to local deployment records. An explicit account remains authoritative. The
+status view names this operation **Network Reconciliation**, distinguishes
+"not yet run" from a failed or stale sync, and always prints the concrete
+`akt store sync` remedy.
+
+Successful close operations also converge local state immediately. Workflow
+and direct Console close paths use the owner returned by the transport when it
+exists; otherwise they accept an owner inferred from an existing deployment
+only when the DSEQ has exactly one local match. Ambiguous DSEQs are never
+updated by guess. The deployment and all of its leases transition to `closed`;
+the transition is one atomic store transaction. The next network reconciliation
+remains the authoritative repair path for changes made elsewhere.
+
 The subscription path remains the design for long-lived sessions; it is not the
 mechanism the one-shot CLI depends on.
 
@@ -542,14 +565,25 @@ output. This keeps irreversible cleanup under the user's control while making
 the continuing escrow liability unmistakable.
 
 Console mutation responses are not trusted as the only evidence of resulting
-state. A non-idempotent lease POST is never replayed after an error; the client
-instead reads the deployment back and accepts success only when every exact
-requested lease is active. Deployment updates are idempotent, so the Console's
-specific transient manifest-version rejection is retried within the normal
-three-attempt bound. After any failed update response, the client compares the
-deployment's API-reported version hash with the deterministic hash of the SDL
-before deciding whether the update failed. Action logs record the reconciled
-outcome, not merely the first HTTP response.
+state. Before creating a deployment, the client derives the SDL's deterministic
+version hash and snapshots every existing deployment DSEQ. It submits the POST
+exactly once. A transport failure, rate limit, server error, or unusable success
+body is an ambiguous outcome, never permission to replay the request: the
+client reads the paginated deployment collection back and accepts success only
+when exactly one new DSEQ has the expected version hash. Zero or multiple
+matches produce an explicit outcome-unknown error and a `pending` action-log
+entry containing the SDL hash, so the user can investigate without accidentally
+creating another deployment.
+
+The same no-replay rule applies to every non-idempotent method, including HTTP
+429 responses. A non-idempotent lease POST is reconciled by reading the
+deployment back and checking that every exact requested lease is active.
+Deployment updates are idempotent, so the Console's specific transient
+manifest-version rejection is retried within the normal three-attempt bound.
+After any failed update response, the client compares the deployment's
+API-reported version hash with the deterministic hash of the SDL before deciding
+whether the update failed. Action logs record the reconciled outcome, not
+merely the first HTTP response.
 
 **Why a translation layer and not per-rail commands**: the alternative — a `deploy` that knows about keyrings and a separate Console `deploy` — means every new action is designed twice, and the two surfaces drift on flag names, defaults, argument order, and error text. Here, adding an action is a workflow definition plus (at most) a message mapping in the console adapter. Neither rail's command handler changes, and no rail-specific redesign is required.
 
@@ -579,7 +613,7 @@ Not every context can run every command. A context with a Console API key and no
 
 ```mermaid
 graph LR
-  RC["Resolved context\n\n- network endpoints\n- console-api-key"] --> RES["capability.Resolve\n\nRPC present yields\nchain-query, chain-tx, provider\n\nkey resolvable yields\nconsole"]
+  RC["Resolved context\n\n- auth method\n- network endpoints\n- console-api-key"] --> RES["capability.Resolve\n\nRPC yields query/provider\n\nRPC + keyring auth yields chain-tx\n\nAPI key yields console"]
   OV["Per-invocation overrides\n\n--node\n--console-api-key\nAKT_CONSOLE_API_KEY\nakt monitor [endpoint]"] --> INV["invocationCapabilities\n(grant, never revoke)"]
   RES --> INV
   INV --> GATE["Command tree walk\n\nakt.requires annotation\nvs. feature set"]
@@ -592,15 +626,33 @@ Capabilities are deliberately coarse — they describe what the *configuration* 
 | Capability | Derived from | Declared by |
 |---|---|---|
 | `chain-query` | network has at least one RPC endpoint | `akt query`, `akt monitor` |
-| `chain-tx` | network has at least one RPC endpoint | `akt tx` |
+| `chain-tx` | `auth-method: keyring` and network has at least one RPC endpoint | `akt tx` |
 | `provider` | network has at least one RPC endpoint (gateway discovery; protected operations validate wallet auth at execution) | `akt provider` |
 | `console` | a Console API key is resolvable (§3.1.4) | `akt console` subcommands |
 
-`chain-tx` deliberately does not probe for a funded key: opening an OS keyring can prompt for a password, and a help listing must never do that. Key and balance problems remain execution-time failures. `akt sdl` declares nothing at all — SDL scaffolding, validation, and linting run entirely locally, so gating them would be wrong.
+`chain-tx` deliberately checks the configured identity mode but does not open
+the keyring or probe for a funded key: opening an OS keyring can prompt for a
+password, and a help listing must never do that. Missing keys and balance
+problems remain execution-time failures. A second authentication boundary
+rejects raw `akt tx` execution under `console-api` auth even when presentation
+gating is `off`; a connection override cannot manufacture a local signer.
+`akt sdl` declares nothing at all — SDL scaffolding, validation, and linting
+run entirely locally, so gating them would be wrong.
 
 **Declaration**: commands carry their requirement in the cobra annotation `akt.requires`. Alternatives are separated by `|` and any one suffices, which is exactly what the transport layer needs: workflow commands declare `chain-tx|console` because §3.5 lets them run on either rail. An annotation the capability package does not recognize **fails open** — a typo in an annotation must never brick a command.
 
-**Overrides grant, never revoke**: gating describes the configuration, so an invocation that carries its own connection details must never be rejected by it. `--node` grants the chain capabilities, `--console-api-key` (or `AKT_CONSOLE_API_KEY` in the environment) grants `console`, and a positional endpoint on `akt monitor` grants chain access — `akt monitor <rpc-endpoint>` works with no context at all, consistent with the standalone-operation goal in §1.4. Argument scanning stops at the `--` terminator so a user's shell command cannot masquerade as a flag. Help invocations are never enforced against, because several clean-copied SDK groups disable flag parsing and cobra therefore cannot short-circuit their `--help` before the root hooks run.
+**Overrides grant connection capabilities, never signing identities**: gating
+describes the configuration, so an invocation that carries its own connection
+details must be able to use them. `--node` grants `chain-query` and `provider`;
+it grants `chain-tx` only when the resolved auth method is `keyring`, and never
+turns a Console context into a local signer. `--console-api-key` (or
+`AKT_CONSOLE_API_KEY` in the environment) grants `console`, and a positional
+endpoint on `akt monitor` grants chain access — `akt monitor <rpc-endpoint>`
+works with no context at all, consistent with the standalone-operation goal in
+§1.4. Argument scanning stops at the `--` terminator so a user's shell command
+cannot masquerade as a flag. Help invocations are never enforced against,
+because several clean-copied SDK groups disable flag parsing and cobra therefore
+cannot short-circuit their `--help` before the root hooks run.
 
 **Presentation**: two modes ship deliberately, selected by `defaults.command-gating` (flag/viper value first, then the config default), because it is not yet obvious which reads better to users and the answer needs feedback rather than a guess. `dim` is the settled default (2026-07); `hide` stays available so the comparison can still be made:
 

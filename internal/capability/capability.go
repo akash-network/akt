@@ -29,9 +29,9 @@ type Capability string
 const (
 	// ChainQuery requires a network RPC endpoint.
 	ChainQuery Capability = "chain-query"
-	// ChainTx requires a network RPC endpoint (transactions additionally
-	// need a funded key at execution time; key presence is deliberately
-	// not probed here because opening OS keyrings can prompt).
+	// ChainTx requires keyring auth and a network RPC endpoint (transactions
+	// additionally need a funded key at execution time; key presence is
+	// deliberately not probed here because opening OS keyrings can prompt).
 	ChainTx Capability = "chain-tx"
 	// Console requires a resolvable Console API key.
 	Console Capability = "console"
@@ -56,10 +56,11 @@ func Resolve(rc *aktctx.Context) Set {
 
 	hasRPC := len(rc.Network.Endpoints.RPC) > 0
 	hasKey := rc.ConsoleAPIKey != ""
+	hasLocalTxAuth := rc.AuthMethod != aktctx.AuthMethodConsoleAPI
 
 	return Set{
 		ChainQuery: hasRPC,
-		ChainTx:    hasRPC,
+		ChainTx:    hasRPC && hasLocalTxAuth,
 		Console:    hasKey,
 		Provider:   hasRPC,
 	}
@@ -108,7 +109,7 @@ func (s Set) Satisfies(requirement string) bool {
 // remedies maps a capability to how the user enables it.
 var remedies = map[Capability]string{
 	ChainQuery: "add an RPC endpoint to the context's network (akt context network edit <network> --rpc <url>)",
-	ChainTx:    "add an RPC endpoint to the context's network (akt context network edit <network> --rpc <url>)",
+	ChainTx:    "use a keyring-auth context with an RPC endpoint (akt context use <context>)",
 	Console:    "configure a Console API key (akt console login, or akt context edit <context> --console-api-key <key>)",
 	Provider:   "add an RPC endpoint to the context's network (akt context network edit <network> --rpc <url>)",
 }

@@ -271,6 +271,11 @@ the deployment is created.`,
 				if resolveErr != nil {
 					return resolveErr
 				}
+				if !isHelpInvocation(cmd, os.Args[1:]) {
+					if err := rawTxAuthError(cmd, rc); err != nil {
+						return err
+					}
+				}
 				applyTransactionDefaults(cmd, rc)
 				if err := applyProviderDefaults(cmd, rc); err != nil {
 					return err
@@ -297,7 +302,7 @@ the deployment is created.`,
 					// positional monitor endpoint) grant their capability so
 					// gating never rejects a command that carries its own
 					// connection details.
-					set := invocationCapabilities(capability.Resolve(rc), cmd, os.Args[1:], args)
+					set := invocationCapabilities(capability.Resolve(rc), rc.AuthMethod, cmd, os.Args[1:], args)
 
 					applyCapabilityGating(cmd.Root(), set, mode)
 
@@ -470,7 +475,7 @@ the deployment is created.`,
 						// Same mode resolution as enforcement (flag > env >
 						// config) so help and execution never disagree.
 						mode := capability.ParseMode(gatingMode(v, m))
-						set := invocationCapabilities(capability.Resolve(rc), c, os.Args[1:], nil)
+						set := invocationCapabilities(capability.Resolve(rc), rc.AuthMethod, c, os.Args[1:], nil)
 						applyCapabilityGating(root, set, mode)
 					}
 				}
@@ -691,6 +696,19 @@ func localIdentityMode(cmd *cobra.Command) aktclient.LocalIdentityMode {
 	}
 
 	return aktclient.LocalIdentityRequired
+}
+
+// rawTxAuthError is the execution boundary between raw Cosmos/Akash
+// transaction commands and Console-managed signing. Workflow tx steps have
+// their own transport abstraction; the raw tx tree always needs local keyring
+// auth and must fail before any child hook can dereference a missing keyring.
+func rawTxAuthError(cmd *cobra.Command, rc *aktctx.Context) error {
+	if cmd == nil || rc == nil || rc.AuthMethod != aktctx.AuthMethodConsoleAPI ||
+		!strings.HasPrefix(cmd.CommandPath(), "akt tx") {
+		return nil
+	}
+
+	return fmt.Errorf("raw chain transactions require keyring auth; the active context uses console-api: use `akt deploy`, `akt update`, `akt close`, or `akt console` for managed-wallet operations, or switch to a keyring context")
 }
 
 func boolFlag(cmd *cobra.Command, name string) bool {

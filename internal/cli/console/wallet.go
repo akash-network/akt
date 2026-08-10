@@ -90,10 +90,18 @@ func walletBalanceCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			}
 
 			return printJSON(cmd, struct {
-				Available     string `json:"available"`
-				InDeployments string `json:"inDeployments"`
-				Total         string `json:"total"`
-			}{formatUSD(b.BalanceUSD()), formatUSD(b.DeploymentsUSD()), formatUSD(b.TotalUSD())})
+				Available        string `json:"available"`
+				InDeployments    string `json:"inDeployments"`
+				Total            string `json:"total"`
+				AllocationStatus string `json:"allocationStatus"`
+				AllocationNote   string `json:"allocationNote"`
+			}{
+				Available:        formatUSD(b.BalanceUSD()),
+				InDeployments:    formatUSD(b.DeploymentsUSD()),
+				Total:            formatUSD(b.TotalUSD()),
+				AllocationStatus: "provisional",
+				AllocationNote:   "available and in-deployment allocations may lag recent creates and closes; total is authoritative",
+			})
 		},
 	}
 }

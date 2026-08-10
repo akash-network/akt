@@ -51,9 +51,11 @@ func TestWalletBalanceScalesMicroACT(t *testing.T) {
 	}
 
 	var got struct {
-		Available     string `json:"available"`
-		InDeployments string `json:"inDeployments"`
-		Total         string `json:"total"`
+		Available        string `json:"available"`
+		InDeployments    string `json:"inDeployments"`
+		Total            string `json:"total"`
+		AllocationStatus string `json:"allocationStatus"`
+		AllocationNote   string `json:"allocationNote"`
 	}
 	if err := json.Unmarshal([]byte(out), &got); err != nil {
 		t.Fatalf("output is not the documented JSON shape (%q): %v", out, err)
@@ -67,6 +69,35 @@ func TestWalletBalanceScalesMicroACT(t *testing.T) {
 	}
 	if got.Total != "$19.84" {
 		t.Errorf("total = %q, want $19.84", got.Total)
+	}
+	if got.AllocationStatus != "provisional" {
+		t.Errorf("allocationStatus = %q, want provisional", got.AllocationStatus)
+	}
+	for _, want := range []string{"may lag", "recent creates and closes", "total is authoritative"} {
+		if !strings.Contains(got.AllocationNote, want) {
+			t.Errorf("allocationNote = %q, want it to contain %q", got.AllocationNote, want)
+		}
+	}
+}
+
+func TestFormatUSDPreservesSubCentValues(t *testing.T) {
+	tests := []struct {
+		value float64
+		want  string
+	}{
+		{0, "$0.00"},
+		{12.34, "$12.34"},
+		{0.01, "$0.01"},
+		{0.005, "$0.005"},
+		{0.000001, "$0.000001"},
+		{0.0000004, "$<0.000001"},
+		{-0.0000004, "-$<0.000001"},
+	}
+
+	for _, tt := range tests {
+		if got := formatUSD(tt.value); got != tt.want {
+			t.Errorf("formatUSD(%g) = %q, want %q", tt.value, got, tt.want)
+		}
 	}
 }
 
@@ -289,7 +320,7 @@ func TestCreateRejectsNegativeDeposit(t *testing.T) {
 	m := newAuthedManager(t)
 
 	sdlPath := filepath.Join(t.TempDir(), "deploy.yaml")
-	if err := os.WriteFile(sdlPath, []byte("version: \"2.0\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(sdlPath, []byte(validConsoleDeploymentSDL), 0o600); err != nil {
 		t.Fatalf("write SDL: %v", err)
 	}
 
@@ -341,13 +372,17 @@ func TestCreateCachesManifestForLeaseCreate(t *testing.T) {
 	m := newAuthedManager(t)
 
 	sdlPath := filepath.Join(t.TempDir(), "deploy.yaml")
-	if err := os.WriteFile(sdlPath, []byte("version: \"2.0\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(sdlPath, []byte(validConsoleDeploymentSDL), 0o600); err != nil {
 		t.Fatalf("write SDL: %v", err)
 	}
 
 	const manifest = `[{"name":"dcloud","services":[]}]`
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/deployments" {
+			writeJSON(t, w, `{"data":{"deployments":[],"pagination":{"hasMore":false}}}`)
+			return
+		}
 		body, _ := json.Marshal(map[string]any{
 			"data": map[string]any{
 				"dseq":     "9911",
@@ -369,6 +404,19 @@ func TestCreateCachesManifestForLeaseCreate(t *testing.T) {
 	}
 	if strings.Contains(out, `"note"`) {
 		t.Errorf("a successful cache write must not emit a note, got %q", out)
+	}
+	if strings.Contains(out, `"state"`) || strings.Contains(out, `"open"`) {
+		t.Errorf("create acknowledgement must not invent deployment state, got %q", out)
+	}
+	for _, want := range []string{
+		`"autoTopUp"`,
+		`"enabled": true`,
+		`"frequency": "daily"`,
+		`"disableCommand": "akt console deployment settings 9911 false"`,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("create output does not contain %q: %s", want, out)
+		}
 	}
 
 	cached, err := console.LoadManifest(m.Root(), "prod", "9911")

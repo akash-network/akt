@@ -111,15 +111,16 @@ func statusCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 			pretty.KV(out, "Bids", fmt.Sprintf("%d", stats.Bids))
 			pretty.Newline(out)
 
-			fmt.Fprintln(out, pretty.Section("Sync State"))
+			fmt.Fprintln(out, pretty.Section("Network Reconciliation"))
 			if ss != nil && ss.LastBlockHeight > 0 {
 				syncTime := time.Unix(ss.LastSyncTime, 0).UTC().Format(time.RFC3339)
 				pretty.KV(out, "Last Block", pretty.FormatNumber(ss.LastBlockHeight))
 				pretty.KV(out, "Last Sync", syncTime)
 				pretty.KV(out, "Status", "synced")
 			} else {
-				pretty.KV(out, "Status", "not synced")
+				pretty.KV(out, "Status", "not yet run")
 			}
+			pretty.KV(out, "Run", "akt store sync")
 
 			return nil
 		},

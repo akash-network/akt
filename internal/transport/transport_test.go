@@ -25,6 +25,38 @@ const (
 	msgCloseDeployment  = "deployment.MsgCloseDeployment"
 )
 
+const validConsoleTransportSDL = `version: "2.0"
+services:
+  web:
+    image: nginx:1.27-alpine
+    expose:
+      - port: 80
+        as: 80
+        to:
+          - global: true
+profiles:
+  compute:
+    web:
+      resources:
+        cpu:
+          units: 0.5
+        memory:
+          size: 512Mi
+        storage:
+          size: 512Mi
+  placement:
+    dcloud:
+      pricing:
+        web:
+          denom: uact
+          amount: 10000
+deployment:
+  web:
+    dcloud:
+      profile: web
+      count: 1
+`
+
 // --- fakes (mirroring internal/workflow/adapters test fakes) ---
 
 // fakeTxClient records broadcast messages and returns a canned response.
@@ -117,6 +149,10 @@ func TestConsoleTransportKindAndRouting(t *testing.T) {
 	var gotData map[string]any
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/deployments" {
+			_, _ = w.Write([]byte(`{"data":{"deployments":[],"pagination":{"hasMore":false}}}`))
+			return
+		}
 		gotMethod, gotPath = r.Method, r.URL.Path
 
 		var body struct {
@@ -138,8 +174,8 @@ func TestConsoleTransportKindAndRouting(t *testing.T) {
 	}
 
 	res, err := tr.BroadcastTx(context.Background(), msgCreateDeployment, map[string]string{
-		"sdl":     "services:\n  web:\n    image: nginx\n", // raw SDL content
-		"deposit": "5usd",                                  // unified syntax, not the wire form
+		"sdl":     validConsoleTransportSDL, // raw SDL content
+		"deposit": "5usd",                   // unified syntax, not the wire form
 	})
 	if err != nil {
 		t.Fatalf("BroadcastTx: %v", err)

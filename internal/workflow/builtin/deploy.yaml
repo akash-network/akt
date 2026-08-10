@@ -96,3 +96,7 @@ steps:
     template: |
       Deployment active!
         DSEQ: {{ (index .Steps "create-deployment").dseq }}
+      {{ if eq (index (index .Steps "create-deployment") "rail") "console" }}
+        Auto top-up: enabled ({{ (index .Steps "create-deployment").auto_top_up }})
+        Disable with: akt console deployment settings {{ (index .Steps "create-deployment").dseq }} false
+      {{ end }}
