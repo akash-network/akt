@@ -138,7 +138,7 @@ rather than printing it.`,
 					return err
 				}
 
-				return pretty.PrintQueryResult(cmd, cl.ClientContext(), &res.Order)
+				return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)
 			}
 
 			pageReq, err := ReadPageRequest(cmd.Flags())
