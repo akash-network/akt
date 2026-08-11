@@ -1284,6 +1284,7 @@ steps:
       dseq: "{{ (index .Steps \"create-deployment\").dseq }}"
     timeout: "{{ index .Params \"bid-timeout\" }}"
     until: "{{ ge (len .Result.bids) 1 }}"
+    timeout-error: "no bids received (at least 1 required)"
     on-error: abort
 
   - name: select-bid
@@ -1341,7 +1342,7 @@ the same validation from their declared parameter types.
 |------------|------------------------------------------------|-----------------------------------------------|
 | `tx`       | Broadcast a transaction                        | `msg`, `params`, `output`, `on-error`         |
 | `query`    | Execute a chain query                          | `query`, `params`, `output`                   |
-| `wait`     | Poll a query until a condition is met          | `query`, `params`, `until`, `timeout`         |
+| `wait`     | Poll a query until a condition is met          | `query`, `params`, `until`, `timeout`, `timeout-error` |
 | `prompt`   | Interactive user input (bid selection, confirm) | `mode`, `data`, `display`, `output`          |
 | `provider` | Provider gateway call                          | `action`, `params`, `retry`                   |
 | `output`   | Display formatted output                       | `template`                                    |
@@ -1400,6 +1401,11 @@ Each step's `on-error` field controls behavior on failure:
 | `skip`     | Skip silently                       |
 
 Steps can also define `retry` with `max` attempts and `delay` between retries.
+Wait steps may define `timeout-error`, a user-facing explanation of what did
+not arrive. On timeout the engine appends the elapsed limit to that explanation
+and never exposes the internal `until` template. Without `timeout-error`, it
+reports that the condition was not met before the limit without printing the
+condition source.
 
 #### 2.3.6 Error Recovery and Partial State
 
@@ -1443,6 +1449,10 @@ Workflows support two execution modes:
 - `prompt` steps render interactive selection tables (e.g., bid selection).
 - `output` steps render formatted text.
 - Errors are displayed inline with the step that failed.
+- A deployment waiting for bids reports the number received, elapsed time, and
+  remaining time immediately, whenever the count changes, and at least every
+  30 seconds. Progress is informational stderr output and is suppressed by
+  `--quiet`, non-TTY execution, and structured workflow output modes.
 
 **JSONL mode** (`--output jsonl`, or auto-selected when no TTY is attached):
 - Emits one JSONL line to stdout per completed workflow step.
@@ -2019,14 +2029,25 @@ Schema:       v3
 
 Records:
   Deployments:  47 (12 active, 35 closed)
-  Leases:       52
-  Bids:         156
+  Leases:       52 (12 active, 40 closed)
+  Bids:         156 (3 open, 12 matched, 138 lost, 3 closed)
 
-Sync State:
+Network Reconciliation:
   Last Block:   18234567
-  Last Sync:    2026-03-23 10:15:32 UTC
-  Status:       synced
+  Last Run:     2026-03-23T10:15:32Z
+  Status:       completed
 ```
+
+Record totals include a non-zero breakdown for every known state. Records with
+an unrecognized state are included as `other`, so the breakdown always accounts
+for the displayed total.
+
+Network reconciliation is separate from workflow persistence. A store that has
+records but has never run an explicit reconciliation displays `Status: not yet
+run` and `Run: akt store sync`; this is an available action, not a fault. A
+completed reconciliation reports the last chain height and run time without
+claiming that the local snapshot remains continuously synchronized after the
+one-shot command exits.
 
 #### `akt store export`
 
@@ -3387,6 +3408,16 @@ type BidRecord struct {
 }
 ```
 
+`ProviderAttributes` is populated from the provider's current on-chain
+registration, and `ProviderAudited` is true when at least one current audit
+record exists for that provider. The deploy workflow enriches the bids it
+observes before persisting them; full reconciliation performs the same lookup
+for every unique bidding provider. A Console-only workflow may use the Console
+provider detail response when no chain query client is available. Metadata
+lookup is best-effort and must never turn an otherwise usable bid into a failed
+deployment; when a refresh cannot complete, reconciliation preserves metadata
+already stored for that bid.
+
 #### SyncState
 
 ```go
@@ -3461,6 +3492,15 @@ meta/
   without migrating would be read and written at whatever schema it was last
   left at, which is exactly the drift the versioning exists to prevent.
 
+`RecordVersion` has a different scope: it is the monotonic revision of one
+deployment, lease, or bid record. A newly created local record starts at 1;
+each write over the same key advances it. Importing a record with a higher
+revision preserves that higher value, while importing an equal or older
+revision advances from the existing local value. This makes merge/import and
+future remote synchronization orderable without changing the database schema.
+Version advancement happens inside the same bbolt write transaction as the
+record update.
+
 ### 4.6 Export Format
 
 Exports include a header with metadata:
@@ -3479,6 +3519,7 @@ deployments:
   - owner: akash1abc...
     dseq: 12345
     state: active
+    record_version: 4
     sdl_hash: sha256:abc123...
     # ... full DeploymentRecord fields
 leases:
@@ -3498,6 +3539,12 @@ bids:
       provider: akash1prov...
     # ... full BidRecord fields
 ```
+
+The three version values are independent:
+
+- top-level `version` is the export-envelope format;
+- top-level `schema_version` is the bbolt layout and migration level;
+- each `record_version` is that individual record's monotonic update revision.
 
 ---
 
@@ -6110,6 +6157,16 @@ Errors presented to users include:
 1. **What happened**: A clear description of the failure.
 2. **Context**: What operation was being performed.
 3. **Suggestion**: An actionable next step.
+
+The process-level stderr boundary removes transport and implementation wrappers
+that add no user-facing information. In particular, nested
+`rpc error: code = Unknown desc =` prefixes, Cosmos SDK
+`failed to execute message; message index: N:` wrappers, and trailing Go source
+locations are omitted when a more specific chain explanation remains. For
+example, an insufficient-funds response ends with the spendable balance and
+required amount rather than an SDK file path. This is display-only: the
+original error remains intact for exit-code classification, action logs, and
+debugging.
 
 ```
 Error: cannot connect to RPC endpoint

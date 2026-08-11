@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -359,6 +360,11 @@ func executeWorkflow(
 	}
 
 	registry := steps.NewRegistry(chainCl, providerCl)
+	if outputFormat(cmd) == "pretty" {
+		registry.Register(steps.NewWaitExecutor(chainCl, newBidWaitProgressReporter(func(message string) {
+			cliutil.Status(cmd, message)
+		})))
+	}
 	if jsonl {
 		// Keep stdout pure JSONL: output-step text is recorded in the step
 		// result ("text" output) instead of printed.
@@ -387,6 +393,40 @@ func executeWorkflow(
 	}
 
 	return nil
+}
+
+func newBidWaitProgressReporter(report func(string)) steps.WaitProgressReporter {
+	lastCount := -1
+	nextPeriodicReport := time.Duration(0)
+
+	return func(progress steps.WaitProgress) {
+		if progress.Query != "market.bids" || report == nil {
+			return
+		}
+
+		var result struct {
+			Bids []json.RawMessage `json:"bids"`
+		}
+		if err := json.Unmarshal(progress.Result, &result); err != nil {
+			return
+		}
+
+		elapsed := progress.Elapsed.Round(time.Second)
+		remaining := progress.Remaining.Round(time.Second)
+		count := len(result.Bids)
+		if count == lastCount && elapsed < nextPeriodicReport {
+			return
+		}
+
+		lastCount = count
+		nextPeriodicReport = (elapsed/(30*time.Second) + 1) * 30 * time.Second
+		report(fmt.Sprintf(
+			"Waiting for bids: %d received, %s elapsed, %s remaining",
+			count,
+			elapsed,
+			remaining,
+		))
+	}
 }
 
 // resolveContext resolves the active context, returning nil when no manager

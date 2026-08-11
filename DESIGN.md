@@ -503,6 +503,12 @@ both are deliberate rather than a fallback:
   escape hatch for everything a single run cannot see — pre-existing
   deployments, escrow balances that move every block, leases a provider closed.
 
+`akt store status` presents this separately as **Network Reconciliation**.
+Before the first explicit reconciliation it says `not yet run` and names
+`akt store sync`; it does not describe workflow-written records as unsynced or
+faulty. After a run it reports the height and time of that snapshot, without
+implying that a one-shot CLI remains continuously synchronized.
+
 The subscription path remains the design for long-lived sessions; it is not the
 mechanism the one-shot CLI depends on.
 
@@ -540,6 +546,12 @@ paid on-chain state before failing, the command surfaces the DSEQ, provider (if
 known), and exact retry and explicit-close commands in both human and JSONL
 output. This keeps irreversible cleanup under the user's control while making
 the continuing escrow liability unmistakable.
+
+Long wait steps expose progress through an optional engine callback rather
+than writing from the workflow package. The CLI installs that callback only
+for human TTY output, keeping workflow results and JSONL stdout deterministic.
+The workflow definition owns a wait step's user-facing timeout explanation;
+the engine never substitutes its internal template condition into an error.
 
 Console mutation responses are not trusted as the only evidence of resulting
 state. A non-idempotent lease POST is never replayed after an error; the client
@@ -772,7 +784,20 @@ The deployment store is defined as a Go interface, with bbolt as the default bac
 - **Future backends**: SQLite, remote/networked stores, or other embedded databases.
 - **Import/Export**: Backends implement serialization to YAML/JSON for backup, restore, and machine portability.
 
-The store is sync-ready: every record has a `version` field (monotonically increasing) and `updated_at` timestamp. The sync engine updates records through the same interface, enabling future remote sync without changing the data model.
+The store is sync-ready: every deployment, lease, and bid has a monotonic
+`record_version`, advanced atomically with each bbolt write. An imported higher
+revision is preserved; an equal or older write advances from the local
+revision. This is deliberately separate from the database `schema_version`
+(migration level) and the export envelope `version` (file format). The sync
+engine updates records through the same interface, enabling future remote sync
+without changing the data model.
+
+Bid persistence enriches each unique provider once per workflow query or
+reconciliation pass. Self-declared attributes come from the provider record;
+the audited flag means at least one current on-chain audit exists. Console-only
+workflows use the Console provider detail endpoint for the same fields. This
+metadata is ancillary: a lookup failure does not fail a deployment, and a
+reconciliation that cannot refresh it preserves the last stored values.
 
 ### 5.4 Plugin System (exec-based)
 
@@ -872,6 +897,11 @@ error and a non-zero process status while retaining the response for
 diagnostics. Only pure construction (`--generate-only` or `--offline`) may
 carry a non-zero-shaped fixture without converting it into an execution
 failure.
+At the final terminal boundary, known redundant gRPC and Cosmos SDK execution
+wrappers are removed from the displayed text when the chain already supplied a
+specific explanation. The underlying error value is never rewritten, so
+structured action logs and exit-code classification retain the full diagnostic
+chain.
 The CLI parses fee strings and validates multisig record types and batch
 cardinality before calling SDK helpers whose invalid-input behavior includes
 panics. Unsigned construction preserves a supplied signer address without

@@ -140,10 +140,12 @@ func persistDeploy(ctx context.Context, s sstore.Store, state *wf.RunState, now 
 
 	for _, b := range observedBids(state) {
 		bid := &sstore.BidRecord{
-			ID:        b.id,
-			State:     "lost",
-			Price:     b.price,
-			CreatedAt: now,
+			ID:                 b.id,
+			State:              "lost",
+			Price:              b.price,
+			ProviderAttributes: b.attributes,
+			ProviderAudited:    b.audited,
+			CreatedAt:          now,
 		}
 		if bid.ID.Owner == "" {
 			bid.ID.Owner = owner
@@ -413,8 +415,10 @@ func paramString(state *wf.RunState, name string) string {
 
 // observedBid is the identity and price of one bid a run saw.
 type observedBid struct {
-	id    sstore.BidID
-	price string
+	id         sstore.BidID
+	price      string
+	attributes map[string]string
+	audited    bool
 }
 
 // observedBids extracts every bid the wait-for-bids step returned.
@@ -435,6 +439,7 @@ func observedBids(state *wf.RunState) []observedBid {
 	}
 
 	out := make([]observedBid, 0, len(list))
+	metadata := observedProviderMetadata(sr.Output["provider_metadata"])
 	for _, item := range list {
 		inner, ok := item.(map[string]any)
 		if !ok {
@@ -459,6 +464,7 @@ func observedBids(state *wf.RunState) []observedBid {
 		gseq, _ := asUint64(id["gseq"])
 		oseq, _ := asUint64(id["oseq"])
 
+		providerMetadata := metadata[provider]
 		out = append(out, observedBid{
 			id: sstore.BidID{
 				Owner:    owner,
@@ -467,11 +473,54 @@ func observedBids(state *wf.RunState) []observedBid {
 				OSeq:     uint32(oseq), //nolint:gosec // order sequences are small by construction
 				Provider: provider,
 			},
-			price: coinString(inner["price"]),
+			price:      coinString(inner["price"]),
+			attributes: providerMetadata.attributes,
+			audited:    providerMetadata.audited,
 		})
 	}
 
 	return out
+}
+
+type observedMetadata struct {
+	attributes map[string]string
+	audited    bool
+}
+
+func observedProviderMetadata(value any) map[string]observedMetadata {
+	entries, ok := value.(map[string]any)
+	if !ok {
+		return nil
+	}
+
+	result := make(map[string]observedMetadata, len(entries))
+	for provider, raw := range entries {
+		entry, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		attributes := map[string]string{}
+		switch rawAttributes := entry["attributes"].(type) {
+		case map[string]any:
+			for key, value := range rawAttributes {
+				if stringValue, ok := value.(string); ok {
+					attributes[key] = stringValue
+				}
+			}
+		case map[string]string:
+			for key, value := range rawAttributes {
+				attributes[key] = value
+			}
+		default:
+			continue
+		}
+
+		audited, _ := entry["audited"].(bool)
+		result[provider] = observedMetadata{attributes: attributes, audited: audited}
+	}
+
+	return result
 }
 
 // coinString renders a {amount, denom} object as a coin string, normalized

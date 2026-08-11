@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+### Changed
+
+- **Exports showed every `record_version` as zero without explaining the other
+  version fields**: bbolt now assigns revision 1 to a new deployment, lease, or
+  bid and advances it atomically on later writes while preserving newer
+  imported revisions. Store documentation and export help distinguish record
+  revision, database schema version, and export-envelope format version.
+
+- **Stored bids always exported empty provider metadata**: workflow and
+  reconciliation bid reads now enrich each unique provider with its advertised
+  attributes and current audit presence. Console-only workflows use provider
+  details from the Console API, and transient metadata lookup failures preserve
+  previously stored values instead of failing the deployment.
+
+- **Rejected transactions buried the useful chain explanation**: terminal
+  errors now remove repeated unknown-gRPC prefixes, the Cosmos SDK message-index
+  wrapper, and trailing internal Go source locations. The specific cause, such
+  as the spendable and required balances, remains visible while action logs and
+  exit-code handling retain the original error.
+
+- **Deploy could stay silent for five minutes and then print its template
+  condition**: the bid wait now reports bids received, elapsed time, and time
+  remaining at useful intervals on interactive stderr. Its timeout says that
+  no bids arrived and how long it waited, while machine output stays free of
+  progress text and the internal Go-template condition is never exposed.
+
+- **Store status hid bid and lease outcomes and called untouched reconciliation
+  state a fault**: record totals now break down non-zero deployment, lease, and
+  bid states, including an `other` count for unfamiliar values. The former
+  `Sync State: not synced` section is now `Network Reconciliation`; it reports
+  `not yet run` and points to the existing `akt store sync` command, or shows
+  the height and time of the last completed snapshot.
+
 ### Fixed
 
 - **Mainnet identity was duplicated in command code and context tests**:

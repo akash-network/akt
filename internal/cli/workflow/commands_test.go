@@ -486,6 +486,10 @@ func TestExecuteConsoleDeployEndToEnd(t *testing.T) {
 				{"bid":{"id":{"owner":"o","dseq":"4242","gseq":1,"oseq":1,"provider":"akash1exp"},"state":"open","price":{"denom":"uakt","amount":"25"}}},
 				{"bid":{"id":{"owner":"o","dseq":"4242","gseq":1,"oseq":1,"provider":"akash1cheap"},"state":"open","price":{"denom":"uakt","amount":"10"}}}
 			]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/providers/akash1cheap":
+			_, _ = w.Write([]byte(`{"owner":"akash1cheap","isAudited":true,"attributes":[{"key":"region","value":"us-west"}]}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/providers/akash1exp":
+			_, _ = w.Write([]byte(`{"owner":"akash1exp","isAudited":false,"attributes":[{"key":"region","value":"eu-west"}]}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/leases":
 			if err := json.NewDecoder(r.Body).Decode(&leaseBody); err != nil {
 				t.Errorf("decode lease body: %v", err)
@@ -590,6 +594,11 @@ func TestExecuteConsoleDeployEndToEnd(t *testing.T) {
 		want := "lost"
 		if b.ID.Provider == "akash1cheap" {
 			want = "matched"
+			if !b.ProviderAudited || b.ProviderAttributes["region"] != "us-west" {
+				t.Errorf("cheap provider metadata = %#v audited=%v", b.ProviderAttributes, b.ProviderAudited)
+			}
+		} else if b.ProviderAudited || b.ProviderAttributes["region"] != "eu-west" {
+			t.Errorf("expensive provider metadata = %#v audited=%v", b.ProviderAttributes, b.ProviderAudited)
 		}
 		if b.State != want {
 			t.Errorf("bid from %s = %q, want %q", b.ID.Provider, b.State, want)

@@ -401,10 +401,18 @@ func TestConsoleCreateLeaseMissingManifest(t *testing.T) {
 
 func TestConsoleQueryBidsFallback(t *testing.T) {
 	c, _ := newConsoleClient(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/v1/bids" || r.URL.Query().Get("dseq") != "4242" {
-			t.Errorf("request = %s?%s, want /v1/bids?dseq=4242", r.URL.Path, r.URL.RawQuery)
+		switch r.URL.Path {
+		case "/v1/bids":
+			if r.URL.Query().Get("dseq") != "4242" {
+				t.Errorf("request = %s?%s, want /v1/bids?dseq=4242", r.URL.Path, r.URL.RawQuery)
+			}
+			_, _ = w.Write([]byte(`{"data":[{"bid":{"id":{"owner":"akash1x","dseq":"4242","gseq":1,"oseq":1,"provider":"akash1p"},"state":"open","price":{"denom":"uakt","amount":"10"}}}]}`))
+		case "/v1/providers/akash1p":
+			_, _ = w.Write([]byte(`{"owner":"akash1p","isAudited":true,"attributes":[{"key":"region","value":"us-west"}]}`))
+		default:
+			t.Errorf("unexpected request path %s", r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
 		}
-		_, _ = w.Write([]byte(`{"data":[{"bid":{"id":{"owner":"akash1x","dseq":"4242","gseq":1,"oseq":1,"provider":"akash1p"},"state":"open","price":{"denom":"uakt","amount":"10"}}}]}`))
 	})
 
 	raw, err := c.Query(context.Background(), queryMarketBids, map[string]string{"dseq": "4242"})
@@ -425,6 +433,10 @@ func TestConsoleQueryBidsFallback(t *testing.T) {
 				State string `json:"state"`
 			} `json:"bid"`
 		} `json:"bids"`
+		ProviderMetadata map[string]struct {
+			Attributes map[string]string `json:"attributes"`
+			Audited    bool              `json:"audited"`
+		} `json:"provider_metadata"`
 	}
 	if err := json.Unmarshal(raw, &res); err != nil {
 		t.Fatalf("unmarshal bids: %v", err)
@@ -434,6 +446,9 @@ func TestConsoleQueryBidsFallback(t *testing.T) {
 	}
 	if res.Bids[0].Bid.ID.Provider != "akash1p" || res.Bids[0].Bid.ID.DSeq != "4242" {
 		t.Errorf("bid id = %+v", res.Bids[0].Bid.ID)
+	}
+	if res.ProviderMetadata["akash1p"].Attributes["region"] != "us-west" || !res.ProviderMetadata["akash1p"].Audited {
+		t.Errorf("provider metadata = %#v", res.ProviderMetadata)
 	}
 }
 

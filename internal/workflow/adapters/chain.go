@@ -21,6 +21,8 @@ import (
 	mv1 "pkg.akt.dev/go/node/market/v1"
 	mtypes "pkg.akt.dev/go/node/market/v1beta5"
 	depositv1 "pkg.akt.dev/go/node/types/deposit/v1"
+
+	aktprovider "pkg.akt.dev/akt/internal/provider"
 )
 
 // Workflow tx message identifiers, matching the `msg:` values used by the
@@ -177,7 +179,16 @@ func (c *chainClient) Query(ctx context.Context, path string, params map[string]
 			return nil, fmt.Errorf("query %s: %w", path, err)
 		}
 
-		return c.marshalJSON(res)
+		raw, err := c.marshalJSON(res)
+		if err != nil {
+			return nil, err
+		}
+		providers := make([]string, 0, len(res.Bids))
+		for _, bid := range res.Bids {
+			providers = append(providers, bid.Bid.ID.Provider)
+		}
+
+		return attachProviderMetadata(raw, aktprovider.FetchChainMetadata(ctx, c.cl.Query(), providers))
 
 	case queryMarketLeases:
 		filters := mv1.LeaseFilters{

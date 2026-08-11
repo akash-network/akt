@@ -64,6 +64,15 @@ func deployRunState(t *testing.T, sdlPath string) *wf.RunState {
 				},
 				"price": map[string]any{"denom": "uakt", "amount": "25"},
 			}},
+		}, "provider_metadata": map[string]any{
+			"akash1cheap": map[string]any{
+				"attributes": map[string]any{"region": "us-west"},
+				"audited":    true,
+			},
+			"akash1exp": map[string]any{
+				"attributes": map[string]any{},
+				"audited":    false,
+			},
 		}},
 	})
 	state.SetStepResult("select-bid", &wf.StepResult{
@@ -178,6 +187,18 @@ func TestPersistDeployRecordsWhatTheRunObserved(t *testing.T) {
 		states[b.ID.Provider] = b.State
 		if b.Price == "" {
 			t.Errorf("bid from %s has no price", b.ID.Provider)
+		}
+	}
+	for _, b := range bids {
+		switch b.ID.Provider {
+		case "akash1cheap":
+			if b.ProviderAttributes["region"] != "us-west" || !b.ProviderAudited {
+				t.Errorf("winning provider metadata = %#v audited=%v", b.ProviderAttributes, b.ProviderAudited)
+			}
+		case "akash1exp":
+			if b.ProviderAttributes == nil || b.ProviderAudited {
+				t.Errorf("losing provider metadata = %#v audited=%v", b.ProviderAttributes, b.ProviderAudited)
+			}
 		}
 	}
 	if states["akash1cheap"] != "matched" {

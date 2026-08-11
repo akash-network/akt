@@ -106,6 +106,9 @@ func TestExportJSON(t *testing.T) {
 	assert.Len(t, env.Deployments, 2)
 	assert.Len(t, env.Leases, 1)
 	assert.Len(t, env.Bids, 1)
+	assert.Equal(t, uint64(1), env.Deployments[0].RecordVersion)
+	assert.Equal(t, uint64(1), env.Leases[0].RecordVersion)
+	assert.Equal(t, uint64(1), env.Bids[0].RecordVersion)
 	require.NotNil(t, env.SyncState)
 	assert.Equal(t, int64(18234567), env.SyncState.LastBlockHeight)
 }

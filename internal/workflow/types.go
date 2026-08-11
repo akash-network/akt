@@ -80,8 +80,9 @@ type StepDef struct {
 	Query string `yaml:"query,omitempty" json:"query,omitempty"` // query path, e.g. "market.bids"
 
 	// wait step fields
-	Timeout string `yaml:"timeout,omitempty" json:"timeout,omitempty"` // duration template
-	Until   string `yaml:"until,omitempty"   json:"until,omitempty"`   // condition expression template
+	Timeout      string `yaml:"timeout,omitempty"       json:"timeout,omitempty"`       // duration template
+	Until        string `yaml:"until,omitempty"         json:"until,omitempty"`         // condition expression template
+	TimeoutError string `yaml:"timeout-error,omitempty" json:"timeout_error,omitempty"` // user-facing timeout explanation
 
 	// prompt step fields
 	Mode    string     `yaml:"mode,omitempty"    json:"mode,omitempty"`    // "interactive", "cheapest", "provider=<addr>"
