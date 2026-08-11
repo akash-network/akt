@@ -248,6 +248,10 @@ graph TB
 - Append-only log of all mutating user actions within the context.
 - Each entry records what was done, when, and the result.
 - A transaction action consists of two parts: the tx message and the chain response.
+- A sync broadcast is first recorded as pending. When the log is viewed, akt
+  best-effort reconciles pending transaction hashes against the context's RPC
+  endpoint and appends a terminal revision. Reads collapse revisions by hash,
+  preserving append-only storage while presenting one current transaction row.
 - Workflow steps, provider operations, context changes, Console API calls, and errors are also logged. Read-only queries are not recorded by default.
 
 #### 3.1.2 Context Propagation

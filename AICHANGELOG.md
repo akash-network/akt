@@ -37,6 +37,17 @@
 
 ### Fixed
 
+- **Confirmed transactions stayed pending forever in the action log**: the
+  default sync broadcast records the honest CheckTx state before a block height
+  exists, but nothing revisited that entry after inclusion. `akt context log`
+  now best-effort resolves the pending hashes it is about to display through
+  the active context's RPC endpoint and appends terminal success or failure
+  revisions with height, gas, code, and error details. Reads collapse revisions
+  by transaction hash before applying the limit, so the on-disk audit trail
+  remains append-only while human and machine output show one current row per
+  transaction. An unavailable node leaves the row pending without breaking
+  offline log inspection.
+
 - **Mainnet identity was duplicated in command code and context tests**:
   startup now reads the mainnet chain ID from the configured `mainnet` network,
   which first-run setup populates from `github.com/akash-network/net`, and
