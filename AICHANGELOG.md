@@ -37,6 +37,20 @@
 
 ### Fixed
 
+- **Console contexts exposed unsafe raw transactions and deployment state could
+  drift or be duplicated**: raw `akt tx` is now specified as a keyring-only
+  surface with an auth boundary independent of presentation gating, while
+  managed-wallet lifecycle operations stay on shared workflows and
+  `akt console`. Console deployment creation is single-submit and reconciles
+  ambiguous outcomes by SDL hash instead of replaying POSTs, including on rate
+  limits. Successful workflow and direct closes converge unique matching local
+  deployment and lease records, and `store status`/`store sync` make network
+  reconciliation discoverable and usable from ownerless Console contexts.
+  Creation output no longer invents `open`, surfaces the default daily auto
+  top-up and its disable command, manual lifecycle help points to `akt deploy`,
+  balance allocation fields are labeled provisional, and nonzero sub-cent USD
+  values no longer round to `$0.00`.
+
 - **Confirmed transactions stayed pending forever in the action log**: the
   default sync broadcast records the honest CheckTx state before a block height
   exists, but nothing revisited that entry after inclusion. `akt context log`

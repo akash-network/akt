@@ -127,7 +127,11 @@ func (c *consoleChainClient) createDeployment(ctx context.Context, params map[st
 		}
 	}
 
-	return consoleTxResult(res.SignTx, map[string]string{"dseq": dseq})
+	return consoleTxResult(res.SignTx, map[string]string{
+		"dseq":        dseq,
+		"rail":        "console",
+		"auto_top_up": "daily",
+	})
 }
 
 // updateDeployment maps deployment.MsgUpdateDeployment to

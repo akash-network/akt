@@ -179,6 +179,28 @@ func TestCorrectedHelpExamplesUseRegisteredSurface(t *testing.T) {
 	}
 }
 
+func TestConsoleManualLifecycleHelpPointsToOneShotDeploy(t *testing.T) {
+	root := NewRootCmd(BuildInfo{Version: "test"})
+
+	for _, path := range []string{
+		"console",
+		"console deployment create",
+		"console bid list",
+		"console lease create",
+	} {
+		t.Run(path, func(t *testing.T) {
+			cmd, _, err := root.Find(strings.Fields(path))
+			if err != nil {
+				t.Fatalf("find command: %v", err)
+			}
+			help := strings.Join([]string{cmd.Long, cmd.Example}, "\n")
+			if !strings.Contains(help, "akt deploy") {
+				t.Errorf("help does not point to the one-shot workflow:\n%s", help)
+			}
+		})
+	}
+}
+
 func walkCommands(cmd *cobra.Command, visit func(*cobra.Command)) {
 	visit(cmd)
 	for _, child := range cmd.Commands() {

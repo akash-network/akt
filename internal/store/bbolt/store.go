@@ -154,6 +154,68 @@ func (s *BoltStore) DeleteDeployment(_ context.Context, owner string, dseq uint6
 	})
 }
 
+// MarkDeploymentClosed updates the deployment and all of its leases in one
+// bbolt transaction, so a crash cannot leave the two local views disagreeing.
+func (s *BoltStore) MarkDeploymentClosed(_ context.Context, owner string, dseq uint64, closedAt int64) error {
+	if owner == "" || dseq == 0 {
+		return fmt.Errorf("close local deployment: owner and dseq are required")
+	}
+
+	return s.db.Update(func(tx *bolt.Tx) error {
+		deployments := tx.Bucket(bucketDeployments)
+		key := []byte(store.DeploymentKey(owner, dseq))
+		record := store.DeploymentRecord{Owner: owner, DSeq: dseq, CreatedAt: closedAt}
+		if data := deployments.Get(key); data != nil {
+			if err := json.Unmarshal(data, &record); err != nil {
+				return fmt.Errorf("unmarshal deployment: %w", err)
+			}
+		}
+		if record.State != "closed" || record.ClosedAt == 0 {
+			record.ClosedAt = closedAt
+		}
+		record.State = "closed"
+		record.UpdatedAt = closedAt
+		data, err := json.Marshal(&record)
+		if err != nil {
+			return fmt.Errorf("marshal deployment: %w", err)
+		}
+		if err := deployments.Put(key, data); err != nil {
+			return fmt.Errorf("store deployment: %w", err)
+		}
+
+		leases := tx.Bucket(bucketLeases)
+		updates := make(map[string][]byte)
+		if err := leases.ForEach(func(k, v []byte) error {
+			var lease store.LeaseRecord
+			if err := json.Unmarshal(v, &lease); err != nil {
+				return fmt.Errorf("unmarshal lease %s: %w", k, err)
+			}
+			if lease.ID.Owner != owner || lease.ID.DSeq != dseq {
+				return nil
+			}
+			if lease.State != "closed" || lease.ClosedAt == 0 {
+				lease.ClosedAt = closedAt
+			}
+			lease.State = "closed"
+			encoded, err := json.Marshal(&lease)
+			if err != nil {
+				return fmt.Errorf("marshal lease %s: %w", k, err)
+			}
+			updates[string(k)] = encoded
+			return nil
+		}); err != nil {
+			return err
+		}
+		for leaseKey, encoded := range updates {
+			if err := leases.Put([]byte(leaseKey), encoded); err != nil {
+				return fmt.Errorf("store lease %s: %w", leaseKey, err)
+			}
+		}
+
+		return nil
+	})
+}
+
 // --- Lease operations ---
 
 // PutLease stores a lease record.

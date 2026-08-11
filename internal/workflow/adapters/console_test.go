@@ -16,12 +16,50 @@ import (
 
 const testConsoleCtx = "test-ctx"
 
+const validConsoleSDL = `version: "2.0"
+services:
+  web:
+    image: nginx:1.27-alpine
+    expose:
+      - port: 80
+        as: 80
+        to:
+          - global: true
+profiles:
+  compute:
+    web:
+      resources:
+        cpu:
+          units: 0.5
+        memory:
+          size: 512Mi
+        storage:
+          size: 512Mi
+  placement:
+    dcloud:
+      pricing:
+        web:
+          denom: uact
+          amount: 10000
+deployment:
+  web:
+    dcloud:
+      profile: web
+      count: 1
+`
+
 // newConsoleClient wires an httptest server into a console client backed
 // consoleChainClient with a temp manifest root.
 func newConsoleClient(t *testing.T, handler http.HandlerFunc) (steps.ChainClient, string) {
 	t.Helper()
 
-	srv := httptest.NewServer(handler)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/deployments" {
+			_, _ = w.Write([]byte(`{"data":{"deployments":[],"pagination":{"hasMore":false}}}`))
+			return
+		}
+		handler(w, r)
+	}))
 	t.Cleanup(srv.Close)
 
 	root := t.TempDir()
@@ -55,7 +93,7 @@ func writeTestSDL(t *testing.T, content string) string {
 }
 
 func TestConsoleCreateDeployment(t *testing.T) {
-	const sdlText = "services:\n  web:\n    image: nginx\n"
+	const sdlText = validConsoleSDL
 	sdlPath := writeTestSDL(t, sdlText)
 
 	var gotMethod, gotPath string
@@ -97,6 +135,9 @@ func TestConsoleCreateDeployment(t *testing.T) {
 	if data["dseq"] != "4242" {
 		t.Errorf("data dseq = %q, want string \"4242\"", data["dseq"])
 	}
+	if data["rail"] != "console" || data["auto_top_up"] != "daily" {
+		t.Errorf("data = %v, want Console rail and daily auto-top-up metadata", data)
+	}
 
 	// The manifest must be cached for the subsequent lease creation.
 	manifest, err := console.LoadManifest(root, testConsoleCtx, "4242")
@@ -109,7 +150,7 @@ func TestConsoleCreateDeployment(t *testing.T) {
 }
 
 func TestConsoleCreateDeploymentRawSDL(t *testing.T) {
-	const sdlText = "services:\n  raw:\n    image: nginx\n"
+	const sdlText = validConsoleSDL
 
 	var gotSDL any
 	c, _ := newConsoleClient(t, func(w http.ResponseWriter, r *http.Request) {
@@ -135,7 +176,7 @@ func TestConsoleCreateDeploymentSignTxFailure(t *testing.T) {
 	// (signTx.code != 0) is a failed step: treating it as success would
 	// leave deploy.yaml hanging in wait-for-bids until timeout with the
 	// rawLog dropped.
-	sdlPath := writeTestSDL(t, "services:\n  web:\n    image: nginx\n")
+	sdlPath := writeTestSDL(t, validConsoleSDL)
 
 	c, _ := newConsoleClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"dseq":"4243","manifest":"[]","signTx":{"code":5,"transactionHash":"DEADBEEF","rawLog":"insufficient fees"}}}`))
@@ -184,23 +225,27 @@ func TestConsoleSDLPathMissingIsError(t *testing.T) {
 	}
 }
 
-func TestConsoleCreateDeploymentEmptyManifestNotCached(t *testing.T) {
-	// An empty manifest must not be cached (mirroring the CLI twin):
-	// lease create should fail with the clear no-cached-manifest error
-	// instead of sending an empty manifest to the provider.
+func TestConsoleCreateDeploymentDerivesMissingManifest(t *testing.T) {
+	// Console occasionally omits the manifest from a successful create
+	// response. The client derives the same manifest while hashing the SDL, so
+	// the workflow can still create its lease without replaying the create.
 	c, root := newConsoleClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"dseq":"4244","manifest":""}}`))
 	})
 
 	if _, err := c.BroadcastTx(context.Background(), msgCreateDeployment, map[string]string{
-		"sdl":     "services:\n  web:\n    image: nginx\n",
+		"sdl":     validConsoleSDL,
 		"deposit": "5",
 	}); err != nil {
 		t.Fatalf("BroadcastTx: %v", err)
 	}
 
-	if _, err := console.LoadManifest(root, testConsoleCtx, "4244"); err == nil {
-		t.Fatal("empty manifest must not be cached")
+	manifest, err := console.LoadManifest(root, testConsoleCtx, "4244")
+	if err != nil {
+		t.Fatalf("derived manifest was not cached: %v", err)
+	}
+	if !json.Valid([]byte(manifest)) || !strings.Contains(manifest, `"name":"web"`) {
+		t.Errorf("derived manifest = %q, want valid manifest JSON for the web service", manifest)
 	}
 }
 

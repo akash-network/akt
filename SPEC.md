@@ -1235,7 +1235,7 @@ the credential (§7.1). Addresses are recorded in full.
 
 Workflow commands (`akt deploy`, `akt update`, `akt close`) are driven by a **declarative workflow engine**. Instead of hardcoded command logic, each workflow is a YAML definition that the engine interprets step by step. Users can override built-in workflows or create custom ones.
 
-**Transports**: actions are defined once — as workflow definitions — and translated per transport by `internal/transport`. Each transport carries the same abstract steps onto its backing rail: the **chain** transport (keyring auth) signs and broadcasts transactions locally plus provider-gateway calls, while the **console** transport (console-api auth) maps the same steps onto Console API REST calls (§7.4–§7.5). Because the command surface (positionals and flags) is generated from the workflow definition and the transport is chosen per context at execution time, `akt deploy/update/close` accept identical arguments on both rails, and adding a new action never requires per-rail redesign. Cross-rail argument syntax (notably `--deposit`, §7.4) is normalized in the transport layer.
+**Transports**: actions are defined once — as workflow definitions — and translated per transport by `internal/transport`. Each transport carries the same abstract steps onto its backing rail: the **chain** transport (keyring auth) signs and broadcasts transactions locally plus provider-gateway calls, while the **console** transport (console-api auth) maps the same steps onto Console API REST calls (§7.4–§7.5). Because the command surface (positionals and flags) is generated from the workflow definition and the transport is chosen per context at execution time, `akt deploy/update/close` accept identical arguments on both rails, and adding a new action never requires per-rail redesign. Cross-rail argument syntax (notably `--deposit`, §7.4) is normalized in the transport layer. A successful Console `akt deploy` result also reports that the Console enabled its default daily auto top-up and prints the exact deployment-settings command that disables it; chain results omit this Console-only state.
 
 #### 2.3.1 Workflow Definition Location
 
@@ -1636,6 +1636,10 @@ The flagship workflow command. Orchestrates the full deployment lifecycle:
 5. **Send manifest** to the provider.
 6. **Wait for deployment to become active** (provider acknowledges, containers start).
 7. **Display endpoint URLs** for the deployed services.
+
+On the Console rail, the final display also identifies the default daily auto
+top-up and prints `akt console deployment settings <dseq> false` as the exact
+opt-out command. The chain rail does not display a Console setting.
 
 | Flag               | Type     | Default         | Description                                                 |
 | ------------------ | -------- | --------------- | ----------------------------------------------------------- |
@@ -2044,6 +2048,7 @@ Network Reconciliation:
   Last Block:   18234567
   Last Run:     2026-03-23T10:15:32Z
   Status:       completed
+  Run:          akt store sync
 ```
 
 Record totals include a non-zero breakdown for every known state. Records with
@@ -2052,10 +2057,12 @@ for the displayed total.
 
 Network reconciliation is separate from workflow persistence. A store that has
 records but has never run an explicit reconciliation displays `Status: not yet
-run` and `Run: akt store sync`; this is an available action, not a fault. A
-completed reconciliation reports the last chain height and run time without
-claiming that the local snapshot remains continuously synchronized after the
-one-shot command exits.
+run`, omits the unknown block and time values, and displays `Run: akt store
+sync`; this is an available action, not a fault. A completed reconciliation
+reports the last chain height and run time without claiming that the local
+snapshot remains continuously synchronized after the one-shot command exits.
+The `Run` row remains visible so the next explicit reconciliation is always
+discoverable.
 
 #### `akt store export`
 
@@ -2080,7 +2087,13 @@ Import records from a previously exported file.
 #### `akt store sync [account]`
 
 Reconcile the local store against on-chain state for the context's tracked
-accounts (§6.7), then record the chain height reached in the sync state.
+accounts (§6.7), then record the chain height reached in the sync state. Owner
+resolution is, in order: the explicit positional account; configured tracked
+accounts; the default account; then, for a `console-api` context without any of
+those identities, all unique owners from its local deployment records. The
+derived owner set is de-duplicated and sorted. If none exists, the command
+fails with a direct request to pass an account address; it never opens a
+nonexistent Console keyring.
 
 Workflow commands record their own results (§6.6), but a single run can only
 observe what passed through it. `akt store sync` is the escape hatch for
@@ -2464,7 +2477,7 @@ With write tools:
 
 ### 2.9 Console Commands
 
-The `akt console` group drives the Akash Console managed-wallet API (§7): deployments are created, funded, and closed by the Console's server-side wallet — no local keyring or gas handling is involved. Authenticated commands resolve the API key per §7.1 (`--console-api-key` flag > `AKT_CONSOLE_API_KEY` > per-context stored credential) and fail with a pointer to `akt console login` when none is found. The base URL resolves per §7.2 (`--console-api-url` flag > context `console-api-url` > default). Public catalog commands (`provider`, `gpu`, `template`) work without a key and without a configured context.
+The `akt console` group drives the Akash Console managed-wallet API (§7): deployments are created, funded, and closed by the Console's server-side wallet — no local keyring or gas handling is involved. Authenticated commands resolve the API key per §7.1 (`--console-api-key` flag > `AKT_CONSOLE_API_KEY` > per-context stored credential) and fail with a pointer to `akt console login` when none is found. The base URL resolves per §7.2 (`--console-api-url` flag > context `console-api-url` > default). Public catalog commands (`provider`, `gpu`, `template`) work without a key and without a configured context. Group, deployment-create, bid-list, and lease-create help identifies `akt deploy <sdl-file>` as the preferred one-shot path that performs those steps together; the subcommands remain available for inspection and manual control.
 
 **Group persistent flags:**
 
@@ -2487,7 +2500,7 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | --------------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | `akt console deployment list`                       | `--skip` (0), `--limit` (20)                   | List deployments with pagination.                                                              |
 | `akt console deployment get <dseq>`                 |                                                | Deployment with leases and escrow account.                                                     |
-| `akt console deployment create <sdl-file> [deposit-usd]` | `--deposit <usd>` (alternative to positional; min 0.5) — **disabled pending feedback** (positional only, 2026-07) | Create a deployment; prints `dseq` + tx hash. The deposit uses the unified cross-rail syntax (§7.4): `5`, `5usd`, or `$5` (min $0.50); coin forms like `5000000uakt` fail with the cross-rail error. The returned manifest is cached at `contexts/<name>/manifests/<dseq>.json` for `lease create`. |
+| `akt console deployment create <sdl-file> [deposit-usd]` | `--deposit <usd>` (alternative to positional; min 0.5) — **disabled pending feedback** (positional only, 2026-07) | Create a deployment; prints `dseq` + tx hash, the Console default `autoTopUp: {enabled: true, frequency: daily}`, and the exact command that disables it. It does not invent a deployment `state`; `deployment get` is authoritative for the later open/active transition. The deposit uses the unified cross-rail syntax (§7.4): `5`, `5usd`, or `$5` (min $0.50); coin forms like `5000000uakt` fail with the cross-rail error. The returned manifest is cached at `contexts/<name>/manifests/<dseq>.json` for `lease create`. |
 | `akt console deployment update <dseq> <sdl-file>`   |                                                | Update the deployment's SDL.                                                                   |
 | `akt console deployment close <dseq>`               |                                                | Close a deployment. Idempotent: an already-closed deployment prints a note and exits 0.        |
 | `akt console deployment deposit <dseq> [amount-usd]` | `--amount <usd>` (alternative to positional; > 0) — **disabled pending feedback** (positional only, 2026-07) | Add funds to the deployment's escrow. The amount uses the unified cross-rail syntax (§7.4): `10`, `10usd`, or `$10`; coin forms fail with the cross-rail error. |
@@ -2500,7 +2513,7 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | Command                       | Flags                        | Description                                                     |
 | ----------------------------- | ---------------------------- | ---------------------------------------------------------------- |
 | `akt console wallet list`     |                              | List managed wallets. `creditAmount` is dollar-scale per the `/v1/wallets` contract (shown as `$X.XX`, no µ scaling), with the wallet's `denom` when the API reports one. |
-| `akt console wallet balance`  |                              | Available / in-deployment / total balance in USD.                |
+| `akt console wallet balance`  |                              | Available / in-deployment / total balance in USD. `total` is authoritative; the allocation fields carry `allocationStatus: provisional` and a note that they can lag recent creates/closes. |
 | `akt console wallet settings [true\|false]` | `--auto-reload true\|false` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Show settings when no value is given; set auto-reload otherwise. Reports `{ autoReloadEnabled, configured }` on every path — after a write, after a read, and for an account that has never configured auto-reload (the API's 404, which reports `configured: false` plus a `note` naming the command that enables it). The raw API record is never printed: like `deployment settings`, the command reshapes it so one command has one output shape. |
 | `akt console wallet cost`     |                              | Estimated weekly cost in USD.                                    |
 | `akt console usage [from] [to]` | `--from`, `--to` (YYYY-MM-DD, alternatives) — **disabled pending feedback** (positional only, 2026-07) | Daily spend history for the managed wallet. `totalSpent` is the spend within the requested range (sum of the daily values, order-independent); `lifetimeSpent` is the API's cumulative figure as of the range end, omitted when the range is empty. Omitted dates use the API defaults (last 30 days). |
@@ -2541,7 +2554,7 @@ the shared gateway boundary verifies the lease before opening a stream.
 | `akt console shell <dseq> <service> [-- command...]` | `--stdin`                                 | Interactive shell in a lease container, default `/bin/sh`; exec is the same operation with an explicit command (JWT scopes `shell,status`). TTY auto-detected; terminal stdin is detached from explicit commands unless `--stdin` is supplied. |
 | `akt console screen <sdl-file>`                    |                                             | Client-side bid screening: derive resources from the SDL and list the providers able to run it (public endpoint, no key needed). |
 
-Per the positional-primary convention (§3.8), every console command takes its primary value(s) positionally; the equivalent flags remain as overrides and a positional value wins when both are given. (2026-07: the flag twins marked *disabled pending feedback* above are commented out in code for the positional-only UX trial — the positional form is the only way while the trial runs; the original flag definitions are preserved in `FEEDBACK(2026-07)` comments for restoration.) Default structured reads are indented JSON, while human acknowledgements and streams use the command-specific pretty forms described below; USD values render as `$X.XX` in human output. State-changing calls are recorded in the context's action log as `type=console` entries (§5.6). No command ever prints a Console API key, except the one-time secret from `apikey create`.
+Per the positional-primary convention (§3.8), every console command takes its primary value(s) positionally; the equivalent flags remain as overrides and a positional value wins when both are given. (2026-07: the flag twins marked *disabled pending feedback* above are commented out in code for the positional-only UX trial — the positional form is the only way while the trial runs; the original flag definitions are preserved in `FEEDBACK(2026-07)` comments for restoration.) Default structured reads are indented JSON, while human acknowledgements and streams use the command-specific pretty forms described below. USD values at or above one cent render with two decimals. A nonzero sub-cent value renders with up to six decimals and trailing zeros stripped; a magnitude below one millionth of a dollar renders as `$<0.000001` (or `-$<0.000001`) rather than the false `$0.00`. Zero remains `$0.00`. State-changing calls are recorded in the context's action log as `type=console` entries (§5.6). No command ever prints a Console API key, except the one-time secret from `apikey create`.
 
 **Console output contract:** the API's JSON field names and value types are the
 canonical structured representation. `--output json` emits that representation;
@@ -2580,11 +2593,18 @@ The active context's configuration determines a **feature set**: which transport
 | Capability | Derived from | Gates |
 |---|---|---|
 | `chain-query` | network has ≥1 RPC endpoint | `query`, `monitor` |
-| `chain-tx` | network has ≥1 RPC endpoint | `tx` |
+| `chain-tx` | `auth-method: keyring` and network has ≥1 RPC endpoint | `tx` |
 | `provider` | network has ≥1 RPC endpoint | `provider` |
 | `console` | Console API key resolvable (§7.1) | Console-backed command groups |
 
 Commands declare requirements via a cobra annotation (`akt.requires`, package `internal/capability`); alternatives are separated by `|` (e.g. workflow commands require `chain-tx|console`). A command whose requirement the context cannot satisfy fails fast with the missing capability and its remedy instead of erroring mid-transport.
+
+`chain-tx` checks identity mode without opening the keyring; key existence and
+funding remain execution-time checks. Raw `akt tx` execution has an independent
+auth boundary and is rejected under `console-api` even when command gating is
+`off` or `--node` supplies an RPC endpoint. Managed-wallet writes use
+`akt deploy/update/close` or `akt console`; a network override supplies a
+connection, never a local signing identity.
 
 Presentation is configurable while UX feedback is collected (`defaults.command-gating`):
 
@@ -3829,13 +3849,17 @@ resolves to a chain-queried minimum that the workflow never reports back, so
 the field is left empty instead of storing the literal word `auto`.
 
 The owner is taken from the transaction result, falling back to the bid or
-lease identity returned by the market, and finally to the context's
-`default-account` when that is an address rather than a keyring name. If no
-owner address can be determined — a rail whose deployment response omits it and
-no address-form default account — the store write is **skipped with a warning**
-rather than writing a record under an empty owner. Records are keyed
-`<owner>:<dseq>` (§4.4), so an empty owner would corrupt the key space and
-produce a record no lookup could find.
+lease identity returned by the market, and then to the context's
+`default-account` when that is an address rather than a keyring name. For an
+update or close whose transport response contains only a DSEQ, the persistence
+path searches existing deployment records and accepts the owner only when that
+DSEQ has exactly one match. A direct `akt console deployment close` uses the
+same transition. No match means there is no local record to update; multiple
+matches refuse to guess and emit a best-effort store warning naming the
+ambiguity. Records are keyed
+`<owner>:<dseq>` (§4.4), so an empty or guessed owner would corrupt the key
+space. A successful close marks the deployment and all locally recorded leases
+for that deployment `closed` in one atomic store transaction.
 
 ### 6.7 Multi-Account Tracking
 
@@ -4006,25 +4030,29 @@ When a workflow runs in a context with `auth-method: console-api`, the workflow 
 
 **Manifest handling**: The Console API's `POST /v1/deployments` returns a `manifest` field in the response. The workflow engine stores this value and passes it to `POST /v1/leases` when creating leases, instead of calling the provider's `send-manifest` endpoint directly.
 
-### 7.5 Command Routing
+### 7.5 Workflow and Command Routing
 
-When a context uses `console-api` auth, the following commands are routed through the Console API instead of direct chain transactions:
+The Console adapter maps abstract workflow actions, not raw `akt tx` commands:
 
-| CLI Command                          | Console API Endpoint                 | Notes                                    |
-| ------------------------------------ | ------------------------------------ | ---------------------------------------- |
-| `akt tx deployment create <sdl>`     | `POST /v1/deployments`               | `--deposit` flag in USD                  |
-| `akt tx deployment update <sdl>`     | `PUT /v1/deployments/{dseq}`         |                                          |
-| `akt tx deployment close`            | `DELETE /v1/deployments/{dseq}`      |                                          |
-| `akt query market bid <dseq>`        | `GET /v1/bids?dseq=`                 |                                          |
-| `akt tx market lease create`         | `POST /v1/leases`                    | Requires manifest from deployment create |
-| `akt tx escrow deposit`              | `POST /v1/deposit-deployment`        | `--deposit` flag in USD                  |
-| `akt query deployment`               | `GET /v1/deployments`                | Paginated via `--skip`/`--limit`         |
+| Workflow action / Console command | Console API Endpoint                 | Notes                                    |
+| --------------------------------- | ------------------------------------ | ---------------------------------------- |
+| deployment create                 | `POST /v1/deployments`               | USD deposit; single-submit reconciliation below |
+| deployment update                 | `PUT /v1/deployments/{dseq}`         |                                          |
+| deployment close                  | `DELETE /v1/deployments/{dseq}`      |                                          |
+| bid list                          | `GET /v1/bids?dseq=`                 |                                          |
+| lease create                      | `POST /v1/leases`                    | Requires manifest from deployment create |
+| escrow deposit                    | `POST /v1/deposit-deployment`        | Amount in USD                            |
+| deployment list/get               | `GET /v1/deployments`                | Paginated via `--skip`/`--limit`         |
 
-Commands **not** listed above (e.g., `akt query bank balances`, `akt query staking validators`, `akt tx gov vote`) are **not supported** with `console-api` auth. They require direct chain access via `keyring` auth. Running an unsupported command with `console-api` auth produces an error:
+The mappings are reached through `akt deploy/update/close` and the dedicated
+`akt console` group. Every raw `akt tx` command requires `keyring` auth,
+including deployment, market, and escrow commands. Chain queries continue to
+use RPC directly when a Console context has a network. Running a raw tx with
+`console-api` auth produces an error before any tx child initializes:
 
 ```
-Error: command "tx gov vote" is not supported with console-api auth.
-Use a context with auth-method: keyring for this operation.
+Error: raw chain transactions require keyring auth; the active context uses console-api.
+Use `akt deploy`, `akt update`, `akt close`, or `akt console` for managed-wallet operations, or switch to a keyring context.
 ```
 
 ### 7.6 Error Handling
@@ -4034,8 +4062,8 @@ Use a context with auth-method: keyring for this operation.
 | 401         | Invalid or expired API key. Point the user at the key resolution chain (§7.1) and `akt console login`. |
 | 402         | Insufficient funds in Console account.                            |
 | 404         | Deployment not found (dseq does not exist or not owned by user).  |
-| 429         | Rate limited. Retry with backoff (safe for every method: the request was rejected before processing). |
-| 5xx         | Console API server error. Retry with backoff (max 3 attempts) for idempotent methods (GET/HEAD/PUT/DELETE) only. POST is never replayed on 5xx: the request may have been processed despite the error (e.g. a gateway 502 after a completed write), and replaying it could duplicate a deployment or a USD deposit. |
+| 429         | Rate limited. Retry with backoff only for idempotent methods (GET/HEAD/PUT/DELETE). A non-idempotent request may already have reached the service and is never replayed. |
+| 5xx         | Console API server error. Retry with backoff (max 3 attempts) for idempotent methods (GET/HEAD/PUT/DELETE) only. A non-idempotent request is never replayed: it may have been processed despite the error (e.g. a gateway 502 after a completed write), and replaying it could duplicate a deployment or a USD deposit. |
 
 The Console may transiently reject an otherwise valid deployment PUT with
 `422 manifest version validation failed`. Because PUT is idempotent, that exact
@@ -4044,6 +4072,19 @@ the client reads the deployment back and compares its base64 `hash` with the
 deterministic SDL version; a match proves success despite the failed response.
 All other 4xx responses remain terminal. A failed lease POST follows the
 read-back rule in §7.3 and is never replayed.
+
+Deployment creation adds a stronger ambiguity protocol. Before POSTing, the
+client validates the SDL, derives its base64 version hash and rendered
+manifest, and snapshots every existing deployment DSEQ through the paginated
+list endpoint. It then submits exactly one POST. Transport errors, 429, 5xx,
+and a success response without a usable DSEQ are ambiguous: the client polls
+the list within a fixed bound and selects deployments absent from the snapshot
+whose hash equals the SDL version. Exactly one match is reconciled as success
+and supplies the locally rendered manifest; zero or multiple matches return an
+"outcome unknown" error that tells the user to inspect
+`akt console deployment list`. The request is never repeated. The action log
+records reconciled success with the DSEQ, definitive 4xx failure as `failed`,
+and an unresolved ambiguous outcome as `pending` with the SDL version hash.
 
 ### 7.7 Differences from Keyring Auth
 

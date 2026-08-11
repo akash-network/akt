@@ -291,6 +291,53 @@ func builtinStepTemplate(t *testing.T, workflow, step string) string {
 	return ""
 }
 
+func TestBuiltinDeployResultReportsConsoleAutoTopUp(t *testing.T) {
+	tmpl := builtinStepTemplate(t, "deploy", "display-result")
+	state := wf.NewRunState("wf-1", "deploy", "akash1owner", nil)
+	state.SetStepResult("create-deployment", &wf.StepResult{
+		Name:   "create-deployment",
+		Type:   wf.StepTx,
+		Status: "success",
+		Output: map[string]any{
+			"dseq":        "9911",
+			"rail":        "console",
+			"auto_top_up": "daily",
+		},
+	})
+
+	rendered, err := wf.ResolveTemplate(tmpl, state)
+	if err != nil {
+		t.Fatalf("ResolveTemplate: %v", err)
+	}
+	for _, want := range []string{
+		"Auto top-up: enabled (daily)",
+		"akt console deployment settings 9911 false",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Errorf("Console result does not contain %q:\n%s", want, rendered)
+		}
+	}
+}
+
+func TestBuiltinDeployResultOmitsConsoleSettingOnChain(t *testing.T) {
+	tmpl := builtinStepTemplate(t, "deploy", "display-result")
+	state := wf.NewRunState("wf-1", "deploy", "akash1owner", nil)
+	state.SetStepResult("create-deployment", &wf.StepResult{
+		Name:   "create-deployment",
+		Type:   wf.StepTx,
+		Status: "success",
+		Output: map[string]any{"dseq": "9911", "owner": "akash1owner"},
+	})
+
+	rendered, err := wf.ResolveTemplate(tmpl, state)
+	if err != nil {
+		t.Fatalf("ResolveTemplate: %v", err)
+	}
+	if strings.Contains(rendered, "Auto top-up") || strings.Contains(rendered, "console deployment settings") {
+		t.Errorf("chain result contains a Console-only setting:\n%s", rendered)
+	}
+}
+
 // updateResultState builds the run state the update workflow's display-result
 // step sees: the send-manifest step reports which providers accepted the new
 // manifest and how many there were.

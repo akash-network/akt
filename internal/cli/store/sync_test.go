@@ -17,6 +17,8 @@ import (
 	aktcodec "pkg.akt.dev/akt/internal/codec"
 	aktctx "pkg.akt.dev/akt/internal/context"
 	aktkeyring "pkg.akt.dev/akt/internal/keyring"
+	sstore "pkg.akt.dev/akt/internal/store"
+	"pkg.akt.dev/akt/internal/store/bbolt"
 )
 
 // syncAddrs returns two distinct, valid account addresses. They are derived
@@ -71,6 +73,37 @@ func TestResolveTrackedAccountsDefaultsToTheDefaultAccount(t *testing.T) {
 	got, err := resolveTrackedAccounts(rc, "", cctx)
 	require.NoError(t, err)
 	require.Equal(t, []string{addrA}, got)
+}
+
+func TestResolveOwnersForConsoleSyncUsesLocalDeploymentOwners(t *testing.T) {
+	ctx := context.Background()
+	s, err := bbolt.OpenContext(ctx, t.TempDir(), "managed")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = s.Close() })
+
+	addrA, addrB := syncAddrs(t)
+	for _, owner := range []string{addrB, addrA, addrB} {
+		require.NoError(t, s.PutDeployment(ctx, &sstore.DeploymentRecord{
+			Owner: owner,
+			DSeq:  uint64(len(owner)),
+			State: "active",
+		}))
+	}
+
+	rc := &aktctx.Context{Name: "managed", AuthMethod: aktctx.AuthMethodConsoleAPI}
+	got, err := resolveOwnersForSync(ctx, rc, "", sdkclient.Context{}, s)
+	require.NoError(t, err)
+	require.ElementsMatch(t, []string{addrA, addrB}, got)
+	require.True(t, sort.StringsAreSorted(got), "owners must be in a stable order: %v", got)
+}
+
+func TestSyncHelpExplainsConsoleOwnerInference(t *testing.T) {
+	cmd := syncCmd(func() string { return t.TempDir() }, func() string { return "managed" }, nil)
+	for _, want := range []string{"Console context", "local deployment records", "akt store sync <address>"} {
+		if !strings.Contains(cmd.Long, want) {
+			t.Errorf("sync help does not contain %q:\n%s", want, cmd.Long)
+		}
+	}
 }
 
 // TestResolveTrackedAccountsUsesTheConfiguredList covers the multi-account

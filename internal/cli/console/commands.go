@@ -7,7 +7,9 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
+	"strconv"
 	"strings"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
@@ -29,7 +31,8 @@ func Commands(mgrFn func() *aktctx.Manager) *cobra.Command {
 		Long: "Interact with the Akash Console API: create and manage deployments through " +
 			"the Console managed wallet, inspect bids and leases, and browse the public " +
 			"provider/GPU/template catalog. Authenticated commands need a Console API key " +
-			"(run `akt console login`); catalog commands work without one.",
+			"(run `akt console login`); catalog commands work without one. For a complete " +
+			"create, bid, lease, and manifest flow, use `akt deploy <sdl-file>`.",
 	}
 
 	cmd.PersistentFlags().String("console-api-url", "", "Console API base URL (overrides the context setting)")
@@ -301,9 +304,28 @@ func printConsoleResult(cmd *cobra.Command, pretty string, structured any) error
 	return printJSON(cmd, structured)
 }
 
-// formatUSD renders a USD amount as $X.XX.
+// formatUSD keeps normal currency values at cents while retaining meaningful
+// precision for the sub-cent usage and cost values returned by Console.
 func formatUSD(v float64) string {
-	return fmt.Sprintf("$%.2f", v)
+	if v == 0 {
+		return "$0.00"
+	}
+
+	prefix := "$"
+	if v < 0 {
+		prefix = "-$"
+	}
+	value := math.Abs(v)
+	if value < 0.000001 {
+		return prefix + "<0.000001"
+	}
+	if value < 0.01 {
+		formatted := strconv.FormatFloat(value, 'f', 6, 64)
+		formatted = strings.TrimRight(strings.TrimRight(formatted, "0"), ".")
+		return prefix + formatted
+	}
+
+	return fmt.Sprintf("%s%.2f", prefix, value)
 }
 
 // parseBoolValue parses a strict true|false string flag value.

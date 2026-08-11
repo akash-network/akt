@@ -1,16 +1,22 @@
 package console
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"strconv"
+	"time"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
+	"pkg.akt.dev/akt/internal/cliutil"
 	"pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
+	sstore "pkg.akt.dev/akt/internal/store"
+	"pkg.akt.dev/akt/internal/store/bbolt"
 	"pkg.akt.dev/akt/internal/transport"
 )
 
@@ -40,7 +46,8 @@ func deploymentCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 		Use:   "deployment",
 		RunE:  sdkclient.ValidateCmd,
 		Short: "Manage Console deployments",
-		Long:  "Create, inspect, update, fund, and close deployments through the Console managed wallet.",
+		Long: "Create, inspect, update, fund, and close deployments through the Console managed wallet. " +
+			"Use `akt deploy <sdl-file>` for the complete create, bid, lease, and manifest flow.",
 	}
 
 	cmd.AddCommand(
@@ -113,7 +120,8 @@ func deploymentCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		Use:   "create <sdl-file> [deposit-usd]",
 		Short: "Create a deployment (managed wallet signs server-side)",
 		Long: "Create a deployment from an SDL file with a USD deposit. The returned manifest " +
-			"is cached per-context so `akt console lease create` can send it without re-passing it.",
+			"is cached per-context so `akt console lease create` can send it without re-passing it. " +
+			"For the complete lifecycle, use `akt deploy <sdl-file>`.",
 		Args: cobra.RangeArgs(1, 2),
 		Example: `  # Deposit as positional argument
   akt console deployment create deploy.yaml 5`,
@@ -176,13 +184,30 @@ func deploymentCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				txHash = result.SignTx.TransactionHash
 			}
 
+			type autoTopUpNotice struct {
+				Enabled        bool   `json:"enabled"`
+				Frequency      string `json:"frequency"`
+				DisableCommand string `json:"disableCommand"`
+			}
+
+			dseq := result.DSeq.String()
 			return printJSON(cmd, struct {
-				DSeq     string `json:"dseq"`
-				TxHash   string `json:"txHash,omitempty"`
-				State    string `json:"state"`
-				Note     string `json:"note,omitempty"`
-				Manifest string `json:"manifest,omitempty"`
-			}{result.DSeq.String(), txHash, "open", note, uncachedManifest})
+				DSeq      string          `json:"dseq"`
+				TxHash    string          `json:"txHash,omitempty"`
+				AutoTopUp autoTopUpNotice `json:"autoTopUp"`
+				Note      string          `json:"note,omitempty"`
+				Manifest  string          `json:"manifest,omitempty"`
+			}{
+				DSeq:   dseq,
+				TxHash: txHash,
+				AutoTopUp: autoTopUpNotice{
+					Enabled:        true,
+					Frequency:      "daily",
+					DisableCommand: "akt console deployment settings " + dseq + " false",
+				},
+				Note:     note,
+				Manifest: uncachedManifest,
+			})
 		},
 	}
 
@@ -228,7 +253,7 @@ func deploymentCloseCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		Args:    cobra.ExactArgs(1),
 		Example: `  akt console deployment close 12345`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cl, _, err := clientFromCmd(cmd, mgrFn, true)
+			cl, rc, err := clientFromCmd(cmd, mgrFn, true)
 			if err != nil {
 				return err
 			}
@@ -246,6 +271,10 @@ func deploymentCloseCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return fmt.Errorf("close deployment %s: %w", args[0], err)
 			}
 
+			if err := convergeClosedDeployment(cmd, rc, args[0]); err != nil && !cliutil.IsQuiet(cmd) {
+				fmt.Fprintf(cmd.ErrOrStderr(), "warning: the local store was not updated: %v\n", err)
+			}
+
 			return printConsoleResult(cmd, pretty, struct {
 				DSeq          string `json:"dseq"`
 				State         string `json:"state"`
@@ -253,6 +282,40 @@ func deploymentCloseCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			}{args[0], "closed", alreadyClosed})
 		},
 	}
+}
+
+func convergeClosedDeployment(cmd *cobra.Command, rc *aktctx.Context, dseqText string) error {
+	if rc == nil || rc.Root == "" || rc.Name == "" {
+		return nil
+	}
+
+	// Do not create an empty database merely because a user closed something
+	// that was never tracked locally.
+	if _, err := os.Stat(aktctx.StoreDBPath(rc.Root, rc.Name)); err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("inspect store: %w", err)
+	}
+
+	dseq, err := strconv.ParseUint(dseqText, 10, 64)
+	if err != nil || dseq == 0 {
+		return fmt.Errorf("cannot match non-numeric dseq %q to a local deployment", dseqText)
+	}
+
+	ctx := context.WithoutCancel(cmd.Context())
+	s, err := bbolt.OpenContext(ctx, rc.Root, rc.Name)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = s.Close() }()
+
+	owner, err := sstore.UniqueDeploymentOwner(ctx, s, dseq)
+	if err != nil || owner == "" {
+		return err
+	}
+
+	return s.MarkDeploymentClosed(ctx, owner, dseq, time.Now().Unix())
 }
 
 func deploymentDepositCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
@@ -392,6 +455,7 @@ func bidCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd.AddCommand(&cobra.Command{
 		Use:     "list <dseq>",
 		Short:   "List bids for a deployment's open orders",
+		Long:    "List bids for a deployment's open orders. Use `akt deploy <sdl-file>` to wait for and select a bid as part of the complete deployment flow.",
 		Args:    cobra.ExactArgs(1),
 		Example: `  akt console bid list 12345`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -437,7 +501,8 @@ func leaseCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 		Use:   "create <dseq> [provider]",
 		Short: "Accept a bid by creating a lease and sending the manifest",
 		Long: "Accept a bid by creating a lease and sending the deployment manifest to the " +
-			"winning provider. The manifest defaults to the one cached by `deployment create`.",
+			"winning provider. The manifest defaults to the one cached by `deployment create`. " +
+			"Use `akt deploy <sdl-file>` to perform creation, bid selection, and lease creation together.",
 		Args: cobra.RangeArgs(1, 2),
 		Example: `  # Provider as positional argument (gseq/oseq default to 1)
   akt console lease create 12345 akash1provider...`,

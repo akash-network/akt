@@ -2,7 +2,9 @@ package store
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -23,6 +25,10 @@ type Store interface {
 	GetDeployment(ctx context.Context, owner string, dseq uint64) (*DeploymentRecord, error)
 	ListDeployments(ctx context.Context, filter DeploymentFilter) ([]*DeploymentRecord, error)
 	DeleteDeployment(ctx context.Context, owner string, dseq uint64) error
+	// MarkDeploymentClosed atomically closes a deployment and every local
+	// lease keyed to it. A missing deployment is created when its owner is
+	// known, which preserves explicit chain-rail close outcomes.
+	MarkDeploymentClosed(ctx context.Context, owner string, dseq uint64, closedAt int64) error
 
 	// Lease operations
 	PutLease(ctx context.Context, l *LeaseRecord) error
@@ -55,6 +61,44 @@ type Store interface {
 
 	// Lifecycle
 	Close() error
+}
+
+// UniqueDeploymentOwner returns the owner of the one local deployment with
+// dseq. No match returns "", nil. Multiple owners are an error: DSEQ is only
+// unique within an owner, so choosing one would corrupt another account's
+// local state.
+func UniqueDeploymentOwner(ctx context.Context, s Store, dseq uint64) (string, error) {
+	if s == nil || dseq == 0 {
+		return "", nil
+	}
+
+	records, err := s.ListDeployments(ctx, DeploymentFilter{})
+	if err != nil {
+		return "", fmt.Errorf("list local deployments: %w", err)
+	}
+
+	seen := make(map[string]struct{})
+	for _, record := range records {
+		if record == nil || record.DSeq != dseq || record.Owner == "" {
+			continue
+		}
+		seen[record.Owner] = struct{}{}
+	}
+
+	owners := make([]string, 0, len(seen))
+	for owner := range seen {
+		owners = append(owners, owner)
+	}
+	sort.Strings(owners)
+
+	switch len(owners) {
+	case 0:
+		return "", nil
+	case 1:
+		return owners[0], nil
+	default:
+		return "", fmt.Errorf("deployment %d has multiple local owners (%s); pass an owner to `akt store sync <address>` instead of guessing", dseq, strings.Join(owners, ", "))
+	}
 }
 
 // DeploymentRecord represents a locally-tracked deployment.

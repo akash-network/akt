@@ -479,6 +479,8 @@ func TestExecuteConsoleDeployEndToEnd(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments":
+			_, _ = w.Write([]byte(`{"data":{"deployments":[],"pagination":{"hasMore":false}}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments":
 			_, _ = w.Write([]byte(`{"data":{"dseq":"4242","manifest":"[{\"name\":\"web\"}]","signTx":{"code":0,"transactionHash":"CREATEHASH"}}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/bids":

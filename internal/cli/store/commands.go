@@ -132,8 +132,8 @@ func statusCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 				pretty.KV(out, "Status", "completed")
 			} else {
 				pretty.KV(out, "Status", "not yet run")
-				pretty.KV(out, "Run", "akt store sync")
 			}
+			pretty.KV(out, "Run", "akt store sync")
 
 			return nil
 		},

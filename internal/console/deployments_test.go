@@ -62,25 +62,86 @@ func versionHash(t *testing.T, rawSDL string) string {
 
 func TestCreateDeployment(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		assert.Equal(t, "/v1/deployments", r.URL.Path)
+		switch r.Method {
+		case http.MethodGet:
+			assert.Equal(t, "/v1/deployments", r.URL.Path)
+			_, _ = w.Write([]byte(`{"data":{"deployments":[],"pagination":{"total":0,"skip":0,"limit":1000,"hasMore":false}}}`))
+		case http.MethodPost:
+			assert.Equal(t, "/v1/deployments", r.URL.Path)
+			data := decodeDataBody(t, r)
+			assert.Equal(t, validUpdateSDL, data["sdl"])
+			assert.InDelta(t, 5.0, data["deposit"], 0.001)
 
-		data := decodeDataBody(t, r)
-		assert.Equal(t, "test-sdl", data["sdl"])
-		assert.InDelta(t, 5.0, data["deposit"], 0.001)
-
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"data":{"dseq":"12345","manifest":"[{\"name\":\"web\"}]","signTx":{"code":0,"transactionHash":"ABC123","rawLog":""}}}`))
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"dseq":"12345","manifest":"[{\"name\":\"web\"}]","signTx":{"code":0,"transactionHash":"ABC123","rawLog":""}}}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
 	}))
 	defer srv.Close()
 
 	c := console.New(srv.URL, "test-key")
-	resp, err := c.CreateDeployment(context.Background(), "test-sdl", 5.0)
+	resp, err := c.CreateDeployment(context.Background(), validUpdateSDL, 5.0)
 	require.NoError(t, err)
 	assert.Equal(t, "12345", resp.DSeq.String())
 	assert.Equal(t, `[{"name":"web"}]`, resp.Manifest)
 	require.NotNil(t, resp.SignTx)
 	assert.Equal(t, "ABC123", resp.SignTx.TransactionHash)
+}
+
+func TestCreateDeploymentReconcilesAmbiguousResponseWithoutReplayingPost(t *testing.T) {
+	expectedHash := versionHash(t, validUpdateSDL)
+	var posts atomic.Int32
+	var submitted atomic.Bool
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			if !submitted.Load() {
+				_, _ = w.Write([]byte(`{"data":{"deployments":[{"deployment":{"id":{"owner":"akash1old","dseq":"100"},"hash":"old"},"leases":[]}],"pagination":{"total":1,"skip":0,"limit":1000,"hasMore":false}}}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":{"deployments":[` +
+				`{"deployment":{"id":{"owner":"akash1old","dseq":"100"},"hash":"old"},"leases":[]},` +
+				`{"deployment":{"id":{"owner":"akash1new","dseq":"12345"},"hash":"` + expectedHash + `"},"leases":[]}` +
+				`],"pagination":{"total":2,"skip":0,"limit":1000,"hasMore":false}}}`))
+		case http.MethodPost:
+			posts.Add(1)
+			submitted.Store(true)
+			w.WriteHeader(http.StatusBadGateway)
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	result, err := console.New(srv.URL, "test-key").CreateDeployment(
+		context.Background(), validUpdateSDL, 5,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "12345", result.DSeq.String())
+	assert.NotEmpty(t, result.Manifest, "reconciled result must carry the locally derived manifest")
+	assert.Equal(t, int32(1), posts.Load(), "deployment POST must be submitted exactly once")
+}
+
+func TestCreateDeploymentAbortsBeforePostWhenSnapshotFails(t *testing.T) {
+	var posts atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			posts.Add(1)
+			_, _ = w.Write([]byte(`{"data":{"dseq":"duplicate"}}`))
+			return
+		}
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer srv.Close()
+
+	_, err := console.New(srv.URL, "test-key").CreateDeployment(
+		context.Background(), validUpdateSDL, 5,
+	)
+	require.ErrorIs(t, err, console.ErrUnauthorized)
+	assert.Zero(t, posts.Load(), "creation without a baseline cannot be reconciled safely")
 }
 
 func TestListDeployments(t *testing.T) {

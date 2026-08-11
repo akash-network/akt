@@ -143,6 +143,60 @@ func TestRootActionLogUsesSelectedContext(t *testing.T) {
 	}
 }
 
+func TestRootRejectsEveryRawTxBeforeConsoleContextTxHooks(t *testing.T) {
+	m := rootTestManager(t)
+	cfg := m.Config()
+	cfg.Defaults.CommandGating = "off"
+	if err := aktctx.SaveConfig(m.Root(), &cfg); err != nil {
+		t.Fatalf("SaveConfig: %v", err)
+	}
+
+	var err error
+	m, err = aktctx.NewManager(m.Root())
+	if err != nil {
+		t.Fatalf("reload manager: %v", err)
+	}
+	if err := m.CreateContext(aktctx.Context{
+		Name:       "managed",
+		Network:    aktctx.Network{Name: "mainnet"},
+		AuthMethod: aktctx.AuthMethodConsoleAPI,
+	}); err != nil {
+		t.Fatalf("CreateContext: %v", err)
+	}
+	if err := m.UseContext("managed"); err != nil {
+		t.Fatalf("UseContext: %v", err)
+	}
+
+	commands := map[string][]string{
+		"bank send":          {"tx", "bank", "send", "managed", "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx", "1uakt"},
+		"certificate create": {"tx", "cert", "generate"},
+		"deployment create":  {"tx", "deployment", "create", "missing.yaml"},
+	}
+
+	for name, args := range commands {
+		t.Run(name, func(t *testing.T) {
+			var runErr error
+			func() {
+				defer func() {
+					if recovered := recover(); recovered != nil {
+						t.Fatalf("raw tx panicked instead of failing at the auth boundary: %v", recovered)
+					}
+				}()
+				runErr = executeRoot(t, append([]string{"--home", m.Root()}, args...)...)
+			}()
+
+			if runErr == nil {
+				t.Fatal("raw tx succeeded under console-api auth")
+			}
+			for _, want := range []string{"raw chain transactions", "keyring", "akt deploy", "akt console"} {
+				if !strings.Contains(runErr.Error(), want) {
+					t.Errorf("error %q missing %q", runErr, want)
+				}
+			}
+		})
+	}
+}
+
 func TestRootResolvesFromFlagThenEnvironmentThenContext(t *testing.T) {
 	m := rootTestManager(t)
 	enc := aktcodec.MakeEncodingConfig()

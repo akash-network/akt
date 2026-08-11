@@ -143,7 +143,7 @@ func RenderContextShow(rc aktctx.Context, effectiveKeyringBackend string) string
 	Newline(w)
 	KVHeader(w, "  Capabilities")
 	renderCapability(w, "Chain queries", set.ChainQuery, "add an RPC endpoint to the network")
-	renderCapability(w, "Chain transactions", set.ChainTx, "add an RPC endpoint to the network")
+	renderCapability(w, "Chain transactions", set.ChainTx, "use a keyring-auth context with an RPC endpoint")
 	renderCapability(w, "Provider gateway", set.Provider, "add an RPC endpoint to the network")
 	renderCapability(w, "Console API", set.Console, "run akt console login")
 

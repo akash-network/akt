@@ -118,7 +118,7 @@ func TestSatisfiesWithAllAlternativesUnsatisfied(t *testing.T) {
 	if !strings.Contains(msg, ", or ") {
 		t.Errorf("both remedies should be offered, got %q", msg)
 	}
-	if !strings.Contains(msg, "akt context network edit") || !strings.Contains(msg, "akt console login") {
+	if !strings.Contains(msg, "keyring-auth") || !strings.Contains(msg, "akt context use") || !strings.Contains(msg, "akt console login") {
 		t.Errorf("explanation missing a remedy: %q", msg)
 	}
 }

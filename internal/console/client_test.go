@@ -161,9 +161,9 @@ func TestPostNotRetriedOn5xx(t *testing.T) {
 	assert.Equal(t, int32(1), calls.Load(), "POST + 5xx must not be retried")
 }
 
-func TestPostRetriedOn429(t *testing.T) {
-	// 429 means the request was rejected before processing, so replaying a
-	// POST is safe.
+func TestPostNotRetriedOn429(t *testing.T) {
+	// A rate-limit response does not prove that a non-idempotent request was
+	// never processed. Replaying it could duplicate a deployment or charge.
 	var calls atomic.Int32
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -177,8 +177,10 @@ func TestPostRetriedOn429(t *testing.T) {
 	defer srv.Close()
 
 	c := console.New(srv.URL, "key")
-	require.NoError(t, c.Deposit(context.Background(), "123", 5))
-	assert.Equal(t, int32(2), calls.Load(), "POST + 429 must retry")
+	err := c.Deposit(context.Background(), "123", 5)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "rate limited")
+	assert.Equal(t, int32(1), calls.Load(), "POST + 429 must not be replayed")
 }
 
 func TestDeleteRetriedOn5xx(t *testing.T) {

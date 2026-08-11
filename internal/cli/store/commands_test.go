@@ -24,6 +24,10 @@ func TestStatusPrettyOutputStripsANSIForNonTTY(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	require.Contains(t, stdout.String(), "Store")
+	require.Contains(t, stdout.String(), "Network Reconciliation")
+	require.Contains(t, stdout.String(), "not yet run")
+	require.Contains(t, stdout.String(), "akt store sync")
+	require.NotContains(t, stdout.String(), "not synced")
 	require.NotContains(t, stdout.String(), "\x1b[")
 }
 

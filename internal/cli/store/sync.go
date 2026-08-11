@@ -1,6 +1,7 @@
 package store
 
 import (
+	"context"
 	"fmt"
 	"sort"
 
@@ -16,6 +17,7 @@ import (
 	aktctx "pkg.akt.dev/akt/internal/context"
 	"pkg.akt.dev/akt/internal/output"
 	"pkg.akt.dev/akt/internal/output/pretty"
+	sstore "pkg.akt.dev/akt/internal/store"
 	syncpkg "pkg.akt.dev/akt/internal/sync"
 )
 
@@ -42,9 +44,12 @@ leases and bids, and writes them to the local store. Local-only fields the
 chain does not carry -- SDL path and hash, labels, notes, tags -- are kept.
 
 Without an argument the context's tracked-accounts setting is used, which
-defaults to the context's default account. The optional account argument
-reconciles a single account instead; it takes a bech32 address or the name of
-a key in the context's keyring.`,
+defaults to the context's default account. A Console context with neither uses
+the unique owners in its local deployment records. If it has no local owners,
+pass one explicitly with akt store sync <address>.
+
+The optional account argument reconciles a single account instead; it takes a
+bech32 address or the name of a key in the context's keyring.`,
 		Example: `  # Reconcile the context's tracked accounts
   akt store sync
 
@@ -82,16 +87,16 @@ a key in the context's keyring.`,
 				}
 			}
 
-			owners, err := resolveTrackedAccounts(rc, account, cl.ClientContext())
-			if err != nil {
-				return err
-			}
-
 			s, err := openStore(ctx, homeFn, ctxNameFn)
 			if err != nil {
 				return fmt.Errorf("open store: %w", err)
 			}
 			defer func() { _ = s.Close() }()
+
+			owners, err := resolveOwnersForSync(ctx, rc, account, cl.ClientContext(), s)
+			if err != nil {
+				return err
+			}
 
 			stats, err := syncpkg.New(s, owners).ReconcileNow(ctx, syncpkg.NewChainQuerier(cl))
 			if err != nil {
@@ -105,6 +110,47 @@ a key in the context's keyring.`,
 	cflags.AddQueryFlagsToCmd(cmd)
 
 	return cmd
+}
+
+func resolveOwnersForSync(
+	ctx context.Context,
+	rc *aktctx.Context,
+	override string,
+	cctx sdkclient.Context,
+	s sstore.Store,
+) ([]string, error) {
+	if override != "" || rc == nil || rc.AuthMethod != aktctx.AuthMethodConsoleAPI ||
+		len(rc.TrackedAccounts) > 0 || rc.DefaultAccount != "" || !cctx.GetFromAddress().Empty() {
+		return resolveTrackedAccounts(rc, override, cctx)
+	}
+
+	records, err := s.ListDeployments(ctx, sstore.DeploymentFilter{})
+	if err != nil {
+		return nil, fmt.Errorf("list local deployments for Console owners: %w", err)
+	}
+
+	seen := make(map[string]struct{})
+	for _, record := range records {
+		if record == nil || record.Owner == "" {
+			continue
+		}
+		addr, err := sdk.AccAddressFromBech32(record.Owner)
+		if err != nil {
+			return nil, fmt.Errorf("local deployment %d has invalid owner %q: %w", record.DSeq, record.Owner, err)
+		}
+		seen[addr.String()] = struct{}{}
+	}
+
+	owners := make([]string, 0, len(seen))
+	for owner := range seen {
+		owners = append(owners, owner)
+	}
+	sort.Strings(owners)
+	if len(owners) == 0 {
+		return nil, fmt.Errorf("no account to sync: pass one explicitly (`akt store sync <address>`); this Console context has no local deployment owners yet")
+	}
+
+	return owners, nil
 }
 
 // syncResult is the machine-readable shape of a completed reconciliation.

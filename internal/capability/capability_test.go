@@ -22,13 +22,23 @@ func TestResolve(t *testing.T) {
 		},
 		{
 			"console key only",
-			&aktctx.Context{ConsoleAPIKey: "sk-x"},
+			&aktctx.Context{AuthMethod: aktctx.AuthMethodConsoleAPI, ConsoleAPIKey: "sk-x"},
 			capability.Set{Console: true},
 		},
 		{
-			"both rails",
+			"console auth with rpc",
 			&aktctx.Context{
 				Network:       aktctx.Network{Endpoints: aktctx.Endpoints{RPC: []string{"https://rpc"}}},
+				AuthMethod:    aktctx.AuthMethodConsoleAPI,
+				ConsoleAPIKey: "sk-x",
+			},
+			capability.Set{ChainQuery: true, Provider: true, Console: true},
+		},
+		{
+			"keyring auth with console credential",
+			&aktctx.Context{
+				Network:       aktctx.Network{Endpoints: aktctx.Endpoints{RPC: []string{"https://rpc"}}},
+				AuthMethod:    aktctx.AuthMethodKeyring,
 				ConsoleAPIKey: "sk-x",
 			},
 			capability.Set{ChainQuery: true, ChainTx: true, Provider: true, Console: true},
@@ -74,7 +84,7 @@ func TestExplainNamesRemedies(t *testing.T) {
 	}
 
 	msg = s.Explain("chain-tx|console")
-	if !strings.Contains(msg, "akt console login") || !strings.Contains(msg, ", or ") {
+	if !strings.Contains(msg, "keyring") || !strings.Contains(msg, "akt console login") || !strings.Contains(msg, ", or ") {
 		t.Errorf("alternative explanation wrong: %q", msg)
 	}
 }

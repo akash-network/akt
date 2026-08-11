@@ -1,6 +1,7 @@
 package console
 
 import (
+	"context"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,7 +12,41 @@ import (
 	"testing"
 
 	aktctx "pkg.akt.dev/akt/internal/context"
+	sstore "pkg.akt.dev/akt/internal/store"
+	"pkg.akt.dev/akt/internal/store/bbolt"
 )
+
+const validConsoleDeploymentSDL = `version: "2.0"
+services:
+  web:
+    image: nginx:1.27-alpine
+    expose:
+      - port: 80
+        as: 80
+        to:
+          - global: true
+profiles:
+  compute:
+    web:
+      resources:
+        cpu:
+          units: 0.5
+        memory:
+          size: 512Mi
+        storage:
+          size: 512Mi
+  placement:
+    dcloud:
+      pricing:
+        web:
+          denom: uact
+          amount: 10000
+deployment:
+  web:
+    dcloud:
+      profile: web
+      count: 1
+`
 
 // TestDeploymentCreateUnifiedDepositSyntax pins the cross-rail deposit
 // contract (transport.ParseDeposit, SPEC §7.4) on `deployment create`: bare
@@ -25,12 +60,16 @@ func TestDeploymentCreateUnifiedDepositSyntax(t *testing.T) {
 	}
 
 	sdlPath := filepath.Join(t.TempDir(), "deploy.yaml")
-	if err := os.WriteFile(sdlPath, []byte("version: \"2.0\"\n"), 0o600); err != nil {
+	if err := os.WriteFile(sdlPath, []byte(validConsoleDeploymentSDL), 0o600); err != nil {
 		t.Fatalf("write SDL file: %v", err)
 	}
 
 	var body string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/deployments" {
+			writeJSON(t, w, `{"data":{"deployments":[],"pagination":{"hasMore":false}}}`)
+			return
+		}
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/deployments" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -199,6 +238,106 @@ func TestDeploymentCloseStructuredAcknowledgement(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func TestDeploymentCloseConvergesUniqueLocalDeploymentAndLeases(t *testing.T) {
+	m := newTestManager(t)
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
+		t.Fatalf("SetConsoleAPIKey: %v", err)
+	}
+
+	ctx := context.Background()
+	s, err := bbolt.OpenContext(ctx, m.Root(), "prod")
+	if err != nil {
+		t.Fatalf("OpenContext: %v", err)
+	}
+	owner := "akash1zn43lmk4dmvcjmfhtaqk4wa9zpuru3xy0kzupu"
+	if err := s.PutDeployment(ctx, &sstore.DeploymentRecord{Owner: owner, DSeq: 42, State: "active"}); err != nil {
+		t.Fatalf("PutDeployment: %v", err)
+	}
+	leaseID := sstore.LeaseID{Owner: owner, DSeq: 42, GSeq: 1, OSeq: 1, Provider: "akash1provider"}
+	if err := s.PutLease(ctx, &sstore.LeaseRecord{ID: leaseID, State: "active"}); err != nil {
+		t.Fatalf("PutLease: %v", err)
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close seed store: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/deployments/42" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	if _, err := execConsole(t, m, srv.URL, "deployment", "close", "42"); err != nil {
+		t.Fatalf("deployment close: %v", err)
+	}
+
+	s, err = bbolt.OpenContext(ctx, m.Root(), "prod")
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+	dep, err := s.GetDeployment(ctx, owner, 42)
+	if err != nil || dep == nil || dep.State != "closed" || dep.ClosedAt == 0 {
+		t.Fatalf("deployment after close = %+v, err %v", dep, err)
+	}
+	lease, err := s.GetLease(ctx, leaseID)
+	if err != nil || lease == nil || lease.State != "closed" || lease.ClosedAt == 0 {
+		t.Fatalf("lease after close = %+v, err %v", lease, err)
+	}
+}
+
+func TestDeploymentCloseDoesNotGuessBetweenLocalOwners(t *testing.T) {
+	m := newTestManager(t)
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
+		t.Fatalf("SetConsoleAPIKey: %v", err)
+	}
+
+	ctx := context.Background()
+	s, err := bbolt.OpenContext(ctx, m.Root(), "prod")
+	if err != nil {
+		t.Fatalf("OpenContext: %v", err)
+	}
+	owners := []string{
+		"akash1zn43lmk4dmvcjmfhtaqk4wa9zpuru3xy0kzupu",
+		"akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx",
+	}
+	for _, owner := range owners {
+		if err := s.PutDeployment(ctx, &sstore.DeploymentRecord{Owner: owner, DSeq: 42, State: "active"}); err != nil {
+			t.Fatalf("PutDeployment: %v", err)
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close seed store: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	out, err := execConsole(t, m, srv.URL, "deployment", "close", "42")
+	if err != nil {
+		t.Fatalf("deployment close: %v", err)
+	}
+	if !strings.Contains(out, "multiple local owners") {
+		t.Errorf("ambiguous local close did not warn:\n%s", out)
+	}
+
+	s, err = bbolt.OpenContext(ctx, m.Root(), "prod")
+	if err != nil {
+		t.Fatalf("reopen store: %v", err)
+	}
+	defer func() { _ = s.Close() }()
+	for _, owner := range owners {
+		dep, getErr := s.GetDeployment(ctx, owner, 42)
+		if getErr != nil || dep == nil || dep.State != "active" {
+			t.Fatalf("ambiguous close changed %s: %+v, err %v", owner, dep, getErr)
+		}
 	}
 }
 

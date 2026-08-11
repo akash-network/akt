@@ -142,3 +142,27 @@ func TestRenderContextShowReportsUnavailableKeyring(t *testing.T) {
 		t.Errorf("an unavailable backend must not be reported as effective, got:\n%s", out)
 	}
 }
+
+func TestRenderContextShowConsoleCannotRunRawTransactions(t *testing.T) {
+	rc := aktctx.Context{
+		Name:          "managed",
+		AuthMethod:    aktctx.AuthMethodConsoleAPI,
+		ConsoleAPIKey: "sk-test",
+		Network: aktctx.Network{
+			Name:      "mainnet",
+			Endpoints: aktctx.Endpoints{RPC: []string{"https://rpc.example"}},
+		},
+	}
+
+	for _, line := range plainLines(RenderContextShow(rc, "")) {
+		if !strings.Contains(line, "Chain transactions") {
+			continue
+		}
+		if !strings.Contains(line, "unavailable") || !strings.Contains(line, "keyring") {
+			t.Fatalf("chain transaction capability = %q, want unavailable with keyring remedy", line)
+		}
+		return
+	}
+
+	t.Fatal("context output omitted the chain transaction capability")
+}
