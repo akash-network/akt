@@ -2,7 +2,9 @@ package context
 
 import (
 	"bytes"
+	stdcontext "context"
 	"encoding/json"
+	"errors"
 	"io"
 	"os"
 	"path/filepath"
@@ -10,7 +12,9 @@ import (
 	"testing"
 	"time"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
@@ -529,6 +533,83 @@ func TestLogRendersEntriesAndFilters(t *testing.T) {
 	out = captureStdout(t, func() { runOK(t, logCmd(mgrFn), "--type", "workflow") })
 	if !strings.Contains(out, "No action log entries") {
 		t.Errorf("an empty filter result should say so, got %q", out)
+	}
+}
+
+func TestReconcilePendingTransactionsAppendsTerminalRevisions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "actions.log")
+	logger, err := actionlog.Open(path)
+	if err != nil {
+		t.Fatalf("open action log: %v", err)
+	}
+	defer func() { _ = logger.Close() }()
+
+	submitted := time.Date(2026, time.August, 6, 18, 29, 4, 0, time.UTC)
+	for _, entry := range []actionlog.Entry{
+		{Timestamp: submitted, Type: actionlog.TypeTx, Action: "success", TxHash: "AA", Status: "pending"},
+		{Timestamp: submitted.Add(time.Second), Type: actionlog.TypeTx, Action: "failure", TxHash: "BB", Status: "pending"},
+		{Timestamp: submitted.Add(2 * time.Second), Type: actionlog.TypeTx, Action: "already-done", TxHash: "CC", Status: "success"},
+		{Timestamp: submitted.Add(3 * time.Second), Type: actionlog.TypeTx, Action: "invalid-hash", TxHash: "not-hex", Status: "pending"},
+		{Timestamp: submitted.Add(4 * time.Second), Type: actionlog.TypeTx, Action: "not-found", TxHash: "DD", Status: "pending"},
+	} {
+		if err := logger.Log(entry); err != nil {
+			t.Fatalf("seed action log: %v", err)
+		}
+	}
+
+	entries, err := logger.Read(actionlog.Filter{})
+	if err != nil {
+		t.Fatalf("read pending entries: %v", err)
+	}
+
+	calls := make(map[byte]int)
+	lookup := func(_ stdcontext.Context, _ sdkclient.Context, hash []byte) (*sdk.TxResponse, error) {
+		calls[hash[0]]++
+		switch hash[0] {
+		case 0xAA:
+			return &sdk.TxResponse{TxHash: "AA", Height: 4694579, GasUsed: 138868}, nil
+		case 0xBB:
+			return &sdk.TxResponse{TxHash: "BB", Height: 4694580, GasUsed: 90000, Code: 7, RawLog: "unauthorized"}, nil
+		default:
+			return nil, errors.New("transaction not found")
+		}
+	}
+
+	if got := reconcilePendingTransactions(stdcontext.Background(), logger, sdkclient.Context{}, entries, lookup); got != 2 {
+		t.Fatalf("appended %d terminal revisions, want 2", got)
+	}
+
+	got, err := logger.Read(actionlog.Filter{})
+	if err != nil {
+		t.Fatalf("read reconciled entries: %v", err)
+	}
+	if len(got) != 5 {
+		t.Fatalf("read returned %d logical transactions, want 5: %+v", len(got), got)
+	}
+
+	byHash := make(map[string]actionlog.Entry, len(got))
+	for _, entry := range got {
+		byHash[entry.TxHash] = entry
+	}
+	if entry := byHash["AA"]; entry.Status != "success" || entry.Height != 4694579 || entry.GasUsed != 138868 || !entry.Timestamp.Equal(submitted) {
+		t.Errorf("successful transaction was not reconciled: %+v", entry)
+	}
+	if entry := byHash["BB"]; entry.Status != "failed" || entry.ResultCode != 7 || entry.Error != "unauthorized" {
+		t.Errorf("failed transaction was not reconciled: %+v", entry)
+	}
+	if entry := byHash["DD"]; entry.Status != "pending" {
+		t.Errorf("lookup failure changed pending transaction: %+v", entry)
+	}
+	if calls[0xAA] != 1 || calls[0xBB] != 1 || calls[0xDD] != 1 || len(calls) != 3 {
+		t.Errorf("lookup calls = %v, want one call for each valid pending hash only", calls)
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read append-only log: %v", err)
+	}
+	if lines := strings.Count(strings.TrimSpace(string(raw)), "\n") + 1; lines != 7 {
+		t.Errorf("raw log has %d lines, want 5 submissions plus 2 revisions", lines)
 	}
 }
 

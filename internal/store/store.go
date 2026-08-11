@@ -246,11 +246,18 @@ type BidFilter struct {
 
 // StoreStats contains aggregate statistics about the store contents.
 type StoreStats struct {
-	Deployments       int64 `json:"deployments"        yaml:"deployments"`
-	ActiveDeployments int64 `json:"active_deployments" yaml:"active_deployments"`
-	ClosedDeployments int64 `json:"closed_deployments" yaml:"closed_deployments"`
-	Leases            int64 `json:"leases"             yaml:"leases"`
-	Bids              int64 `json:"bids"               yaml:"bids"`
+	Deployments             int64 `json:"deployments"               yaml:"deployments"`
+	ActiveDeployments       int64 `json:"active_deployments"        yaml:"active_deployments"`
+	ClosedDeployments       int64 `json:"closed_deployments"        yaml:"closed_deployments"`
+	Leases                  int64 `json:"leases"                    yaml:"leases"`
+	ActiveLeases            int64 `json:"active_leases"             yaml:"active_leases"`
+	ClosedLeases            int64 `json:"closed_leases"             yaml:"closed_leases"`
+	InsufficientFundsLeases int64 `json:"insufficient_funds_leases" yaml:"insufficient_funds_leases"`
+	Bids                    int64 `json:"bids"                      yaml:"bids"`
+	OpenBids                int64 `json:"open_bids"                 yaml:"open_bids"`
+	MatchedBids             int64 `json:"matched_bids"              yaml:"matched_bids"`
+	ClosedBids              int64 `json:"closed_bids"               yaml:"closed_bids"`
+	LostBids                int64 `json:"lost_bids"                 yaml:"lost_bids"`
 }
 
 // DeploymentKey returns the colon-separated bucket key for a deployment.

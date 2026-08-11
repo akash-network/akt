@@ -11,6 +11,9 @@ import (
 	etypes "pkg.akt.dev/go/node/escrow/types/v1"
 	mv1 "pkg.akt.dev/go/node/market/v1"
 	mv1beta "pkg.akt.dev/go/node/market/v1beta5"
+
+	aktprovider "pkg.akt.dev/akt/internal/provider"
+	"pkg.akt.dev/akt/internal/store"
 )
 
 const querierOwner = "akash1zn43lmk4dmvcjmfhtaqk4wa9zpuru3xy0kzupu"
@@ -169,6 +172,37 @@ func TestBidRecordsTranslateChainStateVocabulary(t *testing.T) {
 		if rec.ID.Owner != querierOwner || rec.ID.DSeq != 4649141 {
 			t.Errorf("bid %d identity = %+v", i, rec.ID)
 		}
+	}
+}
+
+func TestApplyBidMetadataPopulatesKnownValues(t *testing.T) {
+	records := []*store.BidRecord{{ID: store.BidID{Provider: "akash1provider"}}}
+	applyBidMetadata(records, map[string]aktprovider.Metadata{
+		"akash1provider": {
+			Attributes: map[string]string{"region": "us-west"},
+			Audited:    true,
+		},
+	})
+
+	if records[0].ProviderAttributes["region"] != "us-west" || !records[0].ProviderAudited {
+		t.Fatalf("bid metadata = %#v audited=%v", records[0].ProviderAttributes, records[0].ProviderAudited)
+	}
+}
+
+func TestMergeBidPreservesMetadataOnlyWhenRefreshWasUnavailable(t *testing.T) {
+	existing := &store.BidRecord{
+		ProviderAttributes: map[string]string{"region": "us-west"},
+		ProviderAudited:    true,
+	}
+
+	unavailable := mergeBid(existing, &store.BidRecord{}, 1)
+	if unavailable.ProviderAttributes["region"] != "us-west" || !unavailable.ProviderAudited {
+		t.Fatalf("unavailable refresh lost metadata: %#v", unavailable)
+	}
+
+	knownUnaudited := mergeBid(existing, &store.BidRecord{ProviderAttributes: map[string]string{}}, 1)
+	if knownUnaudited.ProviderAttributes == nil || knownUnaudited.ProviderAudited {
+		t.Fatalf("known unaudited refresh kept stale metadata: %#v", knownUnaudited)
 	}
 }
 

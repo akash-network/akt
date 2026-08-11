@@ -86,7 +86,10 @@ func (c *consoleChainClient) Query(ctx context.Context, path string, params map[
 			wrapped = append(wrapped, map[string]console.Bid{"bid": b})
 		}
 
-		return json.Marshal(map[string]any{"bids": wrapped})
+		return json.Marshal(map[string]any{
+			"bids":              wrapped,
+			"provider_metadata": fetchConsoleProviderMetadata(ctx, c.cc, bids),
+		})
 
 	default:
 		return nil, fmt.Errorf("query %q is not supported with console-api auth without chain access. Use a context with auth-method: keyring for this operation", path)

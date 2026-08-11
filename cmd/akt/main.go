@@ -24,7 +24,7 @@ func main() {
 	})
 
 	if err := cli.Execute(root); err != nil {
-		_, _ = fmt.Fprintln(os.Stderr, err)
+		_, _ = fmt.Fprintln(os.Stderr, cli.UserFacingError(err))
 		os.Exit(cli.ExitCode(err))
 	}
 }

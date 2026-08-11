@@ -244,6 +244,74 @@ func TestSchemaVersion(t *testing.T) {
 	assert.Equal(t, uint64(1), s.SchemaVersion())
 }
 
+func TestRecordVersionsStartAtOneAndAdvancePerKey(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	deployment := &store.DeploymentRecord{Owner: "akash1abc", DSeq: 1, State: "active"}
+	lease := &store.LeaseRecord{ID: store.LeaseID{
+		Owner: "akash1abc", DSeq: 1, Provider: "akash1provider",
+	}, State: "active"}
+	bid := &store.BidRecord{ID: store.BidID{
+		Owner: "akash1abc", DSeq: 1, Provider: "akash1provider",
+	}, State: "open"}
+
+	require.NoError(t, s.PutDeployment(ctx, deployment))
+	require.NoError(t, s.PutLease(ctx, lease))
+	require.NoError(t, s.PutBid(ctx, bid))
+
+	storedDeployment, err := s.GetDeployment(ctx, deployment.Owner, deployment.DSeq)
+	require.NoError(t, err)
+	storedLease, err := s.GetLease(ctx, lease.ID)
+	require.NoError(t, err)
+	storedBid, err := s.GetBid(ctx, bid.ID)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(1), storedDeployment.RecordVersion)
+	assert.Equal(t, uint64(1), storedLease.RecordVersion)
+	assert.Equal(t, uint64(1), storedBid.RecordVersion)
+
+	// The caller does not need to carry the stored revision back into a later
+	// write; version advancement is atomic inside the bucket transaction.
+	require.NoError(t, s.PutDeployment(ctx, deployment))
+	require.NoError(t, s.PutLease(ctx, lease))
+	require.NoError(t, s.PutBid(ctx, bid))
+
+	storedDeployment, err = s.GetDeployment(ctx, deployment.Owner, deployment.DSeq)
+	require.NoError(t, err)
+	storedLease, err = s.GetLease(ctx, lease.ID)
+	require.NoError(t, err)
+	storedBid, err = s.GetBid(ctx, bid.ID)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(2), storedDeployment.RecordVersion)
+	assert.Equal(t, uint64(2), storedLease.RecordVersion)
+	assert.Equal(t, uint64(2), storedBid.RecordVersion)
+}
+
+func TestRecordVersionPreservesNewerImportedRevision(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	require.NoError(t, s.PutDeployment(ctx, &store.DeploymentRecord{
+		Owner: "akash1abc", DSeq: 1, RecordVersion: 2,
+	}))
+	require.NoError(t, s.PutDeployment(ctx, &store.DeploymentRecord{
+		Owner: "akash1abc", DSeq: 1, RecordVersion: 10,
+	}))
+
+	record, err := s.GetDeployment(ctx, "akash1abc", 1)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(10), record.RecordVersion)
+
+	// An older incoming revision is still a local write, so it advances from
+	// the stored value rather than moving the counter backwards.
+	require.NoError(t, s.PutDeployment(ctx, &store.DeploymentRecord{
+		Owner: "akash1abc", DSeq: 1, RecordVersion: 3,
+	}))
+	record, err = s.GetDeployment(ctx, "akash1abc", 1)
+	require.NoError(t, err)
+	assert.Equal(t, uint64(11), record.RecordVersion)
+}
+
 func TestStats(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
@@ -262,39 +330,50 @@ func TestStats(t *testing.T) {
 		State: "closed",
 	}))
 
-	// 2 leases
-	for i := uint64(1); i <= 2; i++ {
+	// 4 leases across every known state plus one future state.
+	leaseStates := []string{"active", "closed", "insufficient_funds", "future"}
+	for i, state := range leaseStates {
 		require.NoError(t, s.PutLease(ctx, &store.LeaseRecord{
 			ID: store.LeaseID{
 				Owner:    "akash1abc",
-				DSeq:     i,
+				DSeq:     uint64(i + 1),
 				GSeq:     1,
 				OSeq:     1,
 				Provider: "akash1prov",
 			},
-			State: "active",
+			State: state,
 		}))
 	}
 
-	// 1 bid
-	require.NoError(t, s.PutBid(ctx, &store.BidRecord{
-		ID: store.BidID{
-			Owner:    "akash1abc",
-			DSeq:     1,
-			GSeq:     1,
-			OSeq:     1,
-			Provider: "akash1prov",
-		},
-		State: "open",
-	}))
+	// 5 bids across every known state plus one future state.
+	bidStates := []string{"open", "matched", "lost", "closed", "future"}
+	for i, state := range bidStates {
+		require.NoError(t, s.PutBid(ctx, &store.BidRecord{
+			ID: store.BidID{
+				Owner:    "akash1abc",
+				DSeq:     uint64(i + 1),
+				GSeq:     1,
+				OSeq:     1,
+				Provider: "akash1prov",
+			},
+			State: state,
+		}))
+	}
 
 	stats, err := s.Stats(ctx)
 	require.NoError(t, err)
 	assert.Equal(t, int64(3), stats.Deployments)
 	assert.Equal(t, int64(2), stats.ActiveDeployments)
 	assert.Equal(t, int64(1), stats.ClosedDeployments)
-	assert.Equal(t, int64(2), stats.Leases)
-	assert.Equal(t, int64(1), stats.Bids)
+	assert.Equal(t, int64(4), stats.Leases)
+	assert.Equal(t, int64(1), stats.ActiveLeases)
+	assert.Equal(t, int64(1), stats.ClosedLeases)
+	assert.Equal(t, int64(1), stats.InsufficientFundsLeases)
+	assert.Equal(t, int64(5), stats.Bids)
+	assert.Equal(t, int64(1), stats.OpenBids)
+	assert.Equal(t, int64(1), stats.MatchedBids)
+	assert.Equal(t, int64(1), stats.LostBids)
+	assert.Equal(t, int64(1), stats.ClosedBids)
 }
 
 func TestConcurrentAccess(t *testing.T) {

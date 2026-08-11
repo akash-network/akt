@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
@@ -87,11 +88,13 @@ func statusCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 
 			if f := output.FormatFromCmd(cmd); f != output.FormatTable {
 				return output.Fprint(cmd.OutOrStdout(), f, struct {
-					Context       string `json:"context"       yaml:"context"`
-					StorePath     string `json:"storePath"     yaml:"storePath"`
-					DatabaseBytes int64  `json:"databaseBytes" yaml:"databaseBytes"`
-					SchemaVersion uint64 `json:"schemaVersion" yaml:"schemaVersion"`
-				}{ctxName, p, dbSize, s.SchemaVersion()})
+					Context               string               `json:"context"               yaml:"context"`
+					StorePath             string               `json:"storePath"             yaml:"storePath"`
+					DatabaseBytes         int64                `json:"databaseBytes"         yaml:"databaseBytes"`
+					SchemaVersion         uint64               `json:"schemaVersion"         yaml:"schemaVersion"`
+					Records               *sstore.StoreStats   `json:"records"               yaml:"records"`
+					NetworkReconciliation reconciliationStatus `json:"networkReconciliation" yaml:"networkReconciliation"`
+				}{ctxName, p, dbSize, s.SchemaVersion(), stats, describeReconciliation(ss)})
 			}
 
 			out := output.TerminalAwareWriter(cmd.OutOrStdout())
@@ -103,20 +106,30 @@ func statusCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 			pretty.KV(out, "Schema", fmt.Sprintf("v%d", s.SchemaVersion()))
 			pretty.Newline(out)
 
-			total := stats.ActiveDeployments + stats.ClosedDeployments
 			fmt.Fprintln(out, pretty.Section("Records"))
-			pretty.KV(out, "Deployments", fmt.Sprintf("%d (%d active, %d closed)",
-				total, stats.ActiveDeployments, stats.ClosedDeployments))
-			pretty.KV(out, "Leases", fmt.Sprintf("%d", stats.Leases))
-			pretty.KV(out, "Bids", fmt.Sprintf("%d", stats.Bids))
+			pretty.KV(out, "Deployments", formatStateCounts(stats.Deployments,
+				stateCount{"active", stats.ActiveDeployments},
+				stateCount{"closed", stats.ClosedDeployments},
+			))
+			pretty.KV(out, "Leases", formatStateCounts(stats.Leases,
+				stateCount{"active", stats.ActiveLeases},
+				stateCount{"closed", stats.ClosedLeases},
+				stateCount{"insufficient funds", stats.InsufficientFundsLeases},
+			))
+			pretty.KV(out, "Bids", formatStateCounts(stats.Bids,
+				stateCount{"open", stats.OpenBids},
+				stateCount{"matched", stats.MatchedBids},
+				stateCount{"lost", stats.LostBids},
+				stateCount{"closed", stats.ClosedBids},
+			))
 			pretty.Newline(out)
 
 			fmt.Fprintln(out, pretty.Section("Network Reconciliation"))
 			if ss != nil && ss.LastBlockHeight > 0 {
 				syncTime := time.Unix(ss.LastSyncTime, 0).UTC().Format(time.RFC3339)
 				pretty.KV(out, "Last Block", pretty.FormatNumber(ss.LastBlockHeight))
-				pretty.KV(out, "Last Sync", syncTime)
-				pretty.KV(out, "Status", "synced")
+				pretty.KV(out, "Last Run", syncTime)
+				pretty.KV(out, "Status", "completed")
 			} else {
 				pretty.KV(out, "Status", "not yet run")
 			}
@@ -127,6 +140,54 @@ func statusCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 	}
 }
 
+type stateCount struct {
+	name  string
+	count int64
+}
+
+func formatStateCounts(total int64, counts ...stateCount) string {
+	if total == 0 {
+		return "0"
+	}
+
+	parts := make([]string, 0, len(counts)+1)
+	var known int64
+	for _, count := range counts {
+		known += count.count
+		if count.count > 0 {
+			parts = append(parts, fmt.Sprintf("%d %s", count.count, count.name))
+		}
+	}
+
+	if other := total - known; other > 0 {
+		parts = append(parts, fmt.Sprintf("%d other", other))
+	}
+	if len(parts) == 0 {
+		return fmt.Sprintf("%d", total)
+	}
+
+	return fmt.Sprintf("%d (%s)", total, strings.Join(parts, ", "))
+}
+
+type reconciliationStatus struct {
+	Status          string `json:"status"                    yaml:"status"`
+	LastBlockHeight int64  `json:"lastBlockHeight,omitempty" yaml:"lastBlockHeight,omitempty"`
+	LastRun         string `json:"lastRun,omitempty"         yaml:"lastRun,omitempty"`
+	Command         string `json:"command,omitempty"         yaml:"command,omitempty"`
+}
+
+func describeReconciliation(ss *sstore.SyncState) reconciliationStatus {
+	if ss == nil || ss.LastBlockHeight == 0 {
+		return reconciliationStatus{Status: "not_yet_run", Command: "akt store sync"}
+	}
+
+	return reconciliationStatus{
+		Status:          "completed",
+		LastBlockHeight: ss.LastBlockHeight,
+		LastRun:         time.Unix(ss.LastSyncTime, 0).UTC().Format(time.RFC3339),
+	}
+}
+
 func exportCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 	var file string
 
@@ -134,6 +195,9 @@ func exportCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 		Use:   "export",
 		Args:  cobra.NoArgs,
 		Short: "Export the local store to YAML or JSON",
+		Long: "Export the local store to YAML or JSON. The top-level version is " +
+			"the export format, schema_version is the database layout, and each " +
+			"record_version is that record's update revision.",
 		Example: `  # Export to stdout as YAML
   akt store export
 

@@ -18,6 +18,12 @@ const (
 
 type CLIError = cliutil.CLIError
 
+// UserFacingError renders an error for stderr without changing its diagnostic
+// value or exit-code classification.
+func UserFacingError(err error) string {
+	return cliutil.UserFacingError(err)
+}
+
 var (
 	ExitCode       = cliutil.ExitCode
 	ErrUsage       = cliutil.ErrUsage

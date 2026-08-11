@@ -143,6 +143,7 @@ func (l *Logger) Read(filter Filter) ([]Entry, error) {
 	}
 
 	allEntries = append(allEntries, entries...)
+	allEntries = collapseTransactionRevisions(allEntries)
 
 	// Reverse to get most-recent-first.
 	for i, j := 0, len(allEntries)-1; i < j; i, j = i+1, j-1 {
@@ -154,6 +155,31 @@ func (l *Logger) Read(filter Filter) ([]Entry, error) {
 	}
 
 	return allEntries, nil
+}
+
+// collapseTransactionRevisions turns the append-only submission and terminal
+// records for one transaction into one logical entry. The replacement keeps
+// the first record's timestamp so list order continues to reflect when the
+// transaction was submitted, not when a later read observed confirmation.
+func collapseTransactionRevisions(entries []Entry) []Entry {
+	collapsed := make([]Entry, 0, len(entries))
+	indices := make(map[string]int)
+
+	for _, entry := range entries {
+		if entry.Type == TypeTx && entry.TxHash != "" {
+			if index, ok := indices[entry.TxHash]; ok {
+				entry.Timestamp = collapsed[index].Timestamp
+				collapsed[index] = entry
+				continue
+			}
+
+			indices[entry.TxHash] = len(collapsed)
+		}
+
+		collapsed = append(collapsed, entry)
+	}
+
+	return collapsed
 }
 
 // Close flushes and closes the log file.

@@ -16,6 +16,7 @@ import (
 	mv1 "pkg.akt.dev/go/node/market/v1"
 	mv1beta "pkg.akt.dev/go/node/market/v1beta5"
 
+	aktprovider "pkg.akt.dev/akt/internal/provider"
 	"pkg.akt.dev/akt/internal/store"
 )
 
@@ -121,9 +122,17 @@ func (q *chainQuerier) Bids(ctx context.Context, owner string, dseq uint64) ([]*
 
 		nextKey = nextPageKey(res.GetPagination())
 		if len(nextKey) == 0 {
-			return out, nil
+			break
 		}
 	}
+
+	providers := make([]string, 0, len(out))
+	for _, bid := range out {
+		providers = append(providers, bid.ID.Provider)
+	}
+	applyBidMetadata(out, aktprovider.FetchChainMetadata(ctx, q.cl.Query(), providers))
+
+	return out, nil
 }
 
 // nextPageKey returns the continuation key of a paginated response, or nil
@@ -212,6 +221,24 @@ func bidRecords(res *mv1beta.QueryBidsResponse) []*store.BidRecord {
 	}
 
 	return out
+}
+
+func applyBidMetadata(records []*store.BidRecord, metadata map[string]aktprovider.Metadata) {
+	for _, record := range records {
+		if record == nil {
+			continue
+		}
+		providerMetadata, ok := metadata[record.ID.Provider]
+		if !ok {
+			continue
+		}
+
+		record.ProviderAttributes = make(map[string]string, len(providerMetadata.Attributes))
+		for key, value := range providerMetadata.Attributes {
+			record.ProviderAttributes[key] = value
+		}
+		record.ProviderAudited = providerMetadata.Audited
+	}
 }
 
 // deploymentState maps the chain deployment state onto the store vocabulary.

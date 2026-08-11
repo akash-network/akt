@@ -78,6 +78,80 @@ func ExitCode(err error) int {
 	return ExitGeneral
 }
 
+// UserFacingError renders err for terminal display while leaving the error
+// value itself untouched for exit-code classification and action logging.
+func UserFacingError(err error) string {
+	if err == nil {
+		return ""
+	}
+
+	original := err.Error()
+	lines := strings.Split(original, "\n")
+	for i, line := range lines {
+		lines[i] = cleanErrorLine(line)
+	}
+	cleaned := strings.Join(lines, "\n")
+	if strings.TrimSpace(cleaned) == "" {
+		return original
+	}
+
+	return cleaned
+}
+
+func cleanErrorLine(line string) string {
+	line = strings.ReplaceAll(line, "rpc error: code = Unknown desc = ", "")
+	line = stripMessageExecutionPrefix(line)
+
+	trimmed := strings.TrimRight(line, " \t")
+	if !strings.HasSuffix(trimmed, "]") {
+		return line
+	}
+
+	start := strings.LastIndex(trimmed, " [")
+	if start < 0 {
+		return line
+	}
+	source := trimmed[start+2 : len(trimmed)-1]
+	goLine := strings.LastIndex(source, ".go:")
+	if goLine < 0 || !decimalDigits(source[goLine+4:]) || !strings.Contains(source[:goLine], "/") {
+		return line
+	}
+
+	return strings.TrimRight(trimmed[:start], " \t")
+}
+
+func stripMessageExecutionPrefix(line string) string {
+	const marker = "failed to execute message; message index: "
+
+	for {
+		start := strings.Index(line, marker)
+		if start < 0 {
+			return line
+		}
+
+		remainder := line[start+len(marker):]
+		separator := strings.Index(remainder, ": ")
+		if separator < 0 || !decimalDigits(remainder[:separator]) {
+			return line
+		}
+
+		line = line[:start] + remainder[separator+2:]
+	}
+}
+
+func decimalDigits(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+
+	return true
+}
+
 // Convenience constructors for common error categories.
 
 func ErrUsage(msg string, cause error) *CLIError {

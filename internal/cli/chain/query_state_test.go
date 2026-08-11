@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 
@@ -19,6 +20,7 @@ import (
 	dvbeta "pkg.akt.dev/go/node/deployment/v1beta4"
 	mv1 "pkg.akt.dev/go/node/market/v1"
 	mvbeta "pkg.akt.dev/go/node/market/v1beta5"
+	ptypes "pkg.akt.dev/go/node/provider/v1beta4"
 )
 
 // Valid akash bech32 addresses (same fixtures as the flags package tests).
@@ -68,6 +70,17 @@ func (s *stubMarketQuery) Lease(_ context.Context, _ *mvbeta.QueryLeaseRequest, 
 	return s.lease, nil
 }
 
+// stubProviderQuery serves a canned single provider record.
+type stubProviderQuery struct {
+	ptypes.QueryClient
+
+	res *ptypes.QueryProviderResponse
+}
+
+func (s *stubProviderQuery) Provider(_ context.Context, _ *ptypes.QueryProviderRequest, _ ...grpc.CallOption) (*ptypes.QueryProviderResponse, error) {
+	return s.res, nil
+}
+
 // stubQueryClient plugs the module stubs into the aggregated v1beta3 query
 // client. Unstubbed modules panic if touched, which is what a test wants.
 type stubQueryClient struct {
@@ -75,10 +88,12 @@ type stubQueryClient struct {
 
 	dep dvbeta.QueryClient
 	mkt mvbeta.QueryClient
+	prv ptypes.QueryClient
 }
 
 func (s *stubQueryClient) Deployment() dvbeta.QueryClient   { return s.dep }
 func (s *stubQueryClient) Market() mvbeta.QueryClient       { return s.mkt }
+func (s *stubQueryClient) Provider() ptypes.QueryClient     { return s.prv }
 func (s *stubQueryClient) ClientContext() sdkclient.Context { return sdkclient.Context{} }
 
 // stubLightClient satisfies aclient.LightClient so query RunE bodies execute
@@ -256,4 +271,46 @@ func TestQueryMarketPositionalStateMatchPrints(t *testing.T) {
 			require.Contains(t, out, "12345")
 		})
 	}
+}
+
+// TestQuerySingleGetPrintsWrappedRecordNotBareFields pins a regression where
+// the provider and order "get one" paths handed the pretty printer an
+// unwrapped record (e.g. *ptypes.Provider) instead of the query response
+// (*ptypes.QueryProviderResponse). No formatter is registered for the bare
+// type, so it fell through to the raw JSON encoder: with --output json the
+// symptom was a flat object ({"owner":...}) instead of the wrapped shape
+// every other get command produces ({"provider":{"owner":...}}). Decoding
+// into a map and checking the single top-level key distinguishes the two --
+// a substring check does not, since the wrapped form also contains
+// `{"owner":` (nested one level down).
+func TestQuerySingleGetPrintsWrappedRecordNotBareFields(t *testing.T) {
+	t.Run("provider", func(t *testing.T) {
+		prv := &stubProviderQuery{res: &ptypes.QueryProviderResponse{
+			Provider: ptypes.Provider{Owner: stateTestOwner, HostURI: "https://example.com"},
+		}}
+
+		out, err := execQueryCmd(t, GetQueryProviderCmds(), &stubQueryClient{prv: prv}, stateTestOwner)
+		require.NoError(t, err)
+
+		var decoded map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal([]byte(out), &decoded))
+		require.Len(t, decoded, 1, "the response must stay wrapped under a single query-response key")
+		_, wrapped := decoded["provider"]
+		require.True(t, wrapped, "expected the sole top-level key to be \"provider\", got %v", decoded)
+	})
+
+	t.Run("order", func(t *testing.T) {
+		mkt := &stubMarketQuery{order: &mvbeta.QueryOrderResponse{
+			Order: mvbeta.Order{ID: mv1.OrderID{Owner: stateTestOwner, DSeq: 12345, GSeq: 1, OSeq: 1}, State: mvbeta.OrderOpen},
+		}}
+
+		out, err := execQueryCmd(t, GetQueryMarketOrderCmd(), &stubQueryClient{mkt: mkt}, stateTestOwner+"/12345/1/1")
+		require.NoError(t, err)
+
+		var decoded map[string]json.RawMessage
+		require.NoError(t, json.Unmarshal([]byte(out), &decoded))
+		require.Len(t, decoded, 1, "the response must stay wrapped under a single query-response key")
+		_, wrapped := decoded["order"]
+		require.True(t, wrapped, "expected the sole top-level key to be \"order\", got %v", decoded)
+	})
 }

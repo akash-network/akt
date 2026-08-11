@@ -132,6 +132,66 @@ func TestFilterByLimit(t *testing.T) {
 	}
 }
 
+func TestReadCollapsesTransactionRevisionsBeforeLimit(t *testing.T) {
+	l := newTestLogger(t)
+
+	submitted := time.Date(2026, time.August, 6, 18, 29, 4, 0, time.UTC)
+	later := submitted.Add(time.Minute)
+
+	for _, entry := range []actionlog.Entry{
+		{
+			Timestamp: submitted,
+			Type:      actionlog.TypeTx,
+			Action:    "deployment.MsgCreateDeployment",
+			TxHash:    "ABC123",
+			Status:    "pending",
+		},
+		{
+			Timestamp: later,
+			Type:      actionlog.TypeContext,
+			Action:    "edit",
+			Status:    "success",
+		},
+		{
+			Timestamp:  submitted,
+			Type:       actionlog.TypeTx,
+			Action:     "deployment.MsgCreateDeployment",
+			TxHash:     "ABC123",
+			Height:     4694579,
+			GasUsed:    138868,
+			ResultCode: 0,
+			Status:     "success",
+		},
+	} {
+		if err := l.Log(entry); err != nil {
+			t.Fatalf("Log: %v", err)
+		}
+	}
+
+	result, err := l.Read(actionlog.Filter{})
+	if err != nil {
+		t.Fatalf("Read: %v", err)
+	}
+	if len(result) != 2 {
+		t.Fatalf("read returned %d logical entries, want 2: %+v", len(result), result)
+	}
+	if result[0].Action != "edit" {
+		t.Errorf("newest entry = %q, want edit", result[0].Action)
+	}
+	confirmed := result[1]
+	if confirmed.TxHash != "ABC123" || confirmed.Status != "success" || confirmed.Height != 4694579 || confirmed.GasUsed != 138868 {
+		t.Errorf("transaction revision was not collapsed to its terminal state: %+v", confirmed)
+	}
+
+	limited, err := l.Read(actionlog.Filter{Limit: 1})
+	if err != nil {
+		t.Fatalf("Read limit: %v", err)
+	}
+	if len(limited) != 1 || limited[0].Action != "edit" {
+		t.Fatalf("limit was applied before revision collapse: %+v", limited)
+	}
+}
+
 func TestFilterByAccount(t *testing.T) {
 	l := newTestLogger(t)
 

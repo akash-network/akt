@@ -122,5 +122,5 @@ func queryProvider(cmd *cobra.Command, address string) error {
 		return err
 	}
 
-	return pretty.PrintQueryResult(cmd, cl.ClientContext(), &res.Provider)
+	return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)
 }
