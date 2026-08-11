@@ -66,7 +66,7 @@ func (c *Client) CreateDeployment(ctx context.Context, sdl string, depositUSD fl
 		return reconciled, nil
 	}
 
-	unknown := fmt.Errorf("deployment creation outcome unknown after one submission (%v); the request was not replayed: inspect `akt console deployment list` for SDL version %s", err, versionHash)
+	unknown := fmt.Errorf("deployment creation outcome unknown after one submission (%w); the request was not replayed: inspect `akt console deployment list` for SDL version %s", err, versionHash)
 	c.recordOutcome("create-deployment", "", "pending", unknown, map[string]string{"versionHash": versionHash})
 	return nil, unknown
 }
