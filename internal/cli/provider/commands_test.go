@@ -429,7 +429,7 @@ func TestCommandsRegistersEveryGatewayOperation(t *testing.T) {
 	}
 
 	for _, want := range []string{
-		"status", "lease-status", "lease-logs", "lease-events",
+		"status", "lease-status", "lease-attestation", "lease-logs", "lease-events",
 		"lease-shell", "send-manifest", "get-manifest",
 		"migrate-hostnames", "migrate-endpoints",
 	} {
@@ -447,7 +447,7 @@ func TestPositionalDSeqCommandsDoNotRegisterDSeqFlag(t *testing.T) {
 	cmd := Commands()
 
 	positional := map[string]bool{
-		"lease-status": true, "lease-logs": true,
+		"lease-status": true, "lease-attestation": true, "lease-logs": true,
 		"lease-events": true, "get-manifest": true,
 	}
 
