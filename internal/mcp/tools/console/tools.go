@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/mark3labs/mcp-go/mcp"
 	mcpserver "github.com/mark3labs/mcp-go/server"
@@ -187,6 +188,23 @@ func ToolUsageHistory() mcp.Tool {
 // HandleUsageHistory returns the handler for console_usage_history.
 func HandleUsageHistory(cl *console.Client) mcpserver.ToolHandlerFunc {
 	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		startDate := marshal.OptionalString(req, "start_date")
+		endDate := marshal.OptionalString(req, "end_date")
+		for _, date := range []struct {
+			name  string
+			value string
+		}{
+			{name: "start_date", value: startDate},
+			{name: "end_date", value: endDate},
+		} {
+			if date.value == "" {
+				continue
+			}
+			if _, err := time.Parse("2006-01-02", date.value); err != nil {
+				return marshal.ErrResultf("parameter %s must use YYYY-MM-DD: %v", date.name, err), nil
+			}
+		}
+
 		// The endpoint needs the managed wallet's on-chain address; it is not
 		// derived from the API key, and sending an empty one is rejected. Look
 		// it up the same way `akt console usage` does rather than making the
@@ -213,10 +231,7 @@ func HandleUsageHistory(cl *console.Client) mcpserver.ToolHandlerFunc {
 			return marshal.ErrResult("no managed wallet with an on-chain address was found"), nil
 		}
 
-		resp, err := cl.GetUsageHistory(ctx, address,
-			marshal.OptionalString(req, "start_date"),
-			marshal.OptionalString(req, "end_date"),
-		)
+		resp, err := cl.GetUsageHistory(ctx, address, startDate, endDate)
 		if err != nil {
 			return marshal.ErrResultf("failed to get usage history: %v", err), nil
 		}
@@ -382,6 +397,7 @@ func ToolDeposit() mcp.Tool {
 		),
 		mcp.WithNumber("amount_usd",
 			mcp.Required(),
+			mcp.Min(console.MinDepositUSD),
 			mcp.Description(fmt.Sprintf("Amount to deposit in USD. Must be at least %.2f.", console.MinDepositUSD)),
 		),
 	)

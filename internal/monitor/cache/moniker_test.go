@@ -1,8 +1,13 @@
 package cache
 
 import (
+	"errors"
+	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	bolt "go.etcd.io/bbolt"
 )
 
 // openTestMonikerCache creates a temporary bbolt database and returns an open MonikerCache.
@@ -129,5 +134,80 @@ func TestMonikerSetReplacesAll(t *testing.T) {
 	}
 	if _, exists := got["pk1"]; exists {
 		t.Error("old key pk1 still present after Set replacement")
+	}
+}
+
+func TestCacheOpenFailuresAreReported(t *testing.T) {
+	db, err := bolt.Open(filepath.Join(t.TempDir(), "closed.db"), 0o600, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Open(db); err == nil {
+		t.Fatal("Open accepted a closed database")
+	}
+	if _, err := OpenMonikerCache(db); err == nil {
+		t.Fatal("OpenMonikerCache accepted a closed database")
+	}
+
+	directory := t.TempDir()
+	if _, err := OpenDB(directory); err == nil {
+		t.Fatal("OpenDB accepted a directory as a database file")
+	} else if !strings.Contains(err.Error(), directory) {
+		t.Errorf("OpenDB error = %q, want path %q", err, directory)
+	}
+
+	// Keep the os import tied to the contract: the directory remains intact
+	// after the failed open.
+	if info, err := os.Stat(directory); err != nil || !info.IsDir() {
+		t.Fatalf("database failure changed target directory: info=%v err=%v", info, err)
+	}
+}
+
+func TestOpenStoresInitializesAllBucketsAndReportsClosedDB(t *testing.T) {
+	db, err := OpenDB(filepath.Join(t.TempDir(), "stores.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	providers, monikers, err := OpenStores(db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if providers == nil || monikers == nil {
+		t.Fatalf("OpenStores() returned nil handles: providers=%v monikers=%v", providers, monikers)
+	}
+	if err := db.View(func(tx *bolt.Tx) error {
+		for _, name := range [][]byte{bucketProviders, bucketMeta, bucketMonikers} {
+			if tx.Bucket(name) == nil {
+				return errors.New("OpenStores omitted bucket " + string(name))
+			}
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := OpenStores(db); err == nil {
+		t.Fatal("OpenStores accepted a closed database")
+	}
+}
+
+func TestMonikerCacheWithoutBucketReadsEmpty(t *testing.T) {
+	db, err := OpenDB(filepath.Join(t.TempDir(), "raw-moniker.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+
+	cache := &MonikerCache{db: db}
+	if cache.HasMonikers() {
+		t.Fatal("moniker cache without a bucket reported entries")
+	}
+	if got := cache.Get(); len(got) != 0 {
+		t.Fatalf("moniker cache without a bucket = %v, want empty", got)
 	}
 }

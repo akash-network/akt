@@ -75,7 +75,7 @@ func TestDeploymentCreateUnifiedDepositSyntax(t *testing.T) {
 		}
 		b, _ := io.ReadAll(r.Body)
 		body = string(b)
-		writeJSON(t, w, `{"data":{"dseq":"321","manifest":""}}`)
+		writeJSON(t, w, `{"data":{"dseq":"321","manifest":"","signTx":{"code":0,"transactionHash":"tx-create-321","rawLog":""}}}`)
 	}))
 	defer srv.Close()
 
@@ -125,10 +125,26 @@ func TestDeploymentDepositUnifiedSyntax(t *testing.T) {
 	}
 
 	var body string
+	var deposited bool
+	var requestedMicros string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/12345" {
+			amount := "1000000"
+			if deposited {
+				amount = requestedMicros
+			}
+			writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"12345"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"`+amount+`"}],"transferred":[]}}}}`)
+			return
+		}
 		b, _ := io.ReadAll(r.Body)
 		body = string(b)
-		writeJSON(t, w, `{"data":{}}`)
+		if strings.Contains(body, `"deposit":10`) {
+			requestedMicros = "11000000"
+		} else {
+			requestedMicros = "3500000"
+		}
+		deposited = true
+		writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"12345"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"`+requestedMicros+`"}],"transferred":[]}}}}`)
 	}))
 	defer srv.Close()
 
@@ -140,6 +156,7 @@ func TestDeploymentDepositUnifiedSyntax(t *testing.T) {
 		{"$2.50", `"deposit":2.5`},
 	} {
 		body = ""
+		deposited = false
 		if _, err := execConsole(t, m, srv.URL, "deployment", "deposit", "12345", tc.arg); err != nil {
 			t.Fatalf("deposit %q: %v", tc.arg, err)
 		}
@@ -168,16 +185,27 @@ func TestDeploymentDepositStructuredAcknowledgement(t *testing.T) {
 		t.Fatalf("SetConsoleAPIKey: %v", err)
 	}
 
+	var deposited bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/12345" {
+			amount := "1000000"
+			if deposited {
+				amount = "3500000"
+			}
+			writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"12345"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"`+amount+`"}],"transferred":[]}}}}`)
+			return
+		}
+		deposited = true
 		if r.Method != http.MethodPost || r.URL.Path != "/v1/deposit-deployment" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		writeJSON(t, w, `{"data":{}}`)
+		writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"12345"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"3500000"}],"transferred":[]}}}}`)
 	}))
 	defer srv.Close()
 
 	for _, format := range []string{"json", "yaml"} {
 		t.Run(format, func(t *testing.T) {
+			deposited = false
 			out, err := execConsole(t, m, srv.URL, "deployment", "deposit", "12345", "$2.50", "-o", format)
 			if err != nil {
 				t.Fatalf("deposit -o %s: %v", format, err)
@@ -219,6 +247,10 @@ func TestDeploymentCloseStructuredAcknowledgement(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method != http.MethodDelete || r.URL.Path != "/v1/deployments/42" {
 					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+				}
+				if tc.status == http.StatusOK {
+					writeJSON(t, w, `{"data":{"success":true}}`)
+					return
 				}
 				w.WriteHeader(tc.status)
 			}))
@@ -268,7 +300,7 @@ func TestDeploymentCloseConvergesUniqueLocalDeploymentAndLeases(t *testing.T) {
 		if r.Method != http.MethodDelete || r.URL.Path != "/v1/deployments/42" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		w.WriteHeader(http.StatusOK)
+		writeJSON(t, w, `{"data":{"success":true}}`)
 	}))
 	defer srv.Close()
 
@@ -316,7 +348,7 @@ func TestDeploymentCloseDoesNotGuessBetweenLocalOwners(t *testing.T) {
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
+		writeJSON(t, w, `{"data":{"success":true}}`)
 	}))
 	defer srv.Close()
 

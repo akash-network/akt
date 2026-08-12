@@ -1,5 +1,7 @@
 # akt
 
+[![active coverage](https://codecov.io/gh/akash-network/akt/branch/main/graph/badge.svg?flag=active-union)](https://codecov.io/gh/akash-network/akt)
+
 Unified CLI for the [Akash Network](https://akash.network).
 
 ## Overview
@@ -130,10 +132,13 @@ The API key is stored per context at `contexts/<name>/console-api-key` (mode 060
 
 ## Build
 
-Requires Go 1.26+, make, and the [Akash chain SDK](https://github.com/akash-network/chain-sdk) checked out alongside this repo (the `go.work` file references `../chain-sdk/go`).
+Requires Go 1.26+ and make. Go resolves the Akash chain SDK version from
+`go.mod`; a sibling SDK checkout is not required. This repository has no
+`go.work`, and the parent workspace does not include this module, so commands
+must disable workspace discovery.
 
 ```bash
-make akt
+GOWORK=off make akt
 ```
 
 The binary is placed in `.cache/bin/akt`. Version, commit, and build date are injected at link time:
@@ -146,11 +151,62 @@ akt version
 akt version --long
 ```
 
-Run tests:
+Run unit tests (the parent workspace does not include this module, so direct Go
+commands must disable workspace discovery):
 
 ```bash
-go test ./...
+GOWORK=off go list ./... | grep -v /e2e | xargs env GOWORK=off go test
 ```
+
+The E2E package shells out to `.cache/bin/akt`; build it before the full suite:
+
+```bash
+mkdir -p .cache/bin
+GOWORK=off go build -o .cache/bin/akt ./cmd/akt
+GOWORK=off go test ./...
+```
+
+Coverage uses three blocking lanes: cross-package unit tests, offline CLI E2E,
+and a fresh single-validator chain E2E. CI instruments the real `akt` binary,
+collects subprocess counters through `GOCOVERDIR`, and publishes their statement
+union rather than averaging job percentages. Package membership is explicit in
+[`coverage/packages.tsv`](coverage/packages.tsv); the badge reports the active
+union, while repository and experimental-TUI profiles remain separately visible.
+
+```bash
+# Duplicate-free cross-package unit profile and package report
+GOWORK=off make test-coverage-unit
+
+# Build the release-equivalent instrumented binary and collect offline E2E
+GOWORK=off make test-coverage-binary
+GOWORK=off make test-coverage-e2e-prepare COVERAGE_SHARD=e2e-offline
+GOCOVERDIR="$PWD/.cache/coverage/covdata/e2e-offline" \
+  GOWORK=off go test ./e2e/... -v -count=1
+GOWORK=off make test-coverage-shard-ready COVERAGE_SHARD=e2e-offline
+
+# Collect the pinned, harness-owned Docker chain lane
+GOWORK=off make test-coverage-e2e-prepare COVERAGE_SHARD=e2e-localnet
+AKT_E2E_LOCALNET=1 \
+  GOCOVERDIR="$PWD/.cache/coverage/covdata/e2e-localnet" \
+  GOWORK=off go test ./e2e/ -run TestLocalnet -v -count=1 -timeout 15m
+GOWORK=off make test-coverage-shard-ready COVERAGE_SHARD=e2e-localnet
+
+# Merge all blocking lanes and enforce the checked-in package ratchets
+GOWORK=off make test-coverage-report BASE_REF=HEAD^
+
+# Enforce 100% coverage for changed executable active lines
+GOWORK=off make test-coverage-patch BASE_REF=origin/main
+```
+
+The local patch command checks the complete worktree, including untracked Go
+files. CI supplies immutable base and head commits for pull requests and pushes.
+The paths above assume the bare-checkout `.cache` default; if `AKT_DEVCACHE` is
+set, use the absolute shard path printed by `test-coverage-e2e-prepare`.
+
+Reports are written to `.cache/coverage/reports/`. Coverage exceptions require
+an owner, evidence, and review deadline in
+[`coverage/exceptions.tsv`](coverage/exceptions.tsv); there are no implicit path
+exclusions.
 
 ### Isolated Test Environment
 

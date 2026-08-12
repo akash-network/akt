@@ -77,13 +77,23 @@ func ParseWasmStoreCodeArgs(file, sender string, flags *flag.FlagSet) (types.Msg
 		return types.MsgStoreCode{}, err
 	}
 
-	// gzip the wasm file
-	if ioutils.IsWasm(wasm) {
+	// Normalize raw Wasm to gzip and validate pre-compressed input before it is
+	// accepted into a transaction. ioutils.IsWasm indexes the first four bytes,
+	// so the explicit length boundary also keeps truncated files from panicking.
+	if len(wasm) >= 4 && ioutils.IsWasm(wasm) {
 		wasm, err = ioutils.GzipIt(wasm)
 		if err != nil {
 			return types.MsgStoreCode{}, err
 		}
-	} else if !ioutils.IsGzip(wasm) {
+	} else if ioutils.IsGzip(wasm) {
+		uncompressed, err := ioutils.Uncompress(wasm, int64(types.MaxWasmSize))
+		if err != nil {
+			return types.MsgStoreCode{}, fmt.Errorf("invalid gzip: %w", err)
+		}
+		if len(uncompressed) < 4 || !ioutils.IsWasm(uncompressed) {
+			return types.MsgStoreCode{}, errors.New("invalid gzip: decompressed payload is not wasm")
+		}
+	} else {
 		return types.MsgStoreCode{}, errors.New("invalid input file. Use wasm binary or gzip")
 	}
 
@@ -105,17 +115,6 @@ func ParseWasmAccessConfigFlags(flags *flag.FlagSet) (*types.AccessConfig, error
 	if err != nil {
 		return nil, fmt.Errorf("flag any of: %s", err)
 	}
-	if len(addrs) != 0 {
-		acceptedAddrs := make([]sdk.AccAddress, len(addrs))
-		for i, v := range addrs {
-			acceptedAddrs[i], err = sdk.AccAddressFromBech32(v)
-			if err != nil {
-				return nil, fmt.Errorf("parse %q: %w", v, err)
-			}
-		}
-		x := types.AccessTypeAnyOfAddresses.With(acceptedAddrs...)
-		return &x, nil
-	}
 
 	onlyAddrStr, err := flags.GetString(cflags.FlagInstantiateByAddress)
 	if err != nil {
@@ -124,17 +123,16 @@ func ParseWasmAccessConfigFlags(flags *flag.FlagSet) (*types.AccessConfig, error
 	if onlyAddrStr != "" {
 		return nil, fmt.Errorf("not supported anymore. Use: %s", cflags.FlagInstantiateByAnyOfAddress)
 	}
+
 	everybodyStr, err := flags.GetString(cflags.FlagInstantiateByEverybody)
 	if err != nil {
 		return nil, fmt.Errorf("instantiate by everybody: %s", err)
 	}
+	everybody := false
 	if everybodyStr != "" {
-		ok, err := strconv.ParseBool(everybodyStr)
+		everybody, err = strconv.ParseBool(everybodyStr)
 		if err != nil {
 			return nil, fmt.Errorf("boolean value expected for instantiate by everybody: %s", err)
-		}
-		if ok {
-			return &types.AllowEverybody, nil
 		}
 	}
 
@@ -142,15 +140,59 @@ func ParseWasmAccessConfigFlags(flags *flag.FlagSet) (*types.AccessConfig, error
 	if err != nil {
 		return nil, fmt.Errorf("instantiate by nobody: %s", err)
 	}
+	nobody := false
 	if nobodyStr != "" {
-		ok, err := strconv.ParseBool(nobodyStr)
+		nobody, err = strconv.ParseBool(nobodyStr)
 		if err != nil {
 			return nil, fmt.Errorf("boolean value expected for instantiate by nobody: %s", err)
 		}
-		if ok {
-			return &types.AllowNobody, nil
-		}
 	}
+
+	selected := 0
+	if len(addrs) != 0 {
+		selected++
+	}
+	if everybody {
+		selected++
+	}
+	if nobody {
+		selected++
+	}
+	if selected > 1 {
+		return nil, errors.New("instantiate permission modes are mutually exclusive")
+	}
+
+	if len(addrs) != 0 {
+		acceptedAddrs := make([]string, len(addrs))
+		seen := make(map[string]struct{}, len(addrs))
+		for i, value := range addrs {
+			address, err := sdk.AccAddressFromBech32(value)
+			if err != nil {
+				return nil, fmt.Errorf("parse %q: %w", value, err)
+			}
+			canonical := address.String()
+			if _, exists := seen[canonical]; exists {
+				return nil, fmt.Errorf("instantiate any-of address %q is duplicated", canonical)
+			}
+			seen[canonical] = struct{}{}
+			acceptedAddrs[i] = canonical
+		}
+		access := types.AccessConfig{
+			Permission: types.AccessTypeAnyOfAddresses,
+			Addresses:  acceptedAddrs,
+		}
+		if err := access.ValidateBasic(); err != nil {
+			return nil, fmt.Errorf("instantiate any-of addresses: %w", err)
+		}
+		return &access, nil
+	}
+	if everybody {
+		return &types.AllowEverybody, nil
+	}
+	if nobody {
+		return &types.AllowNobody, nil
+	}
+
 	return nil, nil
 }
 

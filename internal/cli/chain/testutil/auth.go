@@ -15,10 +15,7 @@ import (
 func TxSignExec(ctx context.Context, cctx client.Context, args ...string) (testutil.BufferWriter, error) {
 	cmd := cli.GetSignCommand()
 
-	return ExecTestCLICmd(ctx, cctx, cmd,
-		cli.TestFlags().
-			WithChainID(cctx.ChainID).
-			Append(args)...)
+	return ExecTestCLICmd(ctx, cctx, cmd, withChainID(args, cctx.ChainID)...)
 }
 
 func TxBroadcastExec(ctx context.Context, cctx client.Context, args ...string) (testutil.BufferWriter, error) {
@@ -35,14 +32,16 @@ func TxEncodeExec(ctx context.Context, cctx client.Context, filename string, ext
 }
 
 func TxValidateSignaturesExec(ctx context.Context, cctx client.Context, args ...string) (testutil.BufferWriter, error) {
-	return ExecTestCLICmd(ctx, cctx, cli.GetValidateSignaturesCommand(),
-		cli.TestFlags().
-			WithChainID(cctx.ChainID).
-			Append(args)...)
+	return ExecTestCLICmd(ctx, cctx, cli.GetValidateSignaturesCommand(), withChainID(args, cctx.ChainID)...)
 }
 
 func TxMultiSignExec(ctx context.Context, cctx client.Context, args ...string) (testutil.BufferWriter, error) {
-	return ExecTestCLICmd(ctx, cctx, cli.GetAuthMultiSignCmd(), cli.TestFlags().Append(args).WithChainID(cctx.ChainID)...)
+	return ExecTestCLICmd(ctx, cctx, cli.GetAuthMultiSignCmd(), withChainID(args, cctx.ChainID)...)
+}
+
+func withChainID(args []string, chainID string) []string {
+	result := append([]string(nil), args...)
+	return append(result, fmt.Sprintf("--%s=%s", cflags.FlagChainID, chainID))
 }
 
 func TxSignBatchExec(ctx context.Context, cctx client.Context, args ...string) (testutil.BufferWriter, error) {
@@ -58,33 +57,10 @@ func TxDecodeExec(ctx context.Context, cctx client.Context, encodedTx string, ex
 	return ExecTestCLICmd(ctx, cctx, cli.GetDecodeCommand(), append(args, extraArgs...)...)
 }
 
-// TxAuxToFeeExec executes `GetAuxToFeeCommand` cli command with given args.
-func TxAuxToFeeExec(ctx context.Context, cctx client.Context, filename string, extraArgs ...string) (testutil.BufferWriter, error) {
-	args := []string{
-		filename,
-	}
-
-	return ExecTestCLICmd(ctx, cctx, cli.GetAuxToFeeCommand(), append(args, extraArgs...)...)
-}
-
 func ExecQueryAccount(ctx context.Context, cctx client.Context, address fmt.Stringer, extraArgs ...string) (testutil.BufferWriter, error) {
 	args := []string{address.String(), fmt.Sprintf("--%s=json", cflags.FlagOutput)}
 
 	return ExecTestCLICmd(ctx, cctx, cli.GetQueryAuthAccountCmd(), append(args, extraArgs...)...)
-}
-
-func TxMultiSignBatchExec(ctx context.Context, cctx client.Context, filename string, from string, sigFile1 string, sigFile2 string, extraArgs ...string) (testutil.BufferWriter, error) {
-	args := []string{
-		fmt.Sprintf("--%s=%s", cflags.FlagKeyringBackend, keyring.BackendTest),
-		filename,
-		from,
-		sigFile1,
-		sigFile2,
-	}
-
-	args = append(args, extraArgs...)
-
-	return ExecTestCLICmd(ctx, cctx, cli.GetMultiSignBatchCmd(), args...)
 }
 
 func ExecSend(ctx context.Context, cctx client.Context, args ...string) (testutil.BufferWriter, error) {

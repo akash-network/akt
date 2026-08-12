@@ -86,10 +86,7 @@ func gatewayForDeployment(cmd *cobra.Command, cl *console.Client, dseq string, t
 		return nil, mtypes.LeaseID{}, fmt.Errorf("invalid provider address %q: %w", lease.ID.Provider, err)
 	}
 
-	gw, err := rest.NewClient(ctx, addr,
-		rest.WithProviderURL(prov.HostURI),
-		rest.WithAuthToken(token),
-	)
+	gw, err := aktprovider.NewTokenGatewayClient(ctx, addr, prov.HostURI, token)
 	if err != nil {
 		return nil, mtypes.LeaseID{}, fmt.Errorf("create provider gateway client for %s: %w", prov.HostURI, err)
 	}
@@ -388,7 +385,38 @@ func statusCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	return cmd
 }
 
+type consoleLeaseShellRunner func(
+	context.Context,
+	aktprovider.LeaseShellClient,
+	mtypes.LeaseID,
+	string,
+	[]string,
+	io.Reader,
+	io.Writer,
+	io.Writer,
+	bool,
+) error
+
+func runConsoleLeaseShell(
+	ctx context.Context,
+	client aktprovider.LeaseShellClient,
+	id mtypes.LeaseID,
+	service string,
+	command []string,
+	stdin io.Reader,
+	stdout io.Writer,
+	stderr io.Writer,
+	tty bool,
+) error {
+	return aktprovider.RunLeaseShell(ctx, client, id, service, 0, command,
+		stdin, stdout, stderr, tty, nil)
+}
+
 func shellCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
+	return shellCmdWithRunner(mgrFn, runConsoleLeaseShell)
+}
+
+func shellCmdWithRunner(mgrFn func() *aktctx.Manager, run consoleLeaseShellRunner) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "shell <dseq> <service> [-- command...]",
 		Short: "Open a shell or run a command in a lease container",
@@ -441,10 +469,12 @@ func shellCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				stdinOverride,
 			)
 
-			return output.RunShellOutput(cmd, interactive, tty, func(stdout, stderr io.Writer, shellTTY bool) error {
-				return aktprovider.RunLeaseShell(shellCtx, gw, lid, service, 0, command,
-					stdin, stdout, stderr, shellTTY, nil)
+			err = output.RunShellOutput(cmd, interactive, tty, func(stdout, stderr io.Writer, shellTTY bool) error {
+				return run(shellCtx, gw, lid, service, command, stdin, stdout, stderr, shellTTY)
 			})
+			aktprovider.RecordAction(cmd.Context(), "lease-shell", lid.Provider, lid.DSeq, err)
+
+			return err
 		},
 	}
 
@@ -484,8 +514,7 @@ func screenCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			}
 
 			if len(providers) == 0 {
-				fmt.Fprintln(cmd.OutOrStdout(), "No providers matched the SDL's resource requirements.")
-				return nil
+				return printConsoleText(cmd, "No providers matched the SDL's resource requirements.\n")
 			}
 
 			return printJSON(cmd, providers)

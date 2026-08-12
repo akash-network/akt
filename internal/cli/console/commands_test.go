@@ -2,16 +2,21 @@ package console
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
 	aktctx "pkg.akt.dev/akt/internal/context"
 	"pkg.akt.dev/akt/internal/output"
@@ -49,6 +54,10 @@ func newTestManager(t *testing.T) *aktctx.Manager {
 // execConsole runs `akt console <args...>` against the given manager,
 // pointing the client at srvURL when non-empty, and returns combined output.
 func execConsole(t *testing.T, m *aktctx.Manager, srvURL string, args ...string) (string, error) {
+	return execConsoleContext(context.Background(), t, m, srvURL, args...)
+}
+
+func execConsoleContext(ctx context.Context, t *testing.T, m *aktctx.Manager, srvURL string, args ...string) (string, error) {
 	t.Helper()
 
 	// Neutralize any ambient key so tests only see what they configure.
@@ -57,6 +66,7 @@ func execConsole(t *testing.T, m *aktctx.Manager, srvURL string, args ...string)
 	cmd := Commands(func() *aktctx.Manager { return m })
 	cmd.PersistentFlags().VarP(output.NewFormatFlag("pretty"), "output", "o", "Output format: pretty, json, yaml")
 	cmd.PersistentFlags().String("context", "", "Active context name")
+	cmd.SetContext(ctx)
 
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
@@ -120,6 +130,172 @@ func writeJSON(t *testing.T, w http.ResponseWriter, body string) {
 	if _, err := w.Write([]byte(body)); err != nil {
 		t.Errorf("write response: %v", err)
 	}
+}
+
+type consoleOutputErrorWriter struct {
+	err error
+}
+
+func (w consoleOutputErrorWriter) Write([]byte) (int, error) {
+	return 0, w.err
+}
+
+type consoleOutputShortWriter struct{}
+
+func (consoleOutputShortWriter) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+
+	return len(p) - 1, nil
+}
+
+type consoleNthWriteError struct {
+	calls  int
+	failAt int
+	err    error
+	wrote  bytes.Buffer
+}
+
+func (w *consoleNthWriteError) Write(p []byte) (int, error) {
+	w.calls++
+	if w.calls == w.failAt {
+		return 0, w.err
+	}
+
+	return w.wrote.Write(p)
+}
+
+func TestPromptForKeyTerminalBoundary(t *testing.T) {
+	t.Run("prompt write fails before secret read", func(t *testing.T) {
+		writeErr := errors.New("prompt destination closed")
+		cmd := &cobra.Command{}
+		cmd.SetErr(consoleOutputErrorWriter{err: writeErr})
+		readCalls := 0
+
+		key, err := promptForKeyWithTerminal(
+			cmd,
+			77,
+			func(fd int) bool { return fd == 77 },
+			func(int) ([]byte, error) {
+				readCalls++
+				return []byte("must-not-be-read"), nil
+			},
+		)
+		if !errors.Is(err, writeErr) || !strings.Contains(err.Error(), "write API key prompt") {
+			t.Fatalf("prompt error = %v, want wrapped destination failure", err)
+		}
+		if key != "" || readCalls != 0 {
+			t.Fatalf("key/read calls = %q/%d, want no secret read after prompt failure", key, readCalls)
+		}
+	})
+
+	t.Run("terminator failure does not return secret", func(t *testing.T) {
+		writeErr := errors.New("prompt terminator failed")
+		writer := &consoleNthWriteError{failAt: 2, err: writeErr}
+		cmd := &cobra.Command{}
+		cmd.SetErr(writer)
+		readFD := 0
+
+		key, err := promptForKeyWithTerminal(
+			cmd,
+			91,
+			func(int) bool { return true },
+			func(fd int) ([]byte, error) {
+				readFD = fd
+				return []byte("  one-time-secret  "), nil
+			},
+		)
+		if !errors.Is(err, writeErr) || !strings.Contains(err.Error(), "prompt terminator") {
+			t.Fatalf("terminator error = %v, want wrapped destination failure", err)
+		}
+		if key != "" || readFD != 91 {
+			t.Fatalf("key/read fd = %q/%d, want withheld secret read from fd 91", key, readFD)
+		}
+		if got := writer.wrote.String(); got != "Console API key: " {
+			t.Fatalf("accepted prompt bytes = %q", got)
+		}
+	})
+
+	t.Run("terminal secret is trimmed after prompt is completed", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		var prompt bytes.Buffer
+		cmd.SetErr(&prompt)
+
+		key, err := promptForKeyWithTerminal(
+			cmd,
+			12,
+			func(int) bool { return true },
+			func(fd int) ([]byte, error) {
+				if fd != 12 {
+					t.Fatalf("read fd = %d, want 12", fd)
+				}
+				return []byte("  one-time-secret\r\n"), nil
+			},
+		)
+		if err != nil || key != "one-time-secret" {
+			t.Fatalf("prompt result = %q, %v", key, err)
+		}
+		if got := prompt.String(); got != "Console API key: \n" {
+			t.Fatalf("prompt output = %q", got)
+		}
+	})
+
+	t.Run("read failure still restores the prompt line", func(t *testing.T) {
+		readErr := errors.New("terminal read failed")
+		cmd := &cobra.Command{}
+		var prompt bytes.Buffer
+		cmd.SetErr(&prompt)
+
+		key, err := promptForKeyWithTerminal(
+			cmd,
+			12,
+			func(int) bool { return true },
+			func(int) ([]byte, error) { return nil, readErr },
+		)
+		if key != "" || !errors.Is(err, readErr) || !strings.Contains(err.Error(), "read API key") {
+			t.Fatalf("prompt result = %q, %v, want wrapped terminal read failure", key, err)
+		}
+		if got := prompt.String(); got != "Console API key: \n" {
+			t.Fatalf("prompt output after read failure = %q", got)
+		}
+	})
+}
+
+func TestPromptForKeyUsesCommandInputOutsideTerminal(t *testing.T) {
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		t.Skip("process stdin is a terminal; the injectable terminal path is covered separately")
+	}
+	cmd := &cobra.Command{}
+	cmd.SetIn(strings.NewReader("  piped-secret  \n"))
+
+	key, err := promptForKey(cmd)
+	if err != nil || key != "piped-secret" {
+		t.Fatalf("piped prompt result = %q, %v", key, err)
+	}
+}
+
+func executeConsoleWithOutput(
+	t *testing.T,
+	m *aktctx.Manager,
+	srvURL string,
+	out io.Writer,
+	args ...string,
+) error {
+	t.Helper()
+
+	t.Setenv(aktctx.EnvConsoleAPIKey, "")
+	cmd := Commands(func() *aktctx.Manager { return m })
+	cmd.PersistentFlags().VarP(output.NewFormatFlag("pretty"), "output", "o", "Output format: pretty, json, yaml")
+	cmd.PersistentFlags().String("context", "", "Active context name")
+	cmd.SetOut(out)
+	cmd.SetErr(io.Discard)
+	if srvURL != "" {
+		args = append(args, "--console-api-url", srvURL)
+	}
+	cmd.SetArgs(args)
+
+	return cmd.Execute()
 }
 
 const userBody = `{"data":{"id":"uuid-1","userId":"user-1","username":"max","email":"max@example.com","emailVerified":true}}`
@@ -475,6 +651,81 @@ func TestTemplateSDLPrintsRawSDL(t *testing.T) {
 	}
 }
 
+func TestPlainConsoleCommandsPropagateOutputFailures(t *testing.T) {
+	m := newAuthedManager(t)
+	sentinel := errors.New("console destination failed")
+	requests := make(map[string]int)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests[r.Method+" "+r.URL.Path]++
+		switch {
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/api-keys/key-1":
+			w.WriteHeader(http.StatusNotFound)
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/deployments/777":
+			w.WriteHeader(http.StatusNotFound)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/templates/tpl-1":
+			writeJSON(t, w, `{"data":{"id":"tpl-1","name":"web","deploy":"services: {}\\n"}}`)
+		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/bids"):
+			writeJSON(t, w, `{"data":[]}`)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/12345":
+			writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"12345"}}}}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/bid-screening":
+			writeJSON(t, w, `{"providers":[]}`)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.RequestURI())
+			w.WriteHeader(http.StatusNotFound)
+		}
+	}))
+	defer srv.Close()
+
+	sdlPath := filepath.Join(t.TempDir(), "deploy.yaml")
+	if err := os.WriteFile(sdlPath, []byte(screenSDL), 0o600); err != nil {
+		t.Fatalf("write SDL: %v", err)
+	}
+
+	cases := []struct {
+		name string
+		args []string
+	}{
+		{name: "API key delete result", args: []string{"apikey", "delete", "key-1"}},
+		{name: "raw template SDL", args: []string{"template", "sdl", "tpl-1"}},
+		{name: "empty bid result", args: []string{"bid", "list", "12345"}},
+		{name: "empty bid screening result", args: []string{"screen", sdlPath}},
+		{name: "already closed deployment result", args: []string{"deployment", "close", "777"}},
+	}
+
+	failures := []struct {
+		name   string
+		writer io.Writer
+		want   error
+	}{
+		{name: "hard error", writer: consoleOutputErrorWriter{err: sentinel}, want: sentinel},
+		{name: "short write", writer: consoleOutputShortWriter{}, want: io.ErrShortWrite},
+	}
+
+	for _, failure := range failures {
+		t.Run(failure.name, func(t *testing.T) {
+			for _, tc := range cases {
+				t.Run(tc.name, func(t *testing.T) {
+					err := executeConsoleWithOutput(t, m, srv.URL, failure.writer, tc.args...)
+					if !errors.Is(err, failure.want) {
+						t.Fatalf("error = %v, want destination failure %v", err, failure.want)
+					}
+				})
+			}
+		})
+	}
+
+	for _, request := range []string{
+		http.MethodDelete + " /v1/api-keys/key-1",
+		http.MethodDelete + " /v1/deployments/777",
+	} {
+		if requests[request] != len(failures) {
+			t.Fatalf("%s requests = %d, want %d completed mutations", request, requests[request], len(failures))
+		}
+	}
+}
+
 func TestJWTCreatePrintsToken(t *testing.T) {
 	m := newTestManager(t)
 	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
@@ -566,10 +817,20 @@ func TestDepositPositionalAmount(t *testing.T) {
 	}
 
 	var body string
+	var deposited bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/12345" {
+			amount := "1000000"
+			if deposited {
+				amount = "11000000"
+			}
+			writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"12345"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"`+amount+`"}],"transferred":[]}}}}`)
+			return
+		}
 		b, _ := io.ReadAll(r.Body)
 		body = string(b)
-		writeJSON(t, w, `{"data":{}}`)
+		deposited = true
+		writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"12345"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"11000000"}],"transferred":[]}}}}`)
 	}))
 	defer srv.Close()
 

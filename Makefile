@@ -9,6 +9,21 @@ ifeq ($(origin AKT_ROOT), undefined)
 AKT_ROOT := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 endif
 
+# .envrc normally loads these paths from .env. Keep the same layout when make
+# runs without direnv so build and coverage targets share one cache.
+AKT_DEVCACHE_BASE         ?= $(AKT_ROOT)/.cache
+AKT_DEVCACHE              ?= $(AKT_DEVCACHE_BASE)
+AKT_DEVCACHE_BIN          ?= $(AKT_DEVCACHE)/bin
+AKT_DEVCACHE_LIB          ?= $(AKT_DEVCACHE)/lib
+AKT_DEVCACHE_INCLUDE      ?= $(AKT_DEVCACHE)/include
+AKT_DEVCACHE_VERSIONS     ?= $(AKT_DEVCACHE)/versions
+AKT_DEVCACHE_NODE_MODULES ?= $(AKT_DEVCACHE)
+AKT_DEVCACHE_NODE_BIN     ?= $(AKT_DEVCACHE_NODE_MODULES)/node_modules/.bin
+AKT_RUN                   ?= $(AKT_DEVCACHE)/run
+AKT_RUN_BIN               ?= $(AKT_RUN)/bin
+AKT                       ?= $(AKT_DEVCACHE_BIN)/akt
+SEMVER                    ?= $(AKT_ROOT)/script/semver.sh
+
 # Must be built with Go >= the go directive in go.mod: older golangci-lint
 # releases refuse to load a config targeting a newer language version
 # (v2.3.0 is built with go1.24 and cannot run against go 1.26.1).
@@ -102,11 +117,11 @@ ldflags := $(strip $(ldflags))
 
 BUILD_FLAGS += -mod=$(GOMOD) -tags='$(build_tags_cs)' -ldflags '$(ldflags)'
 
-GO                           := GO111MODULE=$(GO111MODULE) go
+GO                           := GOWORK=off GO111MODULE=$(GO111MODULE) go
 GO_BUILD                     := $(GO) build -mod=$(GOMOD)
 GO_TEST                      := $(GO) test -mod=$(GOMOD)
 GO_VET                       := $(GO) vet -mod=$(GOMOD)
-GO_MOD_NAME                  := $(shell go list -m 2>/dev/null)
+GO_MOD_NAME                  := $(shell GOWORK=off go list -m 2>/dev/null)
 
 .PHONY: test test-e2e
 
@@ -119,3 +134,7 @@ test-e2e: akt
 include $(AKT_ROOT)/make/setup-cache.mk
 include $(AKT_ROOT)/make/releasing.mk
 include $(AKT_ROOT)/make/testing.mk
+
+# The binary target lives in make/releasing.mk. Its output directory and link
+# search path must exist before a build from a checkout with no .cache tree.
+$(AKT): | $(AKT_DEVCACHE)

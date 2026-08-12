@@ -48,6 +48,9 @@ func GetQueryMintParamsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("mint params", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), &res.Params)
 		},
@@ -76,6 +79,9 @@ func GetQueryMintInflationCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("mint inflation", res); err != nil {
+				return err
+			}
 
 			return cctx.PrintString(fmt.Sprintf("%s\n", res.Inflation))
 		},
@@ -102,6 +108,9 @@ func GetQueryMintAnnualProvisionsCmd() *cobra.Command {
 			params := &types.QueryAnnualProvisionsRequest{}
 			res, err := cl.Query().Mint().AnnualProvisions(cmd.Context(), params)
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("mint annual provisions", res); err != nil {
 				return err
 			}
 

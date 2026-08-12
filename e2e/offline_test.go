@@ -6,6 +6,7 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -15,7 +16,18 @@ import (
 	"strings"
 	"testing"
 
+	txsigning "cosmossdk.io/x/tx/signing"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
+	"github.com/cosmos/cosmos-sdk/crypto/hd"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	signingtypes "github.com/cosmos/cosmos-sdk/types/tx/signing"
+	authsigning "github.com/cosmos/cosmos-sdk/x/auth/signing"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	"github.com/cosmos/go-bip39"
+	"google.golang.org/protobuf/types/known/anypb"
 	"gopkg.in/yaml.v3"
+
+	aktcodec "pkg.akt.dev/akt/internal/codec"
 )
 
 // Deterministic BIP39 mnemonic used for recovery tests. The derived address
@@ -223,6 +235,7 @@ func TestOfflineTransactionConstructionAndSigningStreams(t *testing.T) {
 	if _, ok := unsigned["body"]; !ok {
 		t.Fatalf("generate-only top-level value is not a transaction: %#v", unsigned)
 	}
+	assertOfflineBankSend(t, generated, false)
 
 	unsignedFile := filepath.Join(t.TempDir(), "unsigned.json")
 	if err := os.WriteFile(unsignedFile, []byte(generated), 0o600); err != nil {
@@ -246,10 +259,154 @@ func TestOfflineTransactionConstructionAndSigningStreams(t *testing.T) {
 			if !ok || len(signatures) != 1 {
 				t.Fatalf("%s signature count = %#v", leaf, signed["signatures"])
 			}
+			assertOfflineBankSend(t, stdout, true)
 			if strings.Contains(stderr, `"body"`) {
 				t.Fatalf("%s wrote transaction data to stderr:\n%s", leaf, stderr)
 			}
 		})
+	}
+}
+
+// assertOfflineBankSend decodes the transaction with the same public Akash
+// protobuf types that a node uses, but derives the expected signer and checks
+// the signature independently of the CLI process that produced the JSON.
+func assertOfflineBankSend(t *testing.T, payload string, wantSigned bool) {
+	t.Helper()
+
+	encConfig := aktcodec.MakeEncodingConfig()
+	tx, err := encConfig.TxConfig.TxJSONDecoder()([]byte(strings.TrimSpace(payload)))
+	if err != nil {
+		t.Fatalf("decode transaction JSON: %v\n%s", err, payload)
+	}
+
+	messages := tx.GetMsgs()
+	if len(messages) != 1 {
+		t.Fatalf("transaction message count = %d, want 1", len(messages))
+	}
+	bankSend, ok := messages[0].(*banktypes.MsgSend)
+	if !ok {
+		t.Fatalf("transaction message = %T, want *banktypes.MsgSend", messages[0])
+	}
+	if bankSend.FromAddress != testMnemonicAddr || bankSend.ToAddress != testMnemonicAddr {
+		t.Fatalf("bank send route = %s -> %s, want %s -> %s",
+			bankSend.FromAddress, bankSend.ToAddress, testMnemonicAddr, testMnemonicAddr)
+	}
+	if want := sdk.NewCoins(sdk.NewInt64Coin("uakt", 1)); !bankSend.Amount.Equal(want) {
+		t.Fatalf("bank send amount = %s, want %s", bankSend.Amount, want)
+	}
+
+	authTx, ok := tx.(authsigning.Tx)
+	if !ok {
+		t.Fatalf("decoded transaction = %T, want authsigning.Tx", tx)
+	}
+	if authTx.GetGas() != 200_000 {
+		t.Fatalf("gas = %d, want 200000", authTx.GetGas())
+	}
+	if want := sdk.NewCoins(sdk.NewInt64Coin("uakt", 5_000)); !authTx.GetFee().Equal(want) {
+		t.Fatalf("fee = %s, want %s", authTx.GetFee(), want)
+	}
+	if authTx.GetMemo() != "" {
+		t.Fatalf("memo = %q, want empty", authTx.GetMemo())
+	}
+
+	wantSigner, err := encConfig.TxConfig.SigningContext().AddressCodec().StringToBytes(testMnemonicAddr)
+	if err != nil {
+		t.Fatalf("decode expected signer address: %v", err)
+	}
+	gotSigners, err := authTx.GetSigners()
+	if err != nil {
+		t.Fatalf("derive transaction signers: %v", err)
+	}
+	if len(gotSigners) != 1 || !bytes.Equal(gotSigners[0], wantSigner) {
+		t.Fatalf("transaction signers = %x, want %x", gotSigners, wantSigner)
+	}
+
+	signatures, err := authTx.GetSignaturesV2()
+	if err != nil {
+		t.Fatalf("decode transaction signatures: %v", err)
+	}
+	if !wantSigned {
+		if len(signatures) != 0 {
+			t.Fatalf("unsigned transaction has %d signatures", len(signatures))
+		}
+		return
+	}
+	if len(signatures) != 1 {
+		t.Fatalf("signed transaction has %d signatures, want 1", len(signatures))
+	}
+
+	signature := signatures[0]
+	if signature.PubKey == nil {
+		t.Fatal("signed transaction omitted its public key")
+	}
+	signerAddress, err := encConfig.TxConfig.SigningContext().AddressCodec().BytesToString(signature.PubKey.Address())
+	if err != nil {
+		t.Fatalf("encode signature public-key address: %v", err)
+	}
+	if signerAddress != testMnemonicAddr {
+		t.Fatalf("signature address = %s, want %s", signerAddress, testMnemonicAddr)
+	}
+	if signature.Sequence != 0 {
+		t.Fatalf("signature sequence = %d, want 0", signature.Sequence)
+	}
+	single, ok := signature.Data.(*signingtypes.SingleSignatureData)
+	if !ok {
+		t.Fatalf("signature data = %T, want single signature", signature.Data)
+	}
+	if single.SignMode != signingtypes.SignMode_SIGN_MODE_DIRECT {
+		t.Fatalf("signature mode = %s, want SIGN_MODE_DIRECT", single.SignMode)
+	}
+	if len(single.Signature) == 0 {
+		t.Fatal("signature bytes are empty")
+	}
+
+	packedPubKey, err := codectypes.NewAnyWithValue(signature.PubKey)
+	if err != nil {
+		t.Fatalf("pack signature public key: %v", err)
+	}
+	signerData := txsigning.SignerData{
+		ChainID:       "akashnet-2",
+		AccountNumber: 0,
+		Sequence:      signature.Sequence,
+		Address:       signerAddress,
+		PubKey: &anypb.Any{
+			TypeUrl: packedPubKey.TypeUrl,
+			Value:   packedPubKey.Value,
+		},
+	}
+	adaptableTx, ok := tx.(authsigning.V2AdaptableTx)
+	if !ok {
+		t.Fatalf("decoded transaction = %T, want authsigning.V2AdaptableTx", tx)
+	}
+	if err := authsigning.VerifySignature(
+		context.Background(),
+		signature.PubKey,
+		signerData,
+		single,
+		encConfig.TxConfig.SignModeHandler(),
+		adaptableTx.GetSigningTxData(),
+	); err != nil {
+		t.Fatalf("verify transaction signature: %v", err)
+	}
+
+	// A positive-only check could pass if verification were accidentally
+	// skipped. Prove the verifier rejects the same transaction after a
+	// single-bit signature mutation.
+	tamperedBytes := append([]byte(nil), single.Signature...)
+	tamperedBytes[len(tamperedBytes)/2] ^= 1
+	tampered := &signingtypes.SingleSignatureData{
+		SignMode:  single.SignMode,
+		Signature: tamperedBytes,
+	}
+	if err := authsigning.VerifySignature(
+		context.Background(),
+		signature.PubKey,
+		signerData,
+		tampered,
+		encConfig.TxConfig.SignModeHandler(),
+		adaptableTx.GetSigningTxData(),
+	); err == nil {
+		t.Fatal("cryptographic verification accepted a tampered signature")
 	}
 }
 
@@ -312,6 +469,33 @@ func TestKeysMnemonic(t *testing.T) {
 	words := strings.Fields(strings.TrimSpace(stripANSI(stdout)))
 	if len(words) != 24 {
 		t.Fatalf("expected a 24-word mnemonic, got %d words:\n%s", len(words), stdout)
+	}
+	mnemonic := strings.Join(words, " ")
+	if !bip39.IsMnemonicValid(mnemonic) {
+		t.Fatalf("generated words are not a checksum-valid BIP39 mnemonic: %q", mnemonic)
+	}
+
+	privateKeyBytes, err := hd.Secp256k1.Derive()(mnemonic, "", sdk.FullFundraiserPath)
+	if err != nil {
+		t.Fatalf("derive generated mnemonic independently: %v", err)
+	}
+	privateKey := hd.Secp256k1.Generate()(privateKeyBytes)
+	encConfig := aktcodec.MakeEncodingConfig()
+	wantAddress, err := encConfig.TxConfig.SigningContext().AddressCodec().BytesToString(privateKey.PubKey().Address())
+	if err != nil {
+		t.Fatalf("encode independently derived address: %v", err)
+	}
+
+	source := filepath.Join(t.TempDir(), "generated-mnemonic.txt")
+	if err := os.WriteFile(source, []byte(mnemonic+"\n"), 0o600); err != nil {
+		t.Fatalf("write generated mnemonic source: %v", err)
+	}
+	mustRunAkt(t, home, "context", "keys", "add", "generated-recovery", "--recover", "--source", source)
+	gotAddress := strings.TrimSpace(stripANSI(mustRunAkt(
+		t, home, "context", "keys", "show", "generated-recovery", "-a",
+	)))
+	if gotAddress != wantAddress {
+		t.Fatalf("recovered address = %s, independently derived address = %s", gotAddress, wantAddress)
 	}
 }
 
@@ -812,183 +996,6 @@ func TestStoreImportMissingFile(t *testing.T) {
 	}
 }
 
-// --- help backstop: every registered command answers --help with exit 0 ---
-//
-// This is the coverage backstop for "every command has at least one e2e
-// test": each command path below gets a --help invocation as a named subtest,
-// so a failure identifies the offending command. The list mirrors the
-// registration in internal/cli/root.go (context/tx/query/monitor/mcp/
-// provider/store/workflows/version/completion), internal/cli/chain/tx.go and
-// internal/cli/chain/query.go.
-
-func TestAllCommandsHelp(t *testing.T) {
-	// Hermetic: help must work on a machine with nothing configured, so
-	// point the CLI at an empty home. AKT_HOME (not --home) because several
-	// SDK group commands disable flag parsing and would ignore the flag.
-	t.Setenv("AKT_HOME", t.TempDir())
-
-	commands := [][]string{
-		// root-level
-		{"version"},
-		{"completion"},
-		{"completion", "bash"},
-		{"completion", "zsh"},
-		{"completion", "fish"},
-		{"completion", "powershell"},
-		{"mcp"},
-
-		// monitor hub + dashboards
-		{"monitor"},
-		{"monitor", "network"},
-		{"monitor", "provider"},
-		{"monitor", "oracle"},
-		{"monitor", "bme"},
-
-		// context management
-		{"context"},
-		{"context", "create"},
-		{"context", "use"},
-		{"context", "list"},
-		{"context", "show"},
-		{"context", "edit"},
-		{"context", "delete"},
-		{"context", "rename"},
-		{"context", "log"},
-
-		// context network
-		{"context", "network"},
-		{"context", "network", "create"},
-		{"context", "network", "edit"},
-		{"context", "network", "delete"},
-		{"context", "network", "list"},
-		{"context", "network", "show"},
-
-		// context keyring
-		{"context", "keyring"},
-		{"context", "keyring", "create"},
-		{"context", "keyring", "list"},
-		{"context", "keyring", "set"},
-
-		// context keys
-		{"context", "keys"},
-		{"context", "keys", "add"},
-		{"context", "keys", "delete"},
-		{"context", "keys", "list"},
-		{"context", "keys", "show"},
-		{"context", "keys", "export"},
-		{"context", "keys", "import"},
-		{"context", "keys", "rename"},
-		{"context", "keys", "mnemonic"},
-		{"context", "keys", "parse"},
-
-		// provider (off-chain provider interaction)
-		{"provider"},
-		{"provider", "status"},
-		{"provider", "lease-status"},
-		{"provider", "lease-logs"},
-		{"provider", "lease-events"},
-		{"provider", "lease-shell"},
-		{"provider", "send-manifest"},
-		{"provider", "get-manifest"},
-		{"provider", "migrate-hostnames"},
-		{"provider", "migrate-endpoints"},
-
-		// store
-		{"store"},
-		{"store", "status"},
-		{"store", "export"},
-		{"store", "import"},
-
-		// built-in workflows
-		{"deploy"},
-		{"update"},
-		{"close"},
-
-		// tx subgroups (internal/cli/chain/tx.go)
-		{"tx"},
-		{"tx", "audit"},
-		{"tx", "authz"},
-		{"tx", "bank"},
-		{"tx", "bank", "send"},
-		{"tx", "bme"},
-		{"tx", "broadcast"},
-		{"tx", "cert"},
-		{"tx", "crisis"},
-		{"tx", "decode"},
-		{"tx", "deployment"},
-		{"tx", "deployment", "close"},
-		{"tx", "distribution"},
-		{"tx", "encode"},
-		{"tx", "escrow"},
-		{"tx", "evidence"},
-		{"tx", "feegrant"},
-		{"tx", "gov"},
-		{"tx", "ibc"},
-		{"tx", "ibc-transfer"},
-		{"tx", "market"},
-		{"tx", "multi-sign"},
-		{"tx", "oracle"},
-		{"tx", "provider"},
-		{"tx", "sign"},
-		{"tx", "sign-batch"},
-		{"tx", "slashing"},
-		{"tx", "staking"},
-		{"tx", "upgrade"},
-		{"tx", "validate-signatures"},
-		{"tx", "vesting"},
-		{"tx", "wasm"},
-
-		// query subgroups (internal/cli/chain/query.go)
-		{"query"},
-		{"query", "audit"},
-		{"query", "auth"},
-		{"query", "authz"},
-		{"query", "bank"},
-		{"query", "bank", "balances"},
-		{"query", "block"},
-		{"query", "block-results"},
-		{"query", "blocks"},
-		{"query", "bme"},
-		{"query", "cert"},
-		{"query", "deployment"},
-		{"query", "deployment", "group"},
-		{"query", "distribution"},
-		{"query", "escrow"},
-		{"query", "evidence"},
-		{"query", "feegrant"},
-		{"query", "gov"},
-		{"query", "ibc"},
-		{"query", "ibc-transfer"},
-		{"query", "market"},
-		{"query", "mint"},
-		{"query", "module-name-to-address"},
-		{"query", "oracle"},
-		{"query", "params"},
-		{"query", "provider"},
-		{"query", "provider", "get"},
-		{"query", "provider", "list"},
-		{"query", "slashing"},
-		{"query", "staking"},
-		{"query", "tx"},
-		{"query", "txs"},
-		{"query", "wasm"},
-	}
-
-	for _, path := range commands {
-		name := strings.Join(path, " ")
-		t.Run(name, func(t *testing.T) {
-			args := append(append([]string{}, path...), "--help")
-			stdout, stderr, exitCode := runAktNoHome(t, args...)
-			if exitCode != 0 {
-				t.Fatalf("akt %s --help exited %d\nstdout: %s\nstderr: %s", name, exitCode, stdout, stderr)
-			}
-			if len(strings.TrimSpace(stdout)) == 0 {
-				t.Fatalf("akt %s --help produced no output", name)
-			}
-		})
-	}
-}
-
 // TestConfigFreeCommandsSkipBootstrap covers the commands that produce the
 // same output with or without configuration. On an unconfigured machine
 // they must not reach the first-run bootstrap: in a terminal it would block
@@ -1025,6 +1032,30 @@ func TestConfigFreeCommandsSkipBootstrap(t *testing.T) {
 				t.Fatalf("akt %s wrote a config on an unconfigured machine", name)
 			}
 		})
+	}
+}
+
+func TestBinaryReportsReleaseBuildTags(t *testing.T) {
+	if os.Getenv("GOCOVERDIR") == "" {
+		t.Skip("release-tag assertion applies to coverage-instrumented E2E lanes")
+	}
+
+	home := t.TempDir()
+	stdout, stderr, exitCode := runAkt(t, home, "version", "--long", "--output", "json")
+	if exitCode != 0 {
+		t.Fatalf("akt version --long exited %d\nstdout: %s\nstderr: %s", exitCode, stdout, stderr)
+	}
+
+	var version struct {
+		BuildTags string `json:"buildTags"`
+	}
+	if err := json.Unmarshal([]byte(stdout), &version); err != nil {
+		t.Fatalf("decode version build metadata: %v\n%s", err, stdout)
+	}
+	for _, tag := range []string{"osusergo", "netgo", "ledger", "muslc", "gcc", "nolink_libwasmvm"} {
+		if !strings.Contains(","+version.BuildTags+",", ","+tag+",") {
+			t.Errorf("instrumented akt build tags %q are missing release tag %q", version.BuildTags, tag)
+		}
 	}
 }
 

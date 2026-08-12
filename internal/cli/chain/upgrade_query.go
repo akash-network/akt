@@ -15,8 +15,9 @@ import (
 // GetQueryUpgradeCmd returns the parent command for all x/upgrade CLI query commands.
 func GetQueryUpgradeCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   types.ModuleName,
-		Short: "Querying commands for the upgrade module",
+		Use:               types.ModuleName,
+		Short:             "Querying commands for the upgrade module",
+		PersistentPreRunE: QueryPersistentPreRunE,
 	}
 
 	cmd.AddCommand(
@@ -31,10 +32,11 @@ func GetQueryUpgradeCmd() *cobra.Command {
 // GetQueryUpgradeCurrentPlanCmd returns the query upgrade plan command.
 func GetQueryUpgradeCurrentPlanCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "plan",
-		Short: "get upgrade plan (if one exists)",
-		Long:  "Gets the currently scheduled upgrade plan, if one exists",
-		Args:  cobra.ExactArgs(0),
+		Use:     "plan",
+		Short:   "get upgrade plan (if one exists)",
+		Long:    "Gets the currently scheduled upgrade plan, if one exists",
+		Example: "  akt query upgrade plan",
+		Args:    cobra.ExactArgs(0),
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)
@@ -62,8 +64,9 @@ func GetQueryUpgradeCurrentPlanCmd() *cobra.Command {
 // upgrade was applied.
 func GetQueryUpgradeAppliedPlanCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "applied [upgrade-name]",
-		Short: "block header for height at which a completed upgrade was applied",
+		Use:     "applied [upgrade-name]",
+		Short:   "block header for height at which a completed upgrade was applied",
+		Example: "  akt query upgrade applied v1.0.0",
 		Long: "If upgrade-name was previously executed on the chain, this returns the header for the block at which it was applied.\n" +
 			"This helps a client determine which binary was valid over a given range of blocks, as well as more context to understand past migrations.",
 		Args: cobra.ExactArgs(1),
@@ -112,8 +115,9 @@ func GetQueryUpgradeAppliedPlanCmd() *cobra.Command {
 // GetModuleVersionsCmd returns the module version list from state
 func GetQueryUpgradeModuleVersionsCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "module_versions [optional module_name]",
-		Short: "get the list of module versions",
+		Use:     "module_versions [optional module_name]",
+		Short:   "get the list of module versions",
+		Example: "  akt query upgrade module_versions\n  akt query upgrade module_versions deployment",
 		Long: "Gets a list of module names and their respective consensus versions.\n" +
 			"Following the command with a specific module name will return only\n" +
 			"that module's information.",

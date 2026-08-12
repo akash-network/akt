@@ -544,13 +544,14 @@ func (d *Dashboard) activeContent(innerW int) string {
 				// Use just the base name
 				parts := strings.Split(name, "/")
 				name = parts[len(parts)-1]
+				name = fmt.Sprintf("%s #%d", name, dep.DSeq)
 			} else {
 				name = fmt.Sprintf("dseq-%d", dep.DSeq)
 			}
 
 			cost := "—"
 			if dep.Deposit != "" {
-				cost = dep.Deposit
+				cost = formatStoredCoins(dep.Deposit)
 			}
 
 			nameRendered := lipgloss.NewStyle().Foreground(theme.Slate300).Render(name)

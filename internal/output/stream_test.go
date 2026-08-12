@@ -3,6 +3,8 @@ package output
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -13,6 +15,33 @@ import (
 type streamRecord struct {
 	Name    string `json:"name"`
 	Message string `json:"message"`
+}
+
+func TestPrintStreamRecordRejectsDestinationFailures(t *testing.T) {
+	record := streamRecord{Name: "web-a", Message: "ready"}
+	wantErr := errors.New("stream destination failed")
+
+	for _, format := range []string{"pretty", "json", "yaml"} {
+		for _, tc := range []struct {
+			name string
+			out  outputBoundaryWriter
+			want error
+		}{
+			{name: "hard error", out: outputBoundaryWriter{err: wantErr}, want: wantErr},
+			{name: "short write", out: outputBoundaryWriter{short: true}, want: io.ErrShortWrite},
+		} {
+			t.Run(format+"/"+tc.name, func(t *testing.T) {
+				cmd := &cobra.Command{}
+				cmd.Flags().String("output", format, "")
+				cmd.SetOut(tc.out)
+
+				err := PrintStreamRecord(cmd, record, "[web-a] ready")
+				if !errors.Is(err, tc.want) {
+					t.Fatalf("PrintStreamRecord() error = %v, want %v", err, tc.want)
+				}
+			})
+		}
+	}
 }
 
 func TestPrintStreamRecord(t *testing.T) {

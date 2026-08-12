@@ -19,12 +19,12 @@ import (
 	mtypes "pkg.akt.dev/go/node/market/v1beta5"
 )
 
-// withActionLog wraps a chain client so every broadcast is recorded in the
+// WithActionLog wraps a chain client so every broadcast is recorded in the
 // action log carried by ctx (SPEC §5.6) and so a broadcast whose CheckTx
 // result carries a non-zero code surfaces as an error (non-zero exit)
 // instead of being silently printed as success. The wrapper is applied
 // unconditionally; a missing logger only disables recording.
-func withActionLog(ctx context.Context, cl aclient.Client) aclient.Client {
+func WithActionLog(ctx context.Context, cl aclient.Client) aclient.Client {
 	return &loggingClient{Client: cl, log: cliutil.ActionLogFromContext(ctx)}
 }
 

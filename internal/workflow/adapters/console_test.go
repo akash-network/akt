@@ -2,6 +2,7 @@ package adapters
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 
 	"pkg.akt.dev/akt/internal/console"
 	"pkg.akt.dev/akt/internal/workflow/steps"
+	"pkg.akt.dev/go/sdl"
 )
 
 const testConsoleCtx = "test-ctx"
@@ -92,6 +94,19 @@ func writeTestSDL(t *testing.T, content string) string {
 	return path
 }
 
+func consoleSDLHash(t *testing.T, content string) string {
+	t.Helper()
+	doc, err := sdl.Read([]byte(content))
+	if err != nil {
+		t.Fatalf("read SDL: %v", err)
+	}
+	version, err := doc.Version()
+	if err != nil {
+		t.Fatalf("derive SDL version: %v", err)
+	}
+	return base64.StdEncoding.EncodeToString(version)
+}
+
 func TestConsoleCreateDeployment(t *testing.T) {
 	const sdlText = validConsoleSDL
 	sdlPath := writeTestSDL(t, sdlText)
@@ -155,7 +170,7 @@ func TestConsoleCreateDeploymentRawSDL(t *testing.T) {
 	var gotSDL any
 	c, _ := newConsoleClient(t, func(w http.ResponseWriter, r *http.Request) {
 		gotSDL = decodeEnvelope(t, r)["sdl"]
-		_, _ = w.Write([]byte(`{"data":{"dseq":"1","manifest":"[]"}}`))
+		_, _ = w.Write([]byte(`{"data":{"dseq":"1","manifest":"[]","signTx":{"code":0,"transactionHash":"HASH-RAW","rawLog":""}}}`))
 	})
 
 	// The sdl param is raw content, not a path: it must pass through as-is.
@@ -230,7 +245,7 @@ func TestConsoleCreateDeploymentDerivesMissingManifest(t *testing.T) {
 	// response. The client derives the same manifest while hashing the SDL, so
 	// the workflow can still create its lease without replaying the create.
 	c, root := newConsoleClient(t, func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"data":{"dseq":"4244","manifest":""}}`))
+		_, _ = w.Write([]byte(`{"data":{"dseq":"4244","manifest":"","signTx":{"code":0,"transactionHash":"HASH-DERIVED","rawLog":""}}}`))
 	})
 
 	if _, err := c.BroadcastTx(context.Background(), msgCreateDeployment, map[string]string{
@@ -282,7 +297,8 @@ func TestConsoleCreateDeploymentDepositValidation(t *testing.T) {
 }
 
 func TestConsoleUpdateDeployment(t *testing.T) {
-	const sdlText = "services:\n  web:\n    image: nginx:1.27\n"
+	const sdlText = validConsoleSDL
+	expectedHash := consoleSDLHash(t, sdlText)
 	sdlPath := writeTestSDL(t, sdlText)
 
 	var gotMethod, gotPath string
@@ -291,7 +307,7 @@ func TestConsoleUpdateDeployment(t *testing.T) {
 	c, _ := newConsoleClient(t, func(w http.ResponseWriter, r *http.Request) {
 		gotMethod, gotPath = r.Method, r.URL.Path
 		gotData = decodeEnvelope(t, r)
-		_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"777"},"state":"active"}}}`))
+		_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"777"},"state":"active","hash":"` + expectedHash + `"},"leases":[]}}`))
 	})
 
 	res, err := c.BroadcastTx(context.Background(), msgUpdateDeployment, map[string]string{
@@ -321,7 +337,7 @@ func TestConsoleCloseDeployment(t *testing.T) {
 
 	c, _ := newConsoleClient(t, func(w http.ResponseWriter, r *http.Request) {
 		gotMethod, gotPath = r.Method, r.URL.Path
-		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"success":true}}`))
 	})
 
 	res, err := c.BroadcastTx(context.Background(), msgCloseDeployment, map[string]string{"dseq": "888"})
@@ -384,7 +400,7 @@ func TestConsoleCreateLeaseUsesCachedManifest(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
 			t.Fatalf("decode lease body: %v", err)
 		}
-		_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"900"},"state":"active"}}}`))
+		_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"900"},"state":"active"},"leases":[{"id":{"owner":"akash1x","dseq":"900","gseq":2,"oseq":3,"provider":"akash1provider"},"state":"active"}]}}`))
 	})
 
 	if err := console.SaveManifest(root, testConsoleCtx, "900", "[MANIFEST]"); err != nil {

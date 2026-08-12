@@ -17,7 +17,8 @@ This document is the detailed technical specification for the `akt` CLI. For arc
 9. [Plugin System Specification](#9-plugin-system-specification)
 10. [Output Format Specification](#10-output-format-specification)
 11. [Error Handling](#11-error-handling)
-12. [Phased Implementation Plan](#12-phased-implementation-plan)
+12. [Testing and Verification](#12-testing-and-verification)
+13. [Phased Implementation Plan](#13-phased-implementation-plan)
 
 ---
 
@@ -311,6 +312,11 @@ status`, and MCP startup MUST run without any keyring access. An address-valued
 access for `--generate-only` or `--dry-run`; a signer name opens the deferred
 keyring when it is resolved.
 
+A named-account lookup MUST treat the returned keyring record as untrusted
+persistent data. A nil record or a record without encoded public-key material
+returns a descriptive account-resolution error before SDK address derivation;
+malformed keyring state MUST NOT panic the CLI.
+
 ### 1.8 Live Reload
 
 The config file (`config.yaml`) is watched for changes using Viper's built-in `WatchConfig()` which uses fsnotify.
@@ -332,6 +338,14 @@ The config file (`config.yaml`) is watched for changes using Viper's built-in `W
 - Network definition changes (endpoints, gas-prices, etc.) propagate to all contexts using that network.
 - Keyring changes are picked up on next key operation.
 - Context-level changes (default-account, gas, fees) apply to subsequent actions.
+
+File creation and replacement can emit an fsnotify event before the writer has
+finished the YAML payload. Reload waits for the create/write burst to settle,
+then publishes only a successfully parsed configuration. A malformed or
+partial write reports a warning and preserves the manager's last-good in-memory
+configuration; subscribers never receive a transient empty config. Watching
+may start before `config.yaml` exists by monitoring its parent directory until
+the file is created.
 
 ### 1.9 Environment Variable Mapping
 
@@ -471,7 +485,30 @@ modified, or deleted.
 
 ## 2. CLI Command Reference
 
-Implementation note: `tx` and `query` commands are clean-copied from `akash-network/chain-sdk/go/cli` into `internal/cli/chain`. Only CLI code is copied; all other chain-sdk packages are imported directly. Command flags default to the resolved akt context values unless explicitly overridden.
+Implementation note: `tx` and `query` commands are clean-copied from
+`akash-network/chain-sdk/go/cli` into `internal/cli/chain`. Only CLI code is
+copied; all other chain-sdk packages are imported directly. Command flags
+default to the resolved akt context values unless explicitly overridden.
+
+The release copy MUST contain only commands registered in the assembled `akt`
+tree and helpers reachable from those commands. Validator-node server, node
+RPC-console, state export, rollback, module-hash, genesis initialization and
+genesis migration helpers remain in `akash-network/node` and MUST NOT be kept
+in `internal/cli/chain` as an unregistered reference copy. The public
+`query block`, `query blocks`, and `query block-results` commands are the
+exception to their former server-file ownership: they remain release commands
+in a focused block-query implementation. Duplicate upstream `keys` commands
+MUST NOT coexist with `akt context keys`; `internal/cli/keys` is the sole key
+management command owner.
+
+An upstream command implementation that is deliberately absent from the
+command tree, including unsupported crisis/evidence transactions or an
+unregistered multisign-batch variant, is not release source. Orphan helpers
+used only by those copies are removed rather than tested for coverage. The
+staking commission-rate builder remains because the registered
+create-validator action calls it. Certificate transaction code, including the
+currently reachable `--to-genesis` behavior, remains unchanged until a
+separate specification decision removes or replaces that public option.
 
 **Help text requirement**: Every command and subcommand must populate cobra's `Example` field with at least one usage example. The example must name a registered command and registered flags, and it must be syntactically runnable after replacing any clearly explained placeholders. It should demonstrate the most common use case with realistic argument values. Commands with multiple modes of operation (e.g., list vs get, interactive vs scripted) should include one example per mode. User-facing help must not contain internal specification references, review notes, or instructions aimed at an automated agent. This ensures that `akt <command> --help` is self-contained -- users should never need to consult external documentation for basic usage.
 
@@ -487,6 +524,14 @@ those values. The accepted enum and the values rendered in `--help` are one
 contract: when an adopted flag is normalized, its help text is normalized in
 the same boundary pass.
 
+Governance leaf queries parse proposal identifiers and validate voter and
+depositor bech32 addresses and pagination before invoking the query client.
+`query gov param` accepts exactly `voting`, `tallying`, or `deposit` and rejects
+any other selector before transport work. Where a vote, deposit, deposit-list,
+vote-list, or tally query first checks that the proposal exists, a failed
+preflight wraps the underlying dependency error so it remains discoverable
+with `errors.Is`.
+
 Every accepted flag must affect the operation it describes. If a leaf cannot
 apply an inherited transport, snapshot, pagination, or output flag, it rejects
 that flag before configuration or network work rather than accepting and
@@ -495,6 +540,22 @@ supplying both is a usage error unless that command explicitly documents a
 different precedence rule.
 Each selectable command path is unique; dependency-owned trees are deduplicated
 when they are adopted into the assembled command tree.
+
+Typed chain query responses are untrusted transport input. A query call that
+returns no error MUST still provide a non-nil response object, plus every nested
+object the selected command renders as a required result. A missing successful
+response is a malformed-node error. The command MUST NOT dereference it, print a
+zero-valued result, or report success. Valid requests preserve the exact parsed
+identity and pagination fields, transport errors remain classifiable by their
+original cause, and destination failures from query rendering remain command
+errors.
+
+BME conversion and escrow-deposit commands MUST validate the required identity
+and run the constructed SDK message's `ValidateBasic` contract before
+broadcast. In particular, BME conversions reject a zero burn amount, and
+escrow deposits reject a zero deployment identifier, zero amount, empty or
+invalid source set, and duplicate sources. A rejected message produces no
+transaction request or success output.
 
 The global `--context` flag selects every context-owned resource touched by an
 invocation. This includes `context show`, `context log`, Console API key login
@@ -824,6 +885,58 @@ akt
 ├── version [--long]                     # Version information (--long: full build info)
 └── completion                           # Shell completion scripts
 ```
+
+Authz grant construction MUST validate the concrete SDK authorization before
+generating or broadcasting a transaction. This applies to send, deposit,
+generic, staking, contract execution/migration, and store-code grants. Nested
+contract limits and filters, raw contract messages, and store-code grant sets
+MUST therefore satisfy their authoritative SDK validation rules; ambiguous
+limit/filter combinations, invalid JSON, duplicate entries, empty generic
+message types, and other invalid authorization state fail locally with no
+transaction output and no broadcast. A valid generated `MsgGrant` MUST retain
+the complete granter and grantee addresses, concrete authorization type and
+fields, and requested expiration exactly.
+
+`query escrow blocks-remaining` MUST derive its estimate from one consistent
+snapshot of BME status, the `uakt` oracle price, active leases for the exact
+owner/deployment sequence, current block height, and the deployment escrow
+account. It MUST request only active matching leases, sum all lease rates,
+ignore negative balances, always include `uact`, and include `uakt` only while
+the BME circuit breaker is active and the price feed is healthy. Missing
+identity, no matching lease, or any upstream query failure MUST return an error
+instead of printing an estimate. JSON and YAML output MUST encode the same
+balance, block count, and average-block-time duration.
+
+The registered `query upgrade` group MUST expose `plan`, `applied
+<upgrade-name>`, and `module_versions [module-name]`. `plan` prints only a real
+scheduled plan and reports when none exists. `applied` MUST bind the queried
+upgrade name to its recorded height and the block header fetched at that exact
+height; a zero height or missing header is an error. `module_versions` MUST
+preserve the optional module filter and report an absent result as not found.
+All three commands use the standard context-aware chain-query pre-run and
+propagate transport errors without printing a successful result.
+
+Wasm instantiation MUST preserve the transaction intent exactly. The code ID
+MUST be an unsigned integer, the label MUST be non-empty, and funds MUST parse
+as normalized SDK coins. Callers MUST choose exactly one administration mode:
+an explicit admin (a bech32 address or a keyring name resolved to its complete
+address) or `--no-admin` for an immutable contract. Omitting both choices or
+combining them is invalid and MUST fail before broadcast. The generated message
+MUST retain the sender, initialization JSON bytes, normalized funds, label,
+code ID, and resolved full admin address without alteration.
+
+Wasm upload inputs MUST be either a Wasm binary or a valid gzip stream. Empty,
+truncated, unrelated, or corrupt files MUST return an actionable validation
+error and MUST NOT panic. When reproducible-build verification fields are used,
+source, builder image, and code hash are an all-or-nothing set; the source and
+builder MUST parse, the gzip stream MUST decompress within the Wasm size limit,
+and the declared hash MUST exactly match the uncompressed Wasm bytes.
+Upload instantiate-permission modes (`any-of` addresses, everybody, or nobody)
+MUST be mutually exclusive. A false boolean value does not select that mode;
+malformed booleans, invalid or duplicate full addresses, the removed single-
+address form, an any-of set larger than the upstream maximum, and multiple
+selected modes MUST fail before message creation. No user-supplied permission
+set may trigger a panic.
 
 Only executable transaction actions appear in this tree. The Akash app does
 not register the Cosmos SDK `MsgVerifyInvariant` handler, so `tx crisis` is not
@@ -1357,6 +1470,14 @@ the same validation from their declared parameter types.
 | `shell`    | Run a shell command (for custom workflows)     | `command`, `output`                           |
 | `check`    | Assert a condition, skip/abort if not met      | `condition`, `on-fail: skip\|abort`           |
 | `foreach`  | Iterate over a query result, executing a sub-step for each item | `query`, `params`, `as`, `step`, `on-error`  |
+
+A false `check` condition with `on-fail: skip` records the step as `skipped`
+and continues the workflow without also requiring `on-error: skip`. With
+`on-fail: abort` (or no override), the same false condition records `failed`
+and returns an error. An `output` step succeeds only when both template
+rendering and the complete write to its configured destination succeed. A
+writer error is a failed step and is subject to the ordinary `on-error`
+policy; output loss is never reported as success.
 
 **`foreach` step detail:**
 
@@ -1937,13 +2058,15 @@ Stream container logs from a lease. The positional `dseq` supplies the deploymen
 `--tail` is exact for a bounded read. Values below `-1` are invalid, and
 `--tail` with `--follow` is refused because an endless stream has no final
 tail. Service and tail filtering are enforced by `akt` after receipt because
-older provider gateways may ignore those query parameters.
+older provider gateways may ignore those query parameters. Each received log
+WebSocket frame is limited to 16 MiB before JSON decoding.
 
 #### `akt provider lease-events [dseq]`
 
 Stream Kubernetes events from a lease. The positional `dseq` behaves as in `lease-logs` (`--dseq` — **disabled pending feedback**, positional only, 2026-07).
 
 Same flags as `lease-logs` (minus `--service`, `--tail`), plus `--follow`.
+Each received event WebSocket frame is limited to 16 MiB before JSON decoding.
 
 #### `akt provider lease-shell`
 
@@ -1969,6 +2092,13 @@ EOF on attached stdin is not a command failure: `akt` waits for the provider's
 remote exit result and returns that result. This prevents a successful
 non-interactive command from printing its output and then exiting non-zero
 solely because local stdin was already closed.
+
+The current chain-SDK PTY transport remains context-cancellable, and akt
+redacts the exact request JWT from any returned shell error. Its failed
+handshake body and received WebSocket frames are not yet size-bounded.
+Replacing that transport locally or upstreaming limits to the shared provider
+client is a P0 gap; shell must not be described as having the 16 MiB log/event
+frame limit until that work lands.
 
 ```bash
 akt provider lease-shell --dseq 12345 --provider akash1prov... --service web -- /bin/bash
@@ -2023,8 +2153,10 @@ and one YAML document per record in YAML mode. Before opening a log, event, or
 shell stream, `akt` checks lease status so a missing lease is a non-zero gateway
 error instead of a successful empty stream. An EOF closes a bounded one-shot
 stream successfully after its records are written; the same EOF is an error
-under `--follow`. Non-success gateway responses include both the HTTP status
-and the provider's trimmed response body when one is available.
+under `--follow`. Log and event frames are capped at 16 MiB; the shell exception
+and P0 boundary gap are documented above. Non-success gateway responses include
+both the HTTP status and the provider's trimmed response body when one is
+available.
 
 ### 2.5 Store Commands
 
@@ -2083,6 +2215,46 @@ Import records from a previously exported file.
 | `--merge`   | bool | `true`  | Merge with existing records (default) |
 | `--replace` | bool | `false` | Replace entire store contents         |
 | `--dry-run` | bool | `false` | Show what would be imported           |
+| `--yes`, `-y` | bool | `false` | Confirm a destructive replacement non-interactively |
+
+The importer strictly decodes and validates the complete export envelope before
+it opens a write transaction. The `deployments`, `leases`, and `bids` members
+are required non-null arrays, including when empty. JSON and YAML reject unknown
+fields, trailing documents, and type mismatches rather than treating omitted,
+null, or misspelled collection names as empty collections. It rejects
+unsupported envelope or schema versions,
+malformed identities, unknown record states, negative record timestamps or
+heights, and nil deployment, lease, or bid records. `sync_state` is optional
+because an exported store may not have
+completed reconciliation yet; when present it is validated. Merge and replace
+imports each apply all records in one bbolt write transaction. Replace clears
+existing records only inside that transaction, after validation has succeeded.
+A decode, validation, migration, or write error rolls the transaction back and
+leaves the prior logical store state unchanged. `--dry-run` performs the same
+validation against a disposable, transactionally consistent snapshot of the
+existing database, or a disposable empty database when the context has no
+store. It MUST NOT create the selected context directory or database, run a
+migration against that database, or otherwise mutate its filesystem state.
+Replacement requires the explicit `--replace` flag and an affirmative prompt,
+or `--replace --yes`; setting `--merge=false` alone is rejected and never
+selects the destructive mode. A dry run never prompts because it cannot mutate
+the store.
+Opening an existing source snapshot is bounded by both the caller's context and
+a short database-lock timeout; another process holding the store cannot make a
+dry-run wait indefinitely. Import decoding reads at most 64 MiB, including one
+lookahead byte used to distinguish an exact-limit document from oversized
+input. Files above that limit fail before JSON/YAML decoding or database work.
+
+Exports enforce that same 64 MiB encoded-envelope ceiling before writing the
+document prefix or payload. A successful JSON or YAML backup is therefore
+accepted by the same binary's importer; an oversized store fails without
+leaving a partial backup. Missing metadata or data buckets are corruption
+errors rather than panics.
+
+When `--file` is set, export writes a sibling temporary file, flushes and closes
+it successfully, and only then atomically renames it over the destination. An
+export, flush, or close failure removes the temporary file and MUST leave an
+existing backup at the destination byte-for-byte unchanged.
 
 #### `akt store sync [account]`
 
@@ -2195,6 +2367,25 @@ MUST NOT trigger first-run bootstrap. Monitor cache directory creation/open
 errors are fatal startup errors. `--clean-cache` removes both `monitor.db` and
 the legacy `top.db`; a failed deletion is reported and the monitor does not
 claim the cache was cleared.
+
+Standalone monitor construction MUST also fail if the CometBFT event client
+cannot be constructed or started, or if the event service synchronously rejects
+its `NewBlockHeader` subscription. Every failure after the cache opens uses the
+same idempotent teardown as a completed monitor session: cancel and drain model
+tasks, shut down any started event service, stop any started CometBFT client,
+close the event bus, and close the cache database. The command MUST NOT launch
+with a locally detected missing event producer and silently expose an empty
+bus.
+
+**Current event-readiness boundary (2026-08):** the pinned upstream CometBFT
+client reports `Subscribe` success when it queues the JSON-RPC request, before
+the server acknowledges it. A later server-side subscription rejection is
+handled inside that client's private listener and cannot currently be returned
+through monitor construction. Waiting for the matching acknowledgement,
+buffering an event that arrives before it, and surfacing terminal resubscription
+failure require a repository-owned `NewBlockHeader` transport. That remains
+roadmap work; local startup success MUST NOT be interpreted as proof of
+server-acknowledged event readiness.
 
 **Hub navigation:**
 
@@ -2350,7 +2541,19 @@ akt events --module market --output json
 
 Start an MCP (Model Context Protocol) server over stdio transport. The server exposes Akash Network tools that compatible clients can invoke to query chain state, check provider status, and (with explicit permission) perform mutating operations.
 
-Configuration is resolved from the active akt context (network, keyring, default account). Console tools are registered when a Console API key resolves through `--console-api-key`, `AKT_CONSOLE_API_KEY`, or the active context credential.
+Configuration is resolved from the active akt context (network, keyring,
+default account) when one exists. A resolved `--console-api-key` or
+`AKT_CONSOLE_API_KEY` is also a complete Console-only MCP configuration: with
+no context, the server starts with Console tools and omits chain/provider tools
+instead of requiring an unrelated provider-auth setting. Console tools are
+registered when a key resolves through either process-level source or the
+active context credential.
+This contextless mode is read-only. `--enable-writes` requires an explicitly
+selected context so the mandatory Console action log has a stable destination;
+the server fails before registering tools when that audit boundary is absent.
+`akt mcp` never launches the interactive first-run wizard because stdio is its
+protocol channel; without either rail it returns the MCP-specific no-tools
+diagnostic.
 
 | Flag                | Type   | Default | Description                                                                       |
 | ------------------- | ------ | ------- | --------------------------------------------------------------------------------- |
@@ -2360,6 +2563,22 @@ Configuration is resolved from the active akt context (network, keyring, default
 **Permission model:**
 
 By default, only read-only query tools are registered. This prevents an MCP client from sending unapproved transactions or performing mutating operations. The `--enable-writes` flag must be explicitly passed to enable write tools. This flag covers both on-chain transactions (which require keyring signing), Console mutations, and mutating provider REST API calls (e.g., submitting manifests).
+
+Enabling MCP writes does not create a second mutation path. Chain broadcasts
+MUST pass through the same transaction action-log decorator used by `akt tx`,
+Console tools MUST use a client carrying the selected context's action logger,
+and provider mutations MUST use the shared provider action recorder. Each
+attempt records the same success, pending, or failed entry required for the
+equivalent CLI operation. Read-only MCP tools MUST NOT append action-log
+entries.
+
+Every provider REST tool requires the provider's full owner address and uses
+the provider record's on-chain `host_uri` as its gateway URL. No tool accepts an
+independent URL that could capture a wallet credential or target one gateway
+while naming another provider in the audit log. Once a manifest tool's
+provider, DSEQ, and manifest inputs are valid, it records exactly one provider
+attempt, including provider lookup, local authentication, or
+gateway-construction failures that occur before an HTTP request.
 
 The inventory is capability-driven. A chain RPC registers 19 read tools; a
 Console credential registers eight. With both configured, `tools/list`
@@ -2406,7 +2625,7 @@ only that rail's subset.
 | `akash_close_deployment`       | Close a deployment (on-chain transaction)                                  |
 | `akash_create_lease`           | Create a lease from a bid (on-chain transaction)                           |
 | `akash_close_lease`            | Close an active lease (on-chain transaction)                               |
-| `akash_submit_manifest`        | Submit manifest to provider (provider REST mutation)                       |
+| `akash_submit_manifest`        | Resolve a provider owner/address and submit its manifest to the registered gateway |
 | `console_close_deployment`     | Close a Console-managed deployment                                         |
 | `console_deposit`              | Add USD credit to a Console-managed deployment                             |
 
@@ -2418,7 +2637,7 @@ loop, allow in-flight tool workers to return, and exit cleanly without printing
 contexts passed to tool handlers retain command-level cancellation while also
 observing these process signals.
 
-**Client implementation:** Uses `v1beta3.LightClient` from chain-sdk for read-only mode, `v1beta3.Client` for write mode, and the shared authenticated provider gateway client for provider REST tools. A `provider_url` selects the endpoint; it does not disable authentication. Keyring contexts attach a wallet-signed JWT, and missing signing identity is reported before the request.
+**Client implementation:** Uses `v1beta3.LightClient` from chain-sdk for read-only mode, `v1beta3.Client` for write mode, and the shared authenticated provider gateway client for provider REST tools. Every provider REST tool accepts a provider owner bech32 address, resolves that provider's current `host_uri` from chain state, and connects only to the registered endpoint. MCP input never supplies an arbitrary URL to a client carrying a wallet JWT or certificate. Keyring contexts attach a short-lived wallet-signed JWT for protected lease/service/manifest calls. That JWT uses granular claims restricted to the resolved provider, deployment identity, and exact operation scope; it MUST NOT use full lease access, so a provider cannot replay it for another provider or operation. Missing signing identity is reported before the request. Public provider status uses the same registered-endpoint resolution without attaching credentials.
 
 **Money units:** `console_wallet_balance` returns explicit `available_usd`, `in_deployments_usd`, and `total_usd` numbers. Console's integer µACT wire values must not leak through this semantic interface.
 
@@ -2436,8 +2655,14 @@ Console-only context does not make that context require a local keyring.
 `oseq`) are positive whole numbers. Pagination values (`skip` and `limit`) are
 non-negative whole numbers; zero retains the documented default behavior.
 Their tool schemas declare these bounds and integer steps. The server rejects
-negative, fractional, non-finite, and out-of-range values before a handler can
-coerce them to a different identifier or silently substitute a default.
+negative, fractional, non-finite, out-of-range, and JSON-unsafe integer values
+before a handler can coerce them to a different identifier or silently
+substitute a default. Required strings and strings whose schema declares a
+positive `minLength` reject empty or whitespace-only values. An optional blank
+string has the same meaning as omission when the handler documents an optional
+filter or default. Tool objects are closed inputs: an argument absent from the declared
+schema is rejected with its exact name, so a typo cannot silently select a
+default.
 
 **Examples:**
 
@@ -2502,7 +2727,7 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | `akt console deployment get <dseq>`                 |                                                | Deployment with leases and escrow account.                                                     |
 | `akt console deployment create <sdl-file> [deposit-usd]` | `--deposit <usd>` (alternative to positional; min 0.5) — **disabled pending feedback** (positional only, 2026-07) | Create a deployment; prints `dseq` + tx hash, the Console default `autoTopUp: {enabled: true, frequency: daily}`, and the exact command that disables it. It does not invent a deployment `state`; `deployment get` is authoritative for the later open/active transition. The deposit uses the unified cross-rail syntax (§7.4): `5`, `5usd`, or `$5` (min $0.50); coin forms like `5000000uakt` fail with the cross-rail error. The returned manifest is cached at `contexts/<name>/manifests/<dseq>.json` for `lease create`. |
 | `akt console deployment update <dseq> <sdl-file>`   |                                                | Update the deployment's SDL.                                                                   |
-| `akt console deployment close <dseq>`               |                                                | Close a deployment. Idempotent: an already-closed deployment prints a note and exits 0.        |
+| `akt console deployment close <dseq>`               |                                                | Close a deployment. Idempotent only when the API unambiguously reports already closed or absent; a rejection that merely contains `closed` remains an error. |
 | `akt console deployment deposit <dseq> [amount-usd]` | `--amount <usd>` (alternative to positional; > 0) — **disabled pending feedback** (positional only, 2026-07) | Add funds to the deployment's escrow. The amount uses the unified cross-rail syntax (§7.4): `10`, `10usd`, or `$10`; coin forms fail with the cross-rail error. |
 | `akt console deployment settings <dseq> [true\|false]` | `--auto-top-up true\|false` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Show settings when no value is given; set auto-top-up when a positional or flag value is present. |
 | `akt console bid list <dseq>`                       |                                                | List bids for the deployment's open orders.                                                    |
@@ -2537,7 +2762,7 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | -------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------- |
 | `akt console apikey list`        |                                                | List API keys (secrets are never shown).                         |
 | `akt console apikey create <name> [expires-at]` | `--name`, `--expires-at` (RFC 3339, alternatives) — **disabled pending feedback** (positional only, 2026-07) | Create a key; the secret is printed exactly once with a warning. |
-| `akt console apikey delete <id>` |                                                | Delete a key; a missing key (404) is a no-op.                    |
+| `akt console apikey delete <id>` |                                                | Delete a key; a missing key (404) is a no-op. Pretty output acknowledges the full ID; JSON/YAML return `{id, deleted:true}`. |
 | `akt console jwt create`         | `--ttl` (300), `--scope` (csv, default `status,logs,events,shell,send-manifest,get-manifest`) | Mint a short-lived provider-scoped JWT. |
 
 **Provider gateway (live lease operations):**
@@ -2856,6 +3081,12 @@ signing-key lookup or even opening the configured backend. `--dry-run` has the
 same address-only identity contract because simulation does not sign. A signer
 name still resolves through the selected keyring on demand. A transaction that
 will sign opens and validates its keyring during startup.
+`akt tx staking create-validator` additionally accepts `--node-id`, `--ip`,
+and `--p2p-port` (default `26656`). During `--generate-only`, when node ID and
+IP are both present, the unsigned transaction note is exactly
+`<node-id>@<ip>:<p2p-port>`. The P2P port MUST be in the inclusive range
+1–65535; an invalid explicitly supplied port is a usage error and MUST NOT
+produce a transaction document.
 Multisign assembly accepts only a legacy amino multisig record and validates
 that each signature batch contains an entry for every transaction before
 indexing it; ordinary keys and short batches are normal input errors, never
@@ -2917,6 +3148,19 @@ invocation that supplies both. An explicit `--chain-id` must agree with the
 selected context even for a local derivation. File-oriented queries such as
 `wasm code`, whose primary result is written to a named file, reject structured
 stdout formats they cannot represent.
+
+The three direct CometBFT block queries use the active context's resolved RPC
+client and the invocation context. `blocks` requires one positional CometBFT
+event expression, accepts only `asc` or `desc` when `--order_by` is set, and
+preserves the node's reported total alongside the requested page and limit.
+`block` accepts an explicitly typed positive decimal height or hexadecimal
+hash; with no identifier it resolves the latest committed positive height.
+`block-results` likewise resolves the latest committed positive height when no
+height is supplied. A nil status, non-positive latest height, nil search or
+results response, or search entry without a block body is a boundary error and
+must not be rendered as a successful empty result. Block and block-search
+protobuf responses honor JSON/YAML output semantics, block-results preserves
+the same structured semantics, and all three propagate output-writer failures.
 
 `wasm build-address` interprets its salt positional as hexadecimal by default.
 `--ascii`, `--hex`, and `--b64` select one mutually exclusive input encoding.
@@ -3574,6 +3818,31 @@ The three version values are independent:
 - top-level `schema_version` is the bbolt layout and migration level;
 - each `record_version` is that individual record's monotonic update revision.
 
+An export reads the schema version, optional sync state, deployments, leases,
+and bids from one bbolt read transaction so concurrent writers cannot produce a
+mixed-time envelope. Unlike list and statistics views, which may continue past
+one unreadable row, a backup export MUST fail and identify any corrupt record;
+it MUST NOT silently omit data and emit an apparently valid backup.
+
+File export is atomic with respect to an existing destination: encoding occurs
+in a sibling temporary file, and replacement happens only after a successful
+flush and close. A failed export leaves the prior destination unchanged.
+
+Imports are all-or-nothing. The complete envelope and every record are strictly
+decoded and validated before mutation. Unknown JSON/YAML fields and trailing
+documents are errors. Record identities are required; deployment state is one
+of `active` or `closed`, lease state is one of `active`, `closed`, or
+`insufficient_funds`, and bid state is one of `open`, `matched`, `closed`, or
+`lost`. Record timestamps and block heights cannot be negative. A missing
+`sync_state` is valid and represents a
+store that has not completed reconciliation. A merge writes every accepted
+record in one bbolt transaction. A replace clears the data buckets and writes
+every accepted record in one bbolt transaction. Any malformed or unsupported
+envelope, nil or invalid deployment, lease, or bid record, or write failure
+aborts that transaction and leaves the prior store state unchanged. The
+implementation MUST NOT clear a store before it knows the replacement can be
+accepted.
+
 ---
 
 ## 5. Action Log Specification
@@ -3704,18 +3973,29 @@ The action log records entries for the following command categories:
 
 | Command category | Logged | Entry type | When |
 |---|---|---|---|
-| `tx *` | Always | `tx` | After broadcast (success or failure). On success: includes tx hash, plus height and gas used when the broadcast mode reports them. Status is `pending` when the transaction was accepted into the mempool but not yet included in a block (the default `sync` mode), and `success` once a height is known. `akt context log` reconciles displayed pending hashes and appends a terminal revision when the node reports inclusion. On failure: includes error message and result code. |
+| `tx *` and MCP chain write tools | Always | `tx` | After broadcast (success or failure). On success: includes tx hash, plus height and gas used when the broadcast mode reports them. Status is `pending` when the transaction was accepted into the mempool but not yet included in a block (the default `sync` mode), and `success` once a height is known. `akt context log` reconciles displayed pending hashes and appends a terminal revision when the node reports inclusion. On failure: includes error message and result code. |
 | `query *` | Never by default | `query` | Read-only queries are not state changes and are not recorded by default (see verbose row below). |
 | Workflow commands (`deploy`, `update`, `close`) | Always | `workflow` | One entry per workflow step. Each entry includes the step name, step index, result, and workflow run ID, and `akt context log` renders the step and run in `SUMMARY` so the steps of a run stay distinguishable and a failed step is identifiable (§2.2). |
-| `provider *` (state-changing: `send-manifest`, `migrate-hostnames`, `migrate-endpoints`, `lease-shell`) | Always | `provider` | After the provider gateway operation completes (success or failure). Read-only provider queries (`status`, `lease-status`, `lease-logs`, `lease-events`, `get-manifest`) are not recorded. |
+| `provider *` and MCP provider writes (state-changing: `send-manifest`, `migrate-hostnames`, `migrate-endpoints`, `lease-shell`) | Always | `provider` | After the provider gateway operation completes (success or failure). Read-only provider queries (`status`, `lease-status`, `lease-logs`, `lease-events`, `get-manifest`) and MCP query tools are not recorded. |
 | `context *` | Always | `context` | After context management operation (switch, edit, create, delete). |
 | `context keys *` (state-changing: `add`, `add --recover`, `delete`, `rename`, `import`) | Always | `context` | After the keyring mutation returns (success or failure), under a dotted `keys.*` action. Secrets — mnemonics, BIP39 and armor passphrases, key material — are never recorded (§2.2.2). Read-only `list`, `show`, `parse`, and `mnemonic` are not recorded. |
 | `context keys export` | Always | `context` | The single exception to the read-only rule: exporting private key material is recorded as a security event, with the key name only and never the armor or passphrase (§2.2.2). |
-| Console API state changes (create/update/close deployment, create lease, deposit) | Always | `console` | After the Console API call completes (success or failure). Read-only Console queries are not recorded. |
+| Console API state changes from CLI, workflow, or MCP (create/update/close deployment, create lease, deposit) | Always | `console` | After the Console API call completes (success or failure). Read-only Console queries, including MCP query tools, are not recorded. |
 | All commands | On failure | `error` | When any command fails. Includes original action type and error message. |
 | `query` (read-only, no side effects) | When `-v` is set (future) | `query` | Verbose-mode query logging for debugging is planned but not yet implemented. Internal queries (e.g. by the sync engine) are never logged. |
 
 The action logger is opened in the root command's `PersistentPreRunE` and closed in `PersistentPostRunE`. Commands retrieve it via `cliutil.ActionLogFromContext(cmd.Context())`.
+When a selected context requires an action log, failure to open that log is a
+startup error. The command MUST NOT continue without its audit destination.
+
+Real mutation E2E must inspect the raw append-only JSONL after invoking the
+public log command once to reconcile pending transactions. Assertions decode and
+collapse revisions independently; `akt context log` cannot serve as the sole
+oracle for the writer and reader it is testing.
+
+Console-minted JWT access to a provider does not change this classification:
+`akt console shell` records the same single `provider/lease-shell` entry as the
+keyring rail, while Console status, logs, and events remain read-only.
 
 ### 5.7 Log Rotation
 
@@ -3723,6 +4003,16 @@ The action logger is opened in the root command's `PersistentPreRunE` and closed
 - Rotated logs are named `actions.log.1`, `actions.log.2`, etc.
 - A maximum of 5 rotated logs are kept (total ~50 MB per context).
 - `akt context log` reads across all rotated files transparently.
+- One serialized JSONL record, including its trailing newline, MUST NOT exceed
+  10 MB. `Log` rejects an oversized record before rotation or append, so one
+  caller cannot defeat the per-context storage bound. The reader accepts every
+  record size the writer accepts, but applies the same ceiling to externally
+  modified files so a corrupt or hostile unterminated row cannot cause
+  unbounded allocation.
+- A missing rotation generation is normal. Any other read error from an
+  existing generation, or failure to flush the active log before reading, is
+  returned. `Read` and `Export` never present a partial audit history as a
+  complete one merely because one rotated file is damaged.
 
 ---
 
@@ -3749,6 +4039,30 @@ Additional filters for market events:
 tm.event='Tx' AND akash.market.v1beta4.EventBidCreated.owner='<owner-address>'
 tm.event='Tx' AND akash.market.v1beta4.EventLeaseCreated.owner='<owner-address>'
 ```
+
+Closing a subscription channel terminates its consumer cleanly. The worker
+MUST stop receiving, release the subscription, and return. It MUST NOT treat a
+closed receive as a zero-value event or loop after closure. Context cancellation
+and producer closure follow the same bounded shutdown path.
+
+The event service MUST validate its client capabilities at construction. An
+RPC client that does not implement CometBFT event subscriptions is rejected
+with a descriptive error; construction MUST NOT panic on a failed type
+assertion.
+
+The standalone monitor treats event-service construction failure as a fatal
+startup error and releases its already-open runtime resources. With the current
+upstream WebSocket client, this covers a synchronous subscription enqueue
+failure only. The server's later JSON-RPC acknowledgement or rejection is not
+observable through that interface; the acknowledged and reconnect-aware
+transport described in §2.6 remains required before this service can claim
+end-to-end readiness.
+
+Block-results responses are also untrusted. A successful RPC call with a nil
+response is ignored without panic. Both transaction result events and
+`finalize_block_events` are parsed and published; an unreadable individual
+event is skipped, while a bus publication failure stops processing the rest of
+that block.
 
 ### 6.3 Event Processing
 
@@ -3779,6 +4093,13 @@ On first launch for a context (no `SyncState` in store):
    `tags`, `sdl_path`, `sdl_hash`) is preserved from the record already in the
    store, so reconciling never discards what a workflow run recorded (§6.6).
 5. Set `SyncState.LastBlockHeight` to the current chain height.
+
+Deployment, lease, and bid reconciliation MUST request every pagination page.
+The engine records each non-empty continuation key separately for each query
+family and fails locally if a node repeats a key; it MUST NOT issue the repeated
+request or loop until context cancellation. An empty key terminates traversal.
+This is an untrusted network boundary even when the preceding page decoded
+successfully.
 
 On subsequent launches (existing `SyncState`):
 
@@ -3926,11 +4247,28 @@ API keys are created at [console.akash.network](https://console.akash.network) >
 | Context override    | `console-api-url` field in config.yaml |
 | Flag override       | `--console-api-url`                    |
 
+The Console client MUST NOT follow HTTP redirects. The configured base origin
+is the only destination authorized to receive `x-api-key`, request bodies, or
+managed-wallet mutations. Any 3xx response is an error returned to the caller
+without issuing a request to the redirect target. The returned error MUST NOT
+include the `Location` value. All transport errors, not only HTTP response
+bodies, MUST redact every exact API-key occurrence before they can reach a
+caller or action log; the action-log boundary repeats the redaction as defense
+in depth.
+
 ### 7.3 Endpoints
 
 All requests include `Content-Type: application/json` and `x-api-key` headers.
 
 The endpoints below cover the deployment lifecycle used by command and workflow routing (§7.4-§7.5). The client's full surface — user info, wallets, usage, provider/GPU/template catalogs, API keys, and provider-scoped JWTs — is documented per command in §2.9 and contract-tested against the vendored OpenAPI spec (`internal/console/testdata/openapi.json`).
+
+Provider-gateway calls made after Console or keyring authentication enforce a
+separate transport boundary. One-shot responses have an overall timeout and a
+bounded body; exceeding either limit fails the command. Streaming logs, events,
+and shell sessions remain caller-cancellable and are not cut off by the
+one-shot deadline. Provider-controlled error detail is length-bounded, stripped
+of terminal control sequences, and redacted for bearer/API credentials before
+it is returned or recorded in an action log.
 
 #### `POST /v1/deployments` -- Create Deployment
 
@@ -4064,6 +4402,7 @@ Use `akt deploy`, `akt update`, `akt close`, or `akt console` for managed-wallet
 | 404         | Deployment not found (dseq does not exist or not owned by user).  |
 | 429         | Rate limited. Retry with backoff only for idempotent methods (GET/HEAD/PUT/DELETE). A non-idempotent request may already have reached the service and is never replayed. |
 | 5xx         | Console API server error. Retry with backoff (max 3 attempts) for idempotent methods (GET/HEAD/PUT/DELETE) only. A non-idempotent request is never replayed: it may have been processed despite the error (e.g. a gateway 502 after a completed write), and replaying it could duplicate a deployment or a USD deposit. |
+| 3xx         | Redirect refused. No second request is issued and the API key is not forwarded. |
 
 The Console may transiently reject an otherwise valid deployment PUT with
 `422 manifest version validation failed`. Because PUT is idempotent, that exact
@@ -4076,12 +4415,16 @@ read-back rule in §7.3 and is never replayed.
 Deployment creation adds a stronger ambiguity protocol. Before POSTing, the
 client validates the SDL, derives its base64 version hash and rendered
 manifest, and snapshots every existing deployment DSEQ through the paginated
-list endpoint. It then submits exactly one POST. Transport errors, 429, 5xx,
-and a success response without a usable DSEQ are ambiguous: the client polls
-the list within a fixed bound and selects deployments absent from the snapshot
-whose hash equals the SDL version. Exactly one match is reconciled as success
-and supplies the locally rendered manifest; zero or multiple matches return an
-"outcome unknown" error that tells the user to inspect
+list endpoint. A complete list traversal is limited to 100 pages and 10,000
+deployment records. If `hasMore` remains true after the page limit or a response
+would cross the record limit, the client returns a local pagination-limit error.
+It does not retain the excess records or submit a create request from an
+incomplete baseline. It then submits exactly one POST. Transport errors, 429,
+5xx, and a success response without a usable DSEQ are ambiguous: the client
+polls the list within a fixed bound and selects deployments absent from the
+snapshot whose hash equals the SDL version. Exactly one match is reconciled as
+success and supplies the locally rendered manifest; zero or multiple matches
+return an "outcome unknown" error that tells the user to inspect
 `akt console deployment list`. The request is never repeated. The action log
 records reconciled success with the DSEQ, definitive 4xx failure as `failed`,
 and an unresolved ambiguous outcome as `pending` with the SDL version hash.
@@ -4238,6 +4581,11 @@ Shows deployment metadata (owner, created, deposit, escrow balance, version, SDL
 
 **Columns**: DSEQ, GSeq, OSeq, Provider, State, Price/Block, Age.
 
+Row identity is the complete owner/DSEQ/GSeq/OSeq/provider tuple. DSEQ alone is
+not unique and MUST NOT select a different lease belonging to the same
+deployment. Provider addresses are always displayed in full in both list and
+detail identifiers.
+
 **Actions**: Enter detail, l logs, e events, s shell, w withdraw, / filter.
 
 #### 8.3.4 Providers List View
@@ -4341,7 +4689,7 @@ Real-time consensus state monitoring. Polls the RPC `/consensus_state` endpoint 
 
 **Data sources**:
 - `GET {rpc}/consensus_state` -- Round state, vote bit arrays, proposer info
-- `GET {rpc}/validators?per_page=100` -- Validator set (cached per session)
+- `GET {rpc}/validators?per_page=100` -- Validator set (refreshed at consensus-height boundaries; errors are never cached)
 
 **Displayed data**:
 - Height (with thousand separators), Round, Step (human-readable: NewHeight, NewRound, Propose, Prevote, PrevoteWait, Precommit, PrecommitWait, Commit)
@@ -4349,6 +4697,40 @@ Real-time consensus state monitoring. Polls the RPC `/consensus_state` endpoint 
 - Proposer address and index
 - Prevote/Precommit progress bars: `█`/`░` (40 chars wide), percentage (green if >= 66.7%, yellow otherwise), power fraction
 - Validator vote grid: `●` (voted, green) / `○` (not voted, muted), line-wrapped to terminal width
+
+Consensus height, round, and numeric step values are untrusted input and MUST
+be nonnegative before they are used as indexes or applied to the model. A
+negative value is a malformed-response error, never a panic. Prevote and
+precommit state is scoped to the exact `(height, round)` pair. A height change
+or a same-height round change clears the prior round's vote state before new
+votes are applied, so the displayed voting power cannot include votes from an
+earlier round. Delayed WebSocket events whose height is lower than the current
+height, whose round is lower at the same height, or whose step is lower in the
+same height and round are stale and MUST be ignored rather than rewinding the
+model. A valid vote at a higher height, or a higher round at the same height,
+MUST advance the model and clear the prior vote set. It is forward-progress
+evidence even when a reconnect caused the corresponding `NewRoundStep` event
+to be missed.
+
+The consensus WebSocket feed subscribes to both `tm.event='Vote'` and
+`tm.event='NewRoundStep'` on its initial connection and after every successful
+transport reconnect. A transport reconnect alone MUST NOT be treated as a
+restored feed because CometBFT subscriptions are connection-scoped. The server
+MUST acknowledge both subscribe requests with their valid empty JSON-RPC result
+before setup succeeds; an event that races ahead of those acknowledgements MUST
+be buffered and applied after setup. If either subscription cannot be restored,
+the WebSocket client stops and the returned snapshot channel closes; it MUST
+NOT remain open as a silent feed. Transport and model reconnect delays MUST
+select on the runtime context so cancellation stops the producer, closes its
+snapshot and completion channels, and leaves no later dial scheduled.
+Validator indices and power apply only to the height for which they were
+fetched. Before applying the first vote or round-step event at a higher height,
+the feed MUST refresh the complete paginated validator set and rebuild its
+tracker. If refresh fails, it MUST NOT calculate percentages with the stale
+set; the connection cycle ends and retries without caching that error. An
+initial connection, subscription, or validator failure MUST update the visible
+error and schedule a bounded reconnect rather than leaving the monitor dead
+until process restart.
 
 **Refresh interval**: Configurable, default 1s. Supports fast mode (250ms).
 
@@ -4384,7 +4766,7 @@ Detailed validator list with real-time vote status.
 **Columns**:
 - Proposer indicator: `*` (yellow bold) for current proposer
 - Index: validator index in the set
-- Validator: Moniker (resolved from consensus pubkey via `/cosmos/staking/v1beta1/validators`; emoji-stripped; cached in `~/.config/akt/cache/monikers.json`)
+- Validator: Moniker (resolved from consensus pubkey via `/cosmos/staking/v1beta1/validators`; emoji-stripped; cached in the `monikers` bucket of `~/.config/akt/cache/monitor.db`)
 - Voting Power: formatted as K/M/B
 - Prevote: `✓` (green) or `✗` (red)
 - Precommit: `✓` (green) or `✗` (red)
@@ -4459,7 +4841,8 @@ Real-time monitoring of all Akash providers -- version distribution, resource ut
 - Per-provider health check: gRPC on port 8444 (preferred, includes GPU model info), REST `/status` + `/version` (fallback)
 - Active leases: REST `/akash/market/v1beta5/leases/list?filters.state=active` (for priority scheduling)
 
-**Provider cache** (stored at `~/.config/akt/cache/providers.json`):
+**Provider cache** (stored in the `providers` bucket of
+`~/.config/akt/cache/monitor.db`):
 - Smart scheduling: online providers checked every 1m, recently offline every 5m, long-term offline every 6h
 - Priority queue: unchecked first, then online, then recently offline, then long-term offline
 - Max 10 concurrent provider checks
@@ -4847,6 +5230,20 @@ App (root model)
 └── StatusBar           (1-3 dynamic lines: view hints, connection info, global keys)
 ```
 
+Shell layout works in terminal display cells. ANSI escape sequences are never
+indexed as visible runes when a label is overlaid on a progress bar, and
+flexible table columns distribute leftover cells instead of silently shrinking
+the requested width. The shell removes its own chrome before sizing child
+views; the monitor adapter forwards that content height unchanged. Batched and
+single log appends both register service scopes for the same filter menu.
+
+Every stored balance, deposit, escrow value, bid/lease price, and validator
+token count that carries a Cosmos denomination is rendered with the shared
+pretty coin formatter. Real decimal and integer coin strings are parsed before
+escrow ratios are calculated; incompatible denominations remain unknown rather
+than producing a plausible but false percentage. Named dashboard deployments
+retain their DSEQ so names cannot make otherwise distinct records ambiguous.
+
 ---
 
 ## 9. Plugin System Specification
@@ -4990,6 +5387,24 @@ akt query deployment 12345 -o json | jq '.deployment.state'
 ```
 
 When `--quiet` is set, stderr informational output (progress, status lines) is suppressed; only errors are emitted to stderr. When `--verbose` is set, additional operational detail is emitted to stderr.
+
+All final command renderers, including workflow pretty and JSONL reports,
+propagate writer errors and short writes. Producing only part of a requested
+machine-readable stream is a command failure even when the underlying query,
+transaction, or workflow completed successfully.
+
+This contract applies at every public output boundary: registered and fallback
+query formatters, every transaction result type and format, generic JSON/YAML,
+and tables. Commands write through `cmd.OutOrStdout()` rather than bypassing
+Cobra with `os.Stdout`. ANSI removal is a transparent decorator: it reports a
+short write of stripped bytes as `io.ErrShortWrite` while returning the original
+input length only after the stripped payload was accepted in full.
+
+The transaction pretty renderer applies this contract to the complete public
+`PrintTxResult` path. Summary rows, section headers, registered formatters,
+recursive formatters, and highlighted-JSON fallbacks share one checked writer.
+It returns destination errors and `io.ErrShortWrite`, while formatter errors
+remain available to `errors.Is` callers.
 
 Structured collection fields are always arrays. An empty collection is encoded
 as `[]` in both JSON and YAML, never as `null`; changing output formats must not
@@ -5196,6 +5611,13 @@ Addresses are **always displayed in full**. Never truncated or shortened by defa
 |--------|--------|--------|
 | DENOM | `Balance.Denom` | `uakt` row bolded |
 | AMOUNT | `Balance.Amount` | With AKT conversion for uakt |
+
+The all-balances request MUST leave denomination metadata resolution disabled.
+JSON and YAML preserve each canonical chain coin exactly (for example,
+`{"denom":"uakt","amount":"1000000"}`), while pretty output passes that raw
+coin through `FormatCoin()` and renders `1 AKT`. Resolving `uakt` to `akt` in
+the query transport is prohibited because it both changes machine semantics
+and bypasses the shared micro-unit formatter.
 
 **`QuerySpendableBalancesResponse`**: Same format as all balances.
 
@@ -5488,6 +5910,10 @@ Each message in the transaction body (`tx.Body.Messages`) is rendered using a re
 **Single-message transactions** (1 message): The message detail section renders directly with a descriptive section header (e.g., "Send", "Deployment Created", "Delegate").
 
 **Multi-message transactions** (2+ messages): Each message renders as a numbered sub-section with prefix: "Message N: \<title\>" (e.g., "Message 1: Withdraw Rewards", "Message 2: Delegate").
+Aggregate response events that omit `msg_index` are a valid fallback only for a
+single-message transaction. Multi-message formatting uses indexed ABCI logs or
+aggregate events carrying the exact index; otherwise receipt-only fields are
+omitted rather than copied from one message to another.
 
 **Unregistered message types**: If no `TxPrettyFormatter` is registered for a message type, the message is rendered as syntax-highlighted JSON of the decoded message body (using `WriteHighlightedJSON`).
 
@@ -5843,6 +6269,11 @@ Same fields as MsgCreateProvider.
 **`MsgExec`** — Title: "Authz Exec"
 
 Renders inner messages using their own registered formatters (recursive). Each inner message is shown as a sub-item.
+The receipt assigns events to the outer `MsgExec`, not to its individual inner
+messages. Inner formatters MUST receive no receipt events, so event-derived
+fields such as a proposal ID or contract address are omitted instead of
+reusing the first matching attribute for multiple inner messages. Fields
+carried by each inner message continue to render normally.
 
 ##### Feegrant
 
@@ -6139,19 +6570,18 @@ This matches `tx.Factory.BuildUnsignedTx`, so the estimate the dry run reports i
 **Table rendering engine.** `internal/output/pretty` is the canonical table
 engine for pretty output. It measures every cell with `lipgloss.Width`, so ANSI
 styling never breaks alignment, and it supports per-column alignment
-(`ColDef.Align`). Renderers write tables through exactly four entry points:
+(`ColDef.Align`). Renderers write tables through exactly three entry points:
 
 | Helper | Use |
 |---|---|
-| `WriteTable(w, headers, rows)` | All columns left-aligned. |
 | `WriteTableCols(w, cols, rows)` | Per-column alignment. |
 | `WriteTableOrEmpty(w, headers, rows, emptyMsg)` | As `WriteTable`, with a caller-named empty message. |
 | `WriteTableColsOrEmpty(w, cols, rows, emptyMsg)` | As `WriteTableCols`, with a caller-named empty message. |
 
 The `*OrEmpty` forms are the default choice for list renderers, because every
-list can come back empty. The plain forms carry the same guarantee as a
-backstop: given no rows they print the generic `(no results)` instead of a bare
-header, so no code path can regress to a header-only table.
+list can come back empty. The plain column-defined form carries the same
+guarantee as a backstop: given no rows it prints the generic `(no results)`
+instead of a bare header, so no code path can regress to a header-only table.
 
 `internal/output.PrintTable` is a second, legacy engine built on
 `text/tabwriter`. It is not ANSI-aware and has no per-column alignment, and it
@@ -6265,7 +6695,874 @@ Cobra provides this feature via `Command.SuggestionsMinimumDistance` and `Comman
 
 ---
 
-## 12. Phased Implementation Plan
+## 12. Testing and Verification
+
+This section defines the coverage denominator, collection method, behavioral
+inventory, integration environments, and quality gates for the repository.
+These requirements apply to every phase. A test that only executes a line does
+not satisfy a behavioral requirement unless it also verifies the promised
+result.
+
+### 12.1 Coverage denominators
+
+Coverage reports MUST publish all of the following denominators. They are not
+interchangeable.
+
+| Denominator | Required contents | Gate |
+|---|---|---|
+| `repository` | Every non-test Go statement compiled from this module, including `cmd/akt`, clean-copied code under `internal/cli/chain`, the disabled TUI shell, and repository-owned executable tooling such as `tools/coverage` | Reported on every pull request and default-branch build |
+| `active` | Every statement reachable through a default release build and a shipped command or service. This includes chain commands, contexts, keyrings, Console, provider, workflows, transports, store, sync, events, output, MCP, and `akt monitor` | Primary per-package and aggregate release gate |
+| `experimental-tui` | The disabled application shell and dependencies used only by that shell. The shipped standalone monitor runner is isolated under `internal/monitor/runtime` and remains active | Separate report and no-regression ratchet until the shell ships |
+
+The active denominator MUST NOT exclude a package because its implementation
+was copied from another repository. If users reach it through the shipped
+`akt` binary, it is active code. Likewise, the experimental TUI profile MUST
+NOT be merged into the active percentage while the gate in §2.0 remains in
+place. `akt monitor` is shipped and belongs to `active`; its runtime entry point
+and cache/event lifecycle MUST NOT live in a package classified as
+experimental.
+Taxonomy validation MUST inspect the release-tag dependency closure of
+`internal/monitor/runtime` and reject any repository-owned dependency that is
+not classified as active. This prevents an indirect import from moving shipped
+monitor behavior behind the experimental-TUI denominator.
+It MUST also enforce the reverse release-closure invariant: every package
+classified `active` or `experimental-tui` is linked into the release binary.
+An unlinked package belongs in `support` with a reviewed exception, or in
+`tooling`; labeling it active merely to inflate or hide a denominator is an
+error.
+The only permitted direct import from an active package into the experimental
+denominator is `internal/cli` to the gated `internal/tui` shell. Validation
+MUST reject every other active-to-experimental import edge; the root command's
+environment gate remains the single reviewed bridge while the trial exists.
+
+The shipped monitor runtime owns one bbolt database. Provider, metadata, and
+moniker buckets MUST be initialized in one transaction before the UI model is
+constructed; a failed initialization closes the database and returns the
+boundary error. Runtime tests MUST exercise that failure boundary and a real
+CometBFT WebSocket subscribe/unsubscribe lifecycle, including service and
+client cleanup, rather than replacing event transport with a success-only mock.
+The standalone monitor model MUST set Bubble Tea's alternate-screen view flag
+for normal and quitting views. The embedded monitor MUST leave that flag unset
+so the containing shell remains the sole owner of terminal-screen policy.
+The standalone runtime MUST own one context used by every network command the
+model starts: consensus HTTP and WebSocket requests, chain synchronization,
+provider status and detail probes, validator metadata, governance, oracle, and
+BME refreshes. It MUST cancel that context before closing its remaining event,
+bus, and database resources. Its task drain MUST include asynchronous consensus
+producer work after subscription setup returns. The experimental embedded shell
+MUST provide the same monitor context and drain it before closing shared event,
+bus, or database resources. A completed Bubble Tea program MUST leave no monitor
+network goroutine or socket behind. Consensus setup is successful only after
+both event-subscription acknowledgements are received, and the initial signing
+history MUST pair a sampled commit with the validator set at that exact height.
+Program-completion tests MUST supply an owned readable input pipe rather than
+inherit the CI runner's standard input. Production continues to use the
+terminal already validated by the CLI; this test boundary prevents Linux CI's
+non-interactive `/dev/null` from becoming part of the behavior under test.
+
+Package membership MUST live in a checked-in machine-readable configuration.
+Validation discovers directories containing non-test Go source independently
+of the default build tags, so a package made entirely of build-constrained files
+cannot bypass classification. Repository-owned executable tooling has its own
+no-regression unit-coverage ratchet; test-only helper packages remain excluded.
+The configuration may exclude generated code, test-only helpers compiled into
+support binaries, and code that cannot be reached by a release build. Each
+exclusion requires the exception record defined in §12.4. Broad path or package
+exclusions without a concrete reason are prohibited.
+Validation MUST inspect dependency directories as well as import paths. A
+release dependency whose source directory is inside the repository root but is
+not classified in the main-module taxonomy—such as a nested module selected by
+a local `replace`—MUST be rejected. Repository-owned shipped code cannot escape
+the denominator by changing module boundaries.
+
+A source file compiled into a release package MUST NOT contain APIs used only
+by tests. Such helpers MUST move to a `_test.go` file or a classified
+test-support package. Removing accidentally release-linked test support is a
+correction to the shipped source set, not a coverage exclusion; the support
+package still requires the §12.4 exception record.
+
+### 12.2 Coverage collection and profiles
+
+Unit coverage MUST be cross-package coverage. The unit command supplies
+`-coverpkg` for the applicable denominator so execution through a neighboring
+package counts against the package that owns the statements. All profiles use a
+merge-compatible coverage mode. Direct Go commands continue to run with
+`GOWORK=off` as required by AGENTS.md.
+
+Coverage profile identities are canonical repository-relative source paths plus
+their exact statement ranges. Parsers MUST normalize import-path and absolute
+path spellings before aggregation and reject a duplicate canonical range;
+aliases cannot count the same statement twice.
+Go may emit synthetic zero-statement coverage blocks for empty control-flow
+edges. Those records carry no denominator weight, may have a zero-width source
+range and a nonzero execution counter. They MUST be discarded from statement
+filtering, profile publication, reports, baselines, and ratchets. Changed-source
+analysis keeps them in a separate exact edge-evidence index. When the AST maps
+changed executable syntax to that exact synthetic range, the edge passes only
+if its own counter is positive. A synthetic counter MUST NOT lend coverage to a
+neighboring token or enclosing positive-statement block, and it never changes a
+coverage numerator or denominator. All positive-statement blocks still require
+a strictly increasing source range.
+
+End-to-end tests execute the public binary, not command handlers linked into the
+test process. The test build MUST therefore use Go's binary coverage support:
+
+```text
+go build -cover -covermode=atomic -coverpkg=<denominator> -o <test-binary> ./cmd/akt
+GOCOVERDIR=<unique-shard-directory> <test-command>
+```
+
+The instrumented binary MUST use the release binary's semantic build tags and
+build metadata. Instrumentation may omit only linker or stripping options that
+are incompatible with coverage; it MUST NOT select a different source or
+dependency path. E2E asserts the reported build tags.
+
+Every raw counter shard is bound to the tracked environment recipes (`.env`,
+`.envrc`), the collection CI workflow, all Make recipes, and a canonical
+snapshot of the effective Go build environment. Release-tag selection is
+recorded directly and validated against the GoReleaser recipe. The snapshot
+includes at least
+GOOS, GOARCH, architecture feature levels, CGO_ENABLED and CGO compiler flags,
+GOEXPERIMENT, GOFLAGS, GOTOOLCHAIN, and GOWORK. A change capable of selecting a
+different source set or coverage metadata therefore requires recollection even
+when no Go source file changed.
+
+Every parallel shard receives its own `GOCOVERDIR`. CI converts counter data
+with `go tool covdata`, then merges profiles only after every shard finishes.
+A non-instrumented binary MUST NOT be used for a coverage-labelled E2E job.
+When shards are transferred between CI jobs from a dot-directory, artifact
+upload MUST explicitly include hidden paths and fail if no files match. The
+artifact scope MUST be limited to the named coverage shard or report directory;
+the surrounding cache and any credentials MUST NOT be uploaded. The merge job
+MUST fail when any required shard is absent.
+Immediately before publication, collection-side validation MUST reject every
+shard entry except `source-manifest.tsv`, `binary-identity.tsv` for an E2E
+shard, `covmeta.*`, and `covcounters.*`, and MUST validate every accepted form.
+Unit shards MUST reject a binary identity, while every E2E shard MUST require
+one. Validation MUST also ask the pinned Go toolchain to read the covdata so a
+correctly named corrupt payload cannot be published.
+Every accepted `covmeta.<hash>` MUST have at least one matching
+`covcounters.<hash>.*` file. Metadata without counters is an incomplete shard,
+not evidence of a zero-count execution.
+Report-time validation repeats the check after download. This prevents an accidental credential or unrelated runner file from
+entering even an informational live artifact.
+
+Every raw shard MUST also contain a deterministic source manifest generated at
+collection time. The manifest records the digest of every Go or native source
+and test file, every default-, release-, or test-selected `go:embed` input,
+every file beneath a Go package's `testdata` directory, module dependency lock
+file, package-taxonomy input, and build recipe that can change the compiled
+statement map or test behavior. Reporting-only inputs such as checked-in
+baselines, reviewed patch exceptions, and Codecov display policy are excluded:
+changing one of them does not change the counters and MUST NOT force an
+otherwise identical expensive collection to run again. Embedded and test
+fixture inputs are included even when their change does not alter coverage
+metadata line ranges. Before converting or merging
+counters, the report job regenerates the manifest from its checkout and
+requires every blocking shard to match it exactly. A missing, malformed, or
+mismatched manifest is a collection failure. This binds counters to the tested
+worktree/commit and prevents a locally stale instrumented binary or cross-job
+artifact from being evaluated against newer execution inputs.
+Manifest serialization uses a tab-delimited CSV writer and parser, so a
+tracked filename containing a tab, quote, comma, or newline remains one
+unambiguous record. Every manifest input and every changed Go source inspected
+from the worktree MUST be a regular file; a symlink is rejected rather than
+hashing or parsing content outside the reviewed repository path.
+
+Every instrumented E2E build MUST create `binary-identity.tsv` only after its
+pre-build and post-build source manifests match. The identity MUST contain the
+SHA-256 of the exact executable and the SHA-256 of that source manifest. Shard
+preparation MUST verify both digests before copying the identity and manifest
+into `GOCOVERDIR`; collection-side validation MUST verify them again against
+the executable after the suite completes. A missing, malformed, stale, or
+replaced binary therefore fails before artifact publication. Report-time
+validation MUST require the identity and revalidate its manifest digest even
+though the executable itself is intentionally not transferred.
+
+CI publishes at least these profiles:
+
+| Profile | Contents | Merge behavior |
+|---|---|---|
+| `unit` | Cross-package unit and component tests | Independent profile |
+| `e2e` | Offline and hermetic integration lanes that execute an instrumented binary | Independent profile, with lane flags retained |
+| `live` | Tests against shared or externally hosted services | Independent, never allowed to hide a hermetic gap |
+| `union` | Statement union of `unit` and blocking `e2e` profiles for the same commit | Primary active coverage status |
+| `union-live` | `union` plus successful live profiles | Informational because an external outage may prevent collection |
+
+The live Console shard is collected only for same-repository pull requests
+whose base branch is `main`. It executes the read contracts and the bounded
+managed-wallet lifecycle against the configured non-production sandbox. The
+job MUST use the protected `console-sandbox` environment. That environment
+requires approval from `@akash-network/core`, allows a core author to approve
+their own job, prohibits administrator bypass, and limits deployments to
+pull-request merge refs through the exact `refs/pull/*/merge` policy.
+Self-approval is an explicit trust grant to core
+accounts for their own proposed code against the capped sandbox. GitHub MUST
+require workflow approval from every
+external contributor. That repository setting distinguishes organization
+members from external contributors; it cannot express membership in one team.
+
+Fork pull requests MUST remain secretless and skip the complete Console job
+chain. A core member must mirror the proposed commit to a branch in this
+repository before the sandbox lane can run. The workflow MUST NOT use
+`pull_request_target` to execute pull-request code. GitHub does not release
+secrets to a fork's `pull_request` run, and executing that code through
+`pull_request_target` would cross the trust boundary before review.
+
+The Console test job is a required input to `required-ci` for every eligible
+same-repository pull request. A separate mutation opt-in and non-production API
+URL are still required before the lifecycle can write. Every sandbox run MUST
+share one serialized concurrency group. Every pull-request workflow run MUST
+disable automatic cancellation, including a currently ineligible run, because
+retargeting can otherwise let a later event cancel an earlier lifecycle while
+it owns resources. Push and manual workflows MAY replace an older run. There is
+no scheduled or manual sandbox mutation run. The independent `live` profile MUST publish
+active-package and statement totals before it is merged into `union-live`.
+Both reports are retained as pull-request artifacts, and successful report
+generation is a required input to `required-ci`. They remain separate from the
+hermetic `union`: a live counter cannot cover a missing hermetic assertion, and
+a Console failure cannot be reclassified as a coverage regression.
+
+The repository and experimental-TUI denominators receive equivalent reports.
+Only the active `union` is the primary aggregate merge gate. A merged profile
+MUST use statement-range identity and execution counts, not an arithmetic
+average of percentages.
+
+### 12.3 Ratchets and targets
+
+The repository stores a baseline for every package in each gated denominator.
+CI compares the current profile with that baseline according to these rules:
+
+1. An existing package's statement coverage MUST NOT decrease. A prior package
+   with zero executable statements is treated as fully covered: adding
+   statements may transition it only to 100%, never from `0/0` to an uncovered
+   denominator.
+2. A coverage improvement MUST update the checked-in baseline to the current
+   package and aggregate statement counts in the same change. A stale lower
+   ratio, or an equivalent ratio recorded with different counts, fails because
+   it would permit a later test-only regression back to the old floor. A
+   baseline is never lowered. If an exact reviewed exception from
+   §12.4 is unavoidable, added coverage in the same package and aggregate MUST
+   compensate for the unreachable statement.
+3. A new active package requires coverage for every changed executable line and
+   an initial package statement coverage of at least 80%. A new critical
+   package starts at 95% or higher.
+4. Added or changed executable lines in active code require 100% coverage. This
+   patch gate applies even while the repository is below its final aggregate
+target. CI applies it to pull requests and to default-branch pushes, using
+the event's actual before/base revision rather than assuming `HEAD^`.
+The local changed-line command defaults its head to the current worktree and
+includes tracked, staged, unstaged, and untracked Go files. CI supplies an
+immutable tested commit SHA instead.
+Any caller-supplied base name is resolved once to a full commit object before
+source discovery, baseline comparison, or diff construction. A branch or tag
+that moves after resolution cannot select different historical inputs later in
+the same gate.
+Diff parsing recognizes a `+++ b/...` file header only before the file's first
+hunk. Added source text that happens to begin with that sequence cannot switch
+the identity used for a later hunk or attribute changed lines to another
+package.
+Go coverage may attach a multiline statement's counter to only one portion of
+that statement. If a changed executable token has no directly intersecting
+positive-statement coverage block, the patch gate MUST first test for an exact
+synthetic edge-evidence match as defined above. Only when no exact edge match
+exists may it resolve the smallest enclosing statement and use that statement's
+first positive-statement instrumented region. The token is covered only when
+the selected exact edge or statement region executed. Executable syntax whose
+enclosing region has neither kind of evidence MUST fail closed; declaration
+initializers cannot disappear from the gate merely because the Go cover tool
+omitted a direct line mapping.
+5. Once the active union crosses an aggregate milestone, CI records that value
+   as the new floor. The staged milestones are 80%, 90%, and 95%.
+6. Reaching 95% active owned shipped statement coverage completes the initial
+   target. The floor is never lowered, and package ratchets continue toward
+   100%.
+
+Ratio comparisons MUST use exact overflow-safe arithmetic across the complete
+accepted counter range. A syntactically valid baseline with large statement
+counts MUST NOT wrap an intermediate cross-product and bypass either baseline
+weakening detection or the current-profile ratchet. The advertised local
+`test-coverage-check` entry point runs both the merged per-package/aggregate
+ratchets and the 100% changed-active-line gate; CI may expose those two checks
+as separate named steps, but neither is optional.
+Ratchet coverage MUST NOT depend on randomized map iteration, scheduler timing,
+or an implementation-selected comparator call direction. Tests for ordered
+logic exercise every semantically distinct direction explicitly so repeated
+runs converge on the same covered-statement set.
+
+The active and experimental-TUI ratchets each have one canonical checked-in
+baseline path. The enforcement command MUST reject an alternate path; otherwise
+renaming or redirecting a baseline could be mistaken for a first-time bootstrap.
+Moving a package between denominators removes it from the old canonical
+baseline and adds it to the new one. That move MUST preserve at least the
+package ratio stored in its former denominator, satisfy the destination entry
+floor, and preserve both denominator aggregate ratchets; a classification
+change cannot reset package history.
+When a repository introduces its first baseline file, that one-time bootstrap
+may record the existing legacy packages below their eventual entry floors
+because no older ratio exists. It MUST NOT exempt a package introduced by the
+same change: package presence is derived from every non-test Go source file in
+the comparison revision, independently of whether that revision had coverage
+metadata. Packages absent there still start at 80%, or 95% when critical. The
+100% changed-active-line gate applies to the complete bootstrap change as an
+independent backstop.
+Legacy-package discovery MUST apply the main module's directory rules at the
+comparison revision, including nested `go.mod` boundaries and ignored
+dot/underscore, `testdata`, and `vendor` directories. Removing such a boundary
+cannot misclassify newly admitted source as legacy.
+A changed active non-test Go file that contains executable statements but has no
+entry in the release-equivalent coverage profile MUST fail the patch gate. This
+includes files omitted by build constraints, so adding a build tag cannot hide
+code from the coverage contract.
+Every GoReleaser build used to validate the release-equivalent profile MUST
+identify `./cmd/akt` as its main package as well as carrying the canonical build
+tags. A correctly tagged auxiliary binary is not evidence for the shipped
+`akt` denominator.
+
+Critical packages are packages that control money, credentials, persistent
+state, state-changing commands, action logs, workflow execution, or wire
+transports. The checked-in denominator configuration marks them explicitly.
+The long-term target for deterministic critical logic is 100%; only reviewed
+exceptions may account for the remainder.
+
+Coverage percentage is not permission to weaken an assertion. Reviewers MUST
+reject a test whose expected result was copied from the implementation without
+an independent contract or whose only assertion is successful exit when the
+command promises state or structured data.
+
+### 12.4 Coverage exceptions
+
+The only way to exempt an exact line from the changed-line gate is a checked-in
+exception with all of these fields. It does not lower or bypass a package or
+aggregate ratchet:
+
+| Field | Requirement |
+|---|---|
+| Scope | Exact package, file, and line or generated-code rule |
+| Reason | Why meaningful execution is impossible, not merely inconvenient |
+| Owner | Person or team responsible for removing or renewing the exception |
+| Evidence | Build constraint, upstream limitation, or unreachable-state proof |
+| Review deadline | Date no more than 180 days in the future |
+
+An exception MUST be narrow. It MUST NOT exclude a whole package when only one
+branch is unreachable. Expired exceptions fail CI. Equivalent mutants use the
+same record format. An exception never removes a command or MCP tool from the
+behavioral manifest.
+
+### 12.5 Generated behavioral manifest
+
+Tests generate the runnable CLI inventory from the fully assembled Cobra tree
+and the MCP inventory from the actual tool registry. Static lists maintained by
+hand are not authoritative. The generated inventory is matched against
+checked-in scenario metadata with one record per runnable action.
+
+Each record contains:
+
+- exact command path or MCP tool name;
+- capability annotation and backing rail;
+- read-only or state-changing classification;
+- required actors, fixtures, and prerequisite state;
+- positive, boundary, and negative scenario identifiers;
+- the lane or lanes that execute those scenarios;
+- supported output modes and semantic assertions;
+- expected action-log entry type, or an explicit `none` for read-only work;
+- an unsupported classification and rationale when the selected Akash app
+  cannot execute the upstream action.
+
+CI fails when an assembled command or tool has no record, a record names an
+action that no longer exists, a mutating action lacks a state assertion, or a
+shipped action is covered only by `--help`. Dynamically surfaced built-in
+workflows are part of this inventory. User-authored workflows outside the
+repository are tested through the workflow schema and engine contracts rather
+than enumerated by name.
+
+### 12.6 Semantic end-to-end assertions
+
+Every successful state-changing scenario follows this sequence:
+
+1. Capture authoritative pre-state through a client independent of the `akt`
+   command under test.
+2. Execute the action through the instrumented public binary.
+3. Decode and validate the selected output format, stderr contract, and exit
+   code.
+4. Poll the authoritative system until the promised post-state or a bounded
+   timeout.
+5. Assert exact resource identity, full addresses, amounts, status, and other
+   command-specific fields.
+6. Assert one appropriate action-log outcome. Pending transaction revisions
+   may later collapse to one terminal view as specified in §5.
+7. Repeat the action or issue the documented invalid transition when the
+   command promises idempotency, ambiguity reconciliation, or a specific
+   rejection.
+
+Queries run against both empty and populated state where those states have
+different meaning. List tests verify pagination boundaries and exact record
+identity. JSON and YAML are decoded and compared semantically; pretty output is
+checked for the contract in §10, including full addresses and readable amount
+formatting. A non-empty stdout check alone is insufficient.
+
+Read-only commands and tools MUST NOT append an action-log entry. Every mutation
+MUST append the entry required by §5.6, on success and on the specified failure
+paths. Tests inspect logs for secret values as well as required fields.
+
+### 12.7 Test lanes and cadence
+
+No single network fixture can represent every Akash capability. The behavioral
+manifest assigns actions to these lanes:
+
+A lane MAY self-skip only when it was not selected. Once its opt-in environment
+variable is set, missing Docker or another declared dependency, an unreachable
+daemon, fixture bootstrap failure, and missing coverage counters MUST fail the
+job. An explicitly selected blocking lane MUST NOT convert infrastructure
+failure into a successful skip.
+
+An externally supplied chain endpoint is read-only by default, even when a
+funded mnemonic is also supplied. Transaction scenarios against
+`AKT_E2E_RPC` require a separate mutation opt-in, an explicit expected chain
+ID, and a comma-separated mutation-chain allowlist containing that exact ID.
+The harness MUST query the remote node's status before importing the mnemonic
+and reject an expected/observed chain-ID mismatch. Known production chain IDs
+MUST remain prohibited. A mutation that creates a resource snapshots the
+owner's exact pre-state and may update or close only the unique new resource
+identity observed after its transaction; selecting the newest or last list
+entry is prohibited. Resource lists used for that identity proof MUST page to
+exhaustion and reject repeated page keys or duplicate identities. Scenarios
+that leave an additional persistent resource, including the client certificate
+required by deployment creation, run only against a harness-owned throwaway
+chain until they implement exact resource identity and cleanup for every
+created object. Docker-created throwaway fixtures satisfy this boundary
+without external opt-in because the harness owns their complete lifecycle.
+Read-only balance checks against an external endpoint MUST accept its actual
+denomination set and require at least one positive, canonically encoded coin
+for a supplied funded mnemonic. They MUST NOT require the Docker fixture's
+two-denomination genesis layout or construct its container-only native
+observer. The Docker lane continues to require exact `akt`/native agreement for
+both fixture denominations.
+
+In the Docker fresh-chain lane, authoritative transaction receipts and
+post-state MUST come from the pinned node image's native `akash` CLI or another
+typed client that does not call `akt` or reuse its internal query/client code.
+The harness decodes that observer's JSON itself. An `akt` query remains useful
+coverage for the public read surface, but it MUST NOT be the only evidence that
+an `akt` mutation worked. The command-reported transaction hash, independent
+receipt, exact post-state identity, and action-log transaction hash MUST agree.
+A scenario that transfers funds to a newly generated recipient is restricted
+to a harness-owned throwaway chain unless it preserves a recoverable recipient
+key, refunds the transfer, independently verifies final balances, and enforces
+a declared maximum spend.
+
+| Lane | Required environment and proof | Cadence |
+|---|---|---|
+| `offline` | No network. Config, context, keyring, SDL, construction/signing, output, capability failures, completion, and executable documentation examples | Every pull request |
+| `fresh-chain` | Deterministic genesis, funded role accounts, and enough validators to exercise the scenario. Executes every reachable query and transaction with state-based assertions | Every pull request, sharded; extended validator and authority cases nightly |
+| `provider` | Fresh chain, registered provider, real provider services, and local Kubernetes. Covers bids, leases, manifests, gateway auth, logs, events, shell, migrations, and a nonce-emitting workload | Nightly and release; also on pull requests that change provider, market, deployment, workflow, transport, or Console gateway code |
+| `dual-chain` | Two deterministic chains and a pinned relayer. Covers IBC clients, connections, channels, transfers, acknowledgements, and timeout paths | Nightly and release; path-triggered pull requests |
+| `testnetify` | Pinned source snapshot converted to a local chain with recorded source height, app hash, image digest, and snapshot checksum. Covers populated pagination, historical state, migrations, monitor, and upgrade behavior | Scheduled and release; path-triggered pull requests |
+| `console` | Real Console API implementation, database, signer, indexer/proxy, chain, and provider. Covers managed-wallet reads and a complete deployment lifecycle | Protected sandbox lane on every same-repository pull request to `main`; fork changes must be mirrored by core |
+| `monitor` | Real CometBFT HTTP and WebSocket endpoints plus a pseudo-terminal. Covers dashboards, input, rendering parity, cancellation, cache, and reconnect | Smoke tests every pull request; full duration and reconnect tests nightly and release |
+| `fault` | Controlled node, Console, provider, database, signer, and network interruption. Covers retry, ambiguous outcomes, SIGINT, restart, concurrent store access, and recovery | Nightly and release; path-triggered pull requests |
+
+**Current implementation status (2026-08-12):** pull requests currently block
+on cross-package unit, offline instrumented-binary E2E, and a deterministic
+single-validator fresh-chain lane. Harness-owned mutation scenarios bind
+native-node receipts and post-state to the public command and action log. The
+generated Cobra inventory exercises
+structural reachability and help for every visible command; it is not yet the
+checked-in semantic scenario metadata required by §12.5. MCP has registry,
+schema, handler, protocol, and action-log scenarios; handler coverage includes
+valid requests whose chain query or transaction dependency fails and requires
+the operation-specific error result. Real Console read and managed-wallet
+mutation suites require explicit external credentials and block eligible
+same-repository pull requests behind the protected sandbox environment; they
+never replace or contribute counters to the hermetic active union. The
+provider/Kubernetes,
+dual-chain, `testnetify`, full monitor/PTY, fault, multi-validator/multi-actor,
+and mutation-testing lanes in this table remain normative implementation work.
+Only two native fuzz targets exist and CI does not yet run a bounded fuzz
+campaign, so the fuzz boundary set in §12.9 is also incomplete.
+Hermetic unit tests attach the first-run wizard to a real pseudo-terminal and
+drive its network, keyring, active-context, and Console decisions through the
+same raw/canonical terminal transitions used by a human. Pure renderer tests
+remain useful, but cannot replace this interaction test. This does not satisfy
+the separate full monitor/PTY environment in the matrix above.
+Release automation therefore does not yet satisfy the full matrix below, and
+the completion criteria in §12.11 have not been met.
+For each fresh-chain query in the current matrix, a separate request-counting
+HTTP peer replaces the real RPC endpoint and must observe an actual transport
+request followed by command failure. The help form must make no request. A
+merely nonzero exit with an arbitrary diagnostic is not proof that a nominal
+leaf command reached its transport.
+
+The live Console read suite validates command-specific response contracts, not
+only JSON syntax: required object fields are non-null; documented collection
+fields have the correct JSON kind; non-empty public catalogs validate every
+item's stable identity fields; and tenant-owned collections may remain empty
+when that is a legitimate account state. Deployment-dependent reads select an
+exact active deployment and lease rather than treating an empty tenant as a
+command failure. A live provider-status response for that active lease requires
+the documented services, forwarded-ports, and IP collections; the services
+collection is non-empty and every dynamic service entry carries its name and
+numeric availability and total counts.
+The provider-region catalog requires a non-empty top-level region list, unique
+non-empty region keys, non-empty descriptions, and an array-valued provider
+membership field. Individual regions MAY have no current providers because
+Console deliberately emits an empty membership array for catalog regions that
+no provider advertises. Region keys and descriptions MUST exactly match the
+independently fetched `location-region` values in Console's provider-attributes
+schema. Every membership MUST be a canonical `akash` bech32 address and MUST
+not repeat within one region. A mutation-capable sandbox MUST nevertheless
+expose at least one provider membership across the complete catalog. The
+template-list command unwraps Console's `data` envelope and returns a non-empty
+top-level category array. Every category has a unique non-empty title; its
+template array MAY be empty, but every present template has a non-empty ID
+that is unique within that category and the aggregate catalog MUST contain at
+least one template. The same template ID MAY appear in different categories
+because categories classify rather than own templates.
+
+Fresh-chain fixtures define role accounts for at least validator/funder, tenant,
+provider, auditor, fee granter, grantee, vesting recipient, and governance or
+module authority where the app allows it. A deliberate authorization failure is
+a valid scenario for an action that cannot succeed under ordinary authority,
+but the manifest must say so and assert that state did not change.
+
+A single validator is enough for the fast smoke shard, but it is not the full
+fresh-chain contract. Redelegation, jailing, governance, IBC, upgrade, and
+provider lifecycle scenarios receive the extra actors or services they need.
+
+Release automation requires a successful full lane matrix for the release
+commit. An external live-service outage may be waived only with a recorded
+release approval; hermetic failures cannot be waived as external outages.
+
+Until every lane in this section is implemented, the release workflow MUST at
+minimum rerun the complete current hermetic blocking matrix against the exact
+tagged commit and MUST reject a version tag whose commit is not reachable from
+`main`. Publishing MUST depend on that exact-commit job rather than assuming a
+prior branch run tested the same object. The GoReleaser container reference
+MUST include an immutable OCI digest; a version tag alone is insufficient.
+The release coverage comparison MUST start at the commit peeled from the
+nearest earlier reachable semantic-version tag. It MUST NOT default to
+`HEAD^`, because one release may contain several commits. Resolution MUST fail
+closed when the prior tag is absent or invalid, does not peel to a commit, or
+is not an ancestor of the tested commit. Manual check, snapshot, and dry-run
+modes use the same previous-release comparison rule.
+
+For a tag event, the event tag MUST peel to the tested commit and MUST be the
+only tag selecting that commit. The publishing job MUST repeat this check
+immediately before invoking GoReleaser, after its complete tag checkout, and
+must not infer the release identity with an ambiguous `git describe` result.
+All tag publications share one non-cancelling concurrency group across tag
+refs so two stable releases cannot race while updating the Homebrew formula.
+Manual modes run separately with `contents: read`, do not receive publishing
+secrets, and every checkout uses `persist-credentials: false`. Only the tag
+publishing job receives `contents: write`.
+
+Before GoReleaser starts, publication MUST require `GITHUB_TOKEN`. A stable
+semantic version, meaning one with no prerelease component, MUST also require
+`GORELEASER_ACCESS_TOKEN`; discovering that omission after GitHub assets have
+started uploading is a partial-release failure. Release containers default to
+`GOWORK=off`. A non-off override is valid only when it names the existing
+repository-root `go.work` mounted at the corresponding container path.
+`goreleaser check` may tolerate the intentional `brews` deprecation only when
+GoReleaser returns its dedicated deprecated-property status and the
+deprecation plus one-file issue summary are its only error diagnostics. A
+normal validation failure, including one that also mentions a deprecated
+property, remains fatal.
+This interim gate reduces release risk but does not satisfy §12.11.
+
+### 12.8 Console API truth, credentials, budgets, and cleanup
+
+The real Console implementation is the authority for successful response
+schemas and managed-wallet behavior. The vendored OpenAPI document detects
+schema drift but does not replace executing real handlers. HTTP fakes remain
+required for deterministic boundary failures such as malformed bodies,
+timeouts, connection resets, 429 and 5xx responses, and ambiguous
+non-idempotent outcomes. A canned success body written only inside this
+repository is not sufficient proof of Console compatibility.
+
+A successful response cannot be treated as state merely because its HTTP
+status is 2xx. When a client operation expects a response value, the body MUST
+be present and decodable. Data-enveloped operations additionally require a
+present, non-null `data` value. Empty successful bodies remain valid only for
+operations whose contract expects no result, such as a 204 deletion.
+Endpoint invariants are validated before mutation success is logged. A lease
+response must contain every exact requested active lease; deployment settings
+must carry the requested dseq and boolean; wallet settings must carry the
+requested boolean. A malformed success from the non-idempotent lease POST is
+an ambiguous outcome and uses exact read-back reconciliation without replaying
+the POST. A malformed settings acknowledgement fails rather than allowing a
+missing boolean to masquerade as the requested `false` value.
+Deployment create additionally requires a usable DSEQ and a present
+managed-wallet receipt with code zero and a nonblank transaction hash; an
+unusable 2xx response enters the existing no-replay version-hash
+reconciliation. Deployment update validates the returned DSEQ and deterministic
+SDL version hash before success, otherwise using its exact read-back. Close
+requires a present `success: true` acknowledgement. Deposit snapshots and
+compares authoritative total escrow value, defined per denomination as current
+`funds` plus cumulative `transferred`, validates the returned deployment
+identity, never replays its POST, and records `pending` when a lost or malformed
+response cannot be proved applied or unapplied. Including `transferred` keeps
+the proof exact while active-lease settlement consumes current funds. Console
+encodes both escrow collections with the chain's fixed-point decimal grammar,
+so a whole micro amount MAY arrive as
+`500000.000000000000000000` and a settled balance MAY contain a genuine
+fractional micro amount. Current `funds` use the chain's signed `Balance`
+contract because an overdrawn escrow may be negative; cumulative `transferred`
+uses non-negative decimal coins. Production reconciliation MUST retain both
+collections as exact rationals, while the independent live observer MUST retain
+the current `funds` it uses for the pre-lease deposit proof. Both paths MUST
+parse the chain grammar without floating-point conversion, preserve values down
+to the 18th decimal place, accept signed `funds`, reject malformed values, and
+compare the pre/post delta exactly. Production MUST additionally reject a
+negative `transferred` amount. Neither path may require each endpoint value to
+be a lexical integer or discard a fractional component merely because the
+expected deposit delta is an integer. A created API key requires a
+nonblank ID, the requested name, and its one-time secret; an ambiguous response
+is pending and is never replayed. A minted provider JWT requires a nonblank
+token before it may be used.
+
+The Console sandbox lifecycle covers deployment create, bid observation, lease
+creation, live status, logs, events, a deterministic non-interactive shell
+command, deposit, settings, update, child API-key lifecycle, close, and final
+cleanup. Each state is verified independently through the Console API and,
+where applicable, chain RPC, provider gateway, and Kubernetes workload state.
+The deployment-get, bid-list, status, and default log-read contracts MUST run
+against the lifecycle-owned active lease before cleanup; they MUST NOT depend
+on a pre-existing tenant deployment. A separately invocable read-only smoke
+test MAY reuse an existing active lease and skip when none exists.
+The protected CI read step runs only the state-independent read suite before
+the lifecycle. It MUST NOT invoke that optional existing-lease smoke test: the
+blocking lifecycle creates the deployment and lease, runs the shared
+deployment-dependent contracts against that exact resource, then closes it and
+verifies cleanup.
+The independent Console observer is a bounded raw HTTP client maintained by the
+test harness; it MUST NOT call the `akt` binary or reuse `internal/console`.
+This keeps a command-layer or shared-client decoding defect from validating its
+own mutation response.
+
+Live credentials follow these rules:
+
+- use an isolated sandbox tenant and least-privilege, short-lived API keys;
+- fail closed to the exact staging-sandbox and production-namespace-sandbox
+  Akash API hostnames, using HTTPS on the default port with no base path;
+  sandbox-looking third-party hosts are prohibited, while loopback HTTP remains
+  available only through an explicit hermetic-test option that protected read
+  setup and mutation configuration never enable;
+- before network access, match a recognized Akash sandbox hostname to the API
+  key's non-secret environment segment: the staging sandbox host accepts
+  `staging`, while the production-namespace sandbox host accepts `production`;
+  mismatch and endpoint diagnostics MUST NOT print the credential or the raw
+  secret-backed endpoint value;
+- preserve and validate the raw key without trimming it, perform that check in
+  both read setup and mutation lifecycle before any observer or network client
+  exists, and create the temporary CLI context through the same bounded,
+  redacted subprocess path used by all later live commands;
+- make secrets available only after the protected `console-sandbox`
+  environment approves an eligible same-repository pull request to `main`;
+- store the API key, API URL, and mutation opt-in only as secrets on that
+  environment; repository- and organization-scoped copies selected for this
+  repository are prohibited because pull-request workflow code could remove
+  the environment declaration;
+- keep fork pull requests secretless and never execute proposed code through
+  `pull_request_target`;
+- inject secrets through the CI secret store and environment, never process
+  arguments, config committed to the repository, stdout, logs, or artifacts;
+- remove every `AKT_E2E_CONSOLE_*` harness variable from child CLI process
+  environments. Only `AKT_CONSOLE_API_KEY` is forwarded and scanned, so a
+  temporary child key cannot coexist with an inherited, unscanned parent key;
+- never mutate production by default; production canaries are read-only unless
+  a human authorizes one bounded run;
+- serialize mutations that share an account and tag every resource with a
+  unique run identifier where the API permits it;
+- enforce maximum deployment count, attempted USD request total, duration, and
+  concurrent leases before the first mutation. A request reservation is charged
+  before its subprocess starts and remains charged after any ambiguous outcome;
+- separately cap observed spend. Requested deployment deposits move credit into
+  escrow and are not themselves proof of spend. The harness snapshots the
+  authoritative Console total balance before the first write, reads it again
+  after terminal cleanup, and fails when the decrease exceeds the spend limit.
+  The configured spend ceiling MUST be at least the immutable escrow request
+  total, and that request total is the maximum credit available after auto
+  top-up is independently observed disabled. Before creating a lease, the
+  harness intersects the CLI and raw-API bid sets, rejects non-`uact` prices,
+  chooses the lowest numeric price, and requires its conservatively projected
+  price-per-block cost through the complete remaining paid runtime to fit the
+  same ceiling. The projection assumes at least one billable block per second;
+  fixed escrow remains the hard loss bound if blocks arrive faster;
+- disable auto top-up as soon as a deployment identifier is known unless the
+  scenario explicitly tests it.
+
+Subprocess and observer response capture is bounded. Failure diagnostics MUST
+NOT print raw stdout, stderr, HTTP response bodies, action-log entries, API
+keys, or SDL/manifest payloads. They may report the operation, exit or HTTP
+status, full resource identifiers, error class, and captured byte counts. The
+harness scans its complete temporary akt home for the injected credential
+before teardown rather than checking only config and action-log files.
+For a failed Console subprocess, the error class MAY include a recognized HTTP
+status (for example, `console_http_401`) extracted from bounded stderr. It MUST
+NOT include the response body or any other captured text.
+
+The production Console client applies the same boundary independently of the
+test harness. It reads no more than the configured maximum response size and
+fails a larger response without retaining or reporting its contents. Before an
+HTTP error body can enter a returned error or action-log entry, every exact
+occurrence of the configured API key is replaced with a fixed redaction marker.
+The same rule applies to transport diagnostics, including a redirect URL
+selected by a hostile peer.
+Tests exercise both the returned-error and persisted-action-log paths with a
+server that deliberately echoes the credential.
+
+Cleanup is part of the test result. A test registers cleanup immediately after
+each resource is created, closes every deployment, revokes child credentials,
+and verifies terminal state through both Console and chain views. The target
+orphan sweeper runs after the suite, using the run registry and SDL hash when
+no resource label exists. Cleanup failure fails the job and reports
+the full resource identifiers without printing credentials. The sandbox
+account keeps only the capped balance needed for the run.
+
+The mutation deadline expires before the overall test deadline and leaves a
+fixed cleanup reserve. Cleanup has separate bounded phases for ambiguous-write
+discovery, auto-top-up disablement and close requests, and terminal-state plus
+final-spend observation. No discovery loop or single subprocess may consume the
+final observation reserve. When a create outcome is ambiguous, cleanup finds
+only post-baseline deployments carrying the run's unique SDL hash; once it
+finds one, it disables auto top-up before attempting close.
+The ambiguous-create discovery allowance MUST be no shorter than the normal
+post-create indexer-observation allowance. The current 90-second cleanup
+reserve assigns up to 30 seconds to discovery, retains 40 seconds for
+auto-top-up disablement and close, and retains the final 20 seconds for
+terminal-state and balance observation.
+
+**Current implementation boundary (2026-08-12):** the opt-in live suite covers
+create, bid, lease, provider status, deposit, settings, update, and idempotent
+close. Its independent raw observer and final balance delta are Console-side
+proof only. It also requires a provider-reported workload URI to serve a
+bounded non-empty 2xx response through an independent standard HTTP client,
+non-empty structured log and event streams, and an exact sentinel from
+deterministic non-interactive shell execution. The shell operation must produce
+exactly one successful `provider/lease-shell` action while status, logs, and
+events produce none. The child API-key scenario proves the one-time credential
+authenticates the same tenant through both the CLI and a raw observer, revokes
+it, returns both listings to their exact baseline, proves the revoked secret
+fails, and scans the temporary home for disclosure. Independent chain and
+Kubernetes oracles, a persistent run registry, the orphan sweeper, and a
+tenant lock beyond the serialized sandbox CI group are not
+implemented yet. Until those pieces land, the suite is valuable live
+compatibility and cleanup evidence but does not satisfy the complete Console
+lane contract in this section, and abrupt process termination can bypass its
+in-process cleanup.
+
+GitHub concurrency groups are repository-wide and evaluated from the proposed
+workflow. An organization member already allowed to run a same-repository
+pull-request workflow could deliberately cancel the sandbox group before
+environment approval. The checked-in non-cancellation policy therefore handles
+ordinary superseding events, not malicious workflow edits; the target external
+lock and orphan sweeper remain required for that failure mode.
+
+### 12.9 Race, fuzz, and mutation gates
+
+Pull-request CI runs the Go race detector over active packages with the same
+semantic build tags as the release binary. Tests that exercise stores, action
+logs, event delivery, monitor pipelines, sync, workflow callbacks, and client
+retry state MUST include concurrent cases where those components promise
+concurrent use.
+
+Boundary parsers and decoders have native fuzz targets. The minimum set covers
+resource filters, deposits, SDL input boundaries, store imports, Console JSON,
+provider stream records, transaction result decoding, and consensus/event
+parsing. Pull requests run every seed corpus for a short bounded interval;
+scheduled jobs run longer campaigns and retain minimized crashing inputs as
+regression corpus files. A fuzz target must assert invariants such as no panic,
+bounded allocation, canonical round trip, or stable error classification. Mere
+absence of a crash is not enough when a stronger invariant exists.
+
+Mutation testing runs on critical packages. The initial package mutation scores
+are recorded as a baseline and cannot decrease. New or changed critical logic
+MUST introduce no surviving non-equivalent mutant. The staged aggregate target
+is 90%, after which the score continues to ratchet toward 100%. Equivalent or
+unbuildable mutants require the exception record from §12.4.
+
+### 12.10 Reporting and Codecov
+
+CI uploads unit, hermetic E2E lane, repository, active, experimental-TUI, and
+union profiles to Codecov with stable flags from trusted default-branch runs.
+Live and union-live profiles remain pull-request artifacts and do not receive
+an OIDC upload. Codecov uses line coverage, while the repository ratchets use
+Go statement counts;
+Codecov statuses and the badge are therefore visualization and review aids, not
+the authoritative merge gate. The repository-owned active-union ratchet and
+100% changed-statement check remain authoritative, and the stable `required-ci`
+aggregate carries those controls into branch protection. Codecov's project
+status disables removed-code behavior that could hide an aggregate line-
+coverage regression. A Codecov service outage does not change the local
+coverage calculation; CI retains profiles as build artifacts and may retry the
+upload.
+
+The repository MUST have a valid CODEOWNER with write access for the complete
+tree, including `.github/CODEOWNERS` itself. The configured branch ruleset's
+required code-owner review therefore applies to workflow, coverage taxonomy,
+exceptions, baselines, Codecov policy, design/specification, and release
+changes instead of being an ownerless no-op.
+
+The active patch status is scoped to the `active-union` flag. GitHub inline
+annotations MUST be disabled because Codecov does not support annotations for a
+flag-scoped patch status and is deprecating that presentation path. This does
+not disable the Codecov status, pull-request comment, flag report, or badge.
+
+The README displays a Codecov badge for `akash-network/akt` on the default
+branch. The badge represents the active union profile, not the easier unit-only
+profile or the repository denominator. Its link opens the Codecov coverage
+report so package and line details remain inspectable.
+
+The job that checks out and executes repository code MUST NOT hold an OIDC
+token permission. It publishes the already-generated profiles as a narrowly
+scoped artifact. Separate upload-only jobs have no repository checkout or
+repository command execution, download only generated report artifacts, and
+are the sole holders of `id-token: write` for tokenless Codecov upload. The
+upload job runs only for the trusted default branch. Pull-request workflows
+never receive OIDC. The upload job may
+populate Git's object database and index for Codecov source-network metadata,
+but MUST NOT materialize a worktree. The first activated upload must verify that
+module-qualified Go profile paths map to repository sources. The action and
+downloaded Codecov CLI are both pinned, and a
+downloader signature or checksum failure is fatal inside the OIDC job. Service
+availability remains informational through job-level `continue-on-error`; it
+is never implemented by executing an unverified CLI.
+The active-union upload MUST run before narrower unit, lane, repository, or
+experimental profile uploads so a later informational upload failure cannot
+prevent publication of the primary Codecov signal.
+
+Coverage reports list statement totals as well as percentages. CI prints the
+current and baseline value for every regressing package, changed lines that
+were not executed, expired exceptions, and behavior-manifest records without a
+scenario. A single aggregate percentage is not an adequate failure message.
+
+The workflow exposes a stable `required-ci` aggregate over lint, build and unit
+tests, the active race suite, repository coverage enforcement, and the
+protected Console sandbox job for eligible same-repository pull requests.
+Default-branch protection MUST require that exact check. Merely defining the
+job in the repository does not make it a merge gate; the external repository
+ruleset is a required part of the control.
+
+### 12.11 Completion criteria
+
+The testing overhaul is complete only when all of these conditions hold:
+
+- the active union is at least 95% and every active package has a ratchet;
+- changed active lines have 100% coverage or a valid reviewed exception;
+- every assembled CLI action and MCP tool has at least one meaningful
+  behavioral scenario and the required negative or boundary cases;
+- every state-changing action has independent post-state and action-log proof;
+- all required lanes in §12.7 pass for the release commit;
+- race, fuzz corpus, and critical mutation gates pass;
+- the repository, active, and experimental-TUI profiles remain separately
+  visible in CI and Codecov, while the live profile remains visible in CI.
+
+After these conditions are met, active coverage keeps ratcheting toward 100%.
+The 95% milestone is a floor, not a stopping point.
+
+---
+
+## 13. Phased Implementation Plan
 
 ### Phase 1: Foundation
 
@@ -6295,9 +7592,11 @@ Cobra provides this feature via `Command.SuggestionsMinimumDistance` and `Comman
 | 1.15 | Shell completion      | bash, zsh, fish completion scripts                                                                                                                                                          | Tab completion works for commands, flags, and context/network names                                     |
 | 1.16 | E2E test suite        | Core test coverage for context, network, tx, query                                                                                                                                          | Tests pass in CI against a local testnet                                                                |
 
-GitHub-hosted CI and release workflows pin third-party actions to maintained
-major versions. Action-major upgrades must pass `actionlint`, every required PR
-check, and the release workflow's manual `check` mode before merge. Tool
+GitHub-hosted CI and release workflows pin every external action to an
+immutable 40-character commit SHA. Coverage-policy validation rejects tags,
+branches, and abbreviated hashes in any workflow `uses:` entry; local actions
+under `./` are exempt. Action upgrades must pass `actionlint`, every required
+PR check, and the release workflow's manual `check` mode before merge. Tool
 versions remain explicitly pinned where reproducible results require them.
 
 ### Phase 2: Store + Workflow Commands
@@ -6375,4 +7674,4 @@ versions remain explicitly pinned where reproducible results require them.
 | 4.10 | IBC view (TUI)           | Channel list with state                            | IBC channels visible in TUI                        |
 | 4.11 | TUI transaction actions  | Create deployment, fund escrow, etc. from TUI      | Full transaction workflow in TUI                   |
 | 4.12 | Performance optimization | Lazy loading, virtual scrolling                    | Lists with >10,000 items render smoothly           |
-| 4.13 | Comprehensive E2E tests  | Full coverage of all commands and TUI interactions | CI passes with >80% coverage                       |
+| 4.13 | Comprehensive verification | Implement the coverage, behavioral manifest, and environment contract in §12 across the active CLI, MCP, Console, provider, monitor, and experimental TUI profiles | Active union coverage is at least 95% with 100% changed-line coverage and per-package no-regression ratchets; every assembled command and MCP tool has a state-based scenario; required race, fuzz, mutation, and E2E lanes pass for the release commit |

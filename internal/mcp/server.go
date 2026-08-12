@@ -18,6 +18,7 @@ import (
 
 	client "pkg.akt.dev/go/node/client/v1beta3"
 
+	chaincli "pkg.akt.dev/akt/internal/cli/chain"
 	aktconsole "pkg.akt.dev/akt/internal/console"
 	"pkg.akt.dev/akt/internal/mcp/tools/audit"
 	"pkg.akt.dev/akt/internal/mcp/tools/bank"
@@ -77,7 +78,13 @@ func New(
 	// start without a wallet and an RPC endpoint would deny that user a
 	// server they can fully use. The failure is only fatal when it leaves the
 	// server with nothing at all.
-	chainErr := s.registerChainTools(ctx, cctx, providerAuthType, enableWrites)
+	// Consent and capability are separate. A Console-auth context can have an
+	// RPC endpoint for direct chain reads while deliberately carrying no local
+	// keyring. In that state --enable-writes enables Console mutations only;
+	// trying to build a signing client would drop the otherwise healthy chain
+	// read rail and advertise mutations that cannot execute.
+	chainWritesEnabled := enableWrites && cctx.Keyring != nil
+	chainErr := s.registerChainTools(ctx, cctx, providerAuthType, chainWritesEnabled)
 
 	// The Console rail is additive, and registered only when a key resolved --
 	// otherwise every call would fail on auth.
@@ -121,7 +128,7 @@ func (s *Server) registerChainTools(
 		}
 
 		s.registerQueryTools(cl, providerAuthType)
-		s.registerWriteTools(cl, providerAuthType)
+		s.registerWriteTools(ctx, cl, providerAuthType)
 
 		return nil
 	}
@@ -208,7 +215,11 @@ func (s *Server) registerQueryTools(cl client.LightClient, providerAuthType stri
 
 // registerWriteTools registers write tools that require --enable-writes.
 // These tools perform on-chain transactions or mutating provider REST calls.
-func (s *Server) registerWriteTools(cl client.Client, providerAuthType string) {
+func (s *Server) registerWriteTools(ctx context.Context, cl client.Client, providerAuthType string) {
+	// MCP chain writes are an adapter over the CLI transaction boundary, so
+	// they inherit the same failed-CheckTx handling and exact audit fields.
+	cl = chaincli.WithActionLog(ctx, cl)
+
 	// Deployment tx tools
 	s.addWriteTool(deployment.ToolCloseDeployment(), deployment.HandleCloseDeployment(cl))
 
@@ -228,6 +239,7 @@ func (s *Server) registerWriteTools(cl client.Client, providerAuthType string) {
 // the two cannot drift apart.
 func (s *Server) addQueryTool(tool mcp.Tool, handler mcpserver.ToolHandlerFunc) {
 	tool.Annotations = queryToolAnnotations()
+	tool.InputSchema.AdditionalProperties = false
 	s.schemas[tool.Name] = tool.InputSchema
 	s.mcp.AddTool(tool, handler)
 }
@@ -251,6 +263,7 @@ func queryToolAnnotations() mcp.ToolAnnotation {
 // client should confirm them with the user rather than auto-approve.
 func (s *Server) addWriteTool(tool mcp.Tool, handler mcpserver.ToolHandlerFunc) {
 	tool.Annotations = writeToolAnnotations()
+	tool.InputSchema.AdditionalProperties = false
 	s.schemas[tool.Name] = tool.InputSchema
 	s.mcp.AddTool(tool, handler)
 }

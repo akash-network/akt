@@ -5,7 +5,6 @@ import (
 	stdcontext "context"
 	"encoding/json"
 	"errors"
-	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -22,38 +21,6 @@ import (
 	aktctx "pkg.akt.dev/akt/internal/context"
 )
 
-// captureStdout runs fn with os.Stdout redirected to a pipe and returns what
-// was written. The context list/show/log commands print through
-// output.PrintData and fmt.Print, both of which target the process stdout
-// rather than cmd.OutOrStdout().
-func captureStdout(t *testing.T, fn func()) string {
-	t.Helper()
-
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("pipe: %v", err)
-	}
-
-	prev := os.Stdout
-	os.Stdout = w
-
-	done := make(chan string, 1)
-	go func() {
-		var buf bytes.Buffer
-		_, _ = io.Copy(&buf, r)
-		done <- buf.String()
-	}()
-
-	fn()
-
-	os.Stdout = prev
-	_ = w.Close()
-	out := <-done
-	_ = r.Close()
-
-	return out
-}
-
 // runOK executes a command and fails the test if it errors.
 func runOK(t *testing.T, cmd *cobra.Command, args ...string) {
 	t.Helper()
@@ -65,6 +32,23 @@ func runOK(t *testing.T, cmd *cobra.Command, args ...string) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("execute %v: %v", args, err)
 	}
+}
+
+// runOutput executes a command with an isolated Cobra writer and returns its
+// stdout. Command output must never depend on replacing the process stdout.
+func runOutput(t *testing.T, cmd *cobra.Command, args ...string) string {
+	t.Helper()
+
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&bytes.Buffer{})
+	cmd.SetArgs(args)
+
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("execute %v: %v", args, err)
+	}
+
+	return out.String()
 }
 
 // runErr executes a command expecting a failure and returns the error.
@@ -285,7 +269,7 @@ func TestListMarksCurrentContext(t *testing.T) {
 	runOK(t, createCmd(mgrFn), "prod", "--network", "mainnet", "--default-account", "alice", "--set-current")
 	runOK(t, createCmd(mgrFn), "staging", "--network", "mainnet")
 
-	out := captureStdout(t, func() { runOK(t, listCmd(mgrFn)) })
+	out := runOutput(t, listCmd(mgrFn))
 
 	var prodLine, stagingLine string
 	for _, line := range strings.Split(out, "\n") {
@@ -316,10 +300,24 @@ func TestListMarksCurrentContext(t *testing.T) {
 func TestListWithNoContextsExplainsHowToCreateOne(t *testing.T) {
 	m := newTestManager(t)
 
-	out := captureStdout(t, func() { runOK(t, listCmd(func() *aktctx.Manager { return m })) })
+	out := runOutput(t, listCmd(func() *aktctx.Manager { return m }))
 
 	if !strings.Contains(out, "akt context create") {
 		t.Errorf("empty list should point at the create command, got %q", out)
+	}
+}
+
+func TestEmptyContextListUsesStructuredCommandWriter(t *testing.T) {
+	for _, format := range []string{"json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			m := newTestManager(t)
+			cmd := listCmd(func() *aktctx.Manager { return m })
+			cmd.Flags().String("output", "pretty", "test output format")
+			out := runOutput(t, cmd, "--output", format)
+			if !strings.HasSuffix(strings.TrimSpace(out), "[]") {
+				t.Fatalf("empty %s context list = %q, want an empty sequence", format, out)
+			}
+		})
 	}
 }
 
@@ -515,13 +513,13 @@ func TestLogRendersEntriesAndFilters(t *testing.T) {
 	}
 	_ = l.Close()
 
-	out := captureStdout(t, func() { runOK(t, logCmd(mgrFn)) })
+	out := runOutput(t, logCmd(mgrFn))
 	if !strings.Contains(out, "create-deployment") || !strings.Contains(out, "create") {
 		t.Errorf("log should list both entry kinds, got %q", out)
 	}
 
 	// --type narrows to one kind.
-	out = captureStdout(t, func() { runOK(t, logCmd(mgrFn), "--type", "tx") })
+	out = runOutput(t, logCmd(mgrFn), "--type", "tx")
 	if !strings.Contains(out, "create-deployment") {
 		t.Errorf("--type tx should keep the tx entry, got %q", out)
 	}
@@ -530,7 +528,7 @@ func TestLogRendersEntriesAndFilters(t *testing.T) {
 	}
 
 	// A type with no entries prints the empty message, not a bare header.
-	out = captureStdout(t, func() { runOK(t, logCmd(mgrFn), "--type", "workflow") })
+	out = runOutput(t, logCmd(mgrFn), "--type", "workflow")
 	if !strings.Contains(out, "No action log entries") {
 		t.Errorf("an empty filter result should say so, got %q", out)
 	}
@@ -631,7 +629,7 @@ func TestLogHonorsContextOverride(t *testing.T) {
 
 	cmd := logCmd(mgrFn)
 	cmd.Flags().String("context", "", "test context override")
-	out := captureStdout(t, func() { runOK(t, cmd, "--context", "staging") })
+	out := runOutput(t, cmd, "--context", "staging")
 	if !strings.Contains(out, "staging-only-action") {
 		t.Errorf("override log output = %q", out)
 	}
@@ -659,7 +657,7 @@ func TestLogHonorsAKTContext(t *testing.T) {
 
 	cmd := logCmd(mgrFn)
 	cmd.Flags().String("context", "", "test context override")
-	out := captureStdout(t, func() { runOK(t, cmd) })
+	out := runOutput(t, cmd)
 	if !strings.Contains(out, "staging-env-action") {
 		t.Errorf("AKT_CONTEXT log output = %q", out)
 	}
@@ -760,7 +758,7 @@ func TestLogSinceAcceptsDurationsAndDates(t *testing.T) {
 		time.Now().UTC().Add(-time.Hour).Format(time.RFC3339),
 		"2000-01-01",
 	} {
-		out := captureStdout(t, func() { runOK(t, logCmd(mgrFn), "--since", since) })
+		out := runOutput(t, logCmd(mgrFn), "--since", since)
 		if !strings.Contains(out, "create") {
 			t.Errorf("--since %q should keep recent entries, got %q", since, out)
 		}
@@ -768,7 +766,7 @@ func TestLogSinceAcceptsDurationsAndDates(t *testing.T) {
 
 	// A future cutoff filters everything out.
 	future := time.Now().UTC().Add(24 * time.Hour).Format(time.RFC3339)
-	out := captureStdout(t, func() { runOK(t, logCmd(mgrFn), "--since", future) })
+	out := runOutput(t, logCmd(mgrFn), "--since", future)
 	if !strings.Contains(out, "No action log entries") {
 		t.Errorf("a future --since should filter everything, got %q", out)
 	}
@@ -812,50 +810,31 @@ func TestDeleteCancelledByPrompt(t *testing.T) {
 
 	runOK(t, createCmd(mgrFn), "prod", "--network", "mainnet")
 
-	withStdin(t, "n\n", func() {
-		out := captureStdout(t, func() { runOK(t, deleteCmd(mgrFn), "prod") })
-		if !strings.Contains(out, "Cancelled") {
-			t.Errorf("a declined delete should say so, got %q", out)
-		}
-	})
+	cmd := deleteCmd(mgrFn)
+	cmd.SetIn(strings.NewReader("n\n"))
+	var stderr bytes.Buffer
+	cmd.SetOut(&bytes.Buffer{})
+	cmd.SetErr(&stderr)
+	cmd.SetArgs([]string{"prod"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("decline delete: %v", err)
+	}
+	if !strings.Contains(stderr.String(), "Cancelled") {
+		t.Errorf("a declined delete should say so on stderr, got %q", stderr.String())
+	}
 
 	if m.GetContext("prod") == nil {
 		t.Error("a declined delete must not remove the context")
 	}
 
 	// A "y" answer goes through.
-	withStdin(t, "y\n", func() {
-		captureStdout(t, func() { runOK(t, deleteCmd(mgrFn), "prod") })
-	})
+	cmd = deleteCmd(mgrFn)
+	cmd.SetIn(strings.NewReader("y\n"))
+	runOK(t, cmd, "prod")
 
 	if m.GetContext("prod") != nil {
 		t.Error("a confirmed delete must remove the context")
 	}
-}
-
-// withStdin replaces os.Stdin with a pipe carrying input for the duration of
-// fn (deleteCmd reads the confirmation with fmt.Scanln).
-func withStdin(t *testing.T, input string, fn func()) {
-	t.Helper()
-
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("pipe: %v", err)
-	}
-
-	if _, err := w.WriteString(input); err != nil {
-		t.Fatalf("write stdin: %v", err)
-	}
-	_ = w.Close()
-
-	prev := os.Stdin
-	os.Stdin = r
-	defer func() {
-		os.Stdin = prev
-		_ = r.Close()
-	}()
-
-	fn()
 }
 
 // TestCompleteContextNames covers the shell-completion helper used by use,

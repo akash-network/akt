@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"os"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -67,5 +68,103 @@ func TestApplyTransactionDefaultsDryRunUsesSimulationOnly(t *testing.T) {
 
 	if got, _ := cmd.Flags().GetString(cflags.FlagGas); got != "0" {
 		t.Errorf("dry-run gas = %q, want 0 to disable simulate-and-execute", got)
+	}
+}
+
+func TestApplyTransactionDefaultsFeeSourcePrecedence(t *testing.T) {
+	tests := []struct {
+		name       string
+		envFees    *string
+		envPrices  *string
+		context    *aktctx.Context
+		wantFees   string
+		wantPrices string
+	}{
+		{
+			name:       "environment fixed fees override every context fee source",
+			envFees:    stringPointer("77uakt"),
+			context:    &aktctx.Context{Fees: "42uakt", GasPrices: "0.04uakt"},
+			wantFees:   "77uakt",
+			wantPrices: "",
+		},
+		{
+			name:       "environment gas prices override context fixed fees",
+			envPrices:  stringPointer("0.09uakt"),
+			context:    &aktctx.Context{Fees: "42uakt", GasPrices: "0.04uakt"},
+			wantFees:   "",
+			wantPrices: "0.09uakt",
+		},
+		{
+			name:       "empty environment fees deliberately select context gas prices",
+			envFees:    stringPointer(""),
+			context:    &aktctx.Context{Fees: "42uakt", GasPrices: "0.04uakt"},
+			wantFees:   "",
+			wantPrices: "0.04uakt",
+		},
+		{
+			name:       "context fixed fees suppress context gas prices",
+			context:    &aktctx.Context{Fees: "42uakt", GasPrices: "0.04uakt"},
+			wantFees:   "42uakt",
+			wantPrices: "",
+		},
+		{
+			name:       "context gas prices apply without fixed fees",
+			context:    &aktctx.Context{GasPrices: "0.04uakt"},
+			wantFees:   "",
+			wantPrices: "0.04uakt",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			unsetTestEnvironment(t, "AKT_FEES", "AKT_GAS_PRICES")
+			if tc.envFees != nil {
+				t.Setenv("AKT_FEES", *tc.envFees)
+			}
+			if tc.envPrices != nil {
+				t.Setenv("AKT_GAS_PRICES", *tc.envPrices)
+			}
+
+			cmd := &cobra.Command{}
+			cflags.AddTxFlagsToCmd(cmd)
+			applyTransactionDefaults(cmd, tc.context)
+
+			if got, _ := cmd.Flags().GetString(cflags.FlagFees); got != tc.wantFees {
+				t.Errorf("fees = %q, want %q", got, tc.wantFees)
+			}
+			if got, _ := cmd.Flags().GetString(cflags.FlagGasPrices); got != tc.wantPrices {
+				t.Errorf("gas prices = %q, want %q", got, tc.wantPrices)
+			}
+		})
+	}
+}
+
+func TestApplyTransactionDefaultsIgnoresCommandsWithoutTransactionFlags(t *testing.T) {
+	cmd := &cobra.Command{}
+	applyTransactionDefaults(cmd, &aktctx.Context{Fees: "42uakt"})
+
+	if cmd.Flags().Lookup(cflags.FlagFees) != nil {
+		t.Fatal("non-transaction command gained transaction flags")
+	}
+}
+
+func stringPointer(value string) *string {
+	return &value
+}
+
+func unsetTestEnvironment(t *testing.T, names ...string) {
+	t.Helper()
+	for _, name := range names {
+		value, exists := os.LookupEnv(name)
+		if err := os.Unsetenv(name); err != nil {
+			t.Fatalf("unset %s: %v", name, err)
+		}
+		t.Cleanup(func() {
+			if exists {
+				_ = os.Setenv(name, value)
+			} else {
+				_ = os.Unsetenv(name)
+			}
+		})
 	}
 }

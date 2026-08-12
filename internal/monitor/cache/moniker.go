@@ -1,7 +1,6 @@
 package cache
 
 import (
-	"encoding/json"
 	"fmt"
 
 	bolt "go.etcd.io/bbolt"
@@ -17,16 +16,16 @@ type MonikerCache struct {
 
 // OpenMonikerCache opens or creates the moniker cache in the given bbolt database.
 func OpenMonikerCache(db *bolt.DB) (*MonikerCache, error) {
-	err := db.Update(func(tx *bolt.Tx) error {
-		if _, err := tx.CreateBucketIfNotExists(bucketMonikers); err != nil {
-			return fmt.Errorf("create monikers bucket: %w", err)
-		}
-		return nil
-	})
+	err := db.Update(ensureMonikerBucket)
 	if err != nil {
 		return nil, err
 	}
 	return &MonikerCache{db: db}, nil
+}
+
+func ensureMonikerBucket(tx *bolt.Tx) error {
+	_, err := tx.CreateBucketIfNotExists(bucketMonikers)
+	return err
 }
 
 // Get returns all monikers as a map.
@@ -93,32 +92,4 @@ func OpenDB(path string) (*bolt.DB, error) {
 		return nil, fmt.Errorf("open bbolt database %s: %w", path, err)
 	}
 	return db, nil
-}
-
-// MigrateFromJSON imports aktop-format JSON provider cache into bbolt.
-// This is a one-time migration helper. Pass nil to skip.
-func MigrateFromJSON(db *bolt.DB, jsonData []byte) error {
-	if len(jsonData) == 0 {
-		return nil
-	}
-
-	var data struct {
-		Providers map[string]*CachedProvider `json:"providers"`
-	}
-	if err := json.Unmarshal(jsonData, &data); err != nil {
-		return fmt.Errorf("unmarshal JSON cache: %w", err)
-	}
-
-	return db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketProviders)
-		if b == nil {
-			return nil
-		}
-		for owner, p := range data.Providers {
-			if err := putProvider(b, owner, p); err != nil {
-				return err
-			}
-		}
-		return nil
-	})
 }

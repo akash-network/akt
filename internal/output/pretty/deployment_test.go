@@ -2,16 +2,23 @@ package pretty
 
 import (
 	"bytes"
+	"encoding/json"
+	"errors"
+	"io"
 	"testing"
 
 	"cosmossdk.io/math"
 	"github.com/charmbracelet/x/exp/golden"
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
+	"github.com/cosmos/cosmos-sdk/codec"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
+	"gopkg.in/yaml.v3"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	prettytestdata "pkg.akt.dev/akt/internal/output/pretty/testdata"
 	dv1 "pkg.akt.dev/go/node/deployment/v1"
 	dvbeta "pkg.akt.dev/go/node/deployment/v1beta4"
 	eidv1 "pkg.akt.dev/go/node/escrow/id/v1"
@@ -204,4 +211,111 @@ func TestPrintGroupsListUsesPlainCommandWriterOutsideTTY(t *testing.T) {
 	require.NoError(t, PrintGroupsList(cmd, sdkclient.Context{}, groups))
 	require.Contains(t, stdout.String(), "Group 1")
 	require.NotContains(t, stdout.String(), "\x1b[")
+}
+
+func TestPrintGroupsListStructuredOutputIsOneArrayIncludingWhenEmpty(t *testing.T) {
+	for _, format := range []string{cflags.OutputJSON, cflags.OutputYAML} {
+		for _, groups := range []dvbeta.Groups{
+			{},
+			{
+				makeGroup("akash1qwerty", 100, 1, "web", dvbeta.GroupOpen),
+				makeGroup("akash1qwerty", 100, 2, "worker", dvbeta.GroupClosed),
+			},
+		} {
+			name := format + "/nonempty"
+			if len(groups) == 0 {
+				name = format + "/empty"
+			}
+			t.Run(name, func(t *testing.T) {
+				cmd := &cobra.Command{}
+				cmd.Flags().String(cflags.FlagOutput, format, "")
+				var stdout bytes.Buffer
+				cmd.SetOut(&stdout)
+				cctx := sdkclient.Context{Codec: codec.NewProtoCodec(codectypes.NewInterfaceRegistry())}
+
+				require.NoError(t, PrintGroupsList(cmd, cctx, groups))
+				var decoded []any
+				if format == cflags.OutputJSON {
+					require.NoError(t, json.Unmarshal(stdout.Bytes(), &decoded))
+				} else {
+					require.NoError(t, yaml.Unmarshal(stdout.Bytes(), &decoded))
+				}
+				require.Len(t, decoded, len(groups), "structured groups must have one top-level array")
+				if len(groups) == 0 {
+					require.Equal(t, "[]", string(bytes.TrimSpace(stdout.Bytes())))
+				}
+			})
+		}
+	}
+}
+
+func TestPrintGroupsListRejectsCodecFailuresAndMalformedJSON(t *testing.T) {
+	groups := dvbeta.Groups{makeGroup("akash1qwerty", 100, 1, "web", dvbeta.GroupOpen)}
+	baseCodec := codec.NewProtoCodec(codectypes.NewInterfaceRegistry())
+
+	for _, tt := range []struct {
+		name    string
+		codec   codec.Codec
+		wantErr error
+	}{
+		{
+			name: "marshal failure",
+			codec: prettytestdata.GroupsMarshalCodec{
+				Codec: baseCodec,
+				Err:   errors.New("group marshal failed"),
+			},
+			wantErr: errors.New("group marshal failed"),
+		},
+		{
+			name: "malformed codec JSON",
+			codec: prettytestdata.GroupsMarshalCodec{
+				Codec:   baseCodec,
+				Payload: []byte("{"),
+			},
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &cobra.Command{}
+			cmd.Flags().String(cflags.FlagOutput, cflags.OutputJSON, "")
+			cmd.SetOut(io.Discard)
+
+			err := PrintGroupsList(cmd, sdkclient.Context{Codec: tt.codec}, groups)
+			require.Error(t, err)
+			if tt.wantErr != nil {
+				require.EqualError(t, err, tt.wantErr.Error())
+			}
+		})
+	}
+}
+
+func TestPrintGroupsListPropagatesCommandWriterFailures(t *testing.T) {
+	wantErr := errors.New("command stdout failed")
+	groups := dvbeta.Groups{makeGroup("akash1qwerty", 100, 1, "web", dvbeta.GroupOpen)}
+
+	for _, format := range []string{cflags.OutputPretty, cflags.OutputJSON, cflags.OutputYAML} {
+		t.Run(format, func(t *testing.T) {
+			for _, failure := range []struct {
+				name string
+				w    io.Writer
+				want error
+			}{
+				{name: "hard error", w: prettyBoundaryWriter{err: wantErr}, want: wantErr},
+				{name: "short write", w: prettyBoundaryWriter{short: true}, want: io.ErrShortWrite},
+			} {
+				t.Run(failure.name, func(t *testing.T) {
+					cmd := &cobra.Command{}
+					cmd.Flags().String(cflags.FlagOutput, format, "")
+					cmd.SetOut(failure.w)
+
+					var wrongDestination bytes.Buffer
+					cctx := sdkclient.Context{
+						Codec: codec.NewProtoCodec(codectypes.NewInterfaceRegistry()),
+					}.WithOutput(&wrongDestination)
+					err := PrintGroupsList(cmd, cctx, groups)
+					require.ErrorIs(t, err, failure.want)
+					require.Empty(t, wrongDestination.String(), "client context output must be replaced by command output")
+				})
+			}
+		})
+	}
 }

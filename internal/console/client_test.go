@@ -104,6 +104,26 @@ func TestUnexpectedStatusReturnsHTTPError(t *testing.T) {
 	assert.Contains(t, httpErr.Body, "conflict")
 }
 
+func TestUnexpectedStatusRedactsEchoedAPIKey(t *testing.T) {
+	const apiKey = "credential-that-must-not-escape"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"request used ` + apiKey + ` twice: ` + apiKey + `"}`))
+	}))
+	defer srv.Close()
+
+	c := console.New(srv.URL, apiKey)
+	_, err := c.GetDeployment(context.Background(), "1")
+	require.Error(t, err)
+	assert.NotContains(t, err.Error(), apiKey)
+
+	var httpErr *console.HTTPError
+	require.ErrorAs(t, err, &httpErr)
+	assert.NotContains(t, httpErr.Body, apiKey)
+	assert.Equal(t, 2, strings.Count(httpErr.Body, "[REDACTED]"))
+}
+
 func TestRetryOn429ThenSuccess(t *testing.T) {
 	var calls atomic.Int32
 
@@ -145,42 +165,57 @@ func TestPostNotRetriedOn5xx(t *testing.T) {
 	// gateway 502 can hide a completed write). Replaying a POST could
 	// duplicate a deployment or charge the managed wallet twice, so POST
 	// must do exactly one attempt and surface the error.
-	var calls atomic.Int32
+	var posts atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls.Add(1)
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"123"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"1000000"}],"transferred":[]}}}}`))
+			if posts.Load() > 0 {
+				cancel()
+			}
+			return
+		}
 		assert.Equal(t, http.MethodPost, r.Method)
+		posts.Add(1)
 		w.WriteHeader(http.StatusBadGateway)
 	}))
 	defer srv.Close()
 
 	c := console.New(srv.URL, "key")
-	err := c.Deposit(context.Background(), "123", 5)
+	err := c.Deposit(ctx, "123", 5)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "server error")
-	assert.Equal(t, int32(1), calls.Load(), "POST + 5xx must not be retried")
+	assert.Equal(t, int32(1), posts.Load(), "POST + 5xx must not be retried")
 }
 
 func TestPostNotRetriedOn429(t *testing.T) {
 	// A rate-limit response does not prove that a non-idempotent request was
 	// never processed. Replaying it could duplicate a deployment or charge.
-	var calls atomic.Int32
+	var posts atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodPost, r.Method)
-		if calls.Add(1) == 1 {
-			w.WriteHeader(http.StatusTooManyRequests)
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"123"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"1000000"}],"transferred":[]}}}}`))
+			if posts.Load() > 0 {
+				cancel()
+			}
 			return
 		}
-		w.WriteHeader(http.StatusOK)
+		assert.Equal(t, http.MethodPost, r.Method)
+		posts.Add(1)
+		w.WriteHeader(http.StatusTooManyRequests)
 	}))
 	defer srv.Close()
 
 	c := console.New(srv.URL, "key")
-	err := c.Deposit(context.Background(), "123", 5)
+	err := c.Deposit(ctx, "123", 5)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rate limited")
-	assert.Equal(t, int32(1), calls.Load(), "POST + 429 must not be replayed")
+	assert.Equal(t, int32(1), posts.Load(), "POST + 429 must not be replayed")
 }
 
 func TestDeleteRetriedOn5xx(t *testing.T) {
@@ -193,7 +228,7 @@ func TestDeleteRetriedOn5xx(t *testing.T) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
-		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"success":true}}`))
 	}))
 	defer srv.Close()
 
@@ -248,19 +283,44 @@ func TestFlexStringAcceptsNumbers(t *testing.T) {
 }
 
 func TestMissingDataEnvelopeIsAnError(t *testing.T) {
-	// A success-shaped response that omits the envelope must not read as a
-	// successful call with a zero-valued result (e.g. an empty dseq).
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{name: "missing", body: `{"ok":true}`},
+		{name: "null", body: `{"data":null}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			// A success-shaped response that omits or nulls the envelope must
+			// not read as a successful call with a zero-valued result.
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(tc.body))
+			}))
+			defer srv.Close()
+
+			_, err := console.New(srv.URL, "k").GetUser(context.Background())
+			if err == nil {
+				t.Fatal("a response without a non-null data envelope must be an error")
+			}
+			if !strings.Contains(err.Error(), "no data envelope") {
+				t.Errorf("error %q should name the unusable envelope", err)
+			}
+		})
+	}
+}
+
+func TestEmptyBodyIsAnErrorWhenResultExpected(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"ok":true}`))
+		w.WriteHeader(http.StatusOK)
 	}))
 	defer srv.Close()
 
-	c := console.New(srv.URL, "k")
-
-	if _, err := c.GetUser(context.Background()); err == nil {
-		t.Fatal("a response without a data envelope must be an error")
-	} else if !strings.Contains(err.Error(), "no data envelope") {
-		t.Errorf("error %q should name the missing envelope", err)
+	_, err := console.New(srv.URL, "k").GetUsageHistory(context.Background(), "akash1x", "", "")
+	if err == nil {
+		t.Fatal("an empty successful response with an expected result must be an error")
+	}
+	if !strings.Contains(err.Error(), "empty response body") {
+		t.Errorf("error %q should identify the empty success body", err)
 	}
 }
 

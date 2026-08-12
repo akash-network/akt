@@ -40,7 +40,19 @@ func (e *OutputExecutor) Execute(ctx context.Context, step workflow.StepDef, sta
 		out = os.Stdout
 	}
 
-	fmt.Fprint(out, rendered)
+	written, err := io.WriteString(out, rendered)
+	if err == nil && written != len(rendered) {
+		err = io.ErrShortWrite
+	}
+	if err != nil {
+		return &workflow.StepResult{
+			Name:     step.Name,
+			Type:     step.Type,
+			Status:   "failed",
+			Error:    err.Error(),
+			Duration: time.Since(start),
+		}, fmt.Errorf("write output: %w", err)
+	}
 
 	return &workflow.StepResult{
 		Name:     step.Name,

@@ -1,6 +1,8 @@
 package pretty
 
 import (
+	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -28,4 +30,49 @@ func TestWriteHighlightedJSON(t *testing.T) {
 			golden.RequireEqual(t, buf.String())
 		})
 	}
+}
+
+func TestWriteHighlightedJSONPropagatesWriterFailures(t *testing.T) {
+	wantErr := errors.New("output unavailable")
+
+	for _, input := range []struct {
+		name string
+		data []byte
+	}{
+		{name: "valid JSON", data: []byte(`{"status":"ready"}`)},
+		{name: "invalid JSON fallback", data: []byte(`{"status":`)},
+	} {
+		t.Run(input.name, func(t *testing.T) {
+			requirements := []struct {
+				name string
+				w    io.Writer
+				want error
+			}{
+				{name: "hard error", w: errorWriter{err: wantErr}, want: wantErr},
+				{name: "short write", w: shortWriter{}, want: io.ErrShortWrite},
+			}
+
+			for _, requirement := range requirements {
+				t.Run(requirement.name, func(t *testing.T) {
+					if err := WriteHighlightedJSON(requirement.w, input.data); !errors.Is(err, requirement.want) {
+						t.Fatalf("WriteHighlightedJSON() error = %v, want %v", err, requirement.want)
+					}
+				})
+			}
+		})
+	}
+}
+
+type errorWriter struct {
+	err error
+}
+
+func (w errorWriter) Write([]byte) (int, error) {
+	return 0, w.err
+}
+
+type shortWriter struct{}
+
+func (shortWriter) Write(p []byte) (int, error) {
+	return len(p) - 1, nil
 }

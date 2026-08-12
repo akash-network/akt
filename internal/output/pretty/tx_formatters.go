@@ -1,20 +1,24 @@
 package pretty
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	vestingtypes "github.com/cosmos/cosmos-sdk/x/auth/vesting/types"
 	"github.com/cosmos/cosmos-sdk/x/authz"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	crisistypes "github.com/cosmos/cosmos-sdk/x/crisis/types"
 	distrtypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	slashingtypes "github.com/cosmos/cosmos-sdk/x/slashing/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
@@ -28,10 +32,12 @@ import (
 	bmetypes "pkg.akt.dev/go/node/bme/v1"
 	certtypes "pkg.akt.dev/go/node/cert/v1"
 	dv1beta "pkg.akt.dev/go/node/deployment/v1beta4"
+	escrowid "pkg.akt.dev/go/node/escrow/id/v1"
 	ev1 "pkg.akt.dev/go/node/escrow/v1"
 	mtypes "pkg.akt.dev/go/node/market/v1beta5"
 	oracletypes "pkg.akt.dev/go/node/oracle/v2"
 	ptypes "pkg.akt.dev/go/node/provider/v1beta4"
+	attrtypes "pkg.akt.dev/go/node/types/attributes/v1"
 )
 
 // RegisterAllTxFormatters registers TxPrettyFormatter implementations for all
@@ -304,9 +310,12 @@ func fmtProviderUpdate(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg s
 // Cert
 // ---------------------------------------------------------------------------
 
-func fmtCertCreate(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
+func fmtCertCreate(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, resp *sdk.TxResponse, msgIndex int) error {
 	m := msg.(*certtypes.MsgCreateCertificate)
 	KV(w, "Owner", m.Owner)
+	if serial := txEventAttribute(resp, msgIndex, "", "serial"); serial != "" {
+		KV(w, "Serial", serial)
+	}
 	return nil
 }
 
@@ -350,7 +359,7 @@ func fmtStakingCreateValidator(w io.Writer, _ *cobra.Command, _ sdkclient.Contex
 	KV(w, "Operator", m.ValidatorAddress)
 	KV(w, "Moniker", m.Description.Moniker)
 	KV(w, "Self-Delegation", FormatCoin(m.Value))
-	KV(w, "Commission", m.Commission.Rate.String())
+	KV(w, "Commission", FormatPercentDec(m.Commission.Rate))
 	return nil
 }
 
@@ -361,7 +370,7 @@ func fmtStakingEditValidator(w io.Writer, _ *cobra.Command, _ sdkclient.Context,
 		KV(w, "Moniker", m.Description.Moniker)
 	}
 	if m.CommissionRate != nil {
-		KV(w, "Commission", m.CommissionRate.String())
+		KV(w, "Commission", FormatPercentDec(*m.CommissionRate))
 	}
 	return nil
 }
@@ -374,20 +383,26 @@ func fmtStakingDelegate(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg 
 	return nil
 }
 
-func fmtStakingRedelegate(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
+func fmtStakingRedelegate(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, resp *sdk.TxResponse, msgIndex int) error {
 	m := msg.(*stakingtypes.MsgBeginRedelegate)
 	KV(w, "Delegator", m.DelegatorAddress)
 	KV(w, "From", m.ValidatorSrcAddress)
 	KV(w, "To", m.ValidatorDstAddress)
 	KV(w, "Amount", FormatCoin(m.Amount))
+	if completion := txEventAttribute(resp, msgIndex, stakingtypes.EventTypeRedelegate, stakingtypes.AttributeKeyCompletionTime); completion != "" {
+		KV(w, "Completion", completion)
+	}
 	return nil
 }
 
-func fmtStakingUndelegate(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
+func fmtStakingUndelegate(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, resp *sdk.TxResponse, msgIndex int) error {
 	m := msg.(*stakingtypes.MsgUndelegate)
 	KV(w, "Delegator", m.DelegatorAddress)
 	KV(w, "Validator", m.ValidatorAddress)
 	KV(w, "Amount", FormatCoin(m.Amount))
+	if completion := txEventAttribute(resp, msgIndex, stakingtypes.EventTypeUnbond, stakingtypes.AttributeKeyCompletionTime); completion != "" {
+		KV(w, "Completion", completion)
+	}
 	return nil
 }
 
@@ -403,16 +418,22 @@ func fmtStakingCancelUnbonding(w io.Writer, _ *cobra.Command, _ sdkclient.Contex
 // Distribution
 // ---------------------------------------------------------------------------
 
-func fmtDistrWithdrawReward(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
+func fmtDistrWithdrawReward(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, resp *sdk.TxResponse, msgIndex int) error {
 	m := msg.(*distrtypes.MsgWithdrawDelegatorReward)
 	KV(w, "Delegator", m.DelegatorAddress)
 	KV(w, "Validator", m.ValidatorAddress)
+	if amount := txEventAttribute(resp, msgIndex, distrtypes.EventTypeWithdrawRewards, sdk.AttributeKeyAmount); amount != "" {
+		KV(w, "Rewards", formatTxEventCoins(amount))
+	}
 	return nil
 }
 
-func fmtDistrWithdrawCommission(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
+func fmtDistrWithdrawCommission(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, resp *sdk.TxResponse, msgIndex int) error {
 	m := msg.(*distrtypes.MsgWithdrawValidatorCommission)
 	KV(w, "Validator", m.ValidatorAddress)
+	if amount := txEventAttribute(resp, msgIndex, distrtypes.EventTypeWithdrawCommission, sdk.AttributeKeyAmount); amount != "" {
+		KV(w, "Commission", formatTxEventCoins(amount))
+	}
 	return nil
 }
 
@@ -442,9 +463,12 @@ func fmtDistrFundValidatorRewards(w io.Writer, _ *cobra.Command, _ sdkclient.Con
 // Gov
 // ---------------------------------------------------------------------------
 
-func fmtGovSubmitProposal(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
+func fmtGovSubmitProposal(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, resp *sdk.TxResponse, msgIndex int) error {
 	m := msg.(*govv1.MsgSubmitProposal)
 	KV(w, "Proposer", m.Proposer)
+	if proposalID := txEventAttribute(resp, msgIndex, govtypes.EventTypeSubmitProposal, govtypes.AttributeKeyProposalID); proposalID != "" {
+		KV(w, "Proposal ID", Bold(proposalID))
+	}
 	if m.Title != "" {
 		KV(w, "Title", m.Title)
 	}
@@ -522,10 +546,35 @@ func fmtAuthzRevoke(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.
 	return nil
 }
 
-func fmtAuthzExec(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
+func fmtAuthzExec(w io.Writer, cmd *cobra.Command, cctx sdkclient.Context, msg sdk.Msg, resp *sdk.TxResponse, msgIndex int) error {
 	m := msg.(*authz.MsgExec)
 	KV(w, "Grantee", m.Grantee)
-	KV(w, "Messages", fmt.Sprintf("%d", len(m.Msgs)))
+	for i, packed := range m.Msgs {
+		inner, ok := unpackTxMessage(cctx, packed)
+		if !ok {
+			messageType := "unknown"
+			if packed != nil {
+				messageType = shortTypeName(packed.TypeUrl)
+			}
+			KV(w, fmt.Sprintf("Message %d", i+1), messageType+" (cannot decode)")
+			continue
+		}
+
+		formatter, ok := LookupTx(inner)
+		if !ok {
+			KV(w, fmt.Sprintf("Message %d", i+1), shortTypeName(packed.TypeUrl))
+			continue
+		}
+
+		Newline(w)
+		fmt.Fprintf(w, "  %s\n", Bold(fmt.Sprintf("Message %d: %s", i+1, formatter.Title())))
+		// The receipt scopes every nested event to the outer MsgExec. Passing it
+		// through would let repeated inner message types reuse the first event
+		// value and display a false proposal ID, contract address, or code ID.
+		if err := formatter.FormatTx(w, cmd, cctx, inner, nil, msgIndex); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -533,12 +582,17 @@ func fmtAuthzExec(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Ms
 // Feegrant
 // ---------------------------------------------------------------------------
 
-func fmtFeegrantGrant(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
+func fmtFeegrantGrant(w io.Writer, _ *cobra.Command, cctx sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
 	m := msg.(*feegrant.MsgGrantAllowance)
 	KV(w, "Granter", m.Granter)
 	KV(w, "Grantee", m.Grantee)
 	if m.Allowance != nil {
 		KV(w, "Type", shortTypeName(m.Allowance.TypeUrl))
+		if allowance, ok := unpackFeeAllowance(cctx, m.Allowance); ok {
+			if expiration, err := allowance.ExpiresAt(); err == nil && expiration != nil {
+				KV(w, "Expiration", expiration.UTC().Format(time.RFC3339))
+			}
+		}
 	}
 	return nil
 }
@@ -556,8 +610,13 @@ func fmtFeegrantRevoke(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg s
 
 func fmtEscrowDeposit(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
 	m := msg.(*ev1.MsgAccountDeposit)
-	KV(w, "Signer", m.Signer)
-	KV(w, "Account", m.ID.XID)
+	if owner, dseq, ok := escrowDeploymentIdentity(m.ID); ok {
+		KV(w, "Owner", owner)
+		KV(w, "DSEQ", Bold(fmt.Sprintf("%d", dseq)))
+	} else {
+		KV(w, "Signer", m.Signer)
+		KV(w, "Account", m.ID.XID)
+	}
 	KV(w, "Amount", FormatCoin(m.Deposit.Amount))
 	return nil
 }
@@ -597,7 +656,11 @@ func fmtVestingPeriodic(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg 
 	m := msg.(*vestingtypes.MsgCreatePeriodicVestingAccount)
 	KV(w, "From", m.FromAddress)
 	KV(w, "To", m.ToAddress)
-	KV(w, "Periods", fmt.Sprintf("%d", len(m.VestingPeriods)))
+	total := sdk.NewCoins()
+	for _, period := range m.VestingPeriods {
+		total = total.Add(period.Amount...)
+	}
+	KV(w, "Periods", fmt.Sprintf("%d (%s total)", len(m.VestingPeriods), FormatCoins(total)))
 	return nil
 }
 
@@ -635,16 +698,22 @@ func fmtCrisisVerifyInvariant(w io.Writer, _ *cobra.Command, _ sdkclient.Context
 // WASM
 // ---------------------------------------------------------------------------
 
-func fmtWasmStoreCode(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
+func fmtWasmStoreCode(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, resp *sdk.TxResponse, msgIndex int) error {
 	m := msg.(*wasmtypes.MsgStoreCode)
 	KV(w, "Sender", m.Sender)
+	if codeID := txEventAttribute(resp, msgIndex, wasmtypes.EventTypeStoreCode, wasmtypes.AttributeKeyCodeID); codeID != "" {
+		KV(w, "Code ID", Bold(codeID))
+	}
 	return nil
 }
 
-func fmtWasmInstantiate(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
+func fmtWasmInstantiate(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, resp *sdk.TxResponse, msgIndex int) error {
 	m := msg.(*wasmtypes.MsgInstantiateContract)
 	KV(w, "Sender", m.Sender)
 	KV(w, "Code ID", fmt.Sprintf("%d", m.CodeID))
+	if contract := txEventAttribute(resp, msgIndex, wasmtypes.EventTypeInstantiate, wasmtypes.AttributeKeyContractAddr); contract != "" {
+		KV(w, "Contract", Bold(contract))
+	}
 	KV(w, "Label", m.Label)
 	admin := m.Admin
 	if admin == "" {
@@ -654,10 +723,13 @@ func fmtWasmInstantiate(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg 
 	return nil
 }
 
-func fmtWasmInstantiate2(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
+func fmtWasmInstantiate2(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, resp *sdk.TxResponse, msgIndex int) error {
 	m := msg.(*wasmtypes.MsgInstantiateContract2)
 	KV(w, "Sender", m.Sender)
 	KV(w, "Code ID", fmt.Sprintf("%d", m.CodeID))
+	if contract := txEventAttribute(resp, msgIndex, wasmtypes.EventTypeInstantiate, wasmtypes.AttributeKeyContractAddr); contract != "" {
+		KV(w, "Contract", Bold(contract))
+	}
 	KV(w, "Label", m.Label)
 	admin := m.Admin
 	if admin == "" {
@@ -725,7 +797,7 @@ func fmtOracleFeed(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.M
 	KV(w, "Sender", m.Signer)
 	KV(w, "Asset", m.ID.Denom)
 	KV(w, "Base", m.ID.BaseDenom)
-	KV(w, "Price", m.Price.String())
+	KV(w, "Price", DecOrZero(m.Price).String())
 	return nil
 }
 
@@ -759,9 +831,130 @@ func fmtBMEBurnACT(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.M
 // Helpers
 // ---------------------------------------------------------------------------
 
-// formatAttributes formats a list of Akash provider attributes as "key=value, ..."
-func formatAttributes(attrs interface{}) string {
-	// Attributes implement the Stringer interface in most cases.
-	// Use fmt.Sprint as a safe fallback.
-	return fmt.Sprint(attrs)
+// formatAttributes formats a list of Akash provider attributes as "key=value, ...".
+func formatAttributes(attrs attrtypes.Attributes) string {
+	formatted := make([]string, 0, len(attrs))
+	for _, attribute := range attrs {
+		formatted = append(formatted, attribute.Key+"="+attribute.Value)
+	}
+	return strings.Join(formatted, ", ")
+}
+
+// txEventAttribute returns a message-scoped event value. Confirmed responses
+// normally carry ABCIMessageLogs, which preserve msg_index; aggregate events
+// are a fallback for responses that omit those logs.
+func txEventAttribute(resp *sdk.TxResponse, msgIndex int, eventType, key string) string {
+	if resp == nil {
+		return ""
+	}
+
+	for _, log := range resp.Logs {
+		if int(log.MsgIndex) != msgIndex {
+			continue
+		}
+		for _, event := range log.Events {
+			if eventType != "" && event.Type != eventType {
+				continue
+			}
+			for _, attribute := range event.Attributes {
+				if attribute.Key == key {
+					return normalizeTxEventValue(attribute.Value)
+				}
+			}
+		}
+	}
+
+	for _, event := range resp.Events {
+		eventMsgIndex := ""
+		for _, attribute := range event.Attributes {
+			if attribute.Key == "msg_index" {
+				eventMsgIndex = normalizeTxEventValue(attribute.Value)
+				break
+			}
+		}
+		if eventMsgIndex != "" && eventMsgIndex != strconv.Itoa(msgIndex) {
+			continue
+		}
+		if eventType != "" && event.Type != eventType {
+			continue
+		}
+		for _, attribute := range event.Attributes {
+			if attribute.Key == key {
+				return normalizeTxEventValue(attribute.Value)
+			}
+		}
+	}
+
+	return ""
+}
+
+func normalizeTxEventValue(value string) string {
+	var decoded string
+	if len(value) >= 2 && value[0] == '"' && json.Unmarshal([]byte(value), &decoded) == nil {
+		return decoded
+	}
+	return value
+}
+
+func formatTxEventCoins(value string) string {
+	coins, err := sdk.ParseCoinsNormalized(value)
+	if err != nil {
+		return value
+	}
+	return FormatCoins(coins)
+}
+
+func escrowDeploymentIdentity(id escrowid.Account) (string, uint64, bool) {
+	if id.Scope != escrowid.ScopeDeployment {
+		return "", 0, false
+	}
+
+	separator := strings.LastIndexByte(id.XID, '/')
+	if separator <= 0 || separator == len(id.XID)-1 {
+		return "", 0, false
+	}
+	dseq, err := strconv.ParseUint(id.XID[separator+1:], 10, 64)
+	if err != nil || dseq == 0 {
+		return "", 0, false
+	}
+
+	return id.XID[:separator], dseq, true
+}
+
+func unpackTxMessage(cctx sdkclient.Context, packed *codectypes.Any) (sdk.Msg, bool) {
+	if packed == nil {
+		return nil, false
+	}
+	if cached := packed.GetCachedValue(); cached != nil {
+		msg, ok := cached.(sdk.Msg)
+		return msg, ok
+	}
+	if cctx.Codec == nil {
+		return nil, false
+	}
+
+	var msg sdk.Msg
+	if err := cctx.Codec.UnpackAny(packed, &msg); err != nil || msg == nil {
+		return nil, false
+	}
+	return msg, true
+}
+
+func unpackFeeAllowance(cctx sdkclient.Context, packed *codectypes.Any) (feegrant.FeeAllowanceI, bool) {
+	if packed == nil {
+		return nil, false
+	}
+	if cached := packed.GetCachedValue(); cached != nil {
+		allowance, ok := cached.(feegrant.FeeAllowanceI)
+		return allowance, ok
+	}
+	if cctx.Codec == nil {
+		return nil, false
+	}
+
+	var allowance feegrant.FeeAllowanceI
+	if err := cctx.Codec.UnpackAny(packed, &allowance); err != nil || allowance == nil {
+		return nil, false
+	}
+	return allowance, true
 }

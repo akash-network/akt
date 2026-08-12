@@ -2,6 +2,7 @@ package pretty
 
 import (
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -156,21 +157,31 @@ func RenderGroupsList(groups dvbeta.Groups) string {
 // This is used when querying groups for a deployment (no gseq specified).
 func PrintGroupsList(cmd *cobra.Command, cctx sdkclient.Context, groups dvbeta.Groups) error {
 	output, _ := cmd.Flags().GetString(cflags.FlagOutput)
+	checked := clioutput.NewCheckedWriter(cmd.OutOrStdout())
+	cctx = cctx.WithOutput(checked)
 	if output == cflags.OutputJSON || output == cflags.OutputYAML {
-		outCctx := cctx.WithOutputFormat(output)
+		encoded := make([]json.RawMessage, len(groups))
+		for i := range groups {
+			raw, err := cctx.Codec.MarshalJSON(&groups[i])
+			if err != nil {
+				return checked.Complete(err)
+			}
+			encoded[i] = raw
+		}
+		raw, err := json.Marshal(encoded)
+		if err != nil {
+			return checked.Complete(err)
+		}
+
+		outCctx := cctx.WithOutputFormat("json")
 		if output == cflags.OutputYAML {
 			outCctx = cctx.WithOutputFormat("text")
 		}
-		for _, g := range groups {
-			if err := outCctx.PrintProto(&g); err != nil {
-				return err
-			}
-		}
-		return nil
+		return checked.Complete(outCctx.PrintRaw(raw))
 	}
 
-	_, err := fmt.Fprint(clioutput.TerminalAwareWriter(cmd.OutOrStdout()), RenderGroupsList(groups))
-	return err
+	_, err := fmt.Fprint(clioutput.TerminalAwareWriter(checked), RenderGroupsList(groups))
+	return checked.Complete(err)
 }
 
 // formatResourceUnits renders a list of resource units with full spec details.

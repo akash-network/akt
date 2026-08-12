@@ -59,6 +59,9 @@ closed.`,
 				if err != nil {
 					return err
 				}
+				if id.DSeq == 0 {
+					return errDSeqRequired
+				}
 				aid = id.ToEscrowAccountID()
 			default:
 				return fmt.Errorf("invalid account scope. allowed values deployment")
@@ -81,6 +84,9 @@ closed.`,
 					Amount:  amount,
 					Sources: sources,
 				},
+			}
+			if err := msg.ValidateBasic(); err != nil {
+				return err
 			}
 
 			resp, err := cl.Tx().BroadcastMsgs(ctx, []sdk.Msg{msg})

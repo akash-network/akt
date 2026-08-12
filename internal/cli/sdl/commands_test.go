@@ -98,6 +98,17 @@ func TestScaffoldsListsAll(t *testing.T) {
 	require.Contains(t, stdout, "akt sdl init")
 }
 
+func TestScaffoldsStructuredOutputUsesCommandWriter(t *testing.T) {
+	for _, format := range []string{"json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			stdout, _, err := runSDL(t, "", "scaffolds", "--output", format)
+			require.NoError(t, err)
+			require.Contains(t, stdout, "multi-service")
+			require.NotContains(t, stdout, "Generate one with")
+		})
+	}
+}
+
 func TestInitRoundTripAllScaffolds(t *testing.T) {
 	for _, name := range ScaffoldNames() {
 		t.Run(name, func(t *testing.T) {

@@ -1,14 +1,20 @@
 package tui
 
 import (
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/exp/golden"
 
+	monitorcache "pkg.akt.dev/akt/internal/monitor/cache"
+	monitorrpc "pkg.akt.dev/akt/internal/monitor/rpc"
 	"pkg.akt.dev/akt/internal/tui/components"
 	"pkg.akt.dev/akt/internal/tui/keys"
 	"pkg.akt.dev/akt/internal/tui/messages"
@@ -296,6 +302,110 @@ func TestBuildMonitorModelReportsCacheInitializationFailure(t *testing.T) {
 	})
 	if err == nil || !strings.Contains(err.Error(), "cache") {
 		t.Fatalf("error = %v, want cache initialization failure", err)
+	}
+}
+
+func TestEmbeddedMonitorCleanupCancelsAndDrainsNetworkWork(t *testing.T) {
+	cacheDir := t.TempDir()
+	dbPath := filepath.Join(cacheDir, "monitor.db")
+	db, err := monitorcache.OpenDB(dbPath)
+	if err != nil {
+		t.Fatalf("open monitor cache: %v", err)
+	}
+	providerCache, _, err := monitorcache.OpenStores(db)
+	if err != nil {
+		_ = db.Close()
+		t.Fatalf("initialize monitor cache: %v", err)
+	}
+	providerCache.SyncWithChain([]monitorrpc.OnChainProvider{{
+		Owner:   "akash1existing",
+		HostURI: "https://existing.example.test:8443",
+	}})
+	if err := db.Close(); err != nil {
+		t.Fatalf("close primed monitor cache: %v", err)
+	}
+
+	leaseStarted := make(chan struct{})
+	leaseCanceled := make(chan struct{})
+	releaseLease := make(chan struct{})
+	mux := http.NewServeMux()
+	mux.HandleFunc("/abci_query", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"result":{"response":{"code":0,"value":""}}}`)
+	})
+	mux.HandleFunc("/akash/market/v1beta5/leases/list", func(_ http.ResponseWriter, r *http.Request) {
+		close(leaseStarted)
+		select {
+		case <-r.Context().Done():
+			close(leaseCanceled)
+		case <-releaseLease:
+		}
+	})
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+	t.Cleanup(func() { close(releaseLease) })
+
+	model, _, cleanup, err := buildMonitorModel(Config{
+		RPCEndpoint:      server.URL,
+		RESTEndpoint:     server.URL,
+		CacheDir:         cacheDir,
+		InitialDashboard: "provider",
+	})
+	if err != nil {
+		t.Fatalf("build embedded monitor: %v", err)
+	}
+	if cleanup == nil {
+		t.Fatal("embedded monitor has no cleanup boundary")
+	}
+	cleaned := false
+	t.Cleanup(func() {
+		if !cleaned {
+			cleanup()
+		}
+	})
+
+	_, cmd := model.Update(tea.KeyPressMsg{Code: 'r', Text: "r"})
+	if cmd == nil {
+		t.Fatal("provider refresh did not start chain synchronization")
+	}
+	commandDone := make(chan struct{})
+	go func() {
+		_ = cmd()
+		close(commandDone)
+	}()
+	select {
+	case <-leaseStarted:
+	case <-time.After(time.Second):
+		t.Fatal("embedded monitor network request did not start")
+	}
+
+	cleanupDone := make(chan struct{})
+	go func() {
+		cleanup()
+		close(cleanupDone)
+	}()
+	select {
+	case <-cleanupDone:
+		cleaned = true
+	case <-time.After(time.Second):
+		t.Fatal("embedded monitor cleanup did not drain network work")
+	}
+	select {
+	case <-leaseCanceled:
+	case <-time.After(time.Second):
+		t.Fatal("embedded monitor cleanup did not cancel its network context")
+	}
+	select {
+	case <-commandDone:
+	case <-time.After(time.Second):
+		t.Fatal("embedded monitor cleanup returned before its command finished")
+	}
+
+	db, err = monitorcache.OpenDB(dbPath)
+	if err != nil {
+		t.Fatalf("reopen cache after embedded monitor cleanup: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("close reopened monitor cache: %v", err)
 	}
 }
 

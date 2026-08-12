@@ -122,8 +122,10 @@ func apikeyDeleteCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return fmt.Errorf("delete API key %s: %w", args[0], err)
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "API key %s deleted.\n", args[0])
-			return nil
+			return printConsoleResult(cmd, fmt.Sprintf("API key %s deleted.", args[0]), struct {
+				ID      string `json:"id" yaml:"id"`
+				Deleted bool   `json:"deleted" yaml:"deleted"`
+			}{ID: args[0], Deleted: true})
 		},
 	}
 }

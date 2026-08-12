@@ -83,13 +83,13 @@ func (v *LeaseDetailView) View() tea.View {
 		components.KV("GSEQ/OSEQ", fmt.Sprintf("%d/%d", l.ID.GSeq, l.ID.OSeq)),
 		components.KV("State", components.StateTag(l.State)),
 		components.KV("Provider", valOrDash(l.ID.Provider)),
-		components.KV("Price", valOrDash(l.Price)+"/block"),
+		components.KV("Price", valOrDash(formatStoredCoins(l.Price))+"/block"),
 		components.KV("Age", age),
 	}, "\n"))
 
 	// Section 2: Order
 	orderID := fmt.Sprintf("%d/%d/%d", l.ID.DSeq, l.ID.GSeq, l.ID.OSeq)
-	bidID := fmt.Sprintf("%d/%d/%d/%s", l.ID.DSeq, l.ID.GSeq, l.ID.OSeq, truncateAddr(l.ID.Provider))
+	bidID := fmt.Sprintf("%d/%d/%d/%s", l.ID.DSeq, l.ID.GSeq, l.ID.OSeq, l.ID.Provider)
 	sections = append(sections, components.Section("Order", contentW)+"\n"+strings.Join([]string{
 		components.KVBold("Order ID", orderID),
 		components.KV("Bid ID", bidID),
@@ -176,12 +176,3 @@ func (v *LeaseDetailView) Lease() *store.LeaseRecord {
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────
-
-// truncateAddr truncates an address to the first 12 characters followed by "...".
-// If the address is 15 characters or shorter, it is returned as-is.
-func truncateAddr(addr string) string {
-	if len(addr) <= 15 {
-		return addr
-	}
-	return addr[:12] + "..."
-}

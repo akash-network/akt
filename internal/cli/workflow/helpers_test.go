@@ -113,7 +113,9 @@ func TestEmitJSONLShape(t *testing.T) {
 	state.SetStepResult("boom", &wf.StepResult{Name: "boom", Status: "failed", Error: "out of gas"})
 
 	var buf bytes.Buffer
-	emitJSONL(&buf, state, nil)
+	if err := emitJSONL(&buf, state, nil); err != nil {
+		t.Fatalf("emit JSONL: %v", err)
+	}
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	if len(lines) != 3 {
@@ -173,7 +175,9 @@ func TestEmitJSONLSkipsMissingResults(t *testing.T) {
 	state.SetStepResult("ghost", nil)
 
 	var buf bytes.Buffer
-	emitJSONL(&buf, state, nil)
+	if err := emitJSONL(&buf, state, nil); err != nil {
+		t.Fatalf("emit JSONL: %v", err)
+	}
 
 	if strings.TrimSpace(buf.String()) != "" {
 		t.Errorf("a nil step result must emit nothing, got %q", buf.String())
@@ -193,7 +197,9 @@ func TestEmitJSONLOmitsUnconfirmedHeight(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	emitJSONL(&buf, state, nil)
+	if err := emitJSONL(&buf, state, nil); err != nil {
+		t.Fatalf("emit JSONL: %v", err)
+	}
 
 	line := strings.TrimSpace(buf.String())
 	if !strings.Contains(line, `"hash":"ABC123"`) {
@@ -245,7 +251,9 @@ func TestDeployRecoveryAdviceSurfacesPaidPartialState(t *testing.T) {
 	}
 
 	var human bytes.Buffer
-	printResults(&human, state, errors.New("send manifest failed"), advice)
+	if err := printResults(&human, state, errors.New("send manifest failed"), advice); err != nil {
+		t.Fatalf("print results: %v", err)
+	}
 	for _, want := range []string{
 		"Partial deployment state",
 		"DSEQ: 4242",
@@ -278,7 +286,9 @@ func TestDeployRecoveryAdviceJSONLFields(t *testing.T) {
 
 	advice := deployRecoveryAdvice(state, errors.New("refused"))
 	var buf bytes.Buffer
-	emitJSONL(&buf, state, advice)
+	if err := emitJSONL(&buf, state, advice); err != nil {
+		t.Fatalf("emit JSONL: %v", err)
+	}
 
 	lines := strings.Split(strings.TrimSpace(buf.String()), "\n")
 	if len(lines) != 2 {
@@ -366,7 +376,10 @@ func TestFilterProviderStepsDropsOnlyProviderSteps(t *testing.T) {
 	}
 
 	var notes bytes.Buffer
-	filtered := filterProviderSteps(def, &notes)
+	filtered, err := filterProviderSteps(def, &notes)
+	if err != nil {
+		t.Fatalf("filterProviderSteps: %v", err)
+	}
 
 	if len(def.Steps) != 3 {
 		t.Errorf("the input definition must not be mutated, got %d steps", len(def.Steps))
@@ -384,7 +397,9 @@ func TestFilterProviderStepsDropsOnlyProviderSteps(t *testing.T) {
 	// A definition with no provider steps is returned unchanged and silent.
 	notes.Reset()
 	plain := &wf.WorkflowDef{Name: "close", Steps: []wf.StepDef{{Name: "close", Type: wf.StepTx}}}
-	if got := filterProviderSteps(plain, &notes); got != plain {
+	if got, err := filterProviderSteps(plain, &notes); err != nil {
+		t.Fatalf("filter plain workflow: %v", err)
+	} else if got != plain {
 		t.Error("a definition without provider steps should be returned as-is")
 	}
 	if notes.String() != "" {

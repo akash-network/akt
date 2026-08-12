@@ -438,6 +438,7 @@ func sendManifestCmd() *cobra.Command {
 			}
 
 			var failures []error
+			out := output.NewCheckedWriter(cmd.OutOrStdout())
 			for _, provider := range providers {
 				err := submitManifest(cmd, provider, scope.DSeq, mani)
 				recordProviderAction(ctx, "send-manifest", provider, scope.DSeq, err)
@@ -446,7 +447,10 @@ func sendManifestCmd() *cobra.Command {
 					continue
 				}
 
-				fmt.Fprintf(cmd.OutOrStdout(), "Manifest submitted successfully to %s.\n", provider)
+				if _, err := fmt.Fprintf(out, "Manifest submitted successfully to %s.\n", provider); err != nil {
+					failures = append(failures, fmt.Errorf("write manifest result: %w", out.Complete(err)))
+					break
+				}
 			}
 
 			return errors.Join(failures...)
@@ -581,8 +585,9 @@ func migrateHostnamesCmd() *cobra.Command {
 				return aktprovider.GatewayError("migrate hostnames", err)
 			}
 
-			fmt.Fprintln(cmd.OutOrStdout(), "Hostnames migrated successfully.")
-			return nil
+			out := output.NewCheckedWriter(cmd.OutOrStdout())
+			_, err = fmt.Fprintln(out, "Hostnames migrated successfully.")
+			return out.Complete(err)
 		},
 	}
 
@@ -630,8 +635,9 @@ func migrateEndpointsCmd() *cobra.Command {
 				return aktprovider.GatewayError("migrate endpoints", err)
 			}
 
-			fmt.Fprintln(cmd.OutOrStdout(), "Endpoints migrated successfully.")
-			return nil
+			out := output.NewCheckedWriter(cmd.OutOrStdout())
+			_, err = fmt.Fprintln(out, "Endpoints migrated successfully.")
+			return out.Complete(err)
 		},
 	}
 

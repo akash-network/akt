@@ -13,6 +13,7 @@ package events
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/boz/go-lifecycle"
 
@@ -37,6 +38,10 @@ type events struct {
 	lc     lifecycle.Lifecycle
 }
 
+type unsubscribeFlusher interface {
+	FlushUnsubscribe(context.Context) error
+}
+
 // Service represents an event monitoring service that subscribes to and
 // processes blockchain events. It monitors block headers and publishes
 // all typed ABCI events to a message bus.
@@ -55,12 +60,17 @@ type Service interface {
 //   - name: Service name used as a prefix for subscription identifiers
 //   - bus: Message bus for publishing processed events
 func NewService(pctx context.Context, node sdkclient.CometRPC, name string, bus pubsub.Bus) (Service, error) {
+	ebus, ok := node.(cmclient.EventsClient)
+	if !ok {
+		return nil, fmt.Errorf("event service RPC client does not support CometBFT event subscriptions")
+	}
+
 	group, ctx := errgroup.WithContext(pctx)
 
 	ev := &events{
 		ctx:    ctx,
 		group:  group,
-		ebus:   node.(cmclient.EventsClient),
+		ebus:   ebus,
 		client: node,
 		lc:     lifecycle.New(),
 		bus:    bus,
@@ -107,7 +117,14 @@ func (e *events) Shutdown() {
 
 func (e *events) run(subs string, ch <-chan ctypes.ResultEvent, startch chan<- struct{}) error {
 	defer func() {
-		_ = e.ebus.UnsubscribeAll(e.ctx, subs)
+		if err := e.ebus.UnsubscribeAll(e.ctx, subs); err == nil {
+			// Some WebSocket clients return after queueing the unsubscribe,
+			// before their writer has put it on the connection. Let transports
+			// with that behavior expose a write barrier before shutdown returns.
+			if flusher, ok := e.ebus.(unsubscribeFlusher); ok {
+				_ = flusher.FlushUnsubscribe(e.ctx)
+			}
+		}
 		e.lc.ShutdownCompleted()
 	}()
 
@@ -119,7 +136,12 @@ loop:
 		case err := <-e.lc.ShutdownRequest():
 			e.lc.ShutdownInitiated(err)
 			break loop
-		case ev := <-ch:
+		case ev, ok := <-ch:
+			if !ok {
+				e.lc.ShutdownInitiated(fmt.Errorf("event subscription %q closed", subs))
+				break loop
+			}
+
 			// nolint: gocritic
 			switch evt := ev.Data.(type) {
 			case cmtypes.EventDataNewBlockHeader:
@@ -128,12 +150,12 @@ loop:
 		}
 	}
 
-	return e.ctx.Err()
+	return e.lc.Error()
 }
 
 func (e *events) processBlock(height int64) {
 	blkResults, err := e.client.BlockResults(e.ctx, &height)
-	if err != nil {
+	if err != nil || blkResults == nil {
 		return
 	}
 
@@ -142,14 +164,28 @@ func (e *events) processBlock(height int64) {
 			continue
 		}
 
-		for _, ev := range tx.Events {
-			if pev := parseEvent(ev); pev != nil {
-				if err := e.bus.Publish(pev); err != nil {
-					return
-				}
-			}
+		if !e.publishEvents(tx.Events) {
+			return
 		}
 	}
+
+	// Module lifecycle hooks emit events outside transactions. CometBFT
+	// exposes those events separately in FinalizeBlockEvents.
+	e.publishEvents(blkResults.FinalizeBlockEvents)
+}
+
+func (e *events) publishEvents(events []abci.Event) bool {
+	for _, ev := range events {
+		pev := parseEvent(ev)
+		if pev == nil {
+			continue
+		}
+		if err := e.bus.Publish(pev); err != nil {
+			return false
+		}
+	}
+
+	return true
 }
 
 // parseEvent attempts to deserialize an ABCI event into a typed protobuf

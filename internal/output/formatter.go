@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -51,36 +50,31 @@ func PrintData(cmd *cobra.Command, columns []Column, rows [][]string, data any) 
 
 	switch format {
 	case FormatJSON:
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(data)
+		return Fprint(cmd.OutOrStdout(), FormatJSON, data)
 	case FormatYAML:
-		return writeYAML(os.Stdout, data, 2)
+		return Fprint(cmd.OutOrStdout(), FormatYAML, data)
 	default:
-		PrintTable(os.Stdout, columns, rows)
-		return nil
+		return PrintTable(cmd.OutOrStdout(), columns, rows)
 	}
-}
-
-// Print formats and writes data to stdout in the given format.
-func Print(format Format, data any) error {
-	return Fprint(os.Stdout, format, data)
 }
 
 // Fprint formats and writes data to w in the given format.
 func Fprint(w io.Writer, format Format, data any) error {
+	checked := NewCheckedWriter(w)
+	var err error
 	switch format {
 	case FormatJSON:
-		enc := json.NewEncoder(w)
+		enc := json.NewEncoder(checked)
 		enc.SetIndent("", "  ")
-		return enc.Encode(data)
+		err = enc.Encode(data)
 	case FormatYAML:
-		return writeYAML(w, data, 2)
+		err = writeYAML(checked, data, 2)
 	case FormatTable:
 		return fmt.Errorf("table format requires a specific printer; use PrintTable instead")
 	default:
 		return fmt.Errorf("unknown output format %q", format)
 	}
+	return checked.Complete(err)
 }
 
 // FprintJSONSemantics formats JSON-backed data without letting YAML reflection
@@ -115,7 +109,8 @@ func FprintJSONSemantics(w io.Writer, format Format, data any) error {
 		Content: []*yaml.Node{root},
 	}
 
-	return writeYAML(w, document, 2)
+	checked := NewCheckedWriter(w)
+	return checked.Complete(writeYAML(checked, document, 2))
 }
 
 func jsonValueYAMLNode(value any) (*yaml.Node, error) {
@@ -177,13 +172,14 @@ const EmptyTableMessage = "(no results)"
 // and skip this call. This is the legacy tabwriter engine, kept for the
 // remaining PrintData callers; pretty output uses
 // pretty.WriteTableOrEmpty (SPEC §10.12).
-func PrintTable(w io.Writer, columns []Column, rows [][]string) {
+func PrintTable(w io.Writer, columns []Column, rows [][]string) error {
+	checked := NewCheckedWriter(w)
 	if len(rows) == 0 {
-		fmt.Fprintln(w, EmptyTableMessage)
-		return
+		_, err := fmt.Fprintln(checked, EmptyTableMessage)
+		return checked.Complete(err)
 	}
 
-	tw := tabwriter.NewWriter(w, 0, 2, 2, ' ', 0)
+	tw := tabwriter.NewWriter(checked, 0, 2, 2, ' ', 0)
 
 	// Header.
 	headers := make([]string, len(columns))
@@ -191,14 +187,18 @@ func PrintTable(w io.Writer, columns []Column, rows [][]string) {
 		headers[i] = c.Header
 	}
 
-	fmt.Fprintln(tw, strings.Join(headers, "\t"))
+	if _, err := fmt.Fprintln(tw, strings.Join(headers, "\t")); err != nil {
+		return checked.Complete(err)
+	}
 
 	// Rows.
 	for _, row := range rows {
-		fmt.Fprintln(tw, strings.Join(row, "\t"))
+		if _, err := fmt.Fprintln(tw, strings.Join(row, "\t")); err != nil {
+			return checked.Complete(err)
+		}
 	}
 
-	_ = tw.Flush()
+	return checked.Complete(tw.Flush())
 }
 
 func writeYAML(w io.Writer, data any, indent int) error {

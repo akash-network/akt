@@ -192,6 +192,29 @@ func TestDestinationLinesNameTheRootAndItsOverrides(t *testing.T) {
 	}
 }
 
+func TestDestinationAndSummaryWritersPreserveLineContracts(t *testing.T) {
+	root := "/tmp/example/akt-home"
+
+	var destination strings.Builder
+	writeDestination(&destination, root)
+	for _, line := range destinationLines(root) {
+		if !strings.Contains(destination.String(), line+"\n") {
+			t.Errorf("destination writer omitted line %q:\n%s", line, destination.String())
+		}
+	}
+
+	var summary strings.Builder
+	writeSummary(&summary, root, "sandbox", "sandbox-2", "file")
+	if !strings.Contains(summary.String(), "Setup complete") {
+		t.Errorf("summary writer omitted heading:\n%s", summary.String())
+	}
+	for _, line := range summaryLines(root, "sandbox", "sandbox-2", "file") {
+		if !strings.Contains(summary.String(), line+"\n") {
+			t.Errorf("summary writer omitted line %q:\n%s", line, summary.String())
+		}
+	}
+}
+
 // TestSummaryLinesNameEveryLocation covers the closing summary. Before this,
 // the only path the wizard ever printed was config.yaml, so the store, action
 // log, and keyring were left for the user to guess at.
@@ -260,6 +283,71 @@ func TestChainIDOf(t *testing.T) {
 
 	if got := chainIDOf(nets, "absent"); got != "" {
 		t.Errorf("chainIDOf(absent) = %q, want empty", got)
+	}
+}
+
+func TestSingleSelectFallbackSkipsUnavailableOptions(t *testing.T) {
+	restoreNonTTYStdin(t)
+
+	tests := []struct {
+		name    string
+		options []selectOption
+		initial int
+		want    string
+	}{
+		{name: "empty"},
+		{
+			name: "invalid initial uses first",
+			options: []selectOption{
+				{value: "first", label: "first"},
+				{value: "second", label: "second"},
+			},
+			initial: 99,
+			want:    "first",
+		},
+		{
+			name: "unavailable initial advances",
+			options: []selectOption{
+				{value: "missing", label: "missing", unavailable: true},
+				{value: "usable", label: "usable"},
+			},
+			want: "usable",
+		},
+		{
+			name: "all unavailable",
+			options: []selectOption{
+				{value: "one", label: "one", unavailable: true},
+				{value: "two", label: "two", unavailable: true},
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := singleSelect("Choose", tc.options, tc.initial); got != tc.want {
+				t.Errorf("singleSelect = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRenderSingleSelectShowsUnavailableAndWideLabels(t *testing.T) {
+	frame := renderSingleSelect("Choose", []selectOption{
+		{value: "off", label: "not-installed", desc: "unavailable here", unavailable: true},
+		{value: "on", label: "usable", desc: "ready"},
+	}, 1)
+
+	if !strings.Contains(frame, "not-installed") || !strings.Contains(frame, "unavailable here") {
+		t.Errorf("unavailable option is not visible:\n%s", frame)
+	}
+	rows := strings.Split(frame, "\r\n")
+	for _, row := range rows {
+		if strings.Contains(row, "not-installed") && strings.Contains(row, glyphs.G().Cursor) {
+			t.Errorf("unavailable row carried the cursor: %q", row)
+		}
+		if strings.Contains(row, "usable") && !strings.Contains(row, glyphs.G().Cursor) {
+			t.Errorf("selected usable row lacked the cursor: %q", row)
+		}
 	}
 }
 
@@ -474,6 +562,23 @@ func TestLegacyNoticeSaysWhatDoesNotCarryOverAndHow(t *testing.T) {
 	// A keyring directory that does not exist must not be listed.
 	if strings.Contains(body, filepath.Join(l.Path, legacyKeyringTestDir)) {
 		t.Errorf("notice lists a keyring-test directory that does not exist:\n%s", body)
+	}
+}
+
+func TestWriteLegacyNoticeRendersFinding(t *testing.T) {
+	home := writeLegacyFixture(t, []string{"akash1abc.pem"}, true, true)
+	finding := detectLegacyHome(home)
+
+	var output strings.Builder
+	writeLegacyNotice(&output, finding, "/tmp/akt-home", "file")
+
+	if !strings.Contains(output.String(), "Existing Akash CLI configuration") {
+		t.Fatalf("legacy notice heading missing:\n%s", output.String())
+	}
+	for _, line := range legacyNoticeLines(finding, "/tmp/akt-home", "file") {
+		if !strings.Contains(output.String(), line+"\n") {
+			t.Errorf("legacy notice writer omitted line %q", line)
+		}
 	}
 }
 

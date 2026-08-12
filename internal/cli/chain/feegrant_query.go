@@ -73,6 +73,12 @@ $ %s query feegrant grant [granter] [grantee]
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("feegrant allowance", res); err != nil {
+				return err
+			}
+			if err := requireQueryField("feegrant allowance", "allowance", res.Allowance); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), res.Allowance)
 		},
@@ -119,6 +125,9 @@ $ %s query feegrant grants-by-grantee [grantee]
 				},
 			)
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("feegrant allowances", res); err != nil {
 				return err
 			}
 
@@ -168,6 +177,9 @@ $ %s query feegrant grants-by-granter [granter]
 				},
 			)
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("feegrant allowances by granter", res); err != nil {
 				return err
 			}
 

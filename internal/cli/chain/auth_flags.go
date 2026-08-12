@@ -7,9 +7,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
-
-	"github.com/cosmos/gogoproto/jsonpb"
 
 	"github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/tx"
@@ -54,29 +51,6 @@ func SignTx(txFactory tx.Factory, cctx client.Context, name string, txBuilder cl
 	}
 
 	return tx.Sign(cctx.CmdContext, txFactory, name, txBuilder, overwriteSig)
-}
-
-// SignTxWithSignerAddress attaches a signature to a transaction.
-// Don't perform online validation or lookups if offline is true, else
-// populate account and sequence numbers from a foreign account.
-// This function should only be used when signing with a multisig. For
-// normal keys, please use SignTx directly.
-func SignTxWithSignerAddress(txFactory tx.Factory, cctx client.Context, addr sdk.AccAddress,
-	name string, txBuilder client.TxBuilder, offline, overwrite bool,
-) (err error) {
-	// Multisigs only support LEGACY_AMINO_JSON signing.
-	if txFactory.SignMode() == signing.SignMode_SIGN_MODE_UNSPECIFIED {
-		txFactory = txFactory.WithSignMode(signing.SignMode_SIGN_MODE_LEGACY_AMINO_JSON)
-	}
-
-	if !offline {
-		txFactory, err = populateAccountFromState(txFactory, cctx, addr)
-		if err != nil {
-			return err
-		}
-	}
-
-	return tx.Sign(cctx.CmdContext, txFactory, name, txBuilder, overwrite)
 }
 
 // ReadTxFromFile Read and decode a StdTx from the given filename. Can pass "-" to read from stdin.
@@ -168,15 +142,6 @@ func populateAccountFromState(
 	}
 
 	return txBldr.WithAccountNumber(num).WithSequence(seq), nil
-}
-
-func ParseQueryResponse(bz []byte) (sdk.SimulationResponse, error) {
-	var simRes sdk.SimulationResponse
-	if err := jsonpb.Unmarshal(strings.NewReader(string(bz)), &simRes); err != nil {
-		return sdk.SimulationResponse{}, err
-	}
-
-	return simRes, nil
 }
 
 func isTxSigner(user []byte, signers [][]byte) bool {

@@ -123,6 +123,9 @@ func GetOraclePricesCmd() *cobra.Command {
 			if err != nil {
 				return oracleQueryError("cannot read the price history", err)
 			}
+			if err := requireQueryResponse("oracle prices", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)
 		},
@@ -168,6 +171,9 @@ Run "akt q oracle prices" to see which denoms the oracle carries.`,
 			if err != nil {
 				return oracleQueryError(fmt.Sprintf("no aggregated price for denom %q", denom), err)
 			}
+			if err := requireQueryResponse("oracle aggregated price", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)
 		},
@@ -193,6 +199,9 @@ func GetQueryOracleParamsCmd() *cobra.Command {
 			res, err := cl.Query().Oracle().Params(ctx, req)
 			if err != nil {
 				return oracleQueryError("cannot read the module parameters", err)
+			}
+			if err := requireQueryResponse("oracle params", res); err != nil {
+				return err
 			}
 
 			return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)

@@ -239,6 +239,31 @@ func TestMonitorInsecureFlagDefaultsToFalse(t *testing.T) {
 	}
 }
 
+func TestMonitorCommandPropagatesRuntimeStartupFailure(t *testing.T) {
+	parent := t.TempDir()
+	occupied := filepath.Join(parent, "not-a-directory")
+	if err := os.WriteFile(occupied, []byte("occupied"), 0o600); err != nil {
+		t.Fatalf("write occupied home: %v", err)
+	}
+
+	v := viper.New()
+	v.Set("defaults.interactive", true)
+	cmd := monitorCmd(
+		v,
+		func() string { return occupied },
+		func() *aktctx.Manager { return nil },
+		func() string { return "" },
+	)
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+	cmd.SetArgs([]string{"http://127.0.0.1:26657"})
+
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "create monitor cache directory") {
+		t.Fatalf("monitor startup error = %v, want cache initialization failure", err)
+	}
+}
+
 func TestMonitorWithExplicitRPCDoesNotRequireConfig(t *testing.T) {
 	root := &cobra.Command{Use: "akt"}
 	monitor := &cobra.Command{Use: "monitor"}
@@ -246,6 +271,16 @@ func TestMonitorWithExplicitRPCDoesNotRequireConfig(t *testing.T) {
 
 	if requiresConfig(monitor) {
 		t.Fatal("monitor with its own RPC must not trigger config bootstrap")
+	}
+}
+
+func TestMCPDoesNotRunInteractiveConfigBootstrap(t *testing.T) {
+	root := &cobra.Command{Use: "akt"}
+	mcp := &cobra.Command{Use: "mcp"}
+	root.AddCommand(mcp)
+
+	if requiresConfig(mcp) {
+		t.Fatal("MCP stdio must not trigger interactive config bootstrap")
 	}
 }
 

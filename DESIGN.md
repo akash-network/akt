@@ -85,12 +85,53 @@ does not compose a modern view from a single legacy REST subtype, because
 absent deposit and tally fields would otherwise render as valid-looking zero
 values.
 
+Governance query inputs are resolved at the CLI boundary. Proposal identifiers,
+voter and depositor addresses, pagination, and the
+`voting|tallying|deposit` parameter selector are validated before the
+governance query client is invoked. Queries that first confirm a proposal
+exists retain the dependency error as a wrapped cause so callers can classify
+the failure with `errors.Is`.
+
+Consensus input is external data and is validated before it reaches the view
+model. Height, round, and numeric step values cannot be negative. A malformed
+round must return an error rather than becoming an index into a vote set. Vote
+state belongs to one height and round: either value changing replaces the
+prevote and precommit state, including a new round at the same height. The
+monitor never carries votes from an earlier round into the current one. Because
+WebSocket delivery can be delayed or reordered, an event behind the current
+height, round, or step is ignored; it can never rewind the displayed state.
+Conversely, a valid vote at a higher height, or at a higher round in the same
+height, is sufficient evidence of forward consensus progress. The tracker
+advances to that vote's height and round and clears the prior vote set even if
+a reconnect prevented the corresponding `NewRoundStep` event from arriving.
+The CometBFT client may reconnect its transport without restoring server-side
+subscriptions. A successful transport reconnect is therefore not considered a
+restored consensus feed until both `Vote` and `NewRoundStep` subscriptions have
+been reissued and the server has acknowledged both with valid JSON-RPC
+subscribe responses. Events that race ahead of the acknowledgements are
+buffered rather than discarded. If either subscription cannot be restored, the
+client is stopped and the consumer channel closes instead of leaving the
+dashboard attached to a silent connection. Both the transport reconnect delay
+and the view model's bounded retry delay are owned by the monitor and terminate
+immediately on context cancellation.
+Validator identity and voting power are height-scoped, not session-scoped.
+The consensus tracker refreshes the validator set before applying the first
+event of a higher height and never caches a failed validator response. It does
+not calculate a new height with stale indices or power. An initial WebSocket or
+validator fetch failure is displayed and schedules another bounded connection
+attempt; a transient startup outage cannot permanently stop consensus until
+the user restarts `akt monitor`. The initial signing-history sample uses the
+validator set from the sampled commit height, not the latest set, so an epoch
+change cannot attribute the previous block's signature to a new validator.
+
 Provider monitoring is a continuously running pipeline, not a view that is
 populated only after navigation. Startup loads the persisted provider cache,
 immediately reconciles it with the on-chain provider set, and starts the health
 check, chain-resync, and cache-save schedules. Switching dashboards changes only
 what is rendered; it does not start or stop the pipeline. Manual refresh
 requests an immediate reconciliation while retaining the periodic schedules.
+Provider records and validator monikers share the monitor's bbolt database at
+`cache/monitor.db`; no JSON cache migration path is exposed.
 The selected version is a real table filter, not only a sort preference. Every
 reconciliation rebinds the selection to the rebuilt version list so an
 appearing or disappearing version cannot leave an invalid index. Provider
@@ -117,7 +158,35 @@ below the resolved CLI home so `--home` remains a complete isolation boundary.
 The standalone monitor receives the entire terminal height. The embedded
 monitor receives exactly the shell content height after all shell chrome is
 reserved; its renderer and input model use the same dimensions so navigation
-help and bottom rows are not clipped.
+help and bottom rows are not clipped. The standalone model owns an alternate
+screen for its complete lifetime so a monitor session cannot paint or scroll
+through the caller's normal terminal buffer; an embedded model leaves that
+choice to the containing shell. The runtime also owns one cancellable context
+shared by every network command started by the model, including consensus
+HTTP/WebSocket requests, provider probes, and governance, oracle, and BME
+refreshes. It cancels that context before closing the event client, bus, and
+database, and joins both command work and the longer-lived consensus producer;
+leaving the Bubble Tea loop must not strand a network goroutine until process
+exit. The experimental embedded shell applies the same cancel-and-drain
+boundary to the monitor it hosts before closing shared event and cache
+resources.
+
+The shipped standalone runtime also fails startup when it cannot construct or
+start its CometBFT event client, or when the local event service cannot enqueue
+its `NewBlockHeader` subscription. Those branches share the normal idempotent
+teardown path: cancel and drain model work, stop an event service and client
+that started, close the event bus, and close the cache database. A monitor must
+not open with a knowingly absent event producer and present an empty bus as a
+healthy live feed.
+
+This startup check does not yet prove that the CometBFT server accepted the
+subscription. The pinned upstream client returns from `Subscribe` after it
+queues the JSON-RPC request; it consumes a later server rejection inside a
+private listener. A repository-owned `NewBlockHeader` transport that waits for
+the matching server acknowledgement, preserves an event that races ahead of
+that acknowledgement, and exposes terminal reconnect failure remains roadmap
+work. Until then, the runtime guarantee covers local setup failures only and
+must not be described as end-to-end subscription readiness.
 
 #### Non-Goals
 
@@ -253,6 +322,11 @@ graph TB
   endpoint and appends a terminal revision. Reads collapse revisions by hash,
   preserving append-only storage while presenting one current transaction row.
 - Workflow steps, provider operations, context changes, Console API calls, and errors are also logged. Read-only queries are not recorded by default.
+- Each serialized JSONL record is bounded by the 10 MiB rotation budget before
+  it reaches disk. Readers enforce the identical ceiling and surface flush or
+  rotated-generation I/O failures, so a hostile local file cannot force
+  unbounded allocation and a damaged generation cannot masquerade as a
+  complete audit history.
 
 #### 3.1.2 Context Propagation
 
@@ -291,6 +365,11 @@ promotes a keyring context to eager so its advertised chain writes are usable,
 but a Console-only context remains keyring-free. Purely local commands and
 workflow dry-runs receive no keyring.
 
+Keyring records are persistent boundary data. Account resolution validates
+that a returned record and its encoded public key are present before calling
+SDK address derivation. A missing or corrupt record is a descriptive identity
+error; it must not panic the command process.
+
 #### 3.1.2.1 Keyring Backend Resolution
 
 The Cosmos SDK asks `github.com/99designs/keyring` to open the `os` backend
@@ -325,6 +404,16 @@ The context is **live-reloadable**. The config file is watched for changes (via 
 - **TUI mode**: Config changes are detected and applied immediately to all subsequent actions, **regardless of whether flags or env vars are set**. The TUI header updates to reflect the new state. Active WebSocket connections are re-established if endpoints change.
 
 This means a user can edit their config in another terminal and see the TUI react without restarting.
+Create/write notification bursts settle before parsing, because a file-create
+event may precede the payload write. Only a successful reload replaces the
+manager's last-good config or reaches subscribers; an empty or malformed
+intermediate file is never published. The watcher can begin before the config
+exists by watching the parent directory.
+
+Context creation establishes its data directory before registering the context
+in memory. If the config save fails, registration is rolled back before the
+error returns, so a later unrelated save cannot persist a context whose create
+command failed.
 
 #### 3.1.4 Authentication Methods
 
@@ -352,6 +441,20 @@ Each context has an `auth-method` that determines how transactions are signed an
   result expose the Console's default daily auto top-up plus its exact disable
   command. Chain workflow output omits that Console-only setting.
 - No keyring, default-account, or provider-defaults are used. The context only needs a network (for query commands) and the API key.
+- Console HTTP redirects are rejected. The configured origin is the only
+  destination that receives the API key or a managed-wallet mutation; a 3xx
+  response is surfaced rather than followed to an intermediary-selected URL.
+  Neither a redirect target nor any other transport diagnostic may reach the
+  returned error or action log without exact API-key redaction.
+- Console close is idempotent only when the response unambiguously states that
+  the deployment is already closed or absent. A rejection that merely contains
+  the word `closed` (for example, "cannot be closed while leases are active")
+  remains a failed mutation and a failed action-log entry.
+- A process-level Console key is sufficient for read-only MCP without creating
+  configuration or running the first-run wizard. `--enable-writes` still
+  requires an explicitly selected context because every mutation must have a
+  durable per-context action-log destination; contextless writes fail before
+  any tool is registered.
 
 A context uses **one** auth method. Users who need both can create separate contexts (e.g., `prod` with keyring auth and `console` with console-api auth), potentially sharing the same network definition.
 
@@ -367,12 +470,41 @@ selected JWT or mTLS identity. CLI callers perform that local preflight before
 on-chain provider URL discovery, so an RPC failure cannot hide a missing
 signing identity. `--auth-type` overrides the selected context's
 `provider-defaults.auth-type`; both CLI and MCP consume that same resolved
-default. Callers may choose the provider URL, but do not construct provider
-REST clients ad hoc.
-The MCP adapter follows the same boundary: protected chain-backed gateway tools
-use that resolved wallet identity, while public status remains unauthenticated.
+default. CLI commands may choose a provider URL where their public command
+contract permits it, but do not construct provider REST clients ad hoc. MCP
+provider tools instead accept only the provider owner and resolve its registered
+URL from chain state before constructing a client. Protected MCP gateway tools
+use the resolved wallet identity, while public status remains unauthenticated.
 Console MCP tools likewise translate Console wire values into the semantic
 units promised by their schemas before returning them to a client.
+
+MCP is an adapter over the same mutation boundaries, not an audit bypass.
+When write tools are enabled, chain broadcasts use the CLI transaction logging
+decorator, Console clients carry the selected context's action logger, and
+provider mutations use the shared provider action recorder. Read-only MCP tools
+do not append action-log entries. This keeps the audit contract identical
+whether an operation starts at a Cobra command, a workflow, or a JSON-RPC tool.
+Provider REST tools accept the full provider owner address and resolve its
+registered gateway URL through the selected chain client. The same resolved
+provider therefore owns the credential target and, for mutations, the stable
+identity in the audit log; an MCP caller cannot redirect a wallet credential to
+an arbitrary host or pair a URL with a false audit identity. Provider lookup,
+local authentication, or gateway-construction failures after a valid owner and
+mutation payload are failed attempts and receive exactly one audit entry just
+like an HTTP rejection.
+Protected MCP calls also mint granular, short-lived JWT claims restricted to
+that provider, deployment identity, and required scope (`status` or
+`send-manifest`). They never send the provider client's broad full-access JWT,
+so a registered provider cannot replay an observed MCP credential against a
+different provider, deployment, or operation.
+
+MCP tool schemas are executable boundaries. Unknown fields, blank required
+strings, invalid enums, and numeric identifiers that cannot be represented
+exactly by JSON's number type are rejected before a handler or dependency is
+called; misspelled optional arguments never fall back silently.
+Handler contract tests also exercise each query family with a valid identity
+and a failing dependency, so transport errors cannot be mislabeled as success
+or lose the operation-specific diagnostic at the MCP boundary.
 
 #### 3.1.5 Console Provider Gateway Access
 
@@ -397,8 +529,16 @@ its output and then fail locally. Interactive shells and piped commands attach
 stdin automatically. A one-shot command launched from a terminal does not
 advertise stdin to the provider unless the user explicitly supplies `--stdin`;
 otherwise providers can keep an already-finished command open waiting for
-terminal input. Gateway HTTP errors retain the provider's response detail so
-rejected operations remain actionable on both rails.
+terminal input. Gateway HTTP errors retain bounded, terminal-safe provider
+response detail so rejected operations remain actionable on both rails.
+One-shot gateway calls have an overall deadline and a fixed response-body
+ceiling. Error detail strips control sequences and redacts authorization
+material before it can reach a terminal or action log. Streaming calls remain
+context-cancellable rather than inheriting an incompatible one-shot timeout.
+Log and event WebSockets reject frames larger than 16 MiB. The chain SDK still
+owns the PTY shell transport; its handshake body and received frames are not
+yet size-bounded, although akt redacts the exact request JWT from returned
+shell errors. Replacing or upstreaming that PTY transport boundary is a P0 gap.
 Shell output crosses one shared formatting boundary on both rails: pretty mode
 streams an interactive PTY unchanged, while JSON and YAML require an explicit
 remote command, disable the PTY, capture stdout and stderr separately, and emit
@@ -475,8 +615,7 @@ See [SPEC.md sections 3, 10, and 11](SPEC.md) for the detailed specification of 
 │       │   └── certs/
 │       └── actions.log
 ├── cache/                              # Shared caches
-│   ├── providers.json                  # Provider fleet cache
-│   └── monikers.json                   # Validator moniker cache
+│   └── monitor.db                      # Provider + validator moniker cache
 └── plugins/                            # Locally installed plugins
     └── akt-sdl-lint                    # Example plugin binary
 ```
@@ -496,9 +635,21 @@ graph LR
   SR -->|update| DS["Deployment Store\n(bbolt)\n\nRecords:\n- dseq, state\n- bids, leases\n- provider, cost\n- sdl hash\n- metadata"]
 ```
 
-**Startup behavior**: On first launch for a context, the sync engine performs a full reconciliation by querying all deployments owned by accounts in the context. Subsequent launches use incremental sync from the last known block height.
+**Startup behavior**: On first launch for a context, the sync engine performs a
+full reconciliation by querying all deployments owned by accounts in the
+context. Deployment, lease, and bid pagination each track the continuation
+keys already consumed; a node that repeats a non-empty key produces a local
+boundary error before another request, rather than an unbounded reconciliation
+loop. Subsequent launches use incremental sync from the last known block
+height.
 
 **Reconnection**: On WebSocket disconnect, the engine uses exponential backoff (1s, 2s, 4s, ... up to 60s) with jitter. Missed blocks are reconciled by querying the range between last-synced height and current height.
+
+Event subscription and block-result payloads are external boundaries. A client
+without the subscription capability is rejected, a closed subscription exits
+cleanly, and a nil block-result response cannot panic the worker. The event bus
+receives typed ABCI events from both transaction results and the block's
+finalize-event collection.
 
 **Why the CLI does not rely on it.** Subscription-driven sync assumes a session
 that outlives the transactions it watches. A CLI invocation does not: `akt
@@ -534,6 +685,14 @@ remains the authoritative repair path for changes made elsewhere.
 
 The subscription path remains the design for long-lived sessions; it is not the
 mechanism the one-shot CLI depends on.
+
+A closed event subscription is a terminal condition for its consumer. The
+worker exits and releases its subscription; it does not continue receiving
+zero-value events or spin after the producer closes the channel.
+Service construction also validates that the supplied RPC client implements
+the CometBFT event-subscription interface and returns a configuration error
+when it does not; a missing transport capability is never a type-assertion
+panic.
 
 ### 3.5 Transport Translation Layer
 
@@ -576,6 +735,19 @@ for human TTY output, keeping workflow results and JSONL stdout deterministic.
 The workflow definition owns a wait step's user-facing timeout explanation;
 the engine never substitutes its internal template condition into an error.
 
+Step results distinguish a deliberate skip from an execution failure. A
+`check` whose condition is false with `on-fail: skip` records a `skipped`
+result and returns control to the engine without an error; `on-fail: abort`
+records `failed` and stops the workflow. An `output` step is complete only
+after its rendered bytes reach the configured writer. Template and write
+failures both produce failed step results, so redirected or structured output
+cannot be silently lost while the workflow reports success.
+
+The final workflow report has the same contract as an output step. Human and
+JSONL renderers return writer and short-write failures to the Cobra boundary;
+a successful engine run cannot exit zero after its promised stdout payload was
+lost.
+
 Console mutation responses are not trusted as the only evidence of resulting
 state. Before creating a deployment, the client derives the SDL's deterministic
 version hash and snapshots every existing deployment DSEQ. It submits the POST
@@ -585,11 +757,27 @@ client reads the paginated deployment collection back and accepts success only
 when exactly one new DSEQ has the expected version hash. Zero or multiple
 matches produce an explicit outcome-unknown error and a `pending` action-log
 entry containing the SDL hash, so the user can investigate without accidentally
-creating another deployment.
+creating another deployment. Snapshot and reconciliation reads stop after 100
+pages or 10,000 deployment records. A traversal that still advertises another
+page after 100 responses, or that would collect more than 10,000 records,
+produces a local pagination-limit error. The client neither accumulates an
+unbounded collection nor proceeds to the create request without a complete
+baseline.
 
 The same no-replay rule applies to every non-idempotent method, including HTTP
 429 responses. A non-idempotent lease POST is reconciled by reading the
 deployment back and checking that every exact requested lease is active.
+An accepted create response is usable only when its DSEQ and managed-wallet
+transaction receipt are present, its transaction code is zero, and its hash is
+nonblank. Close requires a present `success: true` acknowledgement. Deposit
+validates the returned deployment identity and uses the exact pre/post change
+in total escrow value (`funds` plus cumulative `transferred`) to reconcile a
+lost or malformed response without replaying the charge; this remains valid
+while an active lease settles concurrently. An unproved outcome remains
+pending. One-time API-key creation likewise requires
+its nonblank ID, requested name, and secret, while JWT minting requires a
+nonblank token. An ambiguous one-time-secret response is pending because the
+request cannot safely be replayed and the missing secret cannot be recovered.
 Deployment updates are idempotent, so the Console's specific transient
 manifest-version rejection is retried within the normal three-attempt bound.
 After any failed update response, the client compares the deployment's
@@ -766,6 +954,25 @@ Commands are copied from `akash-network/chain-sdk/go/cli` with the following cle
 
 The `chain-sdk` CLI package (`pkg.akt.dev/go/cli`) will be deprecated and eventually removed once `akt` reaches full feature parity. In the interim, the `go/cli` code is clean-copied into `internal/cli/chain` and adjusted to respect akt context defaults; all other chain-sdk packages are imported directly.
 
+The clean copy is bounded by the release command tree. `internal/cli/chain`
+contains registered user-facing transaction and query commands plus helpers
+they call. It does not retain validator-node server, genesis, RPC-console, or
+duplicate legacy key-command implementations for reference. Node and genesis
+operations remain in `akash-network/node`; context-aware key management lives
+only in `internal/cli/keys`. The three user-facing CometBFT block queries
+(`block`, `blocks`, and `block-results`) remain in a focused query file rather
+than keeping their former server utility owner. Likewise, code for transaction
+groups that the Akash app cannot execute, unregistered command variants, and
+orphan signing or formatting helpers is removed instead of counted as shipped
+coverage debt.
+
+Two reviewed exceptions remain during this cleanup. Staking keeps the
+commission-rate builder used by the registered create-validator command, and
+the complete certificate transaction implementation remains intact. In
+particular, the reachable certificate `--to-genesis` option needs a separate
+product decision before removal; release-source cleanup must not silently
+change that public behavior.
+
 ### 5.2 Cobra for CLI, Bubbletea for TUI
 
 > **The TUI shell is not shipped (2026-07).** It is disabled and incomplete,
@@ -785,6 +992,38 @@ The `chain-sdk` CLI package (`pkg.akt.dev/go/cli`) will be deprecated and eventu
   parameters: explicit values are checked with the generated artifact's
   authoritative parser and linter before output. An internal invariant error
   is reserved for a built-in scaffold whose defaults fail that validation.
+- **Typed query responses remain external input**: a successful transport call
+  must return the response object, and any nested object that the command
+  promises to render, before command code dereferences it. Auth, staking, Wasm,
+  and other direct query leaves reject a missing successful response as a
+  malformed node response. They never panic or print a plausible zero value.
+  Request construction, transport errors, and final output errors remain
+  observable at the Cobra boundary.
+- **Authz grants validate the concrete authorization before transaction
+  generation**: send, deposit, generic, staking, contract, and store-code
+  grants run the authorization type's SDK `ValidateBasic` contract after CLI
+  parsing and before either generated output or broadcast. This keeps nested
+  contract limits and filters, raw contract JSON, and store-code grant sets on
+  the same fail-closed boundary as their on-chain handlers. A rejected grant
+  produces neither a transaction document nor a network request.
+- **BME conversions and escrow deposits validate their constructed messages
+  before broadcast**: zero-value conversions, zero deployment identifiers,
+  zero deposits, and invalid deposit-source sets fail at the CLI boundary.
+  These commands enforce the required deployment identity and run the SDK
+  message's `ValidateBasic` contract after parsing, so a node never receives an
+  action the local boundary or message type already rejects.
+- **Wasm artifacts and intent are validated before broadcast**: upload parsing
+  distinguishes raw Wasm from gzip, rejects truncated or corrupt streams, and
+  verifies optional reproducible-build provenance against the uncompressed
+  bytecode. Instantiation parsing preserves exact JSON/funds and requires an
+  explicit full-address admin or an explicit immutable-contract choice. These
+  checks remain in shared message parsers so direct transactions and governance
+  proposals cannot drift. Upload permission flags are parsed into one explicit
+  mode; conflicting modes and invalid or duplicate complete addresses are
+  rejected instead of being resolved by flag-read order. The parser constructs
+  and validates bounded any-of address sets without calling an upstream helper
+  that panics when the SDK maximum is exceeded, so every user-supplied
+  permission failure remains an ordinary CLI error.
 - **Invocation resolution has one target**: `--context` selects every
   context-owned read and write in the invocation, including context details,
   action logs, Console credential storage, and Console credential removal.
@@ -809,6 +1048,14 @@ The `chain-sdk` CLI package (`pkg.akt.dev/go/cli`) will be deprecated and eventu
 - **Bubbles v2** provides battle-tested components: table, viewport, text input, spinner, help, key bindings, list, progress bar, paginator.
 
 **Current status of the TUI shell**: the root TUI application (the resource browser reached by bare `akt`) is **disabled** while UX feedback is collected. Bare `akt` prints help, and `--interactive` reports that the TUI is disabled rather than launching it. The code path is kept compiled and reachable behind `AKT_EXPERIMENTAL_TUI=1` so it stays exercisable — and honest — while the decision is open; re-enabling is removing one gate in the root command's `RunE`. This is a shipping decision, not an architectural one: the design above stands, and `akt monitor` (which is a separate bubbletea application, not the shell) is unaffected and fully available.
+
+The compiled shell still follows release output invariants. Lease selection uses
+the complete owner/DSEQ/GSEQ/OSEQ/provider identity, all provider addresses are
+rendered in full, and persisted Cosmos coin strings pass through the same
+canonical amount formatter as single-shot output. ANSI-aware components measure
+display cells rather than bytes or runes, and the embedded monitor receives the
+already-reserved content height without subtracting shell chrome again. These
+are behavioral contracts even while the launch gate remains experimental.
 
 **Bubbles v2 component usage by UI element:**
 
@@ -850,6 +1097,35 @@ the audited flag means at least one current on-chain audit exists. Console-only
 workflows use the Console provider detail endpoint for the same fields. This
 metadata is ancillary: a lookup failure does not fail a deployment, and a
 reconciliation that cannot refresh it preserves the last stored values.
+
+Store import is an atomic state transition. The importer decodes and validates
+the complete envelope and every non-nil record before changing the database.
+Decoding is strict: unknown JSON/YAML fields and trailing documents are errors,
+and state enums plus timestamps/heights are validated before replace can clear
+anything.
+Store export is the inverse consistency boundary: schema metadata, sync state,
+deployments, leases, and bids are read in one bbolt snapshot. An undecodable
+row fails the export instead of being omitted from a backup that appears
+successful. File destinations are replaced atomically only after a sibling
+temporary export has been flushed and closed; failure preserves an existing
+backup.
+Merge and replace each commit in one bbolt write transaction; replace clears
+old records inside that same transaction. Malformed input, an unsupported
+version, a nil record, validation failure, or any write error leaves the prior
+store unchanged.
+Import dry-runs are filesystem-read-only for the selected context. Validation
+runs against a disposable, transactionally consistent copy of an existing
+store, or against a disposable empty store when the context has no database.
+Opening and migrating that copy exercises the same schema and write paths as a
+real import without creating directories, a database, or migration writes in
+the selected context. Copying an existing source uses a bounded bbolt read-lock
+wait and returns promptly when another process holds an incompatible lock.
+Both real and dry-run imports cap the encoded envelope at 64 MiB before decode,
+so an arbitrary input cannot exhaust memory before reaching validation.
+Exports use the same ceiling before writing any caller-visible bytes. The
+binary therefore never emits a backup that its own importer must reject. A
+snapshot missing any required bbolt bucket is reported as database corruption,
+not dereferenced as a nil bucket.
 
 ### 5.4 Plugin System (exec-based)
 
@@ -914,11 +1190,23 @@ or `NO_COLOR` is present. This decision is made at the final write boundary so
 shared renderers remain byte-identical between the CLI and monitor while files,
 pipes, and test buffers remain plain text.
 
+Every public output entry point writes through the Cobra command's configured
+writer and one checked boundary. Pretty query and transaction formatters,
+simulation and generate-only results, structured JSON/YAML, tables, and ANSI
+stripping all propagate destination errors and synthesize `io.ErrShortWrite`
+when a writer accepts only a prefix. A formatter that intentionally keeps a
+small void rendering API cannot hide a broken stdout behind that API.
+
 **Formatting conventions:**
 - **List results**: Tabwriter-aligned tables with lipgloss-styled headers. State columns are color-coded (green=active/open, yellow=warning states, red=closed/lost, gray=invalid). Key identifiers (DSEQ, moniker) are bolded.
 - **Single-item results**: Grouped key-value pairs with lipgloss-styled section headers (e.g., "Deployment", "Groups", "Escrow"). Values are colorized where appropriate.
 - **Addresses**: Always displayed in full. Never truncated or shortened by default -- addresses are machine-parseable identifiers and truncation risks ambiguity. Users who need shorter output can pipe through `cut` or `jq`.
 - **Amounts and prices**: All micro-denominated values (`u`-prefixed denoms: uakt, uatom, uosmo, etc.) are scaled to the most readable unit. Thresholds: >= 1,000,000 micro → base denom (e.g., `5.3 AKT`); >= 1,000 micro → milli denom (e.g., `3 mAKT`); < 1,000 micro → micro denom (e.g., `500 uAKT`). Trailing zeros are always stripped. This applies uniformly to every pretty output: balances, prices, escrow amounts, staking tokens, rewards, fees, and any other monetary value. Non-micro denoms and IBC denoms are shown as-is.
+- **Canonical machine amounts**: Chain queries preserve the denomination and
+  integer amount returned by state when producing JSON or YAML. They do not ask
+  the node to replace a micro denomination with display metadata first. Pretty
+  rendering alone applies the shared readable-unit conversion above; this
+  keeps `1000000uakt` machine-readable as such while displaying it as `1 AKT`.
 
 ### 5.6 Multi-Endpoint Failover
 
@@ -976,6 +1264,22 @@ Every transaction result renders the same header block with chain-level metadata
 Below the common summary, each message in the transaction is rendered using a registered `TxPrettyFormatter` for that message's protobuf type. The formatter receives the decoded `sdk.Msg` and the `TxResponse` events, allowing it to display both the message's input parameters (e.g., recipient address, amount) and any chain-emitted outputs (e.g., the DSEQ assigned to a newly created deployment).
 
 For single-message transactions (the common case), the message detail section renders directly below the summary. For multi-message transactions, each message gets a numbered sub-section. If no formatter is registered for a message type, the message body falls back to syntax-highlighted JSON -- no regressions.
+Unindexed aggregate events are used only for a single-message receipt. A
+multi-message receipt must provide indexed logs or `msg_index` attributes;
+otherwise event-derived fields stay absent instead of leaking across message
+sections.
+
+The pretty transaction path owns one checked writer beneath terminal-aware
+styling. Header, summary, formatter, nested formatter, and fallback JSON writes
+all contribute to the command result. A destination error or short write makes
+the command fail, and a formatter error remains discoverable through
+`errors.Is` rather than being replaced by a later rendering failure.
+
+An authz `MsgExec` receipt scopes events to the outer message only. It does not
+identify which inner message emitted a repeated event. Recursive inner
+formatters therefore render message-carried fields but omit receipt-only event
+fields. Missing an assigned ID is safer than displaying the first ID for more
+than one inner message.
 
 **Examples:**
 
@@ -1033,6 +1337,532 @@ Send
   To:         akash1zyxwvutsrqponmlkjihgfedcba987654321098
   Amount:     5 AKT
 ```
+
+### 5.8 Testing and Verification Architecture
+
+Coverage is one input to release confidence, not a substitute for behavioral
+proof. A line can execute while an assertion checks nothing useful. The test
+architecture therefore combines statement coverage, command and tool
+inventory, state-based end-to-end scenarios, race detection, fuzzing, and
+mutation testing. SPEC §12 is the normative contract.
+
+Offline transaction tests decode generated SDK transaction documents and check
+the message and metadata contract rather than treating valid JSON as success.
+For validator creation this includes the optional public P2P note assembled
+from the registered node ID, IP, and bounded port flags (SPEC §3.4).
+
+Coverage is reported against three denominators. They must remain separate so
+an easy or unfinished package cannot hide risk in shipped code:
+
+| Denominator | Contents | Purpose |
+|---|---|---|
+| Repository | Every production Go statement in this module, including clean-copied chain commands, the disabled experimental TUI shell, and repository-owned executable tooling | Reports the complete maintenance burden; never used to make the shipped result look better |
+| Active owned shipped | Code reachable through the default release binary, including chain commands, Console, MCP, provider, workflows, store, sync, events, output, and `akt monitor` | Primary release gate and the staged 95%+ target |
+| Experimental TUI | The disabled shell under `internal/tui` and its shell-only dependencies; the standalone monitor entry point is isolated under `internal/monitor/runtime` | Separate profile and ratchet until the shell ships; it cannot lower or raise the active denominator |
+
+The active denominator includes clean-copied code because users execute it
+through `akt`. Generated code, test-only helpers, and code that cannot be
+reached in the release binary may be excluded only by a checked-in exception
+with an owner, concrete reason, and review deadline. Package selection and
+exceptions are machine-readable and reviewed like source changes. A helper
+used only by tests belongs in a `_test.go` file or the classified test-support
+package; it must not remain in a release-compiled file merely to make it
+importable from tests.
+Taxonomy validation walks non-test Go source independently of the default build
+tags, closing the build-constrained-package gap. Repository tooling is reported
+and ratcheted separately from shipped code; test-only helpers are excluded.
+Release dependency validation also resolves each package's source directory.
+Any dependency sourced from inside the repository but absent from the
+main-module taxonomy fails, closing the nested-module/local-replace escape.
+The shipped standalone monitor runtime is an active package and delegates
+directly to `internal/monitor/ui`; it does not reuse the disabled resource-view
+shell merely to obtain a Bubble Tea entry point.
+It initializes provider, metadata, and moniker cache buckets atomically in one
+bbolt transaction before constructing the model. One resource-boundary
+initializer is injectable for deterministic failure verification; production
+event lifecycle verification uses a real local CometBFT-compatible WebSocket
+peer and proves subscription, unsubscription, client stop, and database close.
+Coverage-policy validation resolves that runtime's complete release-tag
+dependency closure and requires every repository-owned package in the closure
+to remain active. An import of the experimental shell or a support/tooling
+package therefore fails before coverage can be reported under the wrong
+denominator.
+The same validation checks the closure in reverse: each active or experimental
+package must actually be release-linked. A stale or strategically mislabeled
+package cannot remain in either shipped denominator.
+It permits exactly one active-to-experimental import edge—`internal/cli` to the
+environment-gated `internal/tui` entry point—so another shipped path cannot
+begin executing experimental code outside the reviewed bridge.
+Standalone program-completion tests provide an owned input pipe instead of
+inheriting the runner's standard input. Production still receives the terminal
+that the CLI validated, while Linux CI never asks Bubble Tea to register its
+non-interactive `/dev/null` input with epoll.
+
+Unit tests collect cross-package coverage. Subprocess tests build an
+instrumented `akt` binary with the same semantic build tags as the release and
+collect its counters through `GOCOVERDIR`.
+Statement profiles canonicalize repository-relative source identity before
+aggregation. An import path and absolute path that resolve to the same range
+are duplicates and fail rather than increasing its count twice.
+Coverage used as a ratchet is deterministic: no accepted counter relies on map
+iteration order, scheduler timing, or the direction in which a sorting
+implementation happens to invoke a comparator. Directional branches receive
+direct cases instead of incidental execution through an unordered caller.
+Compiler-emitted zero-statement control-flow blocks are removed from statement
+profiles and every coverage denominator. They contribute no Go statements and
+may use zero-width source ranges. The changed-source gate nevertheless retains
+their exact range and execution count in a separate edge-evidence index: a
+changed `case` or `select` edge may pass only when its own synthetic counter ran.
+That evidence cannot cover neighboring syntax, satisfy an enclosing statement,
+or enter filtering, publication, reports, or ratchets. Positive-statement
+blocks retain strict range and duplicate validation.
+Unit, hermetic end-to-end, and live-service profiles remain distinct, then a
+union profile reports the code proven by the full suite. The union cannot
+replace the separate profiles because each one answers a different question.
+Codecov reports the unit, hermetic E2E, repository, experimental-TUI, and
+active-union profiles from trusted default-branch runs. Live and union-live
+profiles remain pull-request artifacts. Repository-owned scripts remain the
+authoritative merge gate. The README badge shows the default branch's active
+union coverage. Its project and patch statuses are review signals for uploaded
+commits, not pull-request credentials or merge controls. Removed-code status
+leniency is disabled so a fully covered patch cannot make an aggregate
+regression appear successful.
+
+Trusted CI collects the Console `live` shard on same-repository pull requests
+whose base branch is `main`. The shard runs the read contracts and bounded
+managed-wallet lifecycle against one non-production Console sandbox. The job
+uses the protected `console-sandbox` environment. A reviewer from
+`@akash-network/core` must approve the job before GitHub releases credentials;
+core authors may approve their own job, and repository administrators cannot
+bypass the environment rule. Deployment branch policy admits only pull-request
+merge refs through `refs/pull/*/merge`. Fork pull requests remain secretless
+and skip the job. A core
+member must mirror a fork change to a repository branch before it can receive
+this evidence. Allowing self-approval explicitly trusts core accounts to run
+their own proposed code against the capped sandbox. CI never uses
+`pull_request_target` to execute proposed code.
+Deployment-dependent read contracts do not depend on leftover tenant state:
+the lifecycle invokes them against the exact active deployment and lease it
+owns before cleanup. The separately runnable read-only test may still reuse an
+existing active deployment for operator diagnostics, but a clean tenant skip
+does not remove those assertions from the blocking lifecycle. CI runs only
+state-independent reads before mutation; it does not invoke the optional
+existing-deployment diagnostic that is expected to skip on a clean tenant.
+
+The Console job and live report generation are required inputs to `required-ci`
+for eligible pull requests. Raw live counters remain separate from the
+hermetic active union, so live execution cannot cover a missing hermetic
+assertion. A verified `union-live` report is retained as an informational
+pull-request artifact.
+The managed-wallet path still requires its independent sandbox endpoint and
+exact mutation opt-in, so possession of an API key alone never authorizes a
+write. The API key, endpoint, and opt-in exist only as `console-sandbox`
+environment secrets; repository- or organization-scoped copies selected for
+this repository are prohibited because proposed workflow code could otherwise
+remove the environment gate. All sandbox jobs
+share one queue that retains up to 100 waiting jobs. A running lifecycle and
+its pull-request workflow are not automatically cancelled while they may own
+resources. Every pull-request workflow uses that non-cancelling policy because
+a retargeted pull request can become ineligible after an earlier run acquired
+sandbox resources. Push and manual workflows may still replace an older run.
+There is no scheduled or manual sandbox mutation run.
+
+This checked-in policy prevents ordinary superseding events; it is not a
+repository-wide lock. GitHub evaluates concurrency from proposed workflow
+files, so an organization member already trusted to run same-repository pull-
+request workflows could deliberately collide with and cancel the sandbox
+group before environment review. The target external lock and orphan sweeper
+remain necessary to survive malicious cancellation or runner loss.
+
+Raw counter shards cross CI job boundaries as narrowly scoped build artifacts.
+Artifact publication explicitly includes the reviewed `.cache/coverage`
+directory, rejects an empty match, and never uploads the surrounding cache.
+Collection jobs validate the exact shard allowlist before upload—source
+manifest, E2E binary identity where applicable, metadata, and counters
+only—and require the pinned Go toolchain to decode the covdata before
+publication. Each metadata hash must have at least one matching counter file;
+an orphan `covmeta` entry is an incomplete shard. Report jobs repeat validation
+after download. The live
+secret boundary therefore cannot rely on an assumption that unrelated files
+were not written beside counters.
+This makes a missing shard a collection failure instead of silently producing
+an incomplete union. Each shard carries a deterministic manifest of its Go
+sources, default/release/test `go:embed` inputs, package `testdata` fixtures,
+dependency locks, collection-relevant package taxonomy, and build recipes. It
+deliberately excludes reporting-only baselines, reviewed exceptions, and
+Codecov presentation policy because those inputs cannot change raw counters.
+The merge job regenerates that
+manifest from the reporting checkout and rejects missing, malformed,
+mixed-revision, or locally stale shards before interpreting their counters.
+Coverage evidence therefore cannot be reused after source, embedded workflow,
+golden, or fixture behavior changes even when the statement map itself is
+unchanged. The manifest also hashes tracked environment recipes, every
+checked-in GitHub Actions workflow, the GoReleaser recipe, all Make recipes,
+and the effective Go build environment (including CGO and architecture feature
+selection), closing the stale-shard path where identical sources were compiled
+under different constraints.
+The manifest is emitted with a tab-delimited CSV encoder instead of string
+concatenation, preserving unusual but valid tracked paths as one record.
+Manifest and changed-source inputs must be regular files; symlink traversal is
+not accepted as repository evidence.
+Each instrumented E2E build also emits a compact identity containing the exact
+binary SHA-256 and the SHA-256 of that build-consistent source manifest. Shard
+preparation verifies the identity before copying it beside the counters, and
+collection-side publication verifies the still-present binary again after the
+suite. A stale or replaced executable therefore fails closed even when its
+source manifest was left behind. Report jobs do not need the executable, but
+they require every E2E identity and verify its manifest digest before accepting
+the transferred shard. Unit shards carry no binary identity.
+
+Coverage analysis and Codecov authentication are separate trust boundaries.
+The report job checks out and executes repository code with read-only
+repository permissions, then publishes only generated profiles. A distinct
+upload-only job on the trusted default branch downloads the hermetic profiles
+and holds the OIDC permission; it does
+not check out the repository or execute project scripts. It reconstructs only
+the tested commit's Git object database and index, which gives Codecov a source
+network without materializing source files. Both the action and its downloaded CLI are
+pinned, with signature and checksum failures fatal inside the OIDC job. A
+Codecov outage stays non-blocking at the job boundary; verification failure
+cannot fall through to execution of the downloaded file. Pull-request
+workflows never receive an OIDC token, so an untrusted workflow edit cannot
+turn coverage reporting into a credential exfiltration path. The live profile
+remains a CI artifact because it exists only on the pull-request run; it is not
+forwarded through an OIDC job.
+
+Repository-owned statement ratchets and the changed-statement gate are the
+authoritative merge controls. Codecov computes line coverage, so its active
+flag and badge are a default-branch visualization rather than a claim that its
+percentage is numerically identical to Go statement coverage. The workflow
+uploads the authoritative active-union profile before narrower informational
+profiles, so a later per-lane upload failure cannot suppress the primary
+Codecov signal. GitHub line annotations are disabled because Codecov cannot
+produce them for a patch status scoped to a flag and is deprecating that
+annotation path; the status and pull-request report remain available. The workflow
+exposes a stable `required-ci` aggregate over lint, build and unit tests, the
+active race suite, repository coverage enforcement, and the protected Console
+sandbox job for eligible same-repository pull requests. Branch protection must
+require that aggregate; defining the job or uploading to Codecov cannot
+substitute for the external repository rule. Repository ownership follows the
+same Akash Go-project convention as node and provider: `@akash-network/core`
+owns the tree, including the ownership file itself, so required code-owner
+review also protects workflow, coverage-policy, baseline, and release changes.
+
+Two independent rules prevent untested changes from hiding inside an aggregate
+percentage. Every active package has a checked-in no-regression ratchet, and
+added or changed executable lines require 100% coverage. A reviewed exception
+is allowed only for a line that cannot be exercised meaningfully. Exceptions
+are narrow, expire, and never excuse a missing behavioral scenario. They exempt
+only the exact changed-line check; they never authorize lowering a package or
+aggregate ratio, so compensating coverage must land in the same change. Once active
+owned shipped coverage reaches 95%, that floor is permanent and continues to
+ratchet toward 100%. A coverage improvement and its exact raised baseline land
+in the same change; leaving the baseline stale would allow a later test-only
+deletion to give the improvement back without crossing the older floor.
+The baseline stores the exact measured statement counts, so an equivalent ratio
+with a changed denominator is stale too. Moving a package between active,
+experimental, and tooling classifications carries its prior package ratio into
+the destination and cannot reopen a new-package history window.
+Ratchets accept only their canonical baseline path, preventing a rename from
+reopening the one-time bootstrap path. The patch gate also fails closed when a
+changed active source file has executable statements but is absent from the
+release-equivalent profile, including omission by a newly added build tag.
+Go can attribute a multiline statement's counter to only part of its syntax.
+When a changed executable token has no directly intersecting positive-statement
+counter, the gate first checks for an exact synthetic edge-evidence match. Only
+when none exists does it use the first positive-statement counter region
+belonging to the token's smallest enclosing statement. The token passes only
+when the selected edge or statement executed. An initializer or other
+executable syntax with neither kind of evidence in its enclosing region still
+fails closed. This preserves the statement contract without demanding
+exceptions for covered closing delimiters, function arguments, or
+composite-literal fields.
+The first checked-in baseline may capture legacy packages below the entry floor,
+but it is not a way to smuggle in a new under-tested package. Package presence
+at the comparison revision's complete non-test Go source tree distinguishes
+legacy code from packages introduced by the bootstrap change; this does not
+depend on the old revision already having coverage metadata. The latter still
+start at 80%, or 95% when critical.
+The independent 100% changed-active-line rule covers every executable line
+added by that change.
+Coverage ratios are compared with overflow-safe exact arithmetic across the
+complete accepted counter range; an oversized but syntactically valid baseline
+cannot wrap a cross-product and disguise a regression. The advertised local
+coverage-check target runs both the union ratchets and changed-line gate, even
+though CI presents them as separate steps for clearer diagnostics.
+Release-profile validation also pins every GoReleaser build's main package to
+`cmd/akt`; matching tags on a different executable cannot validate the shipped
+CLI denominator.
+Presence discovery models nested-module and ignored-directory boundaries from
+the comparison tree, preventing a removed `go.mod` or ignored path from turning
+newly admitted source into a false legacy package. A `0/0` package baseline is
+treated as fully covered, so its first executable statements must all execute.
+CI resolves the event's actual comparison revision and runs that patch gate on
+both pull requests and default-branch pushes, including multi-commit pushes.
+For local use, the same gate compares the base with the complete worktree,
+including untracked Go files, rather than silently testing only the last commit.
+The base name is peeled to one immutable commit before any historical source or
+baseline lookup; a mutable branch or tag cannot be verified at one revision and
+then reused at another during the same command.
+Changed-line diff state is driven only by Git file headers before a hunk starts;
+source code containing a header-looking `+++ b/...` line cannot spoof the file
+that owns a later hunk.
+
+The assembled Cobra tree and MCP registry produce structural inventories during
+tests. They fail on unexpected additions and prove that every visible surface
+constructs and exposes help, but do not constitute behavioral coverage. The
+target behavioral contract is checked-in scenario metadata classifying every
+runnable command and tool by capability, rail, mutation status, required state,
+test lane, output modes, and expected action-log behavior. Once that manifest is
+complete, CI must fail on an unclassified, stale, or help-only action, including
+dynamically registered workflows as well as static commands.
+
+End-to-end testing uses several environments because no single local chain can
+exercise the complete product:
+
+An explicitly selected blocking environment is fail-closed: missing Docker,
+an unreachable daemon, bootstrap failure, or an absent coverage counter is a
+test failure. Opt-in tests may self-skip only when their opt-in variable was not
+set; infrastructure failure after selection must never become a green skip.
+
+The Docker fresh-chain lane treats `akt` as the system under test and the
+pinned node image's native `akash` CLI as an independent state observer. The
+observer constructs its own chain queries and the harness decodes its JSON; an
+`akt` query may demonstrate the public read surface but cannot be the sole
+oracle for an `akt` mutation. Command output, the native transaction receipt,
+exact post-state, and the action log are bound to the same transaction or
+resource identity. After the public log command reconciles a pending receipt,
+the harness independently decodes the append-only action-log JSONL and collapses
+transaction revisions; the production reader cannot validate its own writer.
+A mutation that transfers funds to a newly generated
+recipient runs only on a harness-owned throwaway chain. An external endpoint is
+ineligible until the scenario retains a recoverable key, refunds the funds,
+and verifies a hard spend budget.
+
+External RPC fixtures are read-only unless the operator supplies a second
+mutation opt-in and explicitly allowlists the expected chain ID. The harness
+verifies that ID from the node before loading a funded mnemonic, permanently
+rejects known production chains, and identifies created resources by a
+pre-state/post-state set difference over every pagination page. It never treats
+list order as ownership. A scenario that also creates a persistent prerequisite
+such as a client certificate remains restricted to a harness-owned chain until
+every resource has exact identity tracking and cleanup. The blocking Docker
+fixture is different: it is created and destroyed by the test process, so
+mutations are enabled inside that isolated chain.
+Read-only account checks remain portable across external fixtures: a supplied
+funded mnemonic must expose at least one positive, canonically encoded balance,
+but it need not carry the Docker genesis fixture's exact `uakt` and `uact`
+pair. Native-Docker balance equality is asserted only when the harness owns the
+container and therefore has an independent node CLI available.
+
+| Lane | What it proves |
+|---|---|
+| Offline | Parsing, config, keyring, SDL, signing, structured output, capability errors, and documentation examples |
+| Fresh chain | Queries and transactions against deterministic state, including multi-validator cases and independent post-state queries |
+| Provider | Bids, leases, manifests, gateway authentication, logs, events, shell, migrations, and a real workload on a local Kubernetes provider |
+| Dual chain | IBC clients, connections, channels, transfers, acknowledgements, and timeout paths |
+| Forked state | A pinned `testnetify` snapshot for real pagination, historical state, migrations, monitoring, and upgrade behavior |
+| Console | The real Console implementation, signer, database, indexer, proxy, chain, and provider for managed-wallet lifecycle tests |
+| Monitor | Real CometBFT WebSocket traffic, terminal input, cancellation, cache persistence, and reconnect behavior |
+| Fault | Process restarts, endpoint loss, delayed blocks, ambiguous writes, interruption, and concurrent local-state access |
+
+**Delivery status (2026-08-12):** the blocking implementation currently
+collects cross-package unit coverage plus offline and single-validator
+fresh-chain subprocess coverage. Harness-owned mutations in that lane use the
+pinned node CLI as an independent receipt and state oracle. The Cobra inventory is generated from the
+assembled tree and exercises every visible help path, but is explicitly
+structural rather than the semantic scenario manifest described above. The
+fresh-chain query matrix additionally points each nominal leaf at a
+request-counting HTTP peer: command execution must hit it and fail, while the
+corresponding help form must not hit it. This proves transport reachability
+rather than accepting an arbitrary nonzero diagnostic. The
+MCP registry has semantic schema, handler, mutation-audit, and protocol tests.
+Real Console read and managed-wallet lifecycle suites are a protected,
+blocking service fixture for same-repository pull requests to `main`.
+Provider/Kubernetes, dual-chain, pinned
+`testnetify`, full monitor/PTY, fault-injection, mutation-testing, and the full
+multi-actor command scenario matrix remain delivery work. This status does not
+weaken the target; it prevents the target architecture from being mistaken for
+evidence that those environments already run.
+
+Live Console reads use per-command semantic validators. Public catalogs prove
+the stable identity of every returned item and require populated collections
+where the service contract itself supplies global data; tenant-owned lists are
+allowed to be empty. Nested arrays and objects are checked at their documented
+boundary, so `{}` or a correctly typed but structurally empty value cannot make
+a healthy-looking smoke test.
+
+Every mutation scenario captures authoritative pre-state, executes through the
+public `akt` binary, and verifies post-state through an independent chain,
+Console, provider, or Kubernetes client. Exit zero and non-empty output are not
+sufficient assertions. Mutations must write the specified action-log record;
+read-only operations must not. Retry scenarios prove idempotency or the
+documented ambiguous-outcome behavior.
+
+Console exposes deployment escrow through Cosmos fixed-point decimal coins.
+Whole micro amounts can therefore carry 18 zero decimal places, and settlement
+can leave genuinely fractional micro amounts. Current `funds` are signed
+because an overdrawn escrow balance may be negative; cumulative `transferred`
+remains non-negative. Deposit reconciliation retains both collections as exact
+rationals, while the independent live observer retains the current `funds` used
+by its pre-lease deposit proof. Both validate the chain decimal grammar, preserve
+the 18th decimal place, accept signed `funds`, sum duplicate denominations, and
+compare the complete pre/post delta without floating-point rounding or
+integer-only assumptions. Production also rejects a negative `transferred`
+amount.
+
+The target Console success lane tests against the real Console implementation.
+HTTP fakes remain necessary for deterministic transport failures, malformed
+responses, rate limits, timeout boundaries, and other conditions that should
+not be induced against a shared service. Target live mutation tests use an isolated
+sandbox account, short-lived credentials, strict spend and runtime limits, and
+an orphan sweeper. Production Console testing is read-only unless a human
+explicitly authorizes a bounded run.
+The mutation endpoint guard fails closed to the two exact Akash sandbox API
+hosts, plus loopback HTTP origins used by hermetic tests. First-party origins
+must use HTTPS, the default port, and no base path; a sandbox-looking third-
+party hostname is never enough to receive a credential. Rejection diagnostics
+name only the validation class and never echo the secret-backed URL. Context
+creation uses the same bounded, redacted subprocess runner as every later live
+command, and the lifecycle revalidates the raw key/origin pair immediately
+before constructing any network client.
+Loopback acceptance is an explicit test-only option that neither protected
+read setup nor mutation configuration enables. Child CLI processes receive
+only the documented runtime credential; all `AKT_E2E_CONSOLE_*` harness
+controls, including the parent service key, are removed from their environment
+so child-key rotation cannot leave an unscanned second credential inherited.
+The two Akash sandbox API hostnames are different Console environments despite
+sharing the sandbox chain. The beta host ending in `-staging` accepts
+`staging`-environment service keys; the production-namespace sandbox host
+accepts `production` keys. The harness checks that public environment segment
+against the selected first-party host before network access, without reporting
+the credential itself.
+
+Live catalog assertions follow the upstream data model rather than fixture
+convenience. Console unwraps the template response to a category array. An
+individual category MAY have no templates, while aggregate catalog health
+requires at least one template, unique category titles, and no repeated
+template identity within one category. The same template may intentionally
+appear in multiple categories. A region remains valid when its dynamic provider-membership array is empty; its
+key and description must match the independent provider-attributes schema, and
+every listed provider must be a unique canonical Akash bech32 address. The
+mutation-capable lane additionally requires at least one aggregate provider
+membership before enabling a deployment lifecycle.
+
+The target live Console harness distinguishes money requested from money spent. Every
+USD-bearing request is charged to an attempted-request budget before the
+subprocess starts, and an ambiguous request is never refunded to that budget.
+Actual spend is the decrease in the Console account's authoritative total
+balance between the pre-mutation snapshot and the post-cleanup observation.
+Those are separate limits and reports: moving credit into deployment escrow is
+not described as spend. The tenant must be isolated and mutation runs for one
+tenant must be serialized so another writer cannot hide or inflate the balance
+delta. The fixed escrow request must nevertheless fit wholly inside the hard
+loss ceiling. Before lease creation, the CLI and independent raw observer must
+agree on the exact bid identity and numeric price; selection is price-first,
+accepts only the Console settlement denomination, and rejects a bid whose
+one-block-per-second full-remaining-runtime projection exceeds that ceiling.
+The disabled-auto-top-up escrow balance remains the absolute bound if blocks
+arrive faster than the conservative projection interval.
+
+The harness observes Console state with a small raw HTTP client that is
+independent of the `akt console` command and its Console client package. Command
+responses remain assertions about the public CLI, but create, settings, lease,
+deposit, update, close, and final balance claims require API-side read-back.
+Captured stdout, stderr, HTTP bodies, and action-log entries are bounded and are
+never copied into test failure output; diagnostics identify the operation,
+recognized HTTP status, resource ID when known, and byte counts only. Status
+classification is an allowlist over numeric Console statuses; the underlying
+stderr and response body remain private.
+
+That credential boundary also lives in the production Console client, not only
+in tests. Response reads have a hard byte ceiling. Error bodies are scrubbed of
+the configured API key before they can be returned to a caller or copied into
+an action log, including when a remote service maliciously echoes the request
+credential.
+Successful responses fail closed as well: a call expecting a JSON result
+rejects an empty body, and an enveloped call rejects both a missing and a null
+`data` field. Result-free operations retain their documented empty-body
+behavior. Mutation methods additionally validate endpoint invariants before
+recording success. Lease creation must return every requested active lease or
+reconcile those exact identities through a GET without replaying its POST;
+deployment and wallet settings must explicitly echo the requested identity and
+boolean. A zero-valued struct decoded from `{}` is not an acknowledgement. The live provider-status contract validates the provider's complete
+collection shape and each active service's identity and replica availability,
+so SDK zero values cannot masquerade as a healthy dynamic response.
+
+Mutation time and cleanup time have separate deadlines. The lifecycle context
+expires before the overall test deadline, leaving a fixed cleanup reserve.
+Cleanup subdivides that reserve so discovery or one close request cannot consume
+the time needed to disable auto top-up, verify terminal state, and observe final
+spend. Cleanup starts before the first write is issued and retains both the
+pre-state DSEQ set and unique SDL hashes so an ambiguous create can be found
+without closing another run's deployment.
+The discovery phase is at least as long as normal create-state observation;
+cleanup therefore cannot abandon an accepted create merely because the
+Console indexer exposes it after the ordinary success path would still wait.
+The fixed reserve separately retains forty seconds for disabling auto top-up
+and closing after discovery, then twenty seconds for terminal-state and final
+balance observation.
+
+**Current live-suite boundary (2026-08-12):** the opt-in managed-wallet suite
+implements the raw Console observer, attempted-request and observed-spend
+limits, direct action-log inspection, bounded redacted diagnostics, and phased
+in-process cleanup for create, bid, lease, status, deposit, settings, update,
+logs, events, deterministic non-interactive shell, child API-key lifecycle,
+and close. The provider-reported public workload URI must also return a
+bounded non-empty successful response through a standard HTTP client that does
+not reuse the Console or provider adapters. Streaming commands must return
+non-empty structured records; shell execution must return the exact sentinel
+output and record exactly one provider mutation, while status, logs, and events
+remain unlogged reads. A child credential must authenticate the same tenant,
+disappear from both independent and CLI listings after revocation, and then
+fail authentication without reaching disk or the action log. The suite does
+not yet independently observe chain or Kubernetes state, persist a run
+registry, run an orphan sweeper, or enforce a tenant lock beyond this
+workflow's serialized sandbox CI group. Those are required by the
+target design above and remain delivery work. A process killed before Go
+cleanup runs can therefore still orphan a sandbox resource until the sweeper
+is implemented.
+
+Race tests run over active packages. The target test system gives boundary
+parsers and decoders short pull-request fuzz runs and longer scheduled runs,
+and mutation-tests critical state, money, credential, transport, and workflow
+packages. Changed critical logic must not introduce a surviving
+non-equivalent mutant; package mutation scores ratchet upward like statement
+coverage. The current implementation has two native fuzz targets and no CI
+fuzz campaign or mutation gate, so this remains delivery work rather than a
+property of the present merge gate.
+
+All external GitHub Actions used by CI or release workflows are pinned to an
+immutable 40-character commit SHA. Coverage-policy validation walks every
+workflow and rejects a floating action tag or branch, so the same unreviewed
+upstream retag cannot alter both the evidence producer and its reporter.
+The release builder container is pinned by OCI digest as well as its human-
+readable version tag. A version-tag release first proves that the exact tagged
+commit is reachable from `main`, then reruns the current hermetic blocking
+matrix—lint, build/unit, active race, offline E2E, and fresh-chain E2E—against
+that checkout before publishing. The comparison range starts at the commit
+peeled from the nearest earlier reachable semantic-version tag, never at the
+tagged commit's first parent merely because it is convenient. A missing,
+invalid, or non-ancestor release base aborts the run. The event tag must be the
+only tag selecting the checked commit and is peeled again immediately before
+publication, after tag discovery is complete, so GoReleaser cannot select a
+different tag on the same object.
+
+Tag publications share one non-cancelling queue across version tags. Manual
+check, snapshot, and dry-run jobs use a separate read-only path and retain no
+checkout credential. The publishing job alone receives repository write
+permission and release tokens. It verifies every credential required by a
+stable release before GoReleaser can create a partial GitHub release. Release
+builds default to `GOWORK=off`; an override is accepted only for a verified
+repository-local `go.work` that the container can mount. Configuration checks
+accept GoReleaser's dedicated deprecated-property exit status only when the
+corresponding deprecation and issue-summary diagnostics are the only error
+diagnostics; a mixed validation failure remains fatal.
+This exact-commit gate does not imply that the still-missing provider,
+dual-chain, testnetify, Console, monitor, fault, fuzz, and mutation lanes
+already satisfy the target release matrix.
 
 ---
 
@@ -1122,7 +1952,10 @@ never handle.
 - Full resource set in TUI: governance proposals (with voting), validators (with delegation), escrow accounts, wasm contracts, oracle prices, IBC channels
 - Additional TUI actions: create deployment from TUI, close deployment, fund escrow, vote on proposals
 - Performance optimization: lazy loading, virtual scrolling for large lists
-- Comprehensive e2e test suite covering all commands and TUI interactions
+- Testing and verification contract from SPEC §12, including complete command
+  and MCP inventory, cross-package and subprocess coverage, state-based E2E
+  lanes, and a 95%+ active owned shipped coverage floor that ratchets toward
+  100%
 - Documentation and user guide
 
 ---

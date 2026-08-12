@@ -3,8 +3,10 @@ package console
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 )
 
 // ListAPIKeys lists the account's API keys. Secrets are never included.
@@ -26,6 +28,12 @@ func (c *Client) ListAPIKeys(ctx context.Context) ([]APIKey, error) {
 // Wire: POST /v1/api-keys, body {"data":{"name":..., "expiresAt"?:...}},
 // data-enveloped response.
 func (c *Client) CreateAPIKey(ctx context.Context, name, expiresAt string) (*CreatedAPIKey, error) {
+	if strings.TrimSpace(name) == "" {
+		err := errors.New("console: API key name must not be blank")
+		c.record("create-api-key", "", err)
+		return nil, err
+	}
+
 	payload := map[string]any{"name": name}
 	if expiresAt != "" {
 		payload["expiresAt"] = expiresAt
@@ -33,12 +41,21 @@ func (c *Client) CreateAPIKey(ctx context.Context, name, expiresAt string) (*Cre
 
 	var out CreatedAPIKey
 	err := c.doData(ctx, http.MethodPost, "/v1/api-keys", envelope(payload), &out)
-	c.record("create-api-key", "", err)
-	if err != nil {
+	if err == nil && (strings.TrimSpace(out.ID) == "" || out.Name != name || strings.TrimSpace(out.Name) == "" || strings.TrimSpace(out.APIKey) == "") {
+		err = errors.New("console: API key response omitted its nonblank ID, requested name, or one-time secret")
+	}
+	if err == nil {
+		c.record("create-api-key", "", nil)
+		return &out, nil
+	}
+	if definitiveCreateFailure(err) {
+		c.record("create-api-key", "", err)
 		return nil, err
 	}
 
-	return &out, nil
+	unknown := fmt.Errorf("API key creation outcome unknown after one submission (%w); the request was not replayed because its one-time secret cannot be recovered", err)
+	c.recordOutcome("create-api-key", "", "pending", unknown, map[string]string{"name": name})
+	return nil, unknown
 }
 
 // DeleteAPIKey deletes an API key by ID. A missing key (404) is treated as a
@@ -76,6 +93,9 @@ func (c *Client) CreateJWTToken(ctx context.Context, ttl int, scope []string) (s
 	}
 	if err := c.doData(ctx, http.MethodPost, "/v1/create-jwt-token", body, &out); err != nil {
 		return "", err
+	}
+	if strings.TrimSpace(out.Token) == "" {
+		return "", errors.New("console: JWT response returned a blank token")
 	}
 
 	return out.Token, nil

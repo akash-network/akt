@@ -120,10 +120,6 @@ Examples:
 				}
 
 				authorization = ev1.NewDepositAuthorization(scopes, spendLimit)
-				err = authorization.ValidateBasic()
-				if err != nil {
-					return err
-				}
 			case "send":
 				limit, err := cmd.Flags().GetString(cflags.FlagSpendLimit)
 				if err != nil {
@@ -228,6 +224,9 @@ Examples:
 				}
 			default:
 				return fmt.Errorf("invalid authorization type, %s", args[1])
+			}
+			if err := authorization.ValidateBasic(); err != nil {
+				return fmt.Errorf("invalid authorization: %w", err)
 			}
 
 			expire, err := getExpireTime(cmd)
@@ -387,6 +386,9 @@ $ %s tx grant contract <grantee_addr> execution <contract_addr> --allow-all-mess
 			default:
 				return fmt.Errorf("%s authorization type not supported", args[1])
 			}
+			if err := authorization.ValidateBasic(); err != nil {
+				return fmt.Errorf("invalid authorization: %w", err)
+			}
 
 			expire, err := getExpireTime(cmd)
 			if err != nil {
@@ -449,6 +451,9 @@ $ %s tx grant store-code <grantee_addr> *:%s1l2rsakp388kuv9k8qzq6lrm9taddae7fpx5
 			}
 
 			authorization := types.NewStoreCodeAuthorization(grants...)
+			if err := authorization.ValidateBasic(); err != nil {
+				return fmt.Errorf("invalid authorization: %w", err)
+			}
 
 			expire, err := getExpireTime(cmd)
 			if err != nil {

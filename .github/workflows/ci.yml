@@ -4,25 +4,34 @@ on:
   push:
     branches: [main]
   pull_request:
-  # Manual only — used to run the upstream-drift check below on demand.
   workflow_dispatch:
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Any pull-request run may have owned sandbox resources before a retarget,
+  # so later PR events must not cancel it. The Console job below also
+  # serializes the shared tenant across different pull requests.
+  group: ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name != 'pull_request' }}
+
+permissions:
+  contents: read
 
 env:
   GOWORK: off
+  # Make's release-equivalent linker flags include this search path. CI has no
+  # direnv session, so keep it explicit rather than emitting an invalid bare
+  # `-L` while building the coverage-instrumented binary.
+  AKT_DEVCACHE_LIB: ${{ github.workspace }}/.cache/lib
 
 jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - uses: golangci/golangci-lint-action@v9
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
         with:
           # Must match GOLANGCI_LINT_VERSION in the Makefile, and must be
           # built with Go >= the go directive in go.mod — older releases
@@ -34,8 +43,8 @@ jobs:
   build-and-unit:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - name: Build
@@ -46,76 +55,441 @@ jobs:
         # substitution, which relies on word splitting (SC2046).
         run: go list ./... | grep -v /e2e | xargs go test
 
-  coverage:
+  race-active:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      # Gates the akt-authored packages that carry risk (money, credentials,
-      # gating, action log, transports). internal/cli/chain is excluded: it
-      # is a clean copy of chain-sdk maintained by re-copying, so tests
-      # written against it are clobbered on the next copy — including it
-      # would cap the repo-wide number near 62% no matter what we write.
-      # See make/testing.mk for the package sets and COVER_THRESHOLD.
-      - name: Reconstruct the direnv environment
-        # The coverage targets write under $AKT_DEVCACHE. Those paths live in
-        # .env (sourced by .envrc), which CI has no direnv to load — so source
-        # it here rather than duplicating the paths in this workflow.
-        run: |
-          set -euo pipefail
-          export AKT_ROOT="$GITHUB_WORKSPACE"
-          set -a
-          # shellcheck disable=SC1091
-          . ./.env
-          set +a
-          env | grep -E '^(AKT_ROOT|AKT_DEVCACHE|AKT_RUN)' >> "$GITHUB_ENV"
+      - name: Race detector over active packages
+        run: make test-race-active
 
-      - name: Core coverage (gated)
-        run: make test-coverage-check
-      - name: Repo-wide coverage (reported, not gated)
-        run: make test-coverage
-      - uses: actions/upload-artifact@v7
-        if: always()
+  coverage-unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
-          name: coverage
-          path: .cache/coverage/
+          # test-coverage-unit guards the tooling baseline against HEAD^.
+          # Keep the parent available even though raw counters are the main
+          # output of this job; the report job later checks the event's full
+          # comparison range.
+          fetch-depth: 2
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Cross-package unit coverage
+        run: make test-coverage-unit
+      - name: Validate unit shard before upload
+        if: success()
+        run: make test-coverage-shard-ready COVERAGE_SHARD=unit
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: success()
+        with:
+          name: coverage-covdata-unit
+          path: .cache/coverage/covdata/unit/
+          if-no-files-found: error
+          include-hidden-files: true
           retention-days: 7
 
   e2e-offline:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - name: Build akt binary
-        # `make akt` needs the direnv-managed environment (AKT_ROOT,
-        # AKT_DEVCACHE_*, static-link toolchain); build the plain binary
-        # directly at the path the e2e harness expects instead.
-        run: go build -o .cache/bin/akt ./cmd/akt
+      - name: Build coverage-instrumented akt binary
+        run: make test-coverage-binary
+      - name: Prepare isolated coverage shard
+        run: make test-coverage-e2e-prepare COVERAGE_SHARD=e2e-offline
       - name: e2e offline suite (gated localnet tests self-skip)
+        env:
+          GOCOVERDIR: ${{ github.workspace }}/.cache/coverage/covdata/e2e-offline
         run: go test ./e2e/... -v -count=1
+      - name: Validate offline shard before upload
+        run: make test-coverage-shard-ready COVERAGE_SHARD=e2e-offline
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: success()
+        with:
+          name: coverage-covdata-e2e-offline
+          path: .cache/coverage/covdata/e2e-offline/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
 
   e2e-localnet:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
-      - name: Build akt binary
-        run: go build -o .cache/bin/akt ./cmd/akt
-      # The node image version lives in one place — defaultNodeImage in
-      # e2e/localnet_test.go — so this job pins by using the harness default.
+      - name: Build coverage-instrumented akt binary
+        run: make test-coverage-binary
+      - name: Prepare isolated coverage shard
+        run: make test-coverage-e2e-prepare COVERAGE_SHARD=e2e-localnet
+      # The immutable node image digest lives in one place — defaultNodeImage
+      # in e2e/localnet_test.go — so this job pins by using the harness default.
       # Pinning keeps the blocking gate reproducible: a red run means this
       # change broke something, not that upstream published a release.
       - name: e2e localnet suite (single-validator akash node in docker)
         env:
           AKT_E2E_LOCALNET: "1"
+          GOCOVERDIR: ${{ github.workspace }}/.cache/coverage/covdata/e2e-localnet
         run: go test ./e2e/ -run TestLocalnet -v -count=1 -timeout 15m
+      - name: Validate localnet shard before upload
+        run: make test-coverage-shard-ready COVERAGE_SHARD=e2e-localnet
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: success()
+        with:
+          name: coverage-covdata-e2e-localnet
+          path: .cache/coverage/covdata/e2e-localnet/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+
+  coverage-report:
+    needs: [coverage-unit, e2e-offline, e2e-localnet]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Require every blocking coverage lane
+        env:
+          UNIT_RESULT: ${{ needs.coverage-unit.result }}
+          OFFLINE_RESULT: ${{ needs.e2e-offline.result }}
+          LOCALNET_RESULT: ${{ needs.e2e-localnet.result }}
+        run: |
+          test "$UNIT_RESULT" = success || { echo "coverage-unit result: $UNIT_RESULT" >&2; exit 1; }
+          test "$OFFLINE_RESULT" = success || { echo "e2e-offline result: $OFFLINE_RESULT" >&2; exit 1; }
+          test "$LOCALNET_RESULT" = success || { echo "e2e-localnet result: $LOCALNET_RESULT" >&2; exit 1; }
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The local changed-line gate compares the actual PR base and the
+          # tested merge commit; both revisions must be present.
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-covdata-unit
+          path: .cache/coverage/covdata/unit
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-covdata-e2e-offline
+          path: .cache/coverage/covdata/e2e-offline
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-covdata-e2e-localnet
+          path: .cache/coverage/covdata/e2e-localnet
+      - name: Resolve coverage comparison revisions
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+          TESTED_SHA: ${{ github.sha }}
+        run: |
+          case "$EVENT_NAME" in
+            pull_request)
+              base="$PR_BASE_SHA"
+              ;;
+            push)
+              base="$PUSH_BEFORE_SHA"
+              if test -z "$base" || test "$base" = 0000000000000000000000000000000000000000; then
+                base="$(git rev-parse "$TESTED_SHA^")"
+              fi
+              ;;
+            *)
+              base="$(git rev-parse "$TESTED_SHA^")"
+              ;;
+          esac
+          case "$base:$TESTED_SHA" in
+            *[!0-9a-fA-F:]*|*:*:*|:*|*:)
+              echo "coverage comparison did not resolve to commit hashes" >&2
+              exit 1
+              ;;
+          esac
+          if ! git rev-parse --verify "$base^{commit}" >/dev/null 2>&1; then
+            git fetch --no-tags --depth=1 origin "$base"
+          fi
+          git rev-parse --verify "$base^{commit}" >/dev/null
+          git rev-parse --verify "$TESTED_SHA^{commit}" >/dev/null
+          echo "BASE_REF=$base" >> "$GITHUB_ENV"
+          echo "HEAD_REF=$TESTED_SHA" >> "$GITHUB_ENV"
+      - name: Merge coverage and enforce per-package ratchets
+        run: make test-coverage-report
+      - name: Enforce 100% changed active-line coverage
+        run: make test-coverage-patch
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: coverage-reports
+          path: .cache/coverage/reports/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14
+
+  e2e-console-sandbox:
+    # Fork and Dependabot pull requests never receive secrets. A core member
+    # must mirror those commits to a repository branch before this lane can run.
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
+    needs: coverage-report
+    environment: console-sandbox
+    concurrency:
+      group: console-sandbox
+      queue: max
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Require the protected sandbox inputs
+        env:
+          API_KEY: ${{ secrets.AKT_E2E_CONSOLE_MUTATION_API_KEY }}
+          API_URL: ${{ secrets.AKT_E2E_CONSOLE_API_URL }}
+          MUTATION_OPT_IN: ${{ secrets.AKT_E2E_CONSOLE_MUTATION }}
+        run: |
+          test -n "$API_KEY"
+          test -n "$API_URL"
+          test "$MUTATION_OPT_IN" = I_UNDERSTAND_THIS_SPENDS_SANDBOX_FUNDS
+      - name: Build coverage-instrumented akt binary
+        run: make test-coverage-binary
+      - name: Prepare isolated live coverage shard
+        run: make test-coverage-e2e-prepare COVERAGE_SHARD=e2e-live
+      - name: Real Console state-independent read suite
+        env:
+          AKT_E2E_CONSOLE_API_KEY: ${{ secrets.AKT_E2E_CONSOLE_MUTATION_API_KEY }}
+          AKT_E2E_CONSOLE_API_URL: ${{ secrets.AKT_E2E_CONSOLE_API_URL }}
+          AKT_E2E_CONSOLE_MUTATION: ${{ secrets.AKT_E2E_CONSOLE_MUTATION }}
+          GOCOVERDIR: ${{ github.workspace }}/.cache/coverage/covdata/e2e-live
+        run: go test ./e2e/ -run '^TestConsoleLive$' -v -count=1 -timeout 8m
+      - name: Bounded Console sandbox lifecycle
+        env:
+          AKT_E2E_CONSOLE_API_KEY: ${{ secrets.AKT_E2E_CONSOLE_MUTATION_API_KEY }}
+          AKT_E2E_CONSOLE_MUTATION: ${{ secrets.AKT_E2E_CONSOLE_MUTATION }}
+          AKT_E2E_CONSOLE_API_URL: ${{ secrets.AKT_E2E_CONSOLE_API_URL }}
+          AKT_E2E_CONSOLE_MAX_REQUEST_USD: ${{ vars.AKT_E2E_CONSOLE_MAX_REQUEST_USD }}
+          AKT_E2E_CONSOLE_MAX_SPEND_USD: ${{ vars.AKT_E2E_CONSOLE_MAX_SPEND_USD }}
+          AKT_E2E_CONSOLE_MAX_DEPLOYMENTS: ${{ vars.AKT_E2E_CONSOLE_MAX_DEPLOYMENTS }}
+          AKT_E2E_CONSOLE_MAX_RUNTIME: ${{ vars.AKT_E2E_CONSOLE_MAX_RUNTIME }}
+          GOCOVERDIR: ${{ github.workspace }}/.cache/coverage/covdata/e2e-live
+        run: go test ./e2e/ -run '^TestConsoleLiveManagedWalletLifecycle$' -v -count=1 -timeout 12m
+      - name: Validate live shard before upload
+        run: make test-coverage-shard-ready COVERAGE_SHARD=e2e-live
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: success()
+        with:
+          name: coverage-covdata-e2e-live
+          path: .cache/coverage/covdata/e2e-live/
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 7
+
+  coverage-live-report:
+    if: >-
+      github.event_name == 'pull_request' &&
+      github.event.pull_request.base.ref == 'main' &&
+      github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]'
+    needs: [coverage-report, e2e-console-sandbox]
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The report validates against the actual pull-request base rather
+          # than assuming the tested merge commit's first parent.
+          fetch-depth: 0
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-covdata-e2e-live
+          path: .cache/coverage/covdata/e2e-live
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-covdata-unit
+          path: .cache/coverage/covdata/unit
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-covdata-e2e-offline
+          path: .cache/coverage/covdata/e2e-offline
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-covdata-e2e-localnet
+          path: .cache/coverage/covdata/e2e-localnet
+      - name: Build informational union-live profile
+        env:
+          BASE_REF: ${{ github.event.pull_request.base.sha }}
+        run: make test-coverage-live-report
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage-reports-live
+          path: |
+            .cache/coverage/reports/live.out
+            .cache/coverage/reports/live-active.out
+            .cache/coverage/reports/live-active.tsv
+            .cache/coverage/reports/active-union-live.out
+            .cache/coverage/reports/active-union-live.tsv
+          if-no-files-found: error
+          include-hidden-files: true
+          retention-days: 14
+
+  codecov-upload:
+    if: >-
+      github.ref == 'refs/heads/main' &&
+      (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    needs: coverage-report
+    continue-on-error: true
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    steps:
+      # Codecov expects Git metadata. Build only that metadata: no source is
+      # checked out and no repository-owned command runs in the OIDC job.
+      - name: Prepare tested commit metadata
+        env:
+          REPOSITORY: ${{ github.repository }}
+          SERVER_URL: ${{ github.server_url }}
+          TESTED_SHA: ${{ github.sha }}
+        run: |
+          case "$TESTED_SHA" in
+            *[!0-9a-fA-F]*|'') echo "invalid tested SHA" >&2; exit 1 ;;
+          esac
+          git init --quiet
+          git remote add origin "$SERVER_URL/$REPOSITORY.git"
+          git fetch --no-tags --depth=1 origin "$TESTED_SHA"
+          git update-ref refs/heads/codecov "$TESTED_SHA"
+          git symbolic-ref HEAD refs/heads/codecov
+          git read-tree "$TESTED_SHA"
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: coverage-reports
+          path: coverage-reports
+      - name: Upload active union to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          version: v11.3.1
+          files: coverage-reports/active-union.out
+          flags: active-union
+          override_commit: ${{ github.sha }}
+          disable_search: true
+          disable_file_fixes: true
+          fail_ci_if_error: true
+          use_oidc: true
+      - name: Upload unit profile to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          version: v11.3.1
+          files: coverage-reports/unit.out
+          flags: unit
+          override_commit: ${{ github.sha }}
+          disable_search: true
+          disable_file_fixes: true
+          fail_ci_if_error: true
+          use_oidc: true
+      - name: Upload offline E2E profile to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          version: v11.3.1
+          files: coverage-reports/e2e-offline.out
+          flags: e2e-offline
+          override_commit: ${{ github.sha }}
+          disable_search: true
+          disable_file_fixes: true
+          fail_ci_if_error: true
+          use_oidc: true
+      - name: Upload fresh-chain E2E profile to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          version: v11.3.1
+          files: coverage-reports/e2e-localnet.out
+          flags: fresh-chain
+          override_commit: ${{ github.sha }}
+          disable_search: true
+          disable_file_fixes: true
+          fail_ci_if_error: true
+          use_oidc: true
+      - name: Upload blocking E2E union to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          version: v11.3.1
+          files: coverage-reports/e2e.out
+          flags: e2e
+          override_commit: ${{ github.sha }}
+          disable_search: true
+          disable_file_fixes: true
+          fail_ci_if_error: true
+          use_oidc: true
+      - name: Upload repository union to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          version: v11.3.1
+          files: coverage-reports/repository-union.out
+          flags: repository
+          override_commit: ${{ github.sha }}
+          disable_search: true
+          disable_file_fixes: true
+          fail_ci_if_error: true
+          use_oidc: true
+      - name: Upload experimental TUI union to Codecov
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f # v7.0.0
+        with:
+          version: v11.3.1
+          files: coverage-reports/experimental-tui-union.out
+          flags: experimental-tui
+          override_commit: ${{ github.sha }}
+          disable_search: true
+          disable_file_fixes: true
+          fail_ci_if_error: true
+          use_oidc: true
+
+  required-ci:
+    name: required-ci
+    if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'push') }}
+    needs: [lint, build-and-unit, race-active, coverage-report, e2e-console-sandbox, coverage-live-report]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Require every blocking quality gate
+        env:
+          LINT_RESULT: ${{ needs.lint.result }}
+          BUILD_RESULT: ${{ needs.build-and-unit.result }}
+          RACE_RESULT: ${{ needs.race-active.result }}
+          COVERAGE_RESULT: ${{ needs.coverage-report.result }}
+          CONSOLE_RESULT: ${{ needs.e2e-console-sandbox.result }}
+          LIVE_REPORT_RESULT: ${{ needs.coverage-live-report.result }}
+          CONSOLE_REQUIRED: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' }}
+        run: |
+          test "$LINT_RESULT" = success || { echo "lint result: $LINT_RESULT" >&2; exit 1; }
+          test "$BUILD_RESULT" = success || { echo "build-and-unit result: $BUILD_RESULT" >&2; exit 1; }
+          test "$RACE_RESULT" = success || { echo "race-active result: $RACE_RESULT" >&2; exit 1; }
+          test "$COVERAGE_RESULT" = success || { echo "coverage-report result: $COVERAGE_RESULT" >&2; exit 1; }
+          if test "$CONSOLE_REQUIRED" = true; then
+            test "$CONSOLE_RESULT" = success || { echo "e2e-console-sandbox result: $CONSOLE_RESULT" >&2; exit 1; }
+            test "$LIVE_REPORT_RESULT" = success || { echo "coverage-live-report result: $LIVE_REPORT_RESULT" >&2; exit 1; }
+          else
+            test "$CONSOLE_RESULT" = skipped || { echo "unexpected e2e-console-sandbox result: $CONSOLE_RESULT" >&2; exit 1; }
+            test "$LIVE_REPORT_RESULT" = skipped || { echo "unexpected coverage-live-report result: $LIVE_REPORT_RESULT" >&2; exit 1; }
+          fi
 
   e2e-localnet-latest:
     # Upstream-drift check: the same suite against the newest node image.
@@ -127,8 +501,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
       - name: Build akt binary

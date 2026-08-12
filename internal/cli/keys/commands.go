@@ -224,10 +224,15 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *c
 
 				mnemonic = strings.TrimSpace(string(data))
 			} else if recoverKey {
-				_, _ = fmt.Fprint(cmd.ErrOrStderr(), "Enter your mnemonic: ")
+				if _, err := fmt.Fprint(cmd.ErrOrStderr(), "Enter your mnemonic: "); err != nil {
+					return err
+				}
 
-				reader := bufio.NewReader(os.Stdin)
-				mnemonic, _ = reader.ReadString('\n')
+				reader := bufio.NewReader(cmd.InOrStdin())
+				mnemonic, err = reader.ReadString('\n')
+				if err != nil && strings.TrimSpace(mnemonic) == "" {
+					return fmt.Errorf("read mnemonic: %w", err)
+				}
 				mnemonic = strings.TrimSpace(mnemonic)
 			} else {
 				// Generate new mnemonic.
@@ -242,10 +247,15 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *c
 
 			interactive, _ := cmd.Flags().GetBool("interactive")
 			if interactive {
-				_, _ = fmt.Fprint(cmd.ErrOrStderr(), "Enter BIP39 passphrase (leave empty for none): ")
+				if _, err := fmt.Fprint(cmd.ErrOrStderr(), "Enter BIP39 passphrase (leave empty for none): "); err != nil {
+					return err
+				}
 
-				reader := bufio.NewReader(os.Stdin)
-				bip39Passphrase, _ = reader.ReadString('\n')
+				reader := bufio.NewReader(cmd.InOrStdin())
+				bip39Passphrase, err = reader.ReadString('\n')
+				if err != nil && bip39Passphrase == "" {
+					return fmt.Errorf("read BIP39 passphrase: %w", err)
+				}
 				bip39Passphrase = strings.TrimSpace(bip39Passphrase)
 			}
 
@@ -354,8 +364,8 @@ func printAddedKey(cmd *cobra.Command, result keyAddResult) error {
 		return output.Fprint(cmd.OutOrStdout(), format, result)
 	}
 
-	w := cmd.OutOrStdout()
-	_, _ = fmt.Fprintf(w, "- name: %s\n", result.Name)
+	w := output.NewCheckedWriter(cmd.OutOrStdout())
+	_, err := fmt.Fprintf(w, "- name: %s\n", result.Name)
 	_, _ = fmt.Fprintf(w, "  address: %s\n", result.Address)
 	_, _ = fmt.Fprintf(w, "  type: %s\n", result.Type)
 	if result.Threshold > 0 {
@@ -370,7 +380,7 @@ func printAddedKey(cmd *cobra.Command, result keyAddResult) error {
 		_, _ = fmt.Fprintln(w, result.Mnemonic)
 	}
 
-	return nil
+	return w.Complete(err)
 }
 
 func deleteCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *cobra.Command {
@@ -397,16 +407,22 @@ func deleteCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder)
 
 			yes, _ := cmd.Flags().GetBool("yes")
 			if !yes {
-				fmt.Printf("Delete key %q? [y/N]: ", name)
+				checked := output.NewCheckedWriter(cmd.ErrOrStderr())
+				if _, err := fmt.Fprintf(checked, "Delete key %q? [y/N]: ", name); err != nil {
+					return checked.Complete(err)
+				}
 
-				var answer string
-				_, _ = fmt.Scanln(&answer)
+				line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+				if err != nil && strings.TrimSpace(line) == "" {
+					return fmt.Errorf("read delete confirmation: %w", err)
+				}
+				answer := strings.TrimSpace(line)
 
 				// A declined confirmation changes nothing, so it is not an
 				// action to record.
 				if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
-					fmt.Println("Cancelled.")
-					return nil
+					_, err := fmt.Fprintln(checked, "Cancelled.")
+					return checked.Complete(err)
 				}
 			}
 
@@ -443,12 +459,11 @@ func listCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 			// structured caller needs an empty collection instead.
 			if len(records) == 0 {
 				if output.FormatFromCmd(cmd) != output.FormatTable {
-					return output.Print(output.FormatFromCmd(cmd), []struct{}{})
+					return output.Fprint(cmd.OutOrStdout(), output.FormatFromCmd(cmd), []struct{}{})
 				}
 
-				fmt.Println("No keys found. Add one with: akt context keys add <name>")
-
-				return nil
+				_, err := fmt.Fprintln(cmd.OutOrStdout(), "No keys found. Add one with: akt context keys add <name>")
+				return err
 			}
 
 			type keyRow struct {
@@ -527,8 +542,8 @@ func showCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 			addressOnly, _ := cmd.Flags().GetBool("address")
 			if addressOnly {
 				if output.FormatFromCmd(cmd) == output.FormatTable {
-					fmt.Fprintln(cmd.OutOrStdout(), addr.String())
-					return nil
+					_, err := fmt.Fprintln(cmd.OutOrStdout(), addr.String())
+					return err
 				}
 
 				return output.Fprint(
@@ -553,12 +568,13 @@ func showCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 				return output.Fprint(cmd.OutOrStdout(), output.FormatFromCmd(cmd), details)
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Name:      %s\n", details.Name)
-			fmt.Fprintf(cmd.OutOrStdout(), "Type:      %s\n", details.Type)
-			fmt.Fprintf(cmd.OutOrStdout(), "Address:   %s\n", details.Address)
-			fmt.Fprintf(cmd.OutOrStdout(), "PubKey:    %s\n", details.PubKey)
+			checked := output.NewCheckedWriter(cmd.OutOrStdout())
+			_, writeErr := fmt.Fprintf(checked, "Name:      %s\n", details.Name)
+			_, _ = fmt.Fprintf(checked, "Type:      %s\n", details.Type)
+			_, _ = fmt.Fprintf(checked, "Address:   %s\n", details.Address)
+			_, _ = fmt.Fprintf(checked, "PubKey:    %s\n", details.PubKey)
 
-			return nil
+			return checked.Complete(writeErr)
 		},
 	}
 
@@ -581,10 +597,15 @@ func exportCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder)
 
 			name := args[0]
 
-			fmt.Print("Enter passphrase to encrypt the key: ")
+			if _, err := fmt.Fprint(cmd.ErrOrStderr(), "Enter passphrase to encrypt the key: "); err != nil {
+				return err
+			}
 
-			reader := bufio.NewReader(os.Stdin)
-			passphrase, _ := reader.ReadString('\n')
+			reader := bufio.NewReader(cmd.InOrStdin())
+			passphrase, readErr := reader.ReadString('\n')
+			if readErr != nil && strings.TrimSpace(passphrase) == "" {
+				return fmt.Errorf("read export passphrase: %w", readErr)
+			}
 			passphrase = strings.TrimSpace(passphrase)
 
 			if passphrase == "" {
@@ -603,9 +624,8 @@ func exportCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder)
 				return fmt.Errorf("export key %q: %w", name, err)
 			}
 
-			fmt.Println(armor)
-
-			return nil
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), armor)
+			return err
 		},
 	}
 }
@@ -630,10 +650,15 @@ func importCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder)
 				return fmt.Errorf("read key file: %w", err)
 			}
 
-			fmt.Print("Enter passphrase to decrypt the key: ")
+			if _, err := fmt.Fprint(cmd.ErrOrStderr(), "Enter passphrase to decrypt the key: "); err != nil {
+				return err
+			}
 
-			reader := bufio.NewReader(os.Stdin)
-			passphrase, _ := reader.ReadString('\n')
+			reader := bufio.NewReader(cmd.InOrStdin())
+			passphrase, readErr := reader.ReadString('\n')
+			if readErr != nil && strings.TrimSpace(passphrase) == "" {
+				return fmt.Errorf("read import passphrase: %w", readErr)
+			}
 			passphrase = strings.TrimSpace(passphrase)
 
 			importErr := kr.ImportPrivKey(name, string(data), passphrase)
@@ -651,9 +676,8 @@ func importCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder)
 				return fmt.Errorf("import key: %w", importErr)
 			}
 
-			fmt.Printf("Key %q imported successfully.\n", name)
-
-			return nil
+			_, err = fmt.Fprintf(cmd.ErrOrStderr(), "Key %q imported successfully.\n", name)
+			return err
 		},
 	}
 }
@@ -677,9 +701,8 @@ func renameCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder)
 				return fmt.Errorf("rename key: %w", renameErr)
 			}
 
-			fmt.Printf("Key renamed from %q to %q.\n", args[0], args[1])
-
-			return nil
+			_, err = fmt.Fprintf(cmd.ErrOrStderr(), "Key renamed from %q to %q.\n", args[0], args[1])
+			return err
 		},
 	}
 }
@@ -696,9 +719,8 @@ func mnemonicCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Println(mnemonic)
-
-			return nil
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), mnemonic)
+			return err
 		},
 	}
 }
@@ -722,16 +744,17 @@ func parseCmd() *cobra.Command {
 				return output.Fprint(cmd.OutOrStdout(), output.FormatFromCmd(cmd), result)
 			}
 
-			fmt.Fprintf(cmd.OutOrStdout(), "Format:  %s\n", result.Format)
+			checked := output.NewCheckedWriter(cmd.OutOrStdout())
+			_, writeErr := fmt.Fprintf(checked, "Format:  %s\n", result.Format)
 			if result.HRP != "" {
-				fmt.Fprintf(cmd.OutOrStdout(), "HRP:     %s\n", result.HRP)
+				_, _ = fmt.Fprintf(checked, "HRP:     %s\n", result.HRP)
 			}
-			fmt.Fprintf(cmd.OutOrStdout(), "Hex:     %s\n", result.Hex)
+			_, _ = fmt.Fprintf(checked, "Hex:     %s\n", result.Hex)
 			for _, prefix := range []string{"akash", "cosmos", "osmo"} {
-				fmt.Fprintf(cmd.OutOrStdout(), "%-8s %s\n", prefix+":", result.Addresses[prefix])
+				_, _ = fmt.Fprintf(checked, "%-8s %s\n", prefix+":", result.Addresses[prefix])
 			}
 
-			return nil
+			return checked.Complete(writeErr)
 		},
 	}
 }

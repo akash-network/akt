@@ -6,24 +6,28 @@ import (
 	"fmt"
 	"io"
 	"strings"
+
+	clioutput "pkg.akt.dev/akt/internal/output"
 )
 
 // WriteHighlightedJSON writes syntax-highlighted, indented JSON to w.
 // Keys are cyan, strings green, numbers yellow, booleans magenta, null gray.
 func WriteHighlightedJSON(w io.Writer, data []byte) error {
+	checked := clioutput.NewCheckedWriter(w)
+
 	// Pretty-print with indentation first.
 	var buf bytes.Buffer
 	if err := json.Indent(&buf, data, "", "  "); err != nil {
 		// If we can't indent (not valid JSON), write as-is.
-		_, err := w.Write(data)
-		return err
+		_, writeErr := checked.Write(data)
+		return checked.Complete(writeErr)
 	}
 
 	// Tokenize and colorize.
 	dec := json.NewDecoder(bytes.NewReader(buf.Bytes()))
 	dec.UseNumber()
 
-	return highlightJSON(w, &buf)
+	return checked.Complete(highlightJSON(checked, &buf))
 }
 
 // highlightJSON does a simple line-by-line colorization of indented JSON.
@@ -32,7 +36,9 @@ func highlightJSON(w io.Writer, buf *bytes.Buffer) error {
 	lines := strings.Split(buf.String(), "\n")
 	for _, line := range lines {
 		colored := colorizeJSONLine(line)
-		fmt.Fprintln(w, colored)
+		if _, err := fmt.Fprintln(w, colored); err != nil {
+			return err
+		}
 	}
 	return nil
 }

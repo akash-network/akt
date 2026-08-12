@@ -61,7 +61,7 @@ func TxPersistentPreRunE(cmd *cobra.Command, args []string) error {
 		}
 
 		// Record every broadcast in the per-context action log (SPEC §5.6).
-		wrapped := withActionLog(ctx, cl)
+		wrapped := WithActionLog(ctx, cl)
 
 		ctx = context.WithValue(ctx, ContextTypeClient, wrapped)
 

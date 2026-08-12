@@ -9,6 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	rpcclientmock "github.com/cometbft/cometbft/rpc/client/mock"
+	coretypes "github.com/cometbft/cometbft/rpc/core/types"
+	cmttypes "github.com/cometbft/cometbft/types"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -33,6 +36,23 @@ import (
 type stubIBCClientQueryServer struct {
 	ibcclienttypes.UnimplementedQueryServer
 	err error
+}
+
+type blockQueryRPC struct {
+	rpcclientmock.Client
+
+	block               *coretypes.ResultBlock
+	blockResults        *coretypes.ResultBlockResults
+	blockResultsContext context.Context
+}
+
+func (client *blockQueryRPC) Block(context.Context, *int64) (*coretypes.ResultBlock, error) {
+	return client.block, nil
+}
+
+func (client *blockQueryRPC) BlockResults(ctx context.Context, _ *int64) (*coretypes.ResultBlockResults, error) {
+	client.blockResultsContext = ctx
+	return client.blockResults, nil
 }
 
 func (server *stubIBCClientQueryServer) ClientParams(context.Context, *ibcclienttypes.QueryClientParamsRequest) (*ibcclienttypes.QueryClientParamsResponse, error) {
@@ -645,6 +665,57 @@ func TestQueriesRejectUnsupportedOrConflictingHeight(t *testing.T) {
 			require.ErrorContains(t, err, tc.want)
 		})
 	}
+}
+
+func TestQueryBlockWithoutPositionalHeightHandlesMissingBlock(t *testing.T) {
+	var out bytes.Buffer
+	rpc := &blockQueryRPC{
+		Client: rpcclientmock.New(),
+		block: &coretypes.ResultBlock{
+			Block: &cmttypes.Block{Header: cmttypes.Header{Height: 0}},
+		},
+	}
+	cctx := queryTestClientContext(&out).WithClient(rpc)
+	ctx := context.WithValue(context.Background(), ClientContextKey, &cctx)
+
+	cmd := QueryBlockCmd()
+	cmd.SetContext(ctx)
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+	cmd.SetArgs([]string{"--height", "17"})
+
+	var err error
+	require.NotPanics(t, func() {
+		err = cmd.Execute()
+	})
+	require.ErrorContains(t, err, "no block found with height 17")
+}
+
+func TestQueryBlockResultsPropagatesCommandContext(t *testing.T) {
+	type contextKey struct{}
+
+	var out bytes.Buffer
+	rpc := &blockQueryRPC{
+		Client:       rpcclientmock.New(),
+		blockResults: &coretypes.ResultBlockResults{Height: 23},
+	}
+	cctx := queryTestClientContext(&out).WithClient(rpc)
+	marker := &struct{}{}
+	ctx := context.WithValue(context.Background(), contextKey{}, marker)
+	ctx = context.WithValue(ctx, ClientContextKey, &cctx)
+
+	cmd := QueryBlockResultsCmd()
+	cmd.SetContext(ctx)
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SilenceErrors = true
+	cmd.SilenceUsage = true
+	cmd.SetArgs([]string{"23"})
+
+	require.NoError(t, cmd.Execute())
+	require.Same(t, marker, rpc.blockResultsContext.Value(contextKey{}))
 }
 
 func TestLocalModuleAddressValidatesChainID(t *testing.T) {

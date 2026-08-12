@@ -6,8 +6,10 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"cosmossdk.io/math"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
+	"pkg.akt.dev/akt/internal/output/pretty"
 	"pkg.akt.dev/akt/internal/tui/components"
 	"pkg.akt.dev/akt/internal/tui/data"
 	"pkg.akt.dev/akt/internal/tui/keys"
@@ -171,18 +173,10 @@ func (v *StakingView) rebuildRows() {
 	v.BaseListView.SetRows(rows)
 }
 
-// formatTokens formats a token amount as a human-readable string with M/K suffixes.
+// formatTokens formats a validator's uakt tokens with the canonical amount
+// formatter shared by single-shot and full-screen output.
 func formatTokens(tokens math.Int) string {
-	f := tokens.ToLegacyDec().MustFloat64()
-	uakt := f / 1_000_000 // convert from uakt to AKT
-	switch {
-	case uakt >= 1_000_000:
-		return fmt.Sprintf("%.1fM", uakt/1_000_000)
-	case uakt >= 1_000:
-		return fmt.Sprintf("%.1fK", uakt/1_000)
-	default:
-		return fmt.Sprintf("%.0f", uakt)
-	}
+	return pretty.FormatCoin(sdk.Coin{Denom: "uakt", Amount: tokens})
 }
 
 // formatCommissionRate formats a commission rate as a percentage string.

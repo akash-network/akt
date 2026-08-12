@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -116,7 +117,7 @@ func TestRootActionLogUsesSelectedContext(t *testing.T) {
 		if got := r.Header.Get("x-api-key"); got != "staging-key" {
 			t.Errorf("x-api-key = %q, want staging-key", got)
 		}
-		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"data":{"success":true}}`))
 	}))
 	defer srv.Close()
 
@@ -140,6 +141,52 @@ func TestRootActionLogUsesSelectedContext(t *testing.T) {
 	}
 	if len(entries) != 1 || entries[0].Type != actionlog.TypeConsole || entries[0].Action != "close-deployment" {
 		t.Fatalf("staging entries = %+v, want one Console close-deployment entry", entries)
+	}
+}
+
+func TestRootRefusesToRunWhenSelectedActionLogCannotOpen(t *testing.T) {
+	m := rootTestManager(t)
+	if err := m.CreateContext(aktctx.Context{
+		Name:    "prod",
+		Network: aktctx.Network{Name: "mainnet"},
+	}); err != nil {
+		t.Fatalf("CreateContext: %v", err)
+	}
+	if err := m.UseContext("prod"); err != nil {
+		t.Fatalf("UseContext: %v", err)
+	}
+
+	// A directory at the action-log path makes the append-only file
+	// impossible to open on every supported platform.
+	logPath := aktctx.ActionLogPath(m.Root(), "prod")
+	if err := os.MkdirAll(logPath, 0o700); err != nil {
+		t.Fatalf("block action log path: %v", err)
+	}
+
+	root := NewRootCmd(BuildInfo{Version: "test"})
+	contextCmd, _, err := root.Find([]string{"context"})
+	if err != nil {
+		t.Fatalf("find context command: %v", err)
+	}
+	ran := false
+	contextCmd.AddCommand(&cobra.Command{
+		Use:  "probe-log-open",
+		Args: cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			ran = true
+			return nil
+		},
+	})
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"--home", m.Root(), "context", "probe-log-open"})
+
+	err = Execute(root)
+	if err == nil || !strings.Contains(err.Error(), "open action log") {
+		t.Fatalf("action-log startup error = %v, want open failure", err)
+	}
+	if ran {
+		t.Fatal("command ran without its required action-log boundary")
 	}
 }
 

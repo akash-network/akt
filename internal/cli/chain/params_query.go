@@ -45,6 +45,9 @@ func GetQueryParamsSubspaceCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("params subspace", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), &res.Param)
 		},

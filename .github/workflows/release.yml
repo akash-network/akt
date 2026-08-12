@@ -16,36 +16,172 @@ on:
           - dry-run
 
 concurrency:
-  # Never cancel a run that may be halfway through uploading release assets.
-  group: release-${{ github.workflow }}-${{ github.ref }}
+  # Every tag publication shares one queue so two stable tags cannot race the
+  # Homebrew formula update. Manual verification is isolated per ref.
+  group: ${{ github.event_name == 'push' && format('release-{0}-publish', github.repository) || format('release-{0}-manual-{1}', github.repository, github.ref) }}
   cancel-in-progress: false
 
 env:
   GOWORK: off
+  AKT_DEVCACHE_LIB: ${{ github.workspace }}/.cache/lib
 
 permissions:
   contents: read
 
 jobs:
-  goreleaser:
+  quality:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Resolve release identity and coverage base
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          EVENT_TAG: ${{ github.ref_name }}
+          TESTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          case "$TESTED_SHA" in
+            ''|*[!0-9a-fA-F]*)
+              echo "release commit is not a hexadecimal object ID: $TESTED_SHA" >&2
+              exit 1
+              ;;
+          esac
+          if test "${#TESTED_SHA}" -ne 40; then
+            echo "release commit must be a full 40-character object ID" >&2
+            exit 1
+          fi
+          tested_commit="$(git rev-parse --verify "$TESTED_SHA^{commit}")"
+          checked_out_commit="$(git rev-parse --verify 'HEAD^{commit}')"
+          if test "$tested_commit" != "$TESTED_SHA" ||
+            test "$checked_out_commit" != "$TESTED_SHA"; then
+            echo "checked-out commit $checked_out_commit does not equal event commit $TESTED_SHA" >&2
+            exit 1
+          fi
+
+          search_ref="$TESTED_SHA"
+          if test "$EVENT_NAME" = push; then
+            if ! git check-ref-format "refs/tags/$EVENT_TAG" >/dev/null 2>&1; then
+              echo "invalid release tag ref: $EVENT_TAG" >&2
+              exit 1
+            fi
+            if test "$(./script/semver.sh validate "$EVENT_TAG")" != valid ||
+              test "${EVENT_TAG#v}" = "$EVENT_TAG"; then
+              echo "release tag is not a lowercase-v semantic version: $EVENT_TAG" >&2
+              exit 1
+            fi
+            tag_commit="$(git rev-parse --verify "refs/tags/$EVENT_TAG^{commit}")"
+            if test "$tag_commit" != "$TESTED_SHA"; then
+              echo "event tag $EVENT_TAG peels to $tag_commit, not $TESTED_SHA" >&2
+              exit 1
+            fi
+            exact_tags="$(git tag --points-at "$TESTED_SHA" | LC_ALL=C sort)"
+            if test "$exact_tags" != "$EVENT_TAG"; then
+              echo "event tag must be the only tag selecting $TESTED_SHA" >&2
+              printf 'found tags:\n%s\n' "$exact_tags" >&2
+              exit 1
+            fi
+
+            git fetch --no-tags origin \
+              '+refs/heads/main:refs/remotes/origin/main'
+            if ! git merge-base --is-ancestor "$TESTED_SHA" refs/remotes/origin/main; then
+              echo "release commit $TESTED_SHA is not reachable from origin/main" >&2
+              exit 1
+            fi
+            search_ref="$TESTED_SHA^"
+          elif git tag --points-at "$TESTED_SHA" --list 'v[0-9]*' | grep -q .; then
+            # A manual run on an exact version commit compares with the release
+            # before it, not with itself.
+            search_ref="$TESTED_SHA^"
+          fi
+
+          if ! base_tag="$(git describe --tags --match 'v[0-9]*' --abbrev=0 "$search_ref")"; then
+            echo "no earlier reachable release tag for $TESTED_SHA" >&2
+            exit 1
+          fi
+          if test "$(./script/semver.sh validate "$base_tag")" != valid ||
+            test "${base_tag#v}" = "$base_tag"; then
+            echo "nearest earlier release tag is not a lowercase-v semantic version: $base_tag" >&2
+            exit 1
+          fi
+          base_commit="$(git rev-parse --verify "refs/tags/$base_tag^{commit}")"
+          if test "$base_commit" = "$TESTED_SHA" ||
+            ! git merge-base --is-ancestor "$base_commit" "$TESTED_SHA"; then
+            echo "release base $base_tag ($base_commit) is not an earlier ancestor of $TESTED_SHA" >&2
+            exit 1
+          fi
+          commit_count="$(git rev-list --count "$base_commit..$TESTED_SHA")"
+          if test "$commit_count" -eq 0; then
+            echo "release comparison range is empty" >&2
+            exit 1
+          fi
+
+          {
+            echo "BASE_REF=$base_commit"
+            echo "HEAD_REF=$TESTED_SHA"
+            echo "RELEASE_BASE_TAG=$base_tag"
+          } >> "$GITHUB_ENV"
+          echo "release coverage range: $base_tag ($base_commit)..$TESTED_SHA ($commit_count commits)"
+      - uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.11.4
+          args: --timeout=10m
+      - name: Build
+        run: go build ./...
+      - name: Unit tests
+        run: go list ./... | grep -v /e2e | xargs go test
+      - name: Active race suite
+        run: make test-race-active
+      - name: Unit coverage shard
+        run: |
+          make test-coverage-unit
+          make test-coverage-shard-ready COVERAGE_SHARD=unit
+      - name: Build coverage-instrumented akt binary
+        run: make test-coverage-binary
+      - name: Offline E2E coverage shard
+        run: |
+          make test-coverage-e2e-prepare COVERAGE_SHARD=e2e-offline
+          GOCOVERDIR="$GITHUB_WORKSPACE/.cache/coverage/covdata/e2e-offline" \
+            go test ./e2e/... -v -count=1
+          make test-coverage-shard-ready COVERAGE_SHARD=e2e-offline
+      - name: Fresh-chain E2E coverage shard
+        env:
+          AKT_E2E_LOCALNET: "1"
+        run: |
+          make test-coverage-e2e-prepare COVERAGE_SHARD=e2e-localnet
+          GOCOVERDIR="$GITHUB_WORKSPACE/.cache/coverage/covdata/e2e-localnet" \
+            go test ./e2e/ -run TestLocalnet -v -count=1 -timeout 15m
+          make test-coverage-shard-ready COVERAGE_SHARD=e2e-localnet
+      - name: Enforce coverage ratchets and changed lines
+        run: |
+          make test-coverage-report
+          make test-coverage-patch
+
+  publish:
+    needs: quality
+    if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
       # goreleaser creates the GitHub release and uploads the archives,
       # packages and checksums to it.
       contents: write
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # The version baked into the binary comes from `git describe`, so the
           # single-commit default checkout is not enough.
           fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.ref }}
 
-      - name: Fetch tags
-        # actions/checkout does not always bring annotated tag objects along,
-        # and goreleaser needs the annotation to build the changelog.
-        run: git fetch --force --tags
-
-      - uses: actions/setup-go@v7
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
 
@@ -88,25 +224,88 @@ jobs:
       # ghcr.io/goreleaser/goreleaser-cross (see make/releasing.mk). Docker is
       # preinstalled on the GitHub-hosted runners.
       - name: Publish release
-        if: github.event_name == 'push'
         env:
+          EVENT_TAG: ${{ github.ref_name }}
+          TESTED_SHA: ${{ github.sha }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          # Writes the Homebrew cask to akash-network/homebrew-tap, which
+          # Writes the Homebrew formula to akash-network/homebrew-tap, which
           # GITHUB_TOKEN cannot reach. Same secret node uses, but node only
-          # dispatches a workflow (actions:write) -- writing the cask needs
+          # dispatches a workflow (actions:write) -- writing the formula needs
           # contents:write.
           GORELEASER_ACCESS_TOKEN: ${{ secrets.GORELEASER_ACCESS_TOKEN }}
-        run: make release
+        run: |
+          set -euo pipefail
+          checked_out_commit="$(git rev-parse --verify 'HEAD^{commit}')"
+          tag_commit="$(git rev-parse --verify "refs/tags/$EVENT_TAG^{commit}")"
+          if test "$checked_out_commit" != "$TESTED_SHA" ||
+            test "$tag_commit" != "$TESTED_SHA"; then
+            echo "checked-out commit $checked_out_commit and event tag $EVENT_TAG ($tag_commit) must equal $TESTED_SHA" >&2
+            exit 1
+          fi
+          exact_tags="$(git tag --points-at "$TESTED_SHA" | LC_ALL=C sort)"
+          if test "$exact_tags" != "$EVENT_TAG"; then
+            echo "event tag must be the only tag selecting $TESTED_SHA immediately before publish" >&2
+            printf 'found tags:\n%s\n' "$exact_tags" >&2
+            exit 1
+          fi
+          make release
+
+  manual:
+    needs: quality
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          ref: ${{ github.sha }}
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Load repo build environment
+        run: |
+          set -euo pipefail
+          export AKT_ROOT="$GITHUB_WORKSPACE"
+          set -a
+          # shellcheck disable=SC1091
+          . ./.env
+          set +a
+          env | grep -E '^(AKT_ROOT|AKT_DEVCACHE|AKT_RUN)' >> "$GITHUB_ENV"
+
+      - name: Free disk space
+        run: |
+          set -euo pipefail
+          echo "before:"; df -h / | tail -1
+          sudo rm -rf \
+            /usr/local/lib/android \
+            /usr/share/dotnet \
+            /usr/share/swift \
+            /opt/ghc \
+            /usr/local/.ghcup \
+            /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/powershell \
+            /usr/local/share/boost
+          sudo docker image prune --all --force >/dev/null 2>&1 || true
+          echo "after:"; df -h / | tail -1
 
       - name: Manual run (${{ inputs.mode }})
-        if: github.event_name == 'workflow_dispatch'
         env:
           MODE: ${{ inputs.mode }}
-        run: make "release-${MODE}"
+        run: |
+          case "$MODE" in
+            check|snapshot|dry-run) ;;
+            *) echo "unsupported manual release mode: $MODE" >&2; exit 1 ;;
+          esac
+          make "release-${MODE}"
 
       - name: Upload artifacts
-        if: github.event_name == 'workflow_dispatch' && inputs.mode != 'check'
-        uses: actions/upload-artifact@v7
+        if: inputs.mode != 'check'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: akt-${{ inputs.mode }}
           path: |

@@ -1,6 +1,8 @@
 package keyring_test
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -95,6 +97,9 @@ func TestGetNotFound(t *testing.T) {
 	_, err := mgr.Get("nonexistent")
 	if err == nil {
 		t.Fatal("expected error for nonexistent keyring")
+	}
+	if backend, ok := mgr.EffectiveBackend("nonexistent"); ok || backend != "" {
+		t.Errorf("missing effective backend = (%q, %v), want empty/false", backend, ok)
 	}
 }
 
@@ -210,6 +215,18 @@ func TestReload(t *testing.T) {
 	_, err = kr2.Key("beforereload")
 	if err == nil {
 		t.Error("expected key from old keyring dir to not be present after reload with new dir")
+	}
+}
+
+func TestReloadEvictsRemovedKeyring(t *testing.T) {
+	root := t.TempDir()
+	mgr := aktkeyring.NewManager(root, []aktctx.Keyring{{Name: "removed", Backend: sdkkeyring.BackendTest}}, aktcodec.MakeEncodingConfig().Codec)
+	if _, err := mgr.Get("removed"); err != nil {
+		t.Fatal(err)
+	}
+	mgr.Reload(nil)
+	if _, err := mgr.Get("removed"); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Fatalf("removed keyring error = %v", err)
 	}
 }
 
@@ -357,4 +374,60 @@ func TestCodecNotNil(t *testing.T) {
 	if cdc == nil {
 		t.Fatal("expected non-nil codec")
 	}
+}
+
+func TestManagerDeferredLoadsOnceOnDemand(t *testing.T) {
+	root := t.TempDir()
+	mgr := aktkeyring.NewManager(root, []aktctx.Keyring{{Name: "default", Backend: sdkkeyring.BackendTest}}, aktcodec.MakeEncodingConfig().Codec)
+	deferred := mgr.Deferred("default")
+	if got := deferred.Backend(); got != sdkkeyring.BackendTest {
+		t.Fatalf("deferred backend = %q, want test", got)
+	}
+	if _, err := deferred.List(); err != nil {
+		t.Fatalf("deferred list: %v", err)
+	}
+	if _, err := deferred.List(); err != nil {
+		t.Fatalf("second deferred list: %v", err)
+	}
+	first, err := mgr.Get("default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := mgr.Get("default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Backend() != sdkkeyring.BackendTest || second.Backend() != sdkkeyring.BackendTest {
+		t.Fatalf("cached backends = %q/%q, want test", first.Backend(), second.Backend())
+	}
+
+	missing := mgr.Deferred("missing")
+	if got := missing.Backend(); got != sdkkeyring.BackendOS {
+		t.Errorf("missing deferred backend = %q, want os default", got)
+	}
+	if _, err := missing.List(); err == nil || !strings.Contains(err.Error(), "not found") {
+		t.Errorf("missing deferred list error = %v", err)
+	}
+}
+
+func TestManagerRejectsUnknownBackendAndDirectoryFailure(t *testing.T) {
+	cdc := aktcodec.MakeEncodingConfig().Codec
+	t.Run("unknown backend", func(t *testing.T) {
+		mgr := aktkeyring.NewManager(t.TempDir(), []aktctx.Keyring{{Name: "bad", Backend: "unknown"}}, cdc)
+		if _, err := mgr.Get("bad"); err == nil || !strings.Contains(err.Error(), "unknown keyring backend") {
+			t.Fatalf("unknown backend error = %v", err)
+		}
+	})
+
+	t.Run("keyring directory cannot be created", func(t *testing.T) {
+		root := t.TempDir()
+		blockingFile := filepath.Join(root, "not-a-directory")
+		if err := os.WriteFile(blockingFile, []byte("x"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		mgr := aktkeyring.NewManager(root, []aktctx.Keyring{{Name: "bad", Backend: sdkkeyring.BackendTest, Dir: filepath.Join(blockingFile, "child")}}, cdc)
+		if _, err := mgr.Get("bad"); err == nil || !strings.Contains(err.Error(), "create keyring dir") {
+			t.Fatalf("directory error = %v", err)
+		}
+	})
 }

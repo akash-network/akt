@@ -1,0 +1,2 @@
+package	file	line	reason	owner	evidence	review_deadline
+pkg.akt.dev/akt/internal/cli/chain/testutil	internal/cli/chain/testutil	package	test-only helpers are compiled into chain command tests but are not linked into the release binary	cli maintainers	GOWORK=off go list -deps ./cmd/akt does not include this package	2027-02-07

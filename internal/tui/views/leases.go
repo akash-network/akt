@@ -142,9 +142,8 @@ func (v *LeasesView) selectedRecord() *store.LeaseRecord {
 	if row == nil {
 		return nil
 	}
-	dseq, _ := strconv.ParseUint(row.ID, 10, 64)
 	for _, r := range v.data {
-		if r.ID.DSeq == dseq {
+		if leaseRowID(r.ID) == row.ID {
 			return r
 		}
 	}
@@ -177,11 +176,18 @@ func (v *LeasesView) applyFilter() {
 	rows := make([]components.TableRow, len(filtered))
 	for i, r := range filtered {
 		rows[i] = components.TableRow{
-			ID:    strconv.FormatUint(r.ID.DSeq, 10),
+			ID:    leaseRowID(r.ID),
 			Cells: leaseCells(r),
 		}
 	}
 	v.BaseListView.SetRows(rows)
+}
+
+// leaseRowID encodes every field that identifies a lease. DSEQ alone is not
+// unique because one deployment can have multiple groups, orders, and
+// providers.
+func leaseRowID(id store.LeaseID) string {
+	return fmt.Sprintf("%s/%d/%d/%d/%s", id.Owner, id.DSeq, id.GSeq, id.OSeq, id.Provider)
 }
 
 // leaseCells formats a LeaseRecord into cell values matching the column layout.
@@ -207,7 +213,7 @@ func leaseCells(r *store.LeaseRecord) []string {
 	// PRICE
 	price := "—"
 	if r.Price != "" {
-		price = r.Price
+		price = formatStoredCoins(r.Price)
 	}
 
 	// ESCROW: not directly on LeaseRecord; show "—"

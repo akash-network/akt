@@ -221,6 +221,7 @@ func TestCompareVersionsOrdersProviderReleasesAndCandidates(t *testing.T) {
 	}{
 		{name: "leading v", left: "v0.14.0", right: "v0.9.0", want: 1},
 		{name: "release after candidate", left: "v0.14.0", right: "v0.14.0-rc1", want: 1},
+		{name: "candidate before release", left: "v0.14.0-rc1", right: "v0.14.0", want: -1},
 		{name: "candidate number", left: "v0.14.0-rc10", right: "v0.14.0-rc2", want: 1},
 		{name: "equal", left: "v0.14.0", right: "v0.14.0", want: 0},
 	}

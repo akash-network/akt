@@ -45,6 +45,9 @@ func GetBMEParamsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("BME params", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)
 		},
@@ -72,6 +75,9 @@ func GetBMEVaultStateCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("BME vault state", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)
 		},
@@ -97,6 +103,9 @@ func GetBMEStatusCmd() *cobra.Command {
 
 			res, err := cl.Query().BME().Status(ctx, req)
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("BME status", res); err != nil {
 				return err
 			}
 
@@ -148,6 +157,9 @@ Filter with --owner, --denom, --to-denom and --status.`,
 				Pagination: pageReq,
 			})
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("BME ledger", res); err != nil {
 				return err
 			}
 

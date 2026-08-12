@@ -306,14 +306,18 @@ func (m *Manager) CreateContext(ctx Context) error {
 		return fmt.Errorf("invalid auth-method %q: must be %q or %q", ctx.AuthMethod, AuthMethodKeyring, AuthMethodConsoleAPI)
 	}
 
-	m.cfg.Contexts = append(m.cfg.Contexts, ctx)
-
 	// Create data directories for the new context.
 	if err := EnsureContextDirs(m.root, ctx.Name); err != nil {
 		return err
 	}
 
-	return m.save()
+	m.cfg.Contexts = append(m.cfg.Contexts, ctx)
+	if err := m.save(); err != nil {
+		m.cfg.Contexts = m.cfg.Contexts[:len(m.cfg.Contexts)-1]
+		return err
+	}
+
+	return nil
 }
 
 // UseContext switches the active context.

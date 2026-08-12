@@ -124,15 +124,24 @@ func ParseHeightRoundStep(hrs string) (height int64, round int, step int, err er
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("invalid height: %w", err)
 	}
+	if height < 0 {
+		return 0, 0, 0, fmt.Errorf("invalid height %d: must be nonnegative", height)
+	}
 
 	round, err = strconv.Atoi(parts[1])
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("invalid round: %w", err)
 	}
+	if round < 0 {
+		return 0, 0, 0, fmt.Errorf("invalid round %d: must be nonnegative", round)
+	}
 
 	step, err = strconv.Atoi(parts[2])
 	if err != nil {
 		return 0, 0, 0, fmt.Errorf("invalid step: %w", err)
+	}
+	if step < 0 {
+		return 0, 0, 0, fmt.Errorf("invalid step %d: must be nonnegative", step)
 	}
 
 	return height, round, step, nil
@@ -171,6 +180,10 @@ func CountVotes(votes []string) int {
 
 // ParseConsensusState converts raw consensus data into a State struct
 func ParseConsensusState(resp *ConsensusResponse, validators []Validator) (*State, error) {
+	if resp == nil {
+		return nil, fmt.Errorf("consensus response is nil")
+	}
+
 	rs := resp.Result.RoundState
 
 	height, round, step, err := ParseHeightRoundStep(rs.HeightRoundStep)
@@ -189,9 +202,17 @@ func ParseConsensusState(resp *ConsensusResponse, validators []Validator) (*Stat
 		TotalValidators: len(validators),
 	}
 
-	// Parse vote data for current round
-	if len(rs.HeightVoteSet) > round {
-		voteSet := rs.HeightVoteSet[round]
+	// Parse vote data for the exact current round. The response includes the
+	// round identity on each set, so sparse or reordered sets must not be
+	// treated as slice indexes.
+	var voteSet *HeightVote
+	for i := range rs.HeightVoteSet {
+		if rs.HeightVoteSet[i].Round == round {
+			voteSet = &rs.HeightVoteSet[i]
+			break
+		}
+	}
+	if voteSet != nil {
 
 		// Prevotes
 		state.PrevoteCount = CountVotes(voteSet.Prevotes)
@@ -208,7 +229,7 @@ func ParseConsensusState(resp *ConsensusResponse, validators []Validator) (*Stat
 		}
 
 		// Build validator status list with vote data
-		state.Validators = buildValidatorStatus(validators, voteSet, rs.Proposer.Index)
+		state.Validators = buildValidatorStatus(validators, *voteSet, rs.Proposer.Index)
 	} else {
 		// No vote data yet, but still build validator list
 		state.Validators = buildValidatorStatusNoVotes(validators, rs.Proposer.Index)

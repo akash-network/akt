@@ -1010,37 +1010,6 @@ func Run(cfg Config) error {
 	return err
 }
 
-// RunMonitor launches the TUI in standalone monitor mode.
-// cfg.InitialDashboard selects which dashboard is shown first
-// ("network", "provider", "bme", or "" for the default network).
-func RunMonitor(cfg Config) error {
-	buildLightClient(&cfg)
-
-	model, bus, cleanup, err := buildMonitorModel(cfg)
-	if err != nil {
-		return err
-	}
-	if cleanup != nil {
-		defer cleanup()
-	}
-
-	app := newApp(cfg, model)
-	// In standalone mode, show monitor directly
-	app.monitorActive = model != nil
-
-	if bus != nil && cfg.Store != nil && cfg.ResolvedCtx != nil {
-		eng := synce.New(cfg.Store, []string{cfg.ResolvedCtx.DefaultAccount})
-		if bridge, err := newSyncBridge(bus, eng); err == nil {
-			app.bridge = bridge
-			defer bridge.close()
-		}
-	}
-
-	p := tea.NewProgram(app)
-	_, err = p.Run()
-	return err
-}
-
 func buildMonitorModel(cfg Config) (tea.Model, pubsub.Bus, func(), error) {
 	if cfg.RPCEndpoint == "" || cfg.CacheDir == "" {
 		return nil, nil, nil, nil
@@ -1080,6 +1049,8 @@ func buildMonitorModel(cfg Config) (tea.Model, pubsub.Bus, func(), error) {
 	// The bus carries all typed ABCI events from the chain. Individual
 	// consumers (dashboards, sync engine, etc.) subscribe and filter
 	// by type.
+	runtimeContext, cancelRuntime := context.WithCancel(context.Background())
+	runtimeTasks := monitorui.NewRuntimeTaskGroup()
 	bus := pubsub.NewBus()
 
 	var evtSvc aktevents.Service
@@ -1100,6 +1071,8 @@ func buildMonitorModel(cfg Config) (tea.Model, pubsub.Bus, func(), error) {
 	model := monitorui.NewModel(monitorui.ModelConfig{
 		Client:             monitorrpc.NewClient(cfg.RPCEndpoint, cfg.RESTEndpoint),
 		RPCClient:          monitorrpc.NewRPCProviderClient(cfg.RPCEndpoint),
+		RuntimeContext:     runtimeContext,
+		RuntimeTasks:       runtimeTasks,
 		Cache:              provCache,
 		MonikerCache:       monCache,
 		InsecureSkipVerify: cfg.Insecure,
@@ -1109,6 +1082,8 @@ func buildMonitorModel(cfg Config) (tea.Model, pubsub.Bus, func(), error) {
 	})
 
 	cleanup := func() {
+		cancelRuntime()
+		runtimeTasks.StopAndWait()
 		if evtSvc != nil {
 			evtSvc.Shutdown()
 		}

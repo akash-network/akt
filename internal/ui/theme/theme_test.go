@@ -2,6 +2,7 @@ package theme_test
 
 import (
 	"image/color"
+	"strings"
 	"testing"
 
 	"charm.land/lipgloss/v2"
@@ -199,9 +200,43 @@ func TestSpinnerStyleExists(t *testing.T) {
 }
 
 func TestHRule(t *testing.T) {
-	result := theme.HRule(10)
-	if result == "" {
-		t.Error("HRule(10) returned empty")
+	for _, tc := range []struct {
+		name string
+		rule func(int) string
+	}{
+		{name: "neutral", rule: theme.HRule},
+		{name: "accent", rule: theme.HRuleAccent},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.rule(10); strings.Count(got, "─") != 10 {
+				t.Errorf("rule width = %d, want 10: %q", strings.Count(got, "─"), got)
+			}
+			if got := tc.rule(0); strings.Contains(got, "─") {
+				t.Errorf("zero-width rule contains a rule glyph: %q", got)
+			}
+		})
+	}
+}
+
+func TestStateBadgeClassification(t *testing.T) {
+	tests := []struct {
+		name  string
+		state string
+		want  lipgloss.Style
+	}{
+		{name: "active", state: "active", want: theme.BadgeActive},
+		{name: "closed", state: "revoked", want: theme.BadgeClosed},
+		{name: "warning", state: "overdrawn", want: theme.BadgeWarning},
+		{name: "unknown is closed", state: "future-state", want: theme.BadgeClosed},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := theme.StateBadge(tc.state)
+			if got.Render("state") != tc.want.Render("state") {
+				t.Errorf("StateBadge(%q) rendered %q, want %q", tc.state, got.Render("state"), tc.want.Render("state"))
+			}
+		})
 	}
 }
 

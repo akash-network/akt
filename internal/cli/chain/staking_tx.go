@@ -9,13 +9,10 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	flag "github.com/spf13/pflag"
 
-	"cosmossdk.io/core/address"
 	errorsmod "cosmossdk.io/errors"
 	sdkmath "cosmossdk.io/math"
 	"github.com/cosmos/cosmos-sdk/client"
-	"github.com/cosmos/cosmos-sdk/client/tx"
 	"github.com/cosmos/cosmos-sdk/codec"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -26,16 +23,6 @@ import (
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	"pkg.akt.dev/akt/internal/output/pretty"
 	cclient "pkg.akt.dev/go/node/client/v1beta3"
-)
-
-// default values
-var (
-	DefaultTokens                  = sdk.TokensFromConsensusPower(100, sdk.DefaultPowerReduction)
-	defaultAmount                  = DefaultTokens.String() + sdk.DefaultBondDenom
-	defaultCommissionRate          = "0.1"
-	defaultCommissionMaxRate       = "0.2"
-	defaultCommissionMaxChangeRate = "0.01"
-	defaultMinSelfDelegation       = "1"
 )
 
 type validator struct {
@@ -218,6 +205,9 @@ where we can get the pubkey using "%s tendermint show-validator"
 				ip, _ := cmd.Flags().GetString(cflags.FlagIP)
 				p2pPort, _ := cmd.Flags().GetUint(cflags.FlagP2PPort)
 				nodeID, _ := cmd.Flags().GetString(cflags.FlagNodeID)
+				if p2pPort == 0 || p2pPort > 65535 {
+					return fmt.Errorf("--%s must be between 1 and 65535", cflags.FlagP2PPort)
+				}
 
 				if nodeID != "" && ip != "" && p2pPort > 0 {
 					opts = append(opts, cclient.WithNote(fmt.Sprintf("%s@%s:%d", nodeID, ip, p2pPort)))
@@ -234,6 +224,7 @@ where we can get the pubkey using "%s tendermint show-validator"
 	}
 
 	cmd.Flags().String(cflags.FlagIP, "", fmt.Sprintf("The node's public IP. It takes effect only when used in combination with --%s", cflags.FlagGenerateOnly))
+	cmd.Flags().Uint(cflags.FlagP2PPort, 26656, "The node's public P2P port")
 	cmd.Flags().String(cflags.FlagNodeID, "", "The node's ID")
 	cflags.AddTxFlagsToCmd(cmd)
 
@@ -549,153 +540,6 @@ $ %s tx staking cancel-unbond %s1gghjut3ccd8ay0zduzj64hwre2fxs9ldmqhffj 100uakt 
 	return cmd
 }
 
-// CreateValidatorMsgFlagSet returns the flagset, particular flags, and a description of defaults
-// this is anticipated to be used with the gen-tx
-func CreateValidatorMsgFlagSet(ipDefault string) (fs *flag.FlagSet, defaultsDesc string) {
-	fsCreateValidator := flag.NewFlagSet("", flag.ContinueOnError)
-	fsCreateValidator.String(cflags.FlagIP, ipDefault, "The node's public P2P IP")
-	fsCreateValidator.Uint(cflags.FlagP2PPort, 26656, "The node's public P2P port")
-	fsCreateValidator.String(cflags.FlagNodeID, "", "The node's NodeID")
-	fsCreateValidator.String(cflags.FlagMoniker, "", "The validator's (optional) moniker")
-	fsCreateValidator.String(cflags.FlagWebsite, "", "The validator's (optional) website")
-	fsCreateValidator.String(cflags.FlagSecurityContact, "", "The validator's (optional) security contact email")
-	fsCreateValidator.String(cflags.FlagDetails, "", "The validator's (optional) details")
-	fsCreateValidator.String(cflags.FlagIdentity, "", "The (optional) identity signature (ex. UPort or Keybase)")
-	fsCreateValidator.AddFlagSet(cflags.FlagSetCommissionCreate())
-	fsCreateValidator.AddFlagSet(cflags.FlagSetMinSelfDelegation())
-	fsCreateValidator.AddFlagSet(cflags.FlagSetAmount())
-	fsCreateValidator.AddFlagSet(cflags.FlagSetPublicKey())
-
-	defaultsDesc = fmt.Sprintf(`
-	delegation amount:           %s
-	commission rate:             %s
-	commission max rate:         %s
-	commission max change rate:  %s
-	minimum self delegation:     %s
-`, defaultAmount, defaultCommissionRate,
-		defaultCommissionMaxRate, defaultCommissionMaxChangeRate,
-		defaultMinSelfDelegation)
-
-	return fsCreateValidator, defaultsDesc
-}
-
-type TxCreateValidatorConfig struct {
-	ChainID string
-	NodeID  string
-	Moniker string
-
-	Amount string
-
-	CommissionRate          string
-	CommissionMaxRate       string
-	CommissionMaxChangeRate string
-	MinSelfDelegation       string
-
-	PubKey cryptotypes.PubKey
-
-	IP              string
-	P2PPort         uint
-	Website         string
-	SecurityContact string
-	Details         string
-	Identity        string
-}
-
-func PrepareConfigForTxCreateValidator(flagSet *flag.FlagSet, moniker, nodeID, chainID string, valPubKey cryptotypes.PubKey) (TxCreateValidatorConfig, error) {
-	c := TxCreateValidatorConfig{}
-
-	ip, err := flagSet.GetString(cflags.FlagIP)
-	if err != nil {
-		return c, err
-	}
-
-	if ip == "" {
-		_, _ = fmt.Fprintf(os.Stderr, "failed to retrieve an external IP; the tx's memo field will be unset")
-	}
-
-	p2pPort, err := flagSet.GetUint(cflags.FlagP2PPort)
-	if err != nil {
-		return c, err
-	}
-
-	website, err := flagSet.GetString(cflags.FlagWebsite)
-	if err != nil {
-		return c, err
-	}
-
-	securityContact, err := flagSet.GetString(cflags.FlagSecurityContact)
-	if err != nil {
-		return c, err
-	}
-
-	details, err := flagSet.GetString(cflags.FlagDetails)
-	if err != nil {
-		return c, err
-	}
-
-	identity, err := flagSet.GetString(cflags.FlagIdentity)
-	if err != nil {
-		return c, err
-	}
-
-	c.Amount, err = flagSet.GetString(cflags.FlagAmount)
-	if err != nil {
-		return c, err
-	}
-
-	c.CommissionRate, err = flagSet.GetString(cflags.FlagCommissionRate)
-	if err != nil {
-		return c, err
-	}
-
-	c.CommissionMaxRate, err = flagSet.GetString(cflags.FlagCommissionMaxRate)
-	if err != nil {
-		return c, err
-	}
-
-	c.CommissionMaxChangeRate, err = flagSet.GetString(cflags.FlagCommissionMaxChangeRate)
-	if err != nil {
-		return c, err
-	}
-
-	c.MinSelfDelegation, err = flagSet.GetString(cflags.FlagMinSelfDelegation)
-	if err != nil {
-		return c, err
-	}
-
-	c.IP = ip
-	c.P2PPort = p2pPort
-	c.Website = website
-	c.SecurityContact = securityContact
-	c.Identity = identity
-	c.NodeID = nodeID
-	c.PubKey = valPubKey
-	c.Website = website
-	c.SecurityContact = securityContact
-	c.Details = details
-	c.Identity = identity
-	c.ChainID = chainID
-	c.Moniker = moniker
-
-	if c.Amount == "" {
-		c.Amount = defaultAmount
-	}
-
-	if c.CommissionRate == "" {
-		c.CommissionRate = defaultCommissionRate
-	}
-
-	if c.CommissionMaxRate == "" {
-		c.CommissionMaxRate = defaultCommissionMaxRate
-	}
-
-	if c.CommissionMaxChangeRate == "" {
-		c.CommissionMaxChangeRate = defaultCommissionMaxChangeRate
-	}
-
-	return c, nil
-}
-
 func buildCommissionRates(rateStr, maxRateStr, maxChangeRateStr string) (commission stakingtypes.CommissionRates, err error) {
 	if rateStr == "" || maxRateStr == "" || maxChangeRateStr == "" {
 		return commission, errors.New("must specify all validator commission parameters")
@@ -719,68 +563,4 @@ func buildCommissionRates(rateStr, maxRateStr, maxChangeRateStr string) (commiss
 	commission = stakingtypes.NewCommissionRates(rate, maxRate, maxChangeRate)
 
 	return commission, nil
-}
-
-// BuildCreateValidatorMsg makes a new MsgCreateValidator.
-func BuildCreateValidatorMsg(cctx client.Context, config TxCreateValidatorConfig, txBldr tx.Factory, generateOnly bool, valCodec address.Codec) (tx.Factory, sdk.Msg, error) {
-	amounstStr := config.Amount
-	amount, err := sdk.ParseCoinNormalized(amounstStr)
-	if err != nil {
-		return txBldr, nil, err
-	}
-
-	valAddr := cctx.GetFromAddress()
-	description := stakingtypes.NewDescription(
-		config.Moniker,
-		config.Identity,
-		config.Website,
-		config.SecurityContact,
-		config.Details,
-	)
-
-	// get the initial validator commission parameters
-	rateStr := config.CommissionRate
-	maxRateStr := config.CommissionMaxRate
-	maxChangeRateStr := config.CommissionMaxChangeRate
-	commissionRates, err := buildCommissionRates(rateStr, maxRateStr, maxChangeRateStr)
-	if err != nil {
-		return txBldr, nil, err
-	}
-
-	// get the initial validator min self delegation
-	msbStr := config.MinSelfDelegation
-	minSelfDelegation, ok := sdkmath.NewIntFromString(msbStr)
-
-	if !ok {
-		return txBldr, nil, errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "minimum self delegation must be a positive integer")
-	}
-
-	valStr, err := valCodec.BytesToString(sdk.ValAddress(valAddr))
-	if err != nil {
-		return txBldr, nil, err
-	}
-
-	msg, err := stakingtypes.NewMsgCreateValidator(
-		valStr,
-		config.PubKey,
-		amount,
-		description,
-		commissionRates,
-		minSelfDelegation,
-	)
-	if err != nil {
-		return txBldr, msg, err
-	}
-
-	if generateOnly {
-		ip := config.IP
-		p2pPort := config.P2PPort
-		nodeID := config.NodeID
-
-		if nodeID != "" && ip != "" && p2pPort > 0 {
-			txBldr = txBldr.WithMemo(fmt.Sprintf("%s@%s:%d", nodeID, ip, p2pPort))
-		}
-	}
-
-	return txBldr, msg, nil
 }

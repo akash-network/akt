@@ -11,7 +11,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
+	"testing/iotest"
 
 	"pkg.akt.dev/akt/internal/actionlog"
 	"pkg.akt.dev/go/sdl"
@@ -64,8 +64,10 @@ func openTestLog(t *testing.T) *actionlog.Logger {
 func TestConsoleMutationsRecordedInActionLog(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments":
+			_, _ = w.Write([]byte(`{"data":{"deployments":[],"pagination":{"hasMore":false}}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments":
-			_, _ = w.Write([]byte(`{"data":{"dseq":"12345","manifest":"m"}}`))
+			_, _ = w.Write([]byte(`{"data":{"dseq":"12345","manifest":"m","signTx":{"code":0,"transactionHash":"tx-12345","rawLog":""}}}`))
 		case r.Method == http.MethodDelete:
 			// 409 is not mapped to already-closed, so the close genuinely fails.
 			w.WriteHeader(http.StatusConflict)
@@ -104,6 +106,105 @@ func TestConsoleMutationsRecordedInActionLog(t *testing.T) {
 	}
 }
 
+func TestCredentialEchoIsRedactedFromFailedActionLog(t *testing.T) {
+	const apiKey = "action-log-secret"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+		_, _ = w.Write([]byte(`{"error":"credential ` + apiKey + ` rejected"}`))
+	}))
+	defer srv.Close()
+
+	l := openTestLog(t)
+	c := New(srv.URL, apiKey).WithActionLog(l)
+	err := c.CloseDeployment(context.Background(), "999")
+	if err == nil {
+		t.Fatal("expected close to fail")
+	}
+	if strings.Contains(err.Error(), apiKey) {
+		t.Fatal("returned error exposed the API key")
+	}
+
+	entries, readErr := l.Read(actionlog.Filter{Type: actionlog.TypeConsole})
+	if readErr != nil {
+		t.Fatalf("read action log: %v", readErr)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected one action entry, got %d", len(entries))
+	}
+	if strings.Contains(entries[0].Error, apiKey) {
+		t.Fatal("action log exposed the API key")
+	}
+	if !strings.Contains(entries[0].Error, "[REDACTED]") {
+		t.Fatalf("action log did not retain a redaction marker: %q", entries[0].Error)
+	}
+}
+
+func TestRedirectTargetIsOmittedFromReturnedErrorAndActionLog(t *testing.T) {
+	const apiKey = "redirect-action-log-secret"
+	const hostileOrigin = "https://attacker.invalid/collect"
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Location", hostileOrigin+"?api_key="+apiKey)
+		w.WriteHeader(http.StatusTemporaryRedirect)
+	}))
+	defer srv.Close()
+
+	l := openTestLog(t)
+	err := New(srv.URL, apiKey).WithActionLog(l).CloseDeployment(context.Background(), "999")
+	if err == nil || !strings.Contains(strings.ToLower(err.Error()), "redirect") {
+		t.Fatalf("CloseDeployment() error = %v, want redirect rejection", err)
+	}
+	if strings.Contains(err.Error(), apiKey) || strings.Contains(err.Error(), hostileOrigin) {
+		t.Fatalf("returned redirect error exposed untrusted target data: %q", err)
+	}
+
+	entries, readErr := l.Read(actionlog.Filter{Type: actionlog.TypeConsole})
+	if readErr != nil {
+		t.Fatalf("read action log: %v", readErr)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected one action entry, got %d", len(entries))
+	}
+	if strings.Contains(entries[0].Error, apiKey) || strings.Contains(entries[0].Error, hostileOrigin) {
+		t.Fatalf("action log exposed untrusted redirect target data: %q", entries[0].Error)
+	}
+}
+
+func TestReadResponseBodyEnforcesLimit(t *testing.T) {
+	body, err := readResponseBody(strings.NewReader("1234"), 4)
+	if err != nil || string(body) != "1234" {
+		t.Fatalf("read exact limit = %q, %v", body, err)
+	}
+
+	body, err = readResponseBody(strings.NewReader("12345"), 4)
+	if err == nil {
+		t.Fatal("expected an oversized response to fail")
+	}
+	if body != nil || !strings.Contains(err.Error(), "4-byte limit") {
+		t.Fatalf("oversized response = %q, %v", body, err)
+	}
+
+	if _, err := readResponseBody(strings.NewReader(""), -1); err == nil {
+		t.Fatal("expected a negative limit to fail")
+	}
+}
+
+func TestReadResponseBodyPropagatesReaderFailure(t *testing.T) {
+	wantErr := errors.New("response stream failed")
+	body, err := readResponseBody(iotest.ErrReader(wantErr), 4)
+	if body != nil || !errors.Is(err, wantErr) {
+		t.Fatalf("readResponseBody() = %q, %v; want reader failure", body, err)
+	}
+}
+
+func TestRedactResponseSecretWithoutCredentialPreservesDiagnostic(t *testing.T) {
+	const diagnostic = "public catalog request failed"
+	if got := redactResponseSecret(diagnostic, ""); got != diagnostic {
+		t.Fatalf("redactResponseSecret() = %q, want %q", got, diagnostic)
+	}
+}
+
 func TestCloseAlreadyClosedRecordedAsSuccess(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
@@ -136,7 +237,7 @@ func TestCloseValidation400RecordedAsFailed(t *testing.T) {
 	// not be logged as a successful close.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusBadRequest)
-		_, _ = w.Write([]byte(`{"error":"cannot close: deployment has active leases pending settlement"}`))
+		_, _ = w.Write([]byte(`{"error":"deployment cannot be closed while active leases exist"}`))
 	}))
 	defer srv.Close()
 
@@ -227,13 +328,79 @@ func TestNewMutationsRecordedInActionLog(t *testing.T) {
 	}
 }
 
+func TestConsoleValidationFailuresOccurBeforeNetworkAndAreLogged(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+	}))
+	defer srv.Close()
+
+	log := openTestLog(t)
+	client := New(srv.URL, "test-key").WithActionLog(log)
+	_, err := client.CreateAPIKey(context.Background(), " \t\n", "")
+	if err == nil || !strings.Contains(err.Error(), "name must not be blank") {
+		t.Fatalf("blank API-key name error = %v", err)
+	}
+	if _, err := client.UpdateDeployment(context.Background(), "42", "not-valid-sdl: ["); err == nil || !strings.Contains(err.Error(), "prepare deployment SDL") {
+		t.Fatalf("invalid deployment SDL error = %v", err)
+	}
+	if err := client.Deposit(context.Background(), "42", 0); err == nil || !strings.Contains(err.Error(), "prepare deployment deposit") {
+		t.Fatalf("invalid deployment deposit error = %v", err)
+	}
+	if requests.Load() != 0 {
+		t.Fatalf("local validation failures made %d requests, want zero", requests.Load())
+	}
+
+	entries, readErr := log.Read(actionlog.Filter{Type: actionlog.TypeConsole})
+	if readErr != nil {
+		t.Fatalf("read action log: %v", readErr)
+	}
+	wantActions := []string{"deposit", "update-deployment", "create-api-key"}
+	if len(entries) != len(wantActions) {
+		t.Fatalf("validation action entries = %+v, want %d failures", entries, len(wantActions))
+	}
+	for i, action := range wantActions {
+		if entries[i].Action != action || entries[i].Status != "failed" {
+			t.Errorf("validation entry %d = %+v, want failed %s", i, entries[i], action)
+		}
+	}
+}
+
+func TestCreateAPIKeyDefinitiveFailureIsNotMarkedPending(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"message":"name already exists"}`))
+	}))
+	defer srv.Close()
+
+	log := openTestLog(t)
+	client := New(srv.URL, "test-key").WithActionLog(log)
+	_, err := client.CreateAPIKey(context.Background(), "ci", "")
+	if err == nil || strings.Contains(err.Error(), "outcome unknown") {
+		t.Fatalf("definitive API-key failure = %v, want direct validation error", err)
+	}
+	if requests.Load() != 1 {
+		t.Fatalf("definitive API-key failure made %d requests, want one", requests.Load())
+	}
+
+	entries, readErr := log.Read(actionlog.Filter{Type: actionlog.TypeConsole})
+	if readErr != nil {
+		t.Fatalf("read action log: %v", readErr)
+	}
+	if len(entries) != 1 || entries[0].Action != "create-api-key" || entries[0].Status != "failed" {
+		t.Fatalf("definitive API-key action entry = %+v, want one failed create", entries)
+	}
+}
+
 func TestConsoleWithoutActionLogIsNoop(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			_, _ = w.Write([]byte(`{"data":{"deployments":[],"pagination":{"hasMore":false}}}`))
 			return
 		}
-		_, _ = w.Write([]byte(`{"data":{"dseq":"1"}}`))
+		_, _ = w.Write([]byte(`{"data":{"dseq":"1","signTx":{"code":0,"transactionHash":"tx-1","rawLog":""}}}`))
 	}))
 	defer srv.Close()
 
@@ -275,10 +442,7 @@ func TestAmbiguousDeploymentCreateIsLoggedPending(t *testing.T) {
 
 	l := openTestLog(t)
 	c := New(srv.URL, "test-key").WithActionLog(l)
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-
-	_, err = c.CreateDeployment(ctx, actionLogTestSDL, 5)
+	_, err = c.CreateDeployment(context.Background(), actionLogTestSDL, 5)
 	if err == nil || !strings.Contains(err.Error(), "outcome unknown") || !strings.Contains(err.Error(), "akt console deployment list") {
 		t.Fatalf("ambiguous create error = %v", err)
 	}
@@ -296,5 +460,73 @@ func TestAmbiguousDeploymentCreateIsLoggedPending(t *testing.T) {
 	}
 	if params["versionHash"] != expectedHash {
 		t.Errorf("versionHash = %q, want %q", params["versionHash"], expectedHash)
+	}
+}
+
+func TestAmbiguousLeaseAPIKeyAndDepositAreLoggedPending(t *testing.T) {
+	leaseCtx, cancelLease := context.WithCancel(context.Background())
+	defer cancelLease()
+	depositCtx, cancelDeposit := context.WithCancel(context.Background())
+	defer cancelDeposit()
+
+	var leasePosts atomic.Int32
+	var keyPosts atomic.Int32
+	var depositPosts atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/leases":
+			leasePosts.Add(1)
+			_, _ = w.Write([]byte(`{"data":{}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/api-keys":
+			keyPosts.Add(1)
+			_, _ = w.Write([]byte(`{"data":{}}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/deposit-deployment":
+			depositPosts.Add(1)
+			w.WriteHeader(http.StatusBadGateway)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/42":
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"1000000"}],"transferred":[]}}}}`))
+			if depositPosts.Load() > 0 {
+				cancelDeposit()
+			} else if leasePosts.Load() > 0 {
+				cancelLease()
+			}
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	l := openTestLog(t)
+	c := New(srv.URL, "test-key").WithActionLog(l)
+
+	_, err := c.CreateLease(leaseCtx, "manifest", []LeaseRequest{{
+		DSeq: "42", GSeq: 1, OSeq: 1, Provider: "akash1provider",
+	}})
+	if err == nil || !strings.Contains(err.Error(), "outcome unknown") {
+		t.Fatalf("ambiguous lease error = %v", err)
+	}
+
+	if _, err := c.CreateAPIKey(context.Background(), "ci", ""); err == nil || !strings.Contains(err.Error(), "outcome unknown") {
+		t.Fatalf("ambiguous API-key error = %v", err)
+	}
+
+	if err := c.Deposit(depositCtx, "42", 1); err == nil || !strings.Contains(err.Error(), "outcome unknown") {
+		t.Fatalf("ambiguous deposit error = %v", err)
+	}
+
+	entries, readErr := l.Read(actionlog.Filter{Type: actionlog.TypeConsole})
+	if readErr != nil {
+		t.Fatalf("read: %v", readErr)
+	}
+	if len(entries) != 3 {
+		t.Fatalf("pending entries = %+v", entries)
+	}
+	for i, action := range []string{"deposit", "create-api-key", "create-lease"} {
+		if entries[i].Action != action || entries[i].Status != "pending" {
+			t.Errorf("entry %d = %+v, want pending %s", i, entries[i], action)
+		}
+	}
+	if leasePosts.Load() != 1 || keyPosts.Load() != 1 || depositPosts.Load() != 1 {
+		t.Fatalf("POST counts lease=%d key=%d deposit=%d, want one each", leasePosts.Load(), keyPosts.Load(), depositPosts.Load())
 	}
 }

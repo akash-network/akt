@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -9,7 +10,6 @@ import (
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	signingtypes "github.com/cosmos/cosmos-sdk/types/tx/signing"
 	"github.com/spf13/cobra"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
@@ -134,7 +134,7 @@ func TestReadTxFlagsRejectsUnresolvedPreselectedSigner(t *testing.T) {
 		WithKeyring(aktkeyring.NewInMemory(aktcodec.MakeEncodingConfig().Codec)).
 		WithFrom("missing-signer")
 
-	_, err := ReadTxCommandFlags(cctx, cmd.Flags())
+	_, err := ReadTxCommandFlags(cctx, cmd.Flags(), io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "missing-signer") {
 		t.Fatalf("unresolved signer error = %v", err)
 	}
@@ -202,19 +202,6 @@ func TestCertificateFlagsRemainLeafLocal(t *testing.T) {
 	}
 }
 
-func TestBatchMultisignReadsNoAutoIncrementFromItsCommand(t *testing.T) {
-	cmd := GetMultiSignBatchCmd()
-	if batchNoAutoIncrement(cmd) {
-		t.Fatal("no-auto-increment defaulted true")
-	}
-	if err := cmd.Flags().Set(cflags.FlagNoAutoIncrement, "true"); err != nil {
-		t.Fatal(err)
-	}
-	if !batchNoAutoIncrement(cmd) {
-		t.Fatal("--no-auto-increment was ignored")
-	}
-}
-
 func TestGetMultisigRecordRejectsOrdinaryKey(t *testing.T) {
 	kr := aktkeyring.NewInMemory(aktcodec.MakeEncodingConfig().Codec)
 	_, _, err := kr.NewMnemonic(
@@ -232,13 +219,6 @@ func TestGetMultisigRecordRejectsOrdinaryKey(t *testing.T) {
 	_, _, err = getMultisigRecord(cctx, "ordinary")
 	if err == nil || !strings.Contains(err.Error(), "ordinary") || !strings.Contains(err.Error(), "multisig") {
 		t.Fatalf("getMultisigRecord error = %v", err)
-	}
-}
-
-func TestSignatureForTransactionRejectsShortBatch(t *testing.T) {
-	_, err := signatureForTransaction([]signingtypes.SignatureV2{}, 0, "short.json")
-	if err == nil || !strings.Contains(err.Error(), "short.json") || !strings.Contains(err.Error(), "transaction 1") {
-		t.Fatalf("signatureForTransaction error = %v", err)
 	}
 }
 

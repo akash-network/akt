@@ -78,6 +78,9 @@ $ %s query staking validator %s1gghjut3ccd8ay0zduzj64hwre2fxs9ldmqhffj
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("staking validator", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), &res.Validator)
 		},
@@ -118,6 +121,9 @@ $ %s query staking validators
 				Pagination: pageReq,
 			})
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("staking validators", result); err != nil {
 				return err
 			}
 
@@ -170,6 +176,9 @@ $ %s query staking unbonding-delegations-from %s1gghjut3ccd8ay0zduzj64hwre2fxs9l
 
 			res, err := cl.Query().Staking().ValidatorUnbondingDelegations(cmd.Context(), params)
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("staking unbonding-delegations-from", res); err != nil {
 				return err
 			}
 
@@ -225,6 +234,9 @@ $ %s query staking redelegations-from %s1gghjut3ccd8ay0zduzj64hwre2fxs9ldmqhffj
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("staking redelegations-from", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), res)
 		},
@@ -276,6 +288,12 @@ $ %s query staking delegation %s1gghjut3ccd8ay0zduzj64hwre2fxs9ld75ru9p %s1gghju
 
 			res, err := cl.Query().Staking().Delegation(cmd.Context(), params)
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("staking delegation", res); err != nil {
+				return err
+			}
+			if err := requireQueryField("staking delegation", "delegation response", res.DelegationResponse); err != nil {
 				return err
 			}
 
@@ -330,6 +348,9 @@ $ %s query staking delegations %s1gghjut3ccd8ay0zduzj64hwre2fxs9ld75ru9p
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("staking delegations", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), res)
 		},
@@ -381,6 +402,9 @@ $ %s query staking delegations-to %s1gghjut3ccd8ay0zduzj64hwre2fxs9ldmqhffj
 
 			res, err := cl.Query().Staking().ValidatorDelegations(cmd.Context(), params)
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("staking delegations-to", res); err != nil {
 				return err
 			}
 
@@ -437,6 +461,9 @@ $ %s query staking unbonding-delegation %s1gghjut3ccd8ay0zduzj64hwre2fxs9ld75ru9
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("staking unbonding-delegation", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), &res.Unbond)
 		},
@@ -487,6 +514,9 @@ $ %s query staking unbonding-delegations %s1gghjut3ccd8ay0zduzj64hwre2fxs9ld75ru
 
 			res, err := cl.Query().Staking().DelegatorUnbondingDelegations(cmd.Context(), params)
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("staking unbonding-delegations", res); err != nil {
 				return err
 			}
 
@@ -549,6 +579,9 @@ $ %s query staking redelegation %s1gghjut3ccd8ay0zduzj64hwre2fxs9ld75ru9p %s1l2r
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("staking redelegation", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), res)
 		},
@@ -601,6 +634,9 @@ $ %s query staking redelegations %s1gghjut3ccd8ay0zduzj64hwre2fxs9ld75ru9p
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("staking redelegations", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), res)
 		},
@@ -642,6 +678,12 @@ $ %s query staking historical-info 5
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("staking historical-info", res); err != nil {
+				return err
+			}
+			if err := requireQueryField("staking historical-info", "historical info", res.Hist); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), res.Hist)
 		},
@@ -676,6 +718,9 @@ $ %s query staking pool
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("staking pool", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), &res.Pool)
 		},
@@ -708,6 +753,9 @@ $ %s query staking params
 
 			res, err := cl.Query().Staking().Params(cmd.Context(), &types.QueryParamsRequest{})
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("staking params", res); err != nil {
 				return err
 			}
 
