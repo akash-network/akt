@@ -48,13 +48,17 @@ type GRPCClient struct {
 func NewGRPCGatewayClient(
 	ctx context.Context,
 	cctx sdkclient.Context,
-	addr sdk.AccAddress,
+	accountAddr sdk.AccAddress,
+	expectedProvider sdk.AccAddress,
 	providerURL string,
 	authType string,
 	kr sdkkeyring.Keyring,
 	certQuerier atls.CertificateQuerier,
 ) (*GRPCClient, error) {
-	if err := ValidateGatewayAuthentication(addr, authType, kr); err != nil {
+	if expectedProvider.Empty() {
+		return nil, fmt.Errorf("provider identity is required for gRPC gateway authentication")
+	}
+	if err := ValidateGatewayAuthentication(accountAddr, authType, kr); err != nil {
 		return nil, err
 	}
 
@@ -63,7 +67,9 @@ func NewGRPCGatewayClient(
 		return nil, err
 	}
 
-	tlsCfg, token, err := gatewayClientTLS(ctx, cctx, addr, host, authType, kr, certQuerier)
+	tlsCfg, token, err := gatewayClientTLS(
+		ctx, cctx, accountAddr, expectedProvider, host, authType, kr, certQuerier,
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -83,7 +89,8 @@ func NewGRPCGatewayClient(
 func gatewayClientTLS(
 	ctx context.Context,
 	cctx sdkclient.Context,
-	addr sdk.AccAddress,
+	accountAddr sdk.AccAddress,
+	expectedProvider sdk.AccAddress,
 	host string,
 	authType string,
 	kr sdkkeyring.Keyring,
@@ -102,7 +109,7 @@ func gatewayClientTLS(
 		clientCert = &cert
 		serverName = "mtls." + host
 	default: // "jwt" or unset; ValidateGatewayAuthentication has rejected the rest.
-		signed, err := attestationJWT(ajwt.NewSigner(kr, addr))
+		signed, err := attestationJWT(ajwt.NewSigner(kr, accountAddr))
 		if err != nil {
 			return nil, "", fmt.Errorf("sign gateway JWT: %w", err)
 		}
@@ -113,7 +120,7 @@ func gatewayClientTLS(
 		MinVersion:            tls.VersionTLS13,
 		ServerName:            serverName,
 		InsecureSkipVerify:    true, // nolint: gosec // verifyProviderCertificate does the checking Go's default would.
-		VerifyPeerCertificate: verifyProviderCertificate(ctx, certQuerier, serverName),
+		VerifyPeerCertificate: verifyProviderCertificate(ctx, certQuerier, serverName, expectedProvider),
 	}
 	if clientCert != nil {
 		tlsCfg.Certificates = []tls.Certificate{*clientCert}
@@ -130,6 +137,7 @@ func verifyProviderCertificate(
 	ctx context.Context,
 	certQuerier atls.CertificateQuerier,
 	serverName string,
+	expectedProvider sdk.AccAddress,
 ) func([][]byte, [][]*x509.Certificate) error {
 	return func(rawCerts [][]byte, _ [][]*x509.Certificate) error {
 		certs := make([]*x509.Certificate, 0, len(rawCerts))
@@ -159,6 +167,13 @@ func verifyProviderCertificate(
 
 		if certQuerier == nil {
 			return fmt.Errorf("verify provider certificate: %w", pkiErr)
+		}
+		if certs[0].Subject.CommonName != expectedProvider.String() {
+			return fmt.Errorf(
+				"provider certificate identity %q does not match expected provider %s",
+				certs[0].Subject.CommonName,
+				expectedProvider,
+			)
 		}
 
 		_, _, err := atls.ValidatePeerCertificates(

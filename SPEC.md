@@ -2018,6 +2018,13 @@ lease path sent to the gateway still needs a provider address, so without
 one URL cannot address several gateways, combining `--provider-url` with a
 `send-manifest` fan-out over multiple active leases is refused.
 
+The authenticated gRPC gateway boundary retains that resolved provider address
+independently of both the caller's wallet address and the URL. Standard PKI
+certificates MUST verify against the URL hostname. Before accepting Akash's
+self-signed on-chain certificate fallback, the peer certificate subject MUST
+equal the resolved provider address; a valid registered certificate belonging
+to any other provider is refused before a JWT-bearing request can be sent.
+
 Because the provider is resolved *from* the deployment sequence, the sequence is
 validated first. A lease command invoked with neither a `dseq` nor a
 `--provider` reports the missing deployment sequence, not the missing provider,

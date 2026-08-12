@@ -559,7 +559,7 @@ func validateConsoleLogRecord(raw json.RawMessage, service string) error {
 	}
 
 	podPrefix := service + "-"
-	if record.Name != service && !(strings.HasPrefix(record.Name, podPrefix) && len(record.Name) > len(podPrefix)) {
+	if record.Name != service && (!strings.HasPrefix(record.Name, podPrefix) || len(record.Name) <= len(podPrefix)) {
 		return fmt.Errorf("log source = %q, want service %s or one of its runtime pods", record.Name, service)
 	}
 	if strings.TrimSpace(record.Message) == "" {

@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- **Current-main provider attestation code now satisfies the coverage gates**:
+  semantic tests exercise gRPC authentication, TLS certificate trust,
+  on-chain certificate decoding, attestation command failures, renderer
+  fallbacks, and nonce-boundary cases added by the provider attestation
+  feature. Self-signed gRPC certificates are now bound to the resolved provider
+  address before their on-chain registration is trusted, so another provider's
+  valid certificate cannot terminate a JWT-bearing connection. The Console log
+  oracle's equivalent service/pod predicate also uses the lint-approved
+  positive form. Coverage baselines remain ratchets and are raised to the newly
+  measured Linux result of 18,849 covered active statements out of 22,165
+  (85.04%) rather than lowering the ratchet for the larger denominator.
+
 - **The live Console log check now follows the provider stream contract**:
   sandbox providers report runtime pod names such as
   `web-5bfc685996-wv9vs`, while `web` is the requested SDL service filter. The

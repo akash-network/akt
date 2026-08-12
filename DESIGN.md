@@ -478,6 +478,15 @@ use the resolved wallet identity, while public status remains unauthenticated.
 Console MCP tools likewise translate Console wire values into the semantic
 units promised by their schemas before returning them to a client.
 
+Authenticated gRPC gateway construction carries the resolved provider identity
+separately from the wallet identity and gateway URL. A publicly trusted server
+certificate is bound to the resolved URL by normal hostname verification. When
+the provider uses Akash's self-signed certificate path, its certificate subject
+MUST equal the resolved provider address before the certificate is validated
+against chain state. A valid on-chain certificate owned by another provider is
+not an acceptable substitute, and `--provider-url` never changes the expected
+provider identity.
+
 MCP is an adapter over the same mutation boundaries, not an audit bypass.
 When write tools are enabled, chain broadcasts use the CLI transaction logging
 decorator, Console clients carry the selected context's action logger, and
