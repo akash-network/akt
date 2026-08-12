@@ -2770,6 +2770,11 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 Managed (Console-API) contexts reach provider gateways directly, without a wallet or local key: each command resolves the deployment's first active lease via the Console API, looks up the provider's `hostUri`, and mints a scoped JWT via `POST /v1/create-jwt-token` that the gateway accepts as `Authorization: Bearer`. One-shot calls use a 300 s token; streaming/interactive modes (`--follow`, `--watch`, `shell`) use 3600 s. Without an active lease the commands fail listing the states of the leases that do exist.
 Log, event, and shell calls request their operation scope plus `status` because
 the shared gateway boundary verifies the lease before opening a stream.
+Log records identify the provider-reported runtime pod in their `name` field
+(for example, `web-5bfc685996-wv9vs`), not merely the SDL service. Filtering for
+`web` accepts either the exact name or a `web-` pod prefix and rejects names
+without that boundary, such as `webhook`; structured output preserves the full
+runtime name.
 
 | Command                                            | Flags                                       | Description                                                                                        |
 | -------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------- |

@@ -479,20 +479,7 @@ func TestConsoleLiveManagedWalletLifecycle(t *testing.T) {
 		result := runConsoleAkt(logsCtx, t, home, "console", "logs", dseq, "web", "--tail", "100")
 		requireConsoleSuccess(t, result, "akt console logs")
 		count, err := decodeConsoleJSONStream([]byte(result.Stdout), func(raw json.RawMessage) error {
-			var record struct {
-				Name    string `json:"name"`
-				Message string `json:"message"`
-			}
-			if err := json.Unmarshal(raw, &record); err != nil {
-				return err
-			}
-			if record.Name != "web" {
-				return fmt.Errorf("log service = %q, want web", record.Name)
-			}
-			if strings.TrimSpace(record.Message) == "" {
-				return errors.New("log message is empty")
-			}
-			return nil
+			return validateConsoleLogRecord(raw, "web")
 		})
 		if err != nil {
 			t.Fatalf("akt console logs returned an invalid JSON stream: %v", err)

@@ -516,6 +516,65 @@ func TestDecodeConsoleJSONStreamValidatesEveryRecord(t *testing.T) {
 	}
 }
 
+func TestValidateConsoleLogRecord(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		payload string
+		wantErr string
+	}{
+		{
+			name:    "exact service",
+			payload: `{"name":"web","message":"ready"}`,
+		},
+		{
+			name:    "provider runtime pod",
+			payload: `{"name":"web-5bfc685996-wv9vs","message":"ready"}`,
+		},
+		{
+			name:    "stateful runtime pod",
+			payload: `{"name":"web-0","message":"ready"}`,
+		},
+		{
+			name:    "unbounded prefix",
+			payload: `{"name":"webhook-5bfc685996-wv9vs","message":"ready"}`,
+			wantErr: "want service web",
+		},
+		{
+			name:    "empty pod suffix",
+			payload: `{"name":"web-","message":"ready"}`,
+			wantErr: "want service web",
+		},
+		{
+			name:    "another service",
+			payload: `{"name":"worker-5bfc685996-wv9vs","message":"ready"}`,
+			wantErr: "want service web",
+		},
+		{
+			name:    "empty message",
+			payload: `{"name":"web-5bfc685996-wv9vs","message":" "}`,
+			wantErr: "log message is empty",
+		},
+		{
+			name:    "malformed record",
+			payload: `{"name":`,
+			wantErr: "unexpected end of JSON input",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateConsoleLogRecord(json.RawMessage(tc.payload), "web")
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("valid log record failed: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("log record error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
 func TestConsoleAktArgsKeepOutputFlagBeforeRemoteCommandSeparator(t *testing.T) {
 	got := consoleAktArgs("/tmp/akt-home", "console", "shell", "7", "web", "--", "/bin/sh", "-c", "printf ok")
 	want := []string{"--home", "/tmp/akt-home", "--output", "json", "console", "shell", "7", "web", "--", "/bin/sh", "-c", "printf ok"}

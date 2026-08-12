@@ -522,8 +522,13 @@ Step 1 — resolving the deployment to its active lease, and from that lease to 
 The shared gateway boundary also normalizes protocol details that providers do
 not implement uniformly. It resolves a provider address to the on-chain host
 URI unless the user supplies an explicit URL override, verifies a lease before
-opening its log, event, or shell stream, applies bounded log filters locally, and
-treats an EOF as normal completion only for one-shot streams. Shell stdin EOF
+opening its log, event, or shell stream, applies bounded log filters locally,
+and treats an EOF as normal completion only for one-shot streams. Provider log
+frames identify their runtime pod (for example, `web-5bfc685996-wv9vs`), not
+only the SDL service. A service filter therefore accepts the exact service name
+or a pod name beginning with `<service>-`, while rejecting unrelated prefix
+matches such as `webhook` for `web`; structured output preserves the complete
+provider-reported pod name. Shell stdin EOF
 is held until the remote result arrives so a successful command cannot print
 its output and then fail locally. Interactive shells and piped commands attach
 stdin automatically. A one-shot command launched from a terminal does not

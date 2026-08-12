@@ -4,6 +4,13 @@
 
 ### Fixed
 
+- **The live Console log check now follows the provider stream contract**:
+  sandbox providers report runtime pod names such as
+  `web-5bfc685996-wv9vs`, while `web` is the requested SDL service filter. The
+  lifecycle accepts the exact service or its hyphen-delimited pod name, still
+  rejects unrelated services, and continues to require non-empty bounded log
+  records from the real `akt` subprocess.
+
 - **Console sandbox escrow verification accepts the chain's decimal coin
   encoding**: Production deposit reconciliation preserves fixed-point `funds`
   and `transferred` amounts exactly, while the independent live observer

@@ -549,6 +549,26 @@ func decodeConsoleJSONStream(data []byte, visit func(json.RawMessage) error) (in
 	}
 }
 
+func validateConsoleLogRecord(raw json.RawMessage, service string) error {
+	var record struct {
+		Name    string `json:"name"`
+		Message string `json:"message"`
+	}
+	if err := json.Unmarshal(raw, &record); err != nil {
+		return err
+	}
+
+	podPrefix := service + "-"
+	if record.Name != service && !(strings.HasPrefix(record.Name, podPrefix) && len(record.Name) > len(podPrefix)) {
+		return fmt.Errorf("log source = %q, want service %s or one of its runtime pods", record.Name, service)
+	}
+	if strings.TrimSpace(record.Message) == "" {
+		return errors.New("log message is empty")
+	}
+
+	return nil
+}
+
 func probeConsoleWorkloadIngress(ctx context.Context, rawURI string) error {
 	rawURI = strings.TrimSpace(rawURI)
 	if rawURI == "" {
