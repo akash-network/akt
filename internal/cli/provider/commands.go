@@ -4,10 +4,13 @@ package provider
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -15,14 +18,17 @@ import (
 	"golang.org/x/term"
 
 	manifest "pkg.akt.dev/go/manifest/v2beta3"
+	mtypes "pkg.akt.dev/go/node/market/v1"
 	ptypes "pkg.akt.dev/go/node/provider/v1beta4"
 	rest "pkg.akt.dev/go/provider/client"
+	leasev1 "pkg.akt.dev/go/provider/lease/v1"
 	"pkg.akt.dev/go/sdl"
 
 	"pkg.akt.dev/akt/internal/capability"
 	chaincli "pkg.akt.dev/akt/internal/cli/chain"
 	aktclient "pkg.akt.dev/akt/internal/client"
 	"pkg.akt.dev/akt/internal/output"
+	"pkg.akt.dev/akt/internal/output/pretty"
 	aktprovider "pkg.akt.dev/akt/internal/provider"
 )
 
@@ -49,6 +55,7 @@ func Commands() *cobra.Command {
 	cmd.AddCommand(
 		statusCmd(),
 		leaseStatusCmd(),
+		leaseAttestationCmd(),
 		leaseLogsCmd(),
 		leaseEventsCmd(),
 		leaseShellCmd(),
@@ -129,6 +136,79 @@ func leaseStatusCmd() *cobra.Command {
 			}
 
 			return printJSON(cmd, status)
+		},
+	}
+
+	addLeaseFlags(cmd)
+
+	return cmd
+}
+
+// attestationResult is the lease-attestation output, matching the field shape
+// provider-services prints so a user moving between the two CLIs sees the same
+// document.
+type attestationResult struct {
+	Nonce         string                            `json:"nonce"`
+	Quote         *leasev1.AttestationQuoteResponse `json:"quote"`
+	ReportSize    int                               `json:"report_size_bytes"`
+	NonceVerified bool                              `json:"nonce_verified"`
+	MockReport    bool                              `json:"mock_report"`
+}
+
+func leaseAttestationCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "lease-attestation [dseq]",
+		Short: "Request a confidential-compute attestation quote",
+		Long: "Request a hardware attestation quote from a confidential-compute lease's provider and " +
+			"check that the returned report echoes a fresh nonce. " + leaseProviderHelp,
+		Args: cobra.MaximumNArgs(1),
+		Example: `  # Request an attestation quote (provider resolved from the active lease)
+  akt provider lease-attestation 12345
+
+  # Pin the provider when several leases are active
+  akt provider lease-attestation 12345 --provider akash1...`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx, cancel := context.WithTimeout(cmd.Context(), 30*time.Second)
+			defer cancel()
+
+			lid, providerURL, err := resolveAuthenticatedLease(cmd, args)
+			if err != nil {
+				return err
+			}
+
+			cl, err := grpcGatewayClient(cmd, providerURL)
+			if err != nil {
+				return err
+			}
+			defer func() { _ = cl.Close() }()
+
+			var nonce [64]byte
+			if _, err := rand.Read(nonce[:]); err != nil {
+				return fmt.Errorf("generate nonce: %w", err)
+			}
+
+			// bind_tls is left off to match provider-services' default; TLS
+			// channel binding needs provider-side negotiation this command does
+			// not yet perform.
+			resp, err := cl.LeaseAttestation(ctx, lid, nonce, false)
+			if err != nil {
+				return aktprovider.GatewayError("request lease attestation", err)
+			}
+
+			report, err := base64.StdEncoding.DecodeString(resp.GetReport())
+			if err != nil {
+				return fmt.Errorf("decode attestation report: %w", err)
+			}
+
+			verified, mock := aktprovider.VerifyNonceEcho(report, nonce)
+
+			return printAttestation(cmd, lid, attestationResult{
+				Nonce:         base64.StdEncoding.EncodeToString(nonce[:]),
+				Quote:         resp,
+				ReportSize:    len(report),
+				NonceVerified: verified,
+				MockReport:    mock,
+			})
 		},
 	}
 
@@ -655,28 +735,56 @@ func resolveProviderWithLookup(
 	return addr, providerURL, nil
 }
 
-// gatewayClientFromCmd creates a provider gateway client from the command context.
-func gatewayClientFromCmd(cmd *cobra.Command, providerURL string) (rest.Client, error) {
+// resolveGatewayAuth resolves the client context, account, and auth type both
+// gateway transports need. In mTLS mode it re-derives the context from the
+// provider query path so the account matches the presented certificate.
+func resolveGatewayAuth(cmd *cobra.Command) (sdkclient.Context, sdk.AccAddress, string, error) {
 	cctx, accountAddr, authType, err := gatewayAuthenticationFromCmd(cmd)
 	if err != nil {
-		return nil, err
+		return sdkclient.Context{}, nil, "", err
 	}
 	if authType == "mtls" {
 		cctx, err = providerQueryContext(cmd)
 		if err != nil {
-			return nil, err
+			return sdkclient.Context{}, nil, "", err
 		}
 		accountAddr = cctx.GetFromAddress()
 	}
+	return cctx, accountAddr, authType, nil
+}
 
-	return aktprovider.NewGatewayClient(
-		cmd.Context(),
-		cctx,
-		accountAddr,
-		providerURL,
-		authType,
-		cctx.Keyring,
-	)
+// gatewayClientFromCmd creates a provider gateway REST client from the command context.
+func gatewayClientFromCmd(cmd *cobra.Command, providerURL string) (rest.Client, error) {
+	cctx, accountAddr, authType, err := resolveGatewayAuth(cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	return aktprovider.NewGatewayClient(cmd.Context(), cctx, accountAddr, providerURL, authType, cctx.Keyring)
+}
+
+// grpcGatewayClient constructs the gRPC transport lease-attestation uses. It is
+// a package var so a test can point the command at an in-memory gateway.
+var grpcGatewayClient = grpcGatewayClientFromCmd
+
+// grpcGatewayClientFromCmd creates a provider gateway gRPC client from the
+// command context, resolving auth exactly as the REST transport does.
+func grpcGatewayClientFromCmd(cmd *cobra.Command, providerURL string) (*aktprovider.GRPCClient, error) {
+	cctx, accountAddr, authType, err := resolveGatewayAuth(cmd)
+	if err != nil {
+		return nil, err
+	}
+
+	// The provider's gRPC gateway serves a self-signed certificate; verify it
+	// against the provider's on-chain certificate. The querier needs a
+	// query-capable context, which the JWT auth context is not.
+	queryCtx, err := providerQueryContext(cmd)
+	if err != nil {
+		return nil, err
+	}
+	certQuerier := aktprovider.NewOnChainCertQuerier(queryCtx)
+
+	return aktprovider.NewGRPCGatewayClient(cmd.Context(), cctx, accountAddr, providerURL, authType, cctx.Keyring, certQuerier)
 }
 
 func gatewayAuthenticationFromCmd(cmd *cobra.Command) (sdkclient.Context, sdk.AccAddress, string, error) {
@@ -708,6 +816,22 @@ func printJSON(cmd *cobra.Command, v interface{}) error {
 	}
 
 	return nil
+}
+
+// printAttestation renders the attestation verdict as a summary for pretty output
+// and the full quote for json/yaml. The report and cert chains are large base64
+// blobs, so the default view is the verdict a human wants; -o json carries the
+// raw evidence.
+func printAttestation(cmd *cobra.Command, lid mtypes.LeaseID, result attestationResult) error {
+	if output.FormatFromCmd(cmd) != output.FormatTable {
+		return printJSON(cmd, result)
+	}
+
+	summary := pretty.RenderLeaseAttestation(
+		lid, result.Nonce, result.Quote, result.ReportSize, result.NonceVerified, result.MockReport,
+	)
+	_, err := fmt.Fprint(output.TerminalAwareWriter(cmd.OutOrStdout()), summary)
+	return err
 }
 
 func consumeLeaseLogs(
