@@ -4,6 +4,21 @@
 
 ### Fixed
 
+- **Console deposits no longer report false failure while sandbox state is
+  propagating**: The client now treats a successful deposit response as proof
+  only when its deployment identity and exact `funds` plus `transferred` delta
+  match the pre-submit snapshot. Missing, malformed, or stale acknowledgements
+  fall back to independent GET observations for up to 30 seconds instead of
+  five reads over 1.5 seconds. The non-idempotent POST is still issued exactly
+  once, caller cancellation remains authoritative, and an unproved outcome is
+  still recorded as pending. Regression tests cover fixed-scale balances, an
+  exact response, six stale observations before convergence, the production
+  timing policy, bounded cancellation, and no replay.
+  Secret-safe live diagnostics now classify this local failure as
+  `console_deposit_outcome_unknown` without exposing stderr.
+  The Linux active-union coverage ratchet rises by the exact eleven newly
+  covered statements to 18,860/22,176 (85.05%).
+
 - **Current-main provider attestation code now satisfies the coverage gates**:
   semantic tests exercise gRPC authentication, TLS certificate trust,
   on-chain certificate decoding, attestation command failures, renderer
@@ -12,9 +27,8 @@
   address before their on-chain registration is trusted, so another provider's
   valid certificate cannot terminate a JWT-bearing connection. The Console log
   oracle's equivalent service/pod predicate also uses the lint-approved
-  positive form. Coverage baselines remain ratchets and are raised to the newly
-  measured Linux result of 18,849 covered active statements out of 22,165
-  (85.04%) rather than lowering the ratchet for the larger denominator.
+  positive form. Coverage baselines remain ratchets and were raised with that
+  change rather than lowered for the larger denominator.
 
 - **The live Console log check now follows the provider stream contract**:
   sandbox providers report runtime pod names such as

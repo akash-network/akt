@@ -441,6 +441,7 @@ func TestConsoleCommandDiagnosticClassifiesSafeHTTPStatus(t *testing.T) {
 		{name: "sentinel HTTP status", stderr: "get user: console: invalid or expired API key (HTTP 401)", want: "error_class=console_http_401"},
 		{name: "generic HTTP status", stderr: "console: unexpected status 422: private body", want: "error_class=console_http_422"},
 		{name: "outer status wins over body marker", stderr: "console: unexpected status 422: upstream body mentioned (HTTP 401)", want: "error_class=console_http_422"},
+		{name: "deposit outcome unknown", stderr: "deposit outcome unknown after one submission (private detail)", want: "error_class=console_deposit_outcome_unknown"},
 		{name: "nearby number is not an HTTP status", stderr: "private status 4010", want: "error_class=process_error"},
 		{name: "unknown process error", stderr: "private transport failure", want: "error_class=process_error"},
 	} {

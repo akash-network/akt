@@ -416,6 +416,10 @@ func consoleCommandDiagnostic(result consoleCommandResult) string {
 }
 
 func classifyConsoleProcessError(stderr string) string {
+	if strings.Contains(stderr, "deposit outcome unknown after one submission") {
+		return "console_deposit_outcome_unknown"
+	}
+
 	bestIndex := -1
 	bestStatus := 0
 	for _, status := range []int{

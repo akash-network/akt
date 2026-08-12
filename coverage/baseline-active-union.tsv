@@ -17,7 +17,7 @@ pkg.akt.dev/akt/internal/cli/workflow	541	631
 pkg.akt.dev/akt/internal/client	79	80
 pkg.akt.dev/akt/internal/cliutil	83	106
 pkg.akt.dev/akt/internal/codec	31	31
-pkg.akt.dev/akt/internal/console	602	640
+pkg.akt.dev/akt/internal/console	613	651
 pkg.akt.dev/akt/internal/context	444	464
 pkg.akt.dev/akt/internal/events	59	60
 pkg.akt.dev/akt/internal/glyphs	18	18
@@ -51,4 +51,4 @@ pkg.akt.dev/akt/internal/workflow	199	202
 pkg.akt.dev/akt/internal/workflow/adapters	393	446
 pkg.akt.dev/akt/internal/workflow/builtin	11	14
 pkg.akt.dev/akt/internal/workflow/steps	272	275
-@total	18849	22165
+@total	18860	22176

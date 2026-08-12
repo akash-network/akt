@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
 	sdkmath "cosmossdk.io/math"
 	"pkg.akt.dev/go/sdl"
@@ -471,6 +472,18 @@ func (c *Client) Deposit(ctx context.Context, dseq string, amountUSD float64) er
 	if postErr == nil && out.Deployment.ID.DSeq.String() != dseq {
 		postErr = fmt.Errorf("console: deposit response returned dseq %q, want %q", out.Deployment.ID.DSeq.String(), dseq)
 	}
+	if postErr == nil {
+		afterTotals, escrowErr := deploymentEscrowTotals(&out)
+		switch {
+		case escrowErr != nil:
+			postErr = fmt.Errorf("console: validate deposit response escrow: %w", escrowErr)
+		case depositTotalDeltaMatches(beforeTotals, afterTotals, expectedMicros):
+			c.record("deposit", dseq, nil)
+			return nil
+		default:
+			postErr = fmt.Errorf("console: deposit response escrow did not increase by exactly %s uact", expectedMicros)
+		}
+	}
 	if definitiveCreateFailure(postErr) {
 		c.record("deposit", dseq, postErr)
 		return postErr
@@ -480,11 +493,7 @@ func (c *Client) Deposit(ctx context.Context, dseq string, amountUSD float64) er
 		c.record("deposit", dseq, nil)
 		return nil
 	} else if reconcileErr != nil {
-		if postErr == nil {
-			postErr = reconcileErr
-		} else {
-			postErr = errors.Join(postErr, reconcileErr)
-		}
+		postErr = errors.Join(postErr, reconcileErr)
 	}
 	unknown := fmt.Errorf("deposit outcome unknown after one submission (%w); the request was not replayed: inspect deployment %s escrow state", postErr, dseq)
 	c.recordOutcome("deposit", dseq, "pending", unknown, map[string]any{"amountUSD": amountUSD})
@@ -588,14 +597,38 @@ func parseDeploymentEscrowAmount(raw string) (*big.Rat, error) {
 	), nil
 }
 
+const (
+	depositReconciliationWindow       = 30 * time.Second
+	depositReconciliationPollInterval = 2 * time.Second
+)
+
 func (c *Client) reconcileDeposit(
 	ctx context.Context,
 	dseq string,
 	beforeTotals map[string]*big.Rat,
 	expectedMicros *big.Int,
 ) (bool, error) {
+	reconciliationCtx, cancel := context.WithTimeout(ctx, depositReconciliationWindow)
+	defer cancel()
+
+	return c.reconcileDepositUntil(
+		reconciliationCtx,
+		dseq,
+		beforeTotals,
+		expectedMicros,
+		depositReconciliationPollInterval,
+	)
+}
+
+func (c *Client) reconcileDepositUntil(
+	ctx context.Context,
+	dseq string,
+	beforeTotals map[string]*big.Rat,
+	expectedMicros *big.Int,
+	pollInterval time.Duration,
+) (bool, error) {
 	var lastErr error
-	for attempt := range maxRetries + 2 {
+	for {
 		detail, err := c.GetDeployment(ctx, dseq)
 		if err != nil {
 			lastErr = err
@@ -609,14 +642,22 @@ func (c *Client) reconcileDeposit(
 			lastErr = fmt.Errorf("deployment escrow did not increase by exactly %s uact", expectedMicros)
 		}
 
-		if attempt < maxRetries+1 {
-			if err := waitForRetry(ctx, attempt); err != nil {
-				return false, errors.Join(lastErr, err)
-			}
+		if err := waitForDepositObservation(ctx, pollInterval); err != nil {
+			return false, errors.Join(lastErr, err)
 		}
 	}
+}
 
-	return false, lastErr
+func waitForDepositObservation(ctx context.Context, interval time.Duration) error {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 func depositTotalDeltaMatches(before, after map[string]*big.Rat, expected *big.Int) bool {

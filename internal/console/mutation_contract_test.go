@@ -3,12 +3,14 @@ package console
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestValidateCreateDeploymentResultRequiresCompleteReceipt(t *testing.T) {
@@ -229,11 +231,12 @@ func TestReconcileDepositRejectsUntrustedPostState(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			reconciled, err := New(srv.URL, "test-key").reconcileDeposit(
+			reconciled, err := New(srv.URL, "test-key").reconcileDepositUntil(
 				ctx,
 				"42",
 				map[string]*big.Rat{"uact": big.NewRat(1_000_000, 1)},
 				big.NewInt(1_000_000),
+				time.Millisecond,
 			)
 			if reconciled || err == nil {
 				t.Fatalf("reconcile result = %t, %v, want a failed authoritative check", reconciled, err)
@@ -245,24 +248,82 @@ func TestReconcileDepositRejectsUntrustedPostState(t *testing.T) {
 	}
 }
 
-func TestReconcileDepositExhaustsBoundedChecksWithoutExactDelta(t *testing.T) {
+func TestReconcileDepositStopsWhenCanceledDuringObservation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 	var requests atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests.Add(1)
+		if requests.Add(1) == 2 {
+			cancel()
+		}
 		_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"}},"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"1000000"}],"transferred":[]}}}}`))
 	}))
 	defer srv.Close()
 
-	reconciled, err := New(srv.URL, "test-key").reconcileDeposit(
-		context.Background(),
+	reconciled, err := New(srv.URL, "test-key").reconcileDepositUntil(
+		ctx,
 		"42",
 		map[string]*big.Rat{"uact": big.NewRat(1_000_000, 1)},
 		big.NewInt(1_000_000),
+		time.Millisecond,
 	)
-	if reconciled || err == nil || !strings.Contains(err.Error(), "did not increase by exactly") {
-		t.Fatalf("reconcile result = %t, %v, want bounded no-delta failure", reconciled, err)
+	if reconciled || !errors.Is(err, context.Canceled) {
+		t.Fatalf("reconcile result = %t, %v, want bounded cancellation", reconciled, err)
 	}
-	if requests.Load() != maxRetries+2 {
-		t.Fatalf("reconciliation requests = %d, want %d", requests.Load(), maxRetries+2)
+	if requests.Load() != 2 {
+		t.Fatalf("reconciliation requests = %d, want two observations before cancellation", requests.Load())
+	}
+}
+
+func TestReconcileDepositRejectsPreCanceledContextWithoutReading(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	reconciled, err := New("http://127.0.0.1:1", "test-key").reconcileDepositUntil(
+		ctx,
+		"42",
+		map[string]*big.Rat{"uact": big.NewRat(1_000_000, 1)},
+		big.NewInt(1_000_000),
+		time.Millisecond,
+	)
+	if reconciled || !errors.Is(err, context.Canceled) {
+		t.Fatalf("reconcile result = %t, %v, want immediate cancellation", reconciled, err)
+	}
+}
+
+func TestReconcileDepositWaitsBeyondLegacyAttemptLimit(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		amount := "1000000.000000000000000000"
+		if requests.Add(1) > maxRetries+3 {
+			amount = "2000000.000000000000000000"
+		}
+		_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"}},"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"` + amount + `"}],"transferred":[]}}}}`))
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	reconciled, err := New(srv.URL, "test-key").reconcileDepositUntil(
+		ctx,
+		"42",
+		map[string]*big.Rat{"uact": big.NewRat(1_000_000, 1)},
+		big.NewInt(1_000_000),
+		time.Millisecond,
+	)
+	if !reconciled || err != nil {
+		t.Fatalf("reconcile result = %t, %v, want eventual exact delta", reconciled, err)
+	}
+	if requests.Load() <= maxRetries+3 {
+		t.Fatalf("reconciliation requests = %d, want more than legacy limit %d", requests.Load(), maxRetries+2)
+	}
+}
+
+func TestDepositReconciliationPolicy(t *testing.T) {
+	if depositReconciliationWindow != 30*time.Second {
+		t.Fatalf("deposit reconciliation window = %s, want 30s", depositReconciliationWindow)
+	}
+	if depositReconciliationPollInterval != 2*time.Second {
+		t.Fatalf("deposit reconciliation poll interval = %s, want 2s", depositReconciliationPollInterval)
 	}
 }

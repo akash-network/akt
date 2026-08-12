@@ -595,7 +595,7 @@ func TestDepositBodyShape(t *testing.T) {
 
 	c := console.New(srv.URL, "test-key")
 	require.NoError(t, c.Deposit(context.Background(), "321", 12.5))
-	assert.Equal(t, int32(2), gets.Load(), "deposit must capture authoritative pre- and post-state")
+	assert.Equal(t, int32(1), gets.Load(), "an exact returned post-state must avoid a redundant read-back")
 	assert.Equal(t, int32(1), posts.Load())
 }
 
@@ -661,7 +661,30 @@ func TestDepositRequiresAuthoritativePreStateBeforePost(t *testing.T) {
 	}
 }
 
-func TestDepositSuccessfulAcknowledgementStillRequiresReconciliation(t *testing.T) {
+func TestDepositAcceptsExactReturnedPostState(t *testing.T) {
+	var gets, posts atomic.Int32
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			gets.Add(1)
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"}},"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"500000.000000000000000000"}],"transferred":[]}}}}`))
+		case http.MethodPost:
+			posts.Add(1)
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"}},"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"1000000.000000000000000000"}],"transferred":[]}}}}`))
+		default:
+			t.Fatalf("unexpected request %s", r.Method)
+		}
+	}))
+	defer srv.Close()
+
+	err := console.New(srv.URL, "test-key").Deposit(context.Background(), "42", 0.5)
+	require.NoError(t, err)
+	assert.Equal(t, int32(1), gets.Load(), "exact acknowledgement must be semantic proof without a read-back")
+	assert.Equal(t, int32(1), posts.Load())
+}
+
+func TestDepositStaleAcknowledgementTimesOutWithoutReplaying(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var gets, posts atomic.Int32
@@ -676,7 +699,7 @@ func TestDepositSuccessfulAcknowledgementStillRequiresReconciliation(t *testing.
 			}
 		case http.MethodPost:
 			posts.Add(1)
-			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"}}}}`))
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"}},"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"1000000"}],"transferred":[]}}}}`))
 		default:
 			t.Fatalf("unexpected request %s", r.Method)
 		}
@@ -685,38 +708,58 @@ func TestDepositSuccessfulAcknowledgementStillRequiresReconciliation(t *testing.
 
 	err := console.New(srv.URL, "test-key").Deposit(ctx, "42", 1)
 	require.ErrorContains(t, err, "outcome unknown")
-	assert.Equal(t, int32(1), posts.Load(), "successful acknowledgement must not cause a replay")
+	assert.Equal(t, int32(1), posts.Load(), "stale acknowledgement must not cause a replay")
 	assert.GreaterOrEqual(t, gets.Load(), int32(2), "deposit must inspect post-state")
 }
 
-func TestDepositReconcilesMalformedAcknowledgementWithoutReplayingPost(t *testing.T) {
-	var gets atomic.Int32
-	var posts atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			gets.Add(1)
-			amount := "500000"
-			if posts.Load() > 0 {
-				amount = "1500000"
-			}
-			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"}},"leases":[],"escrow_account":{"state":{"funds":{"denom":"uact","amount":"` + amount + `"},"transferred":[]}}}}`))
-		case http.MethodPost:
-			posts.Add(1)
-			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"999"}}}}`))
-		default:
-			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer srv.Close()
+func TestDepositReconcilesUnusableAcknowledgementWithoutReplayingPost(t *testing.T) {
+	for _, tt := range []struct {
+		name string
+		body string
+	}{
+		{
+			name: "wrong deployment identity",
+			body: `{"data":{"deployment":{"id":{"dseq":"999"}}}}`,
+		},
+		{
+			name: "missing escrow state",
+			body: `{"data":{"deployment":{"id":{"dseq":"42"}}}}`,
+		},
+		{
+			name: "stale escrow state",
+			body: `{"data":{"deployment":{"id":{"dseq":"42"}},"escrow_account":{"state":{"funds":{"denom":"uact","amount":"500000"},"transferred":[]}}}}`,
+		},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var gets atomic.Int32
+			var posts atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.Method {
+				case http.MethodGet:
+					gets.Add(1)
+					amount := "500000"
+					if posts.Load() > 0 {
+						amount = "1500000"
+					}
+					_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"}},"leases":[],"escrow_account":{"state":{"funds":{"denom":"uact","amount":"` + amount + `"},"transferred":[]}}}}`))
+				case http.MethodPost:
+					posts.Add(1)
+					_, _ = w.Write([]byte(tt.body))
+				default:
+					t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+				}
+			}))
+			defer srv.Close()
 
-	err := console.New(srv.URL, "test-key").Deposit(context.Background(), "42", 1)
-	require.NoError(t, err)
-	assert.Equal(t, int32(2), gets.Load())
-	assert.Equal(t, int32(1), posts.Load())
+			err := console.New(srv.URL, "test-key").Deposit(context.Background(), "42", 1)
+			require.NoError(t, err)
+			assert.Equal(t, int32(2), gets.Load())
+			assert.Equal(t, int32(1), posts.Load())
+		})
+	}
 }
 
-func TestDepositReconciliationIncludesCumulativeTransferredDuringSettlement(t *testing.T) {
+func TestDepositReturnedPostStateIncludesCumulativeTransferredDuringSettlement(t *testing.T) {
 	var posts atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {

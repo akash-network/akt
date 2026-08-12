@@ -784,11 +784,14 @@ deployment back and checking that every exact requested lease is active.
 An accepted create response is usable only when its DSEQ and managed-wallet
 transaction receipt are present, its transaction code is zero, and its hash is
 nonblank. Close requires a present `success: true` acknowledgement. Deposit
-validates the returned deployment identity and uses the exact pre/post change
-in total escrow value (`funds` plus cumulative `transferred`) to reconcile a
-lost or malformed response without replaying the charge; this remains valid
-while an active lease settles concurrently. An unproved outcome remains
-pending. One-time API-key creation likewise requires
+validates the returned deployment identity and compares its total escrow value
+(`funds` plus cumulative `transferred`) with the exact pre-submit snapshot. An
+exact returned delta is a semantic acknowledgement. A missing, malformed, or
+stale acknowledgement, including an ambiguous transport response, falls back
+to independent GET observations for a context-cancellable 30-second propagation
+window without replaying the charge. This remains exact while an active lease
+settles concurrently; an unproved outcome remains pending. One-time API-key
+creation likewise requires
 its nonblank ID, requested name, and secret, while JWT minting requires a
 nonblank token. An ambiguous one-time-secret response is pending because the
 request cannot safely be replayed and the missing secret cannot be recovered.
@@ -1786,8 +1789,9 @@ deposit, update, close, and final balance claims require API-side read-back.
 Captured stdout, stderr, HTTP bodies, and action-log entries are bounded and are
 never copied into test failure output; diagnostics identify the operation,
 recognized HTTP status, resource ID when known, and byte counts only. Status
-classification is an allowlist over numeric Console statuses; the underlying
-stderr and response body remain private.
+classification is an allowlist over numeric Console statuses and fixed local
+semantic failures such as an unproved deposit outcome; the underlying stderr
+and response body remain private.
 
 That credential boundary also lives in the production Console client, not only
 in tests. Response reads have a hard byte ceiling. Error bodies are scrubbed of

@@ -7308,12 +7308,15 @@ managed-wallet receipt with code zero and a nonblank transaction hash; an
 unusable 2xx response enters the existing no-replay version-hash
 reconciliation. Deployment update validates the returned DSEQ and deterministic
 SDL version hash before success, otherwise using its exact read-back. Close
-requires a present `success: true` acknowledgement. Deposit snapshots and
-compares authoritative total escrow value, defined per denomination as current
-`funds` plus cumulative `transferred`, validates the returned deployment
-identity, never replays its POST, and records `pending` when a lost or malformed
-response cannot be proved applied or unapplied. Including `transferred` keeps
-the proof exact while active-lease settlement consumes current funds. Console
+requires a present `success: true` acknowledgement. Deposit snapshots
+authoritative total escrow value, defined per denomination as current `funds`
+plus cumulative `transferred`, submits its POST exactly once, and validates the
+returned deployment identity. A returned total whose exact delta equals the
+requested deposit proves success. A lost, malformed, or stale acknowledgement
+MUST fall back to independent GET observations for a context-cancellable
+30-second propagation window. It MUST NOT replay the POST and records `pending`
+when the exact outcome remains unproved. Including `transferred` keeps the
+proof exact while active-lease settlement consumes current funds. Console
 encodes both escrow collections with the chain's fixed-point decimal grammar,
 so a whole micro amount MAY arrive as
 `500000.000000000000000000` and a settled balance MAY contain a genuine
@@ -7411,7 +7414,10 @@ harness scans its complete temporary akt home for the injected credential
 before teardown rather than checking only config and action-log files.
 For a failed Console subprocess, the error class MAY include a recognized HTTP
 status (for example, `console_http_401`) extracted from bounded stderr. It MUST
-NOT include the response body or any other captured text.
+NOT include the response body or any other captured text. A fixed local error
+marker MAY likewise map an unproved deposit to
+`console_deposit_outcome_unknown`; this exposes the safe failure phase without
+copying its potentially joined remote diagnostic.
 
 The production Console client applies the same boundary independently of the
 test harness. It reads no more than the configured maximum response size and
