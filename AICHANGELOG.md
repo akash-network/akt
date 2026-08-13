@@ -45,12 +45,13 @@
   remain successful even when they carry reason text, while an abnormal frame
   without reason text retains its close code and fails. Live-oracle source
   mismatch diagnostics no longer repeat provider-controlled record data.
-  Additional semantic boundary tests cover caller cancellation, output failure,
-  stdin EOF/error behavior,
+  The stream reader is independently exercised so caller cancellation wins
+  deterministically while record delivery is backpressured. Additional
+  semantic boundary tests cover output failure, stdin EOF/error behavior,
   failed audit enrichment, and malformed provider attributes instead of
   lowering the coverage ratchet after removing the unsafe compatibility code.
-  The Linux active-union ratchet advances to 18,870/22,178 (85.08%), with the
-  provider package at 520/523 statements (99.43%).
+  The Linux active-union ratchet advances to 18,872/22,179 (85.09%), with the
+  provider package at 522/524 statements (99.62%).
 
 - **Console sandbox escrow verification accepts the chain's decimal coin
   encoding**: Production deposit reconciliation preserves fixed-point `funds`

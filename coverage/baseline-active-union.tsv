@@ -40,7 +40,7 @@ pkg.akt.dev/akt/internal/monitor/runtime	67	67
 pkg.akt.dev/akt/internal/monitor/ui	1315	1612
 pkg.akt.dev/akt/internal/output	163	176
 pkg.akt.dev/akt/internal/output/pretty	2281	2391
-pkg.akt.dev/akt/internal/provider	520	523
+pkg.akt.dev/akt/internal/provider	522	524
 pkg.akt.dev/akt/internal/store	21	21
 pkg.akt.dev/akt/internal/store/bbolt	676	696
 pkg.akt.dev/akt/internal/sync	278	299
@@ -51,4 +51,4 @@ pkg.akt.dev/akt/internal/workflow	199	202
 pkg.akt.dev/akt/internal/workflow/adapters	393	446
 pkg.akt.dev/akt/internal/workflow/builtin	11	14
 pkg.akt.dev/akt/internal/workflow/steps	272	275
-@total	18870	22178
+@total	18872	22179

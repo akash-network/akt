@@ -542,7 +542,9 @@ provider-reported pod name. Malformed JSON frames and non-EOF websocket read
 failures terminate the command with an error instead of silently accepting a
 truncated log stream. WebSocket close code 1000 is successful regardless of
 its optional reason text; every other close code retains a non-empty failure
-reason even when the peer omits that text. Shell stdin EOF
+reason even when the peer omits that text. Stream record delivery observes the
+caller's cancellation even while the output consumer is backpressured, so a
+cancelled command cannot leak a queued provider record. Shell stdin EOF
 is held until the remote result arrives so a successful command cannot print
 its output and then fail locally. Interactive shells and piped commands attach
 stdin automatically. A one-shot command launched from a terminal does not

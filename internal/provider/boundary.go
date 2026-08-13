@@ -343,33 +343,42 @@ func openGatewayStream[T any](
 			_ = conn.Close()
 		}()
 
-		for {
-			messageType, message, readErr := conn.ReadMessage()
-			if readErr != nil {
-				if ctx.Err() != nil {
-					return
-				}
-				onClose <- gatewayStreamReadReason(readErr)
-				return
-			}
-
-			switch messageType {
-			case websocket.TextMessage:
-				var record T
-				if err := json.Unmarshal(message, &record); err != nil {
-					onClose <- err.Error()
-					return
-				}
-				select {
-				case stream <- record:
-				case <-ctx.Done():
-					return
-				}
-			}
-		}
+		readGatewayStream(ctx, conn, stream, onClose)
 	}()
 
 	return stream, onClose, nil
+}
+
+func readGatewayStream[T any](
+	ctx context.Context,
+	conn *websocket.Conn,
+	stream chan<- T,
+	onClose chan<- string,
+) {
+	for {
+		messageType, message, readErr := conn.ReadMessage()
+		if readErr != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			onClose <- gatewayStreamReadReason(readErr)
+			return
+		}
+
+		switch messageType {
+		case websocket.TextMessage:
+			var record T
+			if err := json.Unmarshal(message, &record); err != nil {
+				onClose <- err.Error()
+				return
+			}
+			select {
+			case stream <- record:
+			case <-ctx.Done():
+				return
+			}
+		}
+	}
 }
 
 func (client *gatewayClient) gatewayStreamSetupError(

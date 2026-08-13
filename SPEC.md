@@ -2786,8 +2786,10 @@ frame or non-EOF websocket read failure MUST fail the command; a prior valid
 record cannot turn a truncated stream into success. WebSocket close code 1000
 MUST complete successfully even when it carries optional reason text. Every
 other close code MUST retain a non-empty failure reason when the peer omits
-that text. Provider EOF remains normal completion only for a bounded one-shot
-read.
+that text. Record delivery MUST observe caller cancellation while the output
+consumer is backpressured and MUST NOT emit the pending record after
+cancellation wins. Provider EOF remains normal completion only for a bounded
+one-shot read.
 
 | Command                                            | Flags                                       | Description                                                                                        |
 | -------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------- |

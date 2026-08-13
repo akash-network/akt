@@ -926,6 +926,58 @@ func TestGatewayBoundaryStreamCancellationAndDecodeFailures(t *testing.T) {
 	}
 }
 
+func TestReadGatewayStreamCancellationWinsBlockedDelivery(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	written := make(chan struct{})
+	release := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		conn, err := upgrader.Upgrade(w, req, nil)
+		if err != nil {
+			t.Errorf("upgrade websocket: %v", err)
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		if err := conn.WriteJSON(rest.ServiceLogMessage{Name: "web", Message: "queued"}); err != nil {
+			t.Errorf("write queued log record: %v", err)
+			return
+		}
+		close(written)
+		<-release
+	}))
+	defer server.Close()
+
+	endpoint := "ws" + strings.TrimPrefix(server.URL, "http")
+	conn, response, err := websocket.DefaultDialer.Dial(endpoint, nil)
+	if err != nil {
+		if response != nil && response.Body != nil {
+			_ = response.Body.Close()
+		}
+		close(release)
+		t.Fatalf("dial websocket: %v", err)
+	}
+	defer func() { _ = conn.Close() }()
+	defer close(release)
+	receiveSignal(t, written)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	stream := make(chan rest.ServiceLogMessage)
+	onClose := make(chan string, 1)
+	readGatewayStream(ctx, conn, stream, onClose)
+
+	select {
+	case record := <-stream:
+		t.Fatalf("cancelled delivery emitted record %#v", record)
+	default:
+	}
+	select {
+	case reason := <-onClose:
+		t.Fatalf("caller cancellation reported close reason %q", reason)
+	default:
+	}
+}
+
 func TestGatewayMalformedLogAfterValidRecordFailsConsumption(t *testing.T) {
 	upgrader := websocket.Upgrader{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
@@ -987,6 +1039,13 @@ func TestGatewayBoundaryClassifiesWebsocketClosure(t *testing.T) {
 			code:        websocket.CloseInternalServerErr,
 			wantErr:     true,
 			wantSnippet: "1011",
+		},
+		{
+			name:        "internal error with reason",
+			code:        websocket.CloseInternalServerErr,
+			reason:      "provider failed",
+			wantErr:     true,
+			wantSnippet: "provider failed",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
