@@ -2734,7 +2734,7 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | `akt console deployment get <dseq>`                 |                                                | Deployment with leases and escrow account.                                                     |
 | `akt console deployment create <sdl-file> [deposit-usd]` | `--deposit <usd>` (alternative to positional; min 0.5) — **disabled pending feedback** (positional only, 2026-07) | Create a deployment; prints `dseq` + tx hash, the Console default `autoTopUp: {enabled: true, frequency: daily}`, and the exact command that disables it. It does not invent a deployment `state`; `deployment get` is authoritative for the later open/active transition. The deposit uses the unified cross-rail syntax (§7.4): `5`, `5usd`, or `$5` (min $0.50); coin forms like `5000000uakt` fail with the cross-rail error. The returned manifest is cached at `contexts/<name>/manifests/<dseq>.json` for `lease create`. |
 | `akt console deployment update <dseq> <sdl-file>`   |                                                | Update the deployment's SDL.                                                                   |
-| `akt console deployment close <dseq>`               |                                                | Close a deployment. Idempotent only when the API unambiguously reports already closed or absent; a rejection that merely contains `closed` remains an error. |
+| `akt console deployment close <dseq>`               |                                                | Close a deployment. A 2xx must acknowledge `success: true`; a non-2xx is idempotent success only when it unambiguously reports already closed/absent. A rejection that merely contains `closed` remains an error. |
 | `akt console deployment deposit <dseq> [amount-usd]` | `--amount <usd>` (alternative to positional; > 0) — **disabled pending feedback** (positional only, 2026-07) | Add funds to the deployment's escrow. The amount uses the unified cross-rail syntax (§7.4): `10`, `10usd`, or `$10`; coin forms fail with the cross-rail error. |
 | `akt console deployment settings <dseq> [true\|false]` | `--auto-top-up true\|false` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Show settings when no value is given; set auto-top-up when a positional or flag value is present. |
 | `akt console bid list <dseq>`                       |                                                | List bids for the deployment's open orders.                                                    |
@@ -2824,10 +2824,13 @@ structured-output rendering fail, the returned error preserves both causes so
 callers can classify either failure with `errors.Is`.
 
 Mutation acknowledgements are structured in JSON/YAML mode. Deployment close
-emits `{dseq, state, already_closed}` and deposit emits
-`{dseq, amount_usd, status}`. Template SDL is byte-for-byte deployable YAML in
-default/pretty mode; JSON/YAML mode wraps the exact source text as `{sdl: ...}`
-so comments and ordering are not lost.
+emits `{dseq, state, already_closed}`. `already_closed` is true only when the
+API explicitly reports the deployment already closed or absent. The API may
+return the same success envelope for an initial close and an already-closed
+no-op; in that case the field is false and does not claim that a new close
+transaction occurred. Deposit emits `{dseq, amount_usd, status}`. Template SDL
+is byte-for-byte deployable YAML in default/pretty mode; JSON/YAML mode wraps
+the exact source text as `{sdl: ...}` so comments and ordering are not lost.
 
 ---
 
@@ -7466,9 +7469,15 @@ terminal-state and balance observation.
 
 **Current implementation boundary (2026-08-12):** the opt-in live suite covers
 create, bid, lease, provider status, deposit, settings, update, and idempotent
-close. Its independent raw observer and final balance delta are Console-side
-proof only. It also requires a provider-reported workload URI to serve a
-bounded non-empty 2xx response through an independent standard HTTP client,
+close. The repeated close runs only after the raw observer establishes terminal
+state. It must succeed through the public binary, emit the exact DSEQ, closed
+state, and an `already_closed` boolean, append one successful close action, and
+leave the deployment independently observable as closed or absent with no
+active lease. The boolean's value is not an idempotency oracle because the API
+may use the same successful response for the initial transition and the
+already-closed no-op. Its independent raw observer and final balance delta are
+Console-side proof only. It also requires a provider-reported workload URI to
+serve a bounded non-empty 2xx response through an independent standard HTTP client,
 non-empty structured log and event streams, and an exact sentinel from
 deterministic non-interactive shell execution. The shell operation must produce
 exactly one successful `provider/lease-shell` action while status, logs, and

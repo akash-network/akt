@@ -53,6 +53,14 @@
   The Linux active-union ratchet advances to 18,872/22,179 (85.09%), with the
   provider package at 522/524 statements (99.62%).
 
+- **Console repeated-close E2E follows the live idempotency contract**: The
+  Console backend can return the same successful close envelope for both an
+  initial close and an already-closed no-op, so `already_closed: false` cannot
+  distinguish those cases. The live lifecycle now requires the repeated CLI
+  command to succeed with an exact close acknowledgement and action-log entry,
+  then independently verifies that GET/list retain terminal state with no
+  active lease. A hermetic two-close test pins the successful-200 behavior.
+
 - **Console sandbox escrow verification accepts the chain's decimal coin
   encoding**: Production deposit reconciliation preserves fixed-point `funds`
   and `transferred` amounts exactly, while the independent live observer

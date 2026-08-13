@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	aktctx "pkg.akt.dev/akt/internal/context"
@@ -270,6 +271,40 @@ func TestDeploymentCloseStructuredAcknowledgement(t *testing.T) {
 				})
 			}
 		})
+	}
+}
+
+func TestDeploymentCloseRepeatedSuccessDoesNotInventPriorState(t *testing.T) {
+	m := newTestManager(t)
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
+		t.Fatalf("SetConsoleAPIKey: %v", err)
+	}
+
+	var deletes atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/deployments/42" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		deletes.Add(1)
+		writeJSON(t, w, `{"data":{"success":true}}`)
+	}))
+	defer srv.Close()
+
+	for attempt := 1; attempt <= 2; attempt++ {
+		out, err := execConsole(t, m, srv.URL, "deployment", "close", "42", "-o", "json")
+		if err != nil {
+			t.Fatalf("close attempt %d: %v", attempt, err)
+		}
+
+		got := decodeStructuredMap(t, "json", out)
+		alreadyClosed, isBool := got["already_closed"].(bool)
+		if len(got) != 3 || got["dseq"] != "42" || got["state"] != "closed" || !isBool || alreadyClosed {
+			t.Errorf("close attempt %d acknowledgement = %#v, want dseq=42 state=closed already_closed=false", attempt, got)
+		}
+	}
+
+	if got := deletes.Load(); got != 2 {
+		t.Fatalf("DELETE requests = %d, want 2", got)
 	}
 }
 

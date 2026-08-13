@@ -232,6 +232,42 @@ func TestCloseAlreadyClosedRecordedAsSuccess(t *testing.T) {
 	}
 }
 
+func TestRepeatedSuccessfulCloseRecordsEveryAttempt(t *testing.T) {
+	var deletes atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/deployments/555" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		deletes.Add(1)
+		_, _ = w.Write([]byte(`{"data":{"success":true}}`))
+	}))
+	defer srv.Close()
+
+	l := openTestLog(t)
+	c := New(srv.URL, "test-key").WithActionLog(l)
+	for attempt := 1; attempt <= 2; attempt++ {
+		if err := c.CloseDeployment(context.Background(), "555"); err != nil {
+			t.Fatalf("CloseDeployment() attempt %d: %v", attempt, err)
+		}
+	}
+
+	if got := deletes.Load(); got != 2 {
+		t.Fatalf("DELETE requests = %d, want 2", got)
+	}
+	entries, err := l.Read(actionlog.Filter{Type: actionlog.TypeConsole})
+	if err != nil {
+		t.Fatalf("read: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("close action entries = %d, want 2: %+v", len(entries), entries)
+	}
+	for i, entry := range entries {
+		if entry.Action != "close-deployment" || entry.Status != "success" || entry.DSeq != 555 || entry.Error != "" {
+			t.Errorf("close action entry %d = %+v", i, entry)
+		}
+	}
+}
+
 func TestCloseValidation400RecordedAsFailed(t *testing.T) {
 	// A 400 without already-closed semantics is a genuine failure: it must
 	// not be logged as a successful close.

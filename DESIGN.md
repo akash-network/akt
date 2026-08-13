@@ -446,10 +446,16 @@ Each context has an `auth-method` that determines how transactions are signed an
   response is surfaced rather than followed to an intermediary-selected URL.
   Neither a redirect target nor any other transport diagnostic may reach the
   returned error or action log without exact API-key redaction.
-- Console close is idempotent only when the response unambiguously states that
-  the deployment is already closed or absent. A rejection that merely contains
-  the word `closed` (for example, "cannot be closed while leases are active")
-  remains a failed mutation and a failed action-log entry.
+- Console accepts a 2xx close only when the response acknowledges
+  `success: true`. Console may return that same acknowledgement when its
+  server-side idempotency check finds the deployment already closed. A
+  non-2xx response is converted to idempotent success only when it
+  unambiguously states that the deployment is already closed or absent; a
+  rejection that merely contains the word `closed` (for example, "cannot be
+  closed while leases are active") remains a failed mutation and a failed
+  action-log entry. `already_closed: false` means only that the response did
+  not explicitly report prior terminal state; callers prove the idempotent
+  outcome by observing that the deployment remains closed or absent.
 - A process-level Console key is sufficient for read-only MCP without creating
   configuration or running the first-run wizard. `--enable-writes` still
   requires an explicitly selected context because every mutation must have a
