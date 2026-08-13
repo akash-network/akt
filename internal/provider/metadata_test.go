@@ -49,6 +49,9 @@ type auditMetadataQuery struct {
 
 func (q *auditMetadataQuery) ProviderAttributes(_ context.Context, req *atypes.QueryProviderAttributesRequest, _ ...grpc.CallOption) (*atypes.QueryProvidersResponse, error) {
 	q.calls = append(q.calls, req.Owner)
+	if req.Owner == "akash1audit-error" {
+		return nil, errors.New("audit query failed")
+	}
 	if req.Owner == "akash1audited" {
 		return &atypes.QueryProvidersResponse{Providers: atypes.AuditedProviders{{Owner: req.Owner, Auditor: "akash1auditor"}}}, nil
 	}
@@ -63,7 +66,7 @@ func TestFetchChainMetadataDeduplicatesAndPreservesKnownFalse(t *testing.T) {
 	got := FetchChainMetadata(context.Background(), metadataQueries{
 		provider: providerQuery,
 		audit:    auditQuery,
-	}, []string{"akash1plain", "akash1audited", "akash1audited", "akash1missing"})
+	}, []string{"akash1plain", "akash1audited", "akash1audited", "akash1missing", "akash1audit-error"})
 
 	if len(got) != 2 {
 		t.Fatalf("metadata = %#v, want two successfully resolved providers", got)
@@ -74,23 +77,44 @@ func TestFetchChainMetadataDeduplicatesAndPreservesKnownFalse(t *testing.T) {
 	if got["akash1plain"].Attributes == nil || got["akash1plain"].Audited {
 		t.Errorf("plain metadata = %#v, want known empty attributes and audited=false", got["akash1plain"])
 	}
-	if len(providerQuery.calls) != 3 {
+	if len(providerQuery.calls) != 4 {
 		t.Errorf("provider calls = %v, want each unique owner once", providerQuery.calls)
 	}
-	if len(auditQuery.calls) != 2 {
+	if len(auditQuery.calls) != 3 {
 		t.Errorf("audit calls = %v, want only providers whose registration resolved", auditQuery.calls)
 	}
 }
 
 func TestAttributesFromProviderJSONAcceptsArrayAndObject(t *testing.T) {
 	for name, raw := range map[string]string{
-		"array":  `{"attributes":[{"key":"region","value":"eu-west"}]}`,
-		"object": `{"attributes":{"region":"eu-west"}}`,
+		"array":       `{"attributes":[{"key":"region","value":"eu-west"}]}`,
+		"object":      `{"attributes":{"region":"eu-west"}}`,
+		"null object": `{"attributes":null}`,
 	} {
 		t.Run(name, func(t *testing.T) {
 			got := AttributesFromProviderJSON([]byte(raw))
+			if name == "null object" {
+				if got == nil || len(got) != 0 {
+					t.Fatalf("attributes = %#v, want known empty map", got)
+				}
+				return
+			}
 			if got["region"] != "eu-west" {
 				t.Fatalf("attributes = %#v", got)
+			}
+		})
+	}
+}
+
+func TestAttributesFromProviderJSONRejectsMalformedBoundaries(t *testing.T) {
+	for name, raw := range map[string]string{
+		"document":    `not-json`,
+		"missing":     `{}`,
+		"wrong shape": `{"attributes":7}`,
+	} {
+		t.Run(name, func(t *testing.T) {
+			if got := AttributesFromProviderJSON([]byte(raw)); got != nil {
+				t.Fatalf("attributes = %#v, want nil", got)
 			}
 		})
 	}

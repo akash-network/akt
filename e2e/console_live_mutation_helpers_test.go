@@ -553,24 +553,49 @@ func decodeConsoleJSONStream(data []byte, visit func(json.RawMessage) error) (in
 	}
 }
 
-func validateConsoleLogRecord(raw json.RawMessage, service string) error {
+func validateConsoleLogStream(data []byte, service string) (int, error) {
+	substantive := 0
+	count, err := decodeConsoleJSONStream(data, func(raw json.RawMessage) error {
+		hasContent, err := validateConsoleLogRecord(raw, service)
+		if err != nil {
+			return err
+		}
+		if hasContent {
+			substantive++
+		}
+		return nil
+	})
+	if err != nil {
+		return count, err
+	}
+	if count == 0 {
+		return 0, errors.New("log stream has no records")
+	}
+	if substantive == 0 {
+		return count, errors.New("log stream has no substantive messages")
+	}
+
+	return count, nil
+}
+
+func validateConsoleLogRecord(raw json.RawMessage, service string) (bool, error) {
 	var record struct {
-		Name    string `json:"name"`
-		Message string `json:"message"`
+		Name    string  `json:"name"`
+		Message *string `json:"message"`
 	}
 	if err := json.Unmarshal(raw, &record); err != nil {
-		return err
+		return false, err
 	}
 
 	podPrefix := service + "-"
 	if record.Name != service && (!strings.HasPrefix(record.Name, podPrefix) || len(record.Name) <= len(podPrefix)) {
-		return fmt.Errorf("log source = %q, want service %s or one of its runtime pods", record.Name, service)
+		return false, errors.New("log source does not match requested service")
 	}
-	if strings.TrimSpace(record.Message) == "" {
-		return errors.New("log message is empty")
+	if record.Message == nil {
+		return false, errors.New("log message is missing or null")
 	}
 
-	return nil
+	return strings.TrimSpace(*record.Message) != "", nil
 }
 
 func probeConsoleWorkloadIngress(ctx context.Context, rawURI string) error {

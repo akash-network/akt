@@ -519,41 +519,66 @@ func TestDecodeConsoleJSONStreamValidatesEveryRecord(t *testing.T) {
 
 func TestValidateConsoleLogRecord(t *testing.T) {
 	for _, tc := range []struct {
-		name    string
-		payload string
-		wantErr string
+		name        string
+		payload     string
+		wantContent bool
+		wantErr     string
+		forbidden   string
 	}{
 		{
-			name:    "exact service",
-			payload: `{"name":"web","message":"ready"}`,
+			name:        "exact service",
+			payload:     `{"name":"web","message":"ready"}`,
+			wantContent: true,
 		},
 		{
-			name:    "provider runtime pod",
-			payload: `{"name":"web-5bfc685996-wv9vs","message":"ready"}`,
+			name:        "provider runtime pod",
+			payload:     `{"name":"web-5bfc685996-wv9vs","message":"ready"}`,
+			wantContent: true,
 		},
 		{
-			name:    "stateful runtime pod",
-			payload: `{"name":"web-0","message":"ready"}`,
+			name:        "stateful runtime pod",
+			payload:     `{"name":"web-0","message":"ready"}`,
+			wantContent: true,
 		},
 		{
 			name:    "unbounded prefix",
 			payload: `{"name":"webhook-5bfc685996-wv9vs","message":"ready"}`,
-			wantErr: "want service web",
+			wantErr: "log source does not match requested service",
 		},
 		{
 			name:    "empty pod suffix",
 			payload: `{"name":"web-","message":"ready"}`,
-			wantErr: "want service web",
+			wantErr: "log source does not match requested service",
 		},
 		{
 			name:    "another service",
 			payload: `{"name":"worker-5bfc685996-wv9vs","message":"ready"}`,
-			wantErr: "want service web",
+			wantErr: "log source does not match requested service",
+		},
+		{
+			name:      "provider controlled source is not repeated",
+			payload:   `{"name":"Bearer provider-jwt\nspoofed","message":"ready"}`,
+			wantErr:   "log source does not match requested service",
+			forbidden: "provider-jwt",
 		},
 		{
 			name:    "empty message",
 			payload: `{"name":"web-5bfc685996-wv9vs","message":" "}`,
-			wantErr: "log message is empty",
+		},
+		{
+			name:    "missing message",
+			payload: `{"name":"web-5bfc685996-wv9vs"}`,
+			wantErr: "log message is missing or null",
+		},
+		{
+			name:    "null message",
+			payload: `{"name":"web-5bfc685996-wv9vs","message":null}`,
+			wantErr: "log message is missing or null",
+		},
+		{
+			name:    "non-string message",
+			payload: `{"name":"web-5bfc685996-wv9vs","message":7}`,
+			wantErr: "cannot unmarshal number",
 		},
 		{
 			name:    "malformed record",
@@ -562,15 +587,68 @@ func TestValidateConsoleLogRecord(t *testing.T) {
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := validateConsoleLogRecord(json.RawMessage(tc.payload), "web")
+			hasContent, err := validateConsoleLogRecord(json.RawMessage(tc.payload), "web")
 			if tc.wantErr == "" {
 				if err != nil {
 					t.Fatalf("valid log record failed: %v", err)
+				}
+				if hasContent != tc.wantContent {
+					t.Fatalf("log record substantive = %t, want %t", hasContent, tc.wantContent)
 				}
 				return
 			}
 			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("log record error = %v, want %q", err, tc.wantErr)
+			}
+			if tc.forbidden != "" && strings.Contains(err.Error(), tc.forbidden) {
+				t.Fatalf("log record error repeated provider-controlled data: %q", err)
+			}
+		})
+	}
+}
+
+func TestValidateConsoleLogStreamRequiresAggregateContent(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		payload   string
+		wantCount int
+		wantErr   string
+	}{
+		{
+			name:      "content and blank line",
+			payload:   "{\"name\":\"web-a\",\"message\":\"ready\"}\n{\"name\":\"web-a\",\"message\":\"\"}\n",
+			wantCount: 2,
+		},
+		{
+			name:      "only blank lines",
+			payload:   "{\"name\":\"web-a\",\"message\":\"\"}\n{\"name\":\"web-b\",\"message\":\" \\n\"}\n",
+			wantCount: 2,
+			wantErr:   "no substantive messages",
+		},
+		{
+			name:    "empty stream",
+			wantErr: "no records",
+		},
+		{
+			name:      "late wrong service",
+			payload:   "{\"name\":\"web-a\",\"message\":\"ready\"}\n{\"name\":\"worker-a\",\"message\":\"ready\"}\n",
+			wantCount: 1,
+			wantErr:   "record 2: log source does not match requested service",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			count, err := validateConsoleLogStream([]byte(tc.payload), "web")
+			if count != tc.wantCount {
+				t.Fatalf("log stream count = %d, want %d", count, tc.wantCount)
+			}
+			if tc.wantErr == "" {
+				if err != nil {
+					t.Fatalf("valid log stream failed: %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+				t.Fatalf("log stream error = %v, want %q", err, tc.wantErr)
 			}
 		})
 	}

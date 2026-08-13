@@ -2779,9 +2779,15 @@ Log, event, and shell calls request their operation scope plus `status` because
 the shared gateway boundary verifies the lease before opening a stream.
 Log records identify the provider-reported runtime pod in their `name` field
 (for example, `web-5bfc685996-wv9vs`), not merely the SDL service. Filtering for
-`web` accepts either the exact name or a `web-` pod prefix and rejects names
-without that boundary, such as `webhook`; structured output preserves the full
-runtime name.
+`web` accepts either the exact name or a `web-` pod prefix with a non-empty
+runtime suffix and rejects incomplete or boundary-less names such as `web-` or
+`webhook`; structured output preserves the full runtime name. A malformed JSON
+frame or non-EOF websocket read failure MUST fail the command; a prior valid
+record cannot turn a truncated stream into success. WebSocket close code 1000
+MUST complete successfully even when it carries optional reason text. Every
+other close code MUST retain a non-empty failure reason when the peer omits
+that text. Provider EOF remains normal completion only for a bounded one-shot
+read.
 
 | Command                                            | Flags                                       | Description                                                                                        |
 | -------------------------------------------------- | ------------------------------------------- | --------------------------------------------------------------------------------------------------- |
@@ -7215,6 +7221,12 @@ command failure. A live provider-status response for that active lease requires
 the documented services, forwarded-ports, and IP collections; the services
 collection is non-empty and every dynamic service entry carries its name and
 numeric availability and total counts.
+Each record returned by the bounded provider-log check MUST name either the
+requested SDL service or one of its hyphen-delimited runtime pods and MUST
+contain a string-valued `message` field. Empty and whitespace-only messages are
+valid individual container-log lines. The aggregate read MUST contain at least
+one substantive message, so an all-blank stream cannot satisfy the live
+contract.
 The provider-region catalog requires a non-empty top-level region list, unique
 non-empty region keys, non-empty descriptions, and an array-valued provider
 membership field. Individual regions MAY have no current providers because

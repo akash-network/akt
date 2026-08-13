@@ -34,8 +34,23 @@
   sandbox providers report runtime pod names such as
   `web-5bfc685996-wv9vs`, while `web` is the requested SDL service filter. The
   lifecycle accepts the exact service or its hyphen-delimited pod name, still
-  rejects unrelated services, and continues to require non-empty bounded log
-  records from the real `akt` subprocess.
+  rejects unrelated services, and requires every record to carry a string
+  `message` field. Individual blank container-log lines are valid; the complete
+  bounded stream must still contain at least one substantive message from the
+  real `akt` subprocess. Regression tests reject missing, null, non-string, and
+  all-blank message streams without mistaking one valid blank line for a CLI
+  failure. The shared production filter now rejects the incomplete runtime name
+  `web-`, and malformed JSON or non-EOF websocket failures can no longer
+  truncate a log stream while returning success. Normal WebSocket close frames
+  remain successful even when they carry reason text, while an abnormal frame
+  without reason text retains its close code and fails. Live-oracle source
+  mismatch diagnostics no longer repeat provider-controlled record data.
+  Additional semantic boundary tests cover caller cancellation, output failure,
+  stdin EOF/error behavior,
+  failed audit enrichment, and malformed provider attributes instead of
+  lowering the coverage ratchet after removing the unsafe compatibility code.
+  The Linux active-union ratchet advances to 18,870/22,178 (85.08%), with the
+  provider package at 520/523 statements (99.43%).
 
 - **Console sandbox escrow verification accepts the chain's decimal coin
   encoding**: Production deposit reconciliation preserves fixed-point `funds`

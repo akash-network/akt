@@ -71,6 +71,31 @@ func TestConsumeStreamDrainsRecordsAndCloseReason(t *testing.T) {
 	}
 }
 
+func TestConsumeStreamReturnsBoundaryErrors(t *testing.T) {
+	t.Run("caller cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+
+		err := ConsumeStream(ctx, "log", make(chan string), make(chan string), false,
+			func(string) error { return nil })
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("ConsumeStream cancellation = %v, want context canceled", err)
+		}
+	})
+
+	t.Run("record emitter", func(t *testing.T) {
+		emitErr := errors.New("output failed")
+		stream := make(chan string, 1)
+		stream <- "record"
+
+		err := ConsumeStream(context.Background(), "log", stream, nil, false,
+			func(string) error { return emitErr })
+		if !errors.Is(err, emitErr) {
+			t.Fatalf("ConsumeStream emitter error = %v, want %v", err, emitErr)
+		}
+	})
+}
+
 func TestValidateLogTail(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -110,6 +135,9 @@ func TestMatchesService(t *testing.T) {
 	if !MatchesService("web-5cfc6c7b4b-4cl7z", "web") {
 		t.Fatal("service must match its Kubernetes pod name")
 	}
+	if MatchesService("web-", "web") {
+		t.Fatal("service must not match an empty runtime pod suffix")
+	}
 	if MatchesService("webhook-abc-123", "web") {
 		t.Fatal("service prefix without a name boundary must not match")
 	}
@@ -148,7 +176,34 @@ func TestHoldEOFUntilContextDone(t *testing.T) {
 	}
 }
 
+func TestHoldEOFReaderBoundaryResults(t *testing.T) {
+	if HoldEOF(context.Background(), nil) != nil {
+		t.Fatal("HoldEOF must preserve nil stdin")
+	}
+
+	t.Run("non EOF error", func(t *testing.T) {
+		readErr := errors.New("read failed")
+		reader := HoldEOF(context.Background(), staticReadResult{err: readErr})
+		n, err := reader.Read(make([]byte, 1))
+		if n != 0 || !errors.Is(err, readErr) {
+			t.Fatalf("Read = (%d, %v), want (0, %v)", n, err, readErr)
+		}
+	})
+
+	t.Run("bytes with EOF", func(t *testing.T) {
+		reader := HoldEOF(context.Background(), staticReadResult{n: 1, err: io.EOF})
+		n, err := reader.Read(make([]byte, 1))
+		if n != 1 || err != nil {
+			t.Fatalf("Read = (%d, %v), want (1, nil)", n, err)
+		}
+	})
+}
+
 func TestSelectShellStdin(t *testing.T) {
+	if SelectShellStdin(context.Background(), nil, true, true, false, false) != nil {
+		t.Fatal("SelectShellStdin must preserve nil stdin")
+	}
+
 	input := strings.NewReader("input")
 	tests := []struct {
 		name          string
@@ -189,6 +244,18 @@ type signaledEOFReader struct {
 func (reader *signaledEOFReader) Read([]byte) (int, error) {
 	close(reader.called)
 	return 0, io.EOF
+}
+
+type staticReadResult struct {
+	n   int
+	err error
+}
+
+func (reader staticReadResult) Read(data []byte) (int, error) {
+	for index := 0; index < reader.n && index < len(data); index++ {
+		data[index] = 'x'
+	}
+	return reader.n, reader.err
 }
 
 func TestGatewayErrorIncludesProviderResponse(t *testing.T) {

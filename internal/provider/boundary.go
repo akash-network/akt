@@ -190,7 +190,6 @@ func (client *gatewayClient) LeaseEvents(
 			source,
 			rest.LeaseEventsPath(id),
 			query,
-			true,
 		)
 		if err != nil {
 			return nil, err
@@ -228,7 +227,6 @@ func (client *gatewayClient) LeaseLogs(
 			source,
 			rest.ServiceLogsPath(id),
 			query,
-			false,
 		)
 		if err != nil {
 			return nil, err
@@ -280,7 +278,6 @@ func openGatewayStream[T any](
 	source gatewayStreamRequestSource,
 	path string,
 	query url.Values,
-	reportReadErrors bool,
 ) (<-chan T, <-chan string, error) {
 	endpoint := *client.host
 	endpoint.Path = strings.TrimSuffix(endpoint.Path, "/") + "/" + path
@@ -352,7 +349,7 @@ func openGatewayStream[T any](
 				if ctx.Err() != nil {
 					return
 				}
-				onClose <- gatewayStreamReadReason(readErr, reportReadErrors)
+				onClose <- gatewayStreamReadReason(readErr)
 				return
 			}
 
@@ -360,9 +357,7 @@ func openGatewayStream[T any](
 			case websocket.TextMessage:
 				var record T
 				if err := json.Unmarshal(message, &record); err != nil {
-					if reportReadErrors {
-						onClose <- err.Error()
-					}
+					onClose <- err.Error()
 					return
 				}
 				select {
@@ -416,15 +411,18 @@ func refreshGatewayStreamDeadline(conn *websocket.Conn) error {
 	return conn.SetReadDeadline(time.Now().Add(rest.PingWait))
 }
 
-func gatewayStreamReadReason(err error, reportReadErrors bool) string {
+func gatewayStreamReadReason(err error) string {
 	var closeErr *websocket.CloseError
 	if errors.As(err, &closeErr) {
+		if closeErr.Code == websocket.CloseNormalClosure {
+			return ""
+		}
+		if closeErr.Text == "" {
+			return fmt.Sprintf("websocket close code %d", closeErr.Code)
+		}
 		return closeErr.Text
 	}
-	if reportReadErrors {
-		return err.Error()
-	}
-	return ""
+	return err.Error()
 }
 
 func (client *gatewayClient) doOneShot(

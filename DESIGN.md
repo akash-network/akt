@@ -535,9 +535,14 @@ opening its log, event, or shell stream, applies bounded log filters locally,
 and treats an EOF as normal completion only for one-shot streams. Provider log
 frames identify their runtime pod (for example, `web-5bfc685996-wv9vs`), not
 only the SDL service. A service filter therefore accepts the exact service name
-or a pod name beginning with `<service>-`, while rejecting unrelated prefix
-matches such as `webhook` for `web`; structured output preserves the complete
-provider-reported pod name. Shell stdin EOF
+or a pod name beginning with `<service>-` and carrying a non-empty runtime
+suffix, while rejecting incomplete or unrelated prefix matches such as `web-`
+or `webhook` for `web`; structured output preserves the complete
+provider-reported pod name. Malformed JSON frames and non-EOF websocket read
+failures terminate the command with an error instead of silently accepting a
+truncated log stream. WebSocket close code 1000 is successful regardless of
+its optional reason text; every other close code retains a non-empty failure
+reason even when the peer omits that text. Shell stdin EOF
 is held until the remote result arrives so a successful command cannot print
 its output and then fail locally. Interactive shells and piped commands attach
 stdin automatically. A one-shot command launched from a terminal does not
@@ -1708,6 +1713,15 @@ where the service contract itself supplies global data; tenant-owned lists are
 allowed to be empty. Nested arrays and objects are checked at their documented
 boundary, so `{}` or a correctly typed but structurally empty value cannot make
 a healthy-looking smoke test.
+
+Provider log validation follows the container-log stream rather than assuming
+that every line contains visible text. Every JSON record must identify the
+requested SDL service or one of its hyphen-delimited runtime pods and must carry
+a string `message` field. An individual empty or whitespace-only message is a
+valid blank container-log line, but a successful bounded read must contain at
+least one substantive message across the complete stream. This preserves blank
+application output without allowing a stream made only of zero-value records to
+pass.
 
 Every mutation scenario captures authoritative pre-state, executes through the
 public `akt` binary, and verifies post-state through an independent chain,

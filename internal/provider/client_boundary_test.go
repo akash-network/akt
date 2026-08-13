@@ -569,8 +569,8 @@ func TestGatewayBoundaryStreamsRecordsAndPreservesRequestSemantics(t *testing.T)
 	if event := receiveStreamValue(t, events.Stream); event.Type != "Normal" || event.Reason != "Scheduled" {
 		t.Fatalf("event = %#v, want scheduled normal event", event)
 	}
-	if reason := receiveStreamValue(t, events.OnClose); reason != "complete" {
-		t.Fatalf("event close reason = %q, want complete", reason)
+	if reason := receiveStreamValue(t, events.OnClose); reason != "" {
+		t.Fatalf("event close reason = %q, want successful completion", reason)
 	}
 	eventRequest := receiveStreamValue(t, requests)
 	if eventRequest.Path != "/lease/42/1/1/kubeevents" || eventRequest.Query().Get("follow") != "true" {
@@ -587,8 +587,8 @@ func TestGatewayBoundaryStreamsRecordsAndPreservesRequestSemantics(t *testing.T)
 	if logLine := receiveStreamValue(t, logs.Stream); logLine.Name != "web" || logLine.Message != "ready" {
 		t.Fatalf("log = %#v, want web ready message", logLine)
 	}
-	if reason := receiveStreamValue(t, logs.OnClose); reason != "complete" {
-		t.Fatalf("log close reason = %q, want complete", reason)
+	if reason := receiveStreamValue(t, logs.OnClose); reason != "" {
+		t.Fatalf("log close reason = %q, want successful completion", reason)
 	}
 	logRequest := receiveStreamValue(t, requests)
 	query := logRequest.Query()
@@ -671,12 +671,9 @@ func TestGatewayBoundaryRejectsOversizedStreamMessages(t *testing.T) {
 			}
 
 			reason := receiveStreamValue(t, onClose)
-			if tc.events && !strings.Contains(reason, "read limit") &&
+			if !strings.Contains(reason, "read limit") &&
 				!strings.Contains(reason, "larger than the configured limit") {
-				t.Fatalf("oversized event close reason = %q, want size-limit detail", reason)
-			}
-			if !tc.events && reason != "" {
-				t.Fatalf("oversized log close reason = %q, want SDK-compatible empty reason", reason)
+				t.Fatalf("oversized %s close reason = %q, want size-limit detail", tc.name, reason)
 			}
 		})
 	}
@@ -782,11 +779,8 @@ func TestGatewayBoundaryStreamSetupFailures(t *testing.T) {
 	})
 
 	readErr := errors.New("stream read failed")
-	if reason := gatewayStreamReadReason(readErr, true); reason != readErr.Error() {
-		t.Fatalf("event read reason = %q, want underlying error", reason)
-	}
-	if reason := gatewayStreamReadReason(readErr, false); reason != "" {
-		t.Fatalf("log read reason = %q, want SDK-compatible empty reason", reason)
+	if reason := gatewayStreamReadReason(readErr); reason != readErr.Error() {
+		t.Fatalf("stream read reason = %q, want underlying error", reason)
 	}
 }
 
@@ -858,7 +852,6 @@ func TestGatewayBoundaryStreamCancellationAndDecodeFailures(t *testing.T) {
 			source,
 			rest.ServiceLogsPath(mtypes.LeaseID{}),
 			url.Values{"follow": []string{"true"}},
-			false,
 		)
 		if err != nil {
 			t.Fatalf("open log stream: %v", err)
@@ -885,7 +878,7 @@ func TestGatewayBoundaryStreamCancellationAndDecodeFailures(t *testing.T) {
 		wantSnippet string
 	}{
 		{name: "event", events: true, wantReason: true, wantSnippet: "invalid character"},
-		{name: "log", events: false, wantReason: false},
+		{name: "log", events: false, wantReason: true, wantSnippet: "invalid character"},
 	} {
 		t.Run(tc.name+" decode", func(t *testing.T) {
 			upgrader := websocket.Upgrader{}
@@ -928,6 +921,118 @@ func TestGatewayBoundaryStreamCancellationAndDecodeFailures(t *testing.T) {
 				}
 			case <-time.After(time.Second):
 				t.Fatal("timed out waiting for malformed stream to close")
+			}
+		})
+	}
+}
+
+func TestGatewayMalformedLogAfterValidRecordFailsConsumption(t *testing.T) {
+	upgrader := websocket.Upgrader{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		conn, err := upgrader.Upgrade(w, req, nil)
+		if err != nil {
+			t.Errorf("upgrade websocket: %v", err)
+			return
+		}
+		defer func() { _ = conn.Close() }()
+
+		if err := conn.WriteJSON(rest.ServiceLogMessage{Name: "web-a", Message: "ready"}); err != nil {
+			t.Errorf("write valid log record: %v", err)
+			return
+		}
+		if err := conn.WriteMessage(websocket.TextMessage, []byte("not-json")); err != nil {
+			t.Errorf("write malformed log record: %v", err)
+		}
+	}))
+	defer server.Close()
+
+	client := gatewayBoundaryClientForWebsocketServer(t, server.URL)
+	logs, err := client.LeaseLogs(context.Background(), mtypes.LeaseID{}, "web", false, -1)
+	if err != nil {
+		t.Fatalf("open log stream: %v", err)
+	}
+
+	records := 0
+	err = ConsumeStream(context.Background(), "log", logs.Stream, logs.OnClose, false,
+		func(record rest.ServiceLogMessage) error {
+			records++
+			if record.Name != "web-a" || record.Message != "ready" {
+				t.Fatalf("valid record = %#v, want web-a ready", record)
+			}
+			return nil
+		})
+	if records != 1 {
+		t.Fatalf("consumed records = %d, want 1 before malformed frame", records)
+	}
+	if err == nil || !strings.Contains(err.Error(), "invalid character") {
+		t.Fatalf("consume malformed log stream error = %v, want decode failure", err)
+	}
+}
+
+func TestGatewayBoundaryClassifiesWebsocketClosure(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		code        int
+		reason      string
+		wantErr     bool
+		wantSnippet string
+	}{
+		{
+			name:   "normal closure with reason",
+			code:   websocket.CloseNormalClosure,
+			reason: "complete",
+		},
+		{
+			name:        "internal error without reason",
+			code:        websocket.CloseInternalServerErr,
+			wantErr:     true,
+			wantSnippet: "1011",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			upgrader := websocket.Upgrader{}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+				conn, err := upgrader.Upgrade(w, req, nil)
+				if err != nil {
+					t.Errorf("upgrade websocket: %v", err)
+					return
+				}
+				defer func() { _ = conn.Close() }()
+
+				if err := conn.WriteJSON(rest.ServiceLogMessage{Name: "web-a", Message: "ready"}); err != nil {
+					t.Errorf("write log record: %v", err)
+					return
+				}
+				if err := conn.WriteControl(
+					websocket.CloseMessage,
+					websocket.FormatCloseMessage(tc.code, tc.reason),
+					time.Now().Add(time.Second),
+				); err != nil {
+					t.Errorf("write close message: %v", err)
+				}
+			}))
+			defer server.Close()
+
+			client := gatewayBoundaryClientForWebsocketServer(t, server.URL)
+			logs, err := client.LeaseLogs(context.Background(), mtypes.LeaseID{}, "web", false, -1)
+			if err != nil {
+				t.Fatalf("open log stream: %v", err)
+			}
+
+			records := 0
+			err = ConsumeStream(context.Background(), "log", logs.Stream, logs.OnClose, false,
+				func(rest.ServiceLogMessage) error {
+					records++
+					return nil
+				})
+			if records != 1 {
+				t.Fatalf("consumed records = %d, want 1", records)
+			}
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ConsumeStream error = %v, wantErr %t", err, tc.wantErr)
+			}
+			if tc.wantSnippet != "" && !strings.Contains(err.Error(), tc.wantSnippet) {
+				t.Fatalf("ConsumeStream error = %v, want %q", err, tc.wantSnippet)
 			}
 		})
 	}

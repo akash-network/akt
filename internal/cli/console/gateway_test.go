@@ -490,6 +490,7 @@ func TestPrintStreamRecordFormats(t *testing.T) {
 	records := []providerLogMsg{
 		{Name: "web-abc-123", Message: "first line"},
 		{Name: "worker-def-456", Message: "second line"},
+		{Name: "web-blank-789", Message: ""},
 	}
 
 	t.Run("pretty", func(t *testing.T) {
@@ -499,7 +500,7 @@ func TestPrintStreamRecordFormats(t *testing.T) {
 				t.Fatalf("print stream record: %v", err)
 			}
 		}
-		if got, want := buf.String(), "[web-abc-123] first line\n[worker-def-456] second line\n"; got != want {
+		if got, want := buf.String(), "[web-abc-123] first line\n[worker-def-456] second line\n[web-blank-789] \n"; got != want {
 			t.Errorf("pretty stream = %q, want %q", got, want)
 		}
 	})
@@ -817,6 +818,7 @@ func TestMatchesService(t *testing.T) {
 		// through the replicaset/pod suffix Kubernetes appends.
 		{"pod of the service", "web-5cfc6c7b4b-4cl7z", "web", true},
 		{"pod named exactly", "web", "web", true},
+		{"empty runtime suffix", "web-", "web", false},
 		// The bug this guards: asking for one service used to return them all.
 		{"pod of another service", "cache-666dd889cf-zpbn5", "web", false},
 		// A prefix that is not a name boundary must not match, or `web` would
