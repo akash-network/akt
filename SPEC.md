@@ -7455,18 +7455,34 @@ Live credentials follow these rules:
 - enforce maximum deployment count, attempted USD request total, duration, and
   concurrent leases before the first mutation. A request reservation is charged
   before its subprocess starts and remains charged after any ambiguous outcome;
-- separately cap observed spend. Requested deployment deposits move credit into
-  escrow and are not themselves proof of spend. The harness snapshots the
-  authoritative Console total balance before the first write, reads it again
-  after terminal cleanup, and fails when the decrease exceeds the spend limit.
+- separately cap run-attributable spend. Before the lease starts, the harness
+  MUST independently prove that exact funded escrow, current `funds` plus
+  cumulative `transferred`, equals the reserved lifecycle request, remains
+  within the spend ceiling, and has no pre-lease transferred value. Deployment
+  auto-top-up MUST already be independently observed disabled. After terminal
+  cleanup, the harness MUST derive gross spend from the lifecycle-owned
+  escrow's exact non-negative cumulative `uact` `transferred` value. Missing,
+  malformed, negative, regressing, or unexpected-denomination transferred
+  state MUST fail closed. A successfully leased lifecycle MUST finish with the
+  deployment closed, no active lease, exactly zero current funds, and a
+  positive increase from its zero pre-lease transferred baseline. Positive
+  residual funds indicate incomplete close settlement, while negative funds
+  indicate unsettled overdrawn liability; either MUST fail this bounded success
+  scenario even though the observer accepts signed funds as valid wire data.
   The configured spend ceiling MUST be at least the immutable escrow request
-  total, and that request total is the maximum credit available after auto
-  top-up is independently observed disabled. Before creating a lease, the
-  harness intersects the CLI and raw-API bid sets, rejects non-`uact` prices,
-  chooses the lowest numeric price, and requires its conservatively projected
+  total. Before creating a lease, the harness
+  intersects the CLI and raw-API bid sets, rejects non-`uact` prices, chooses
+  the lowest numeric price, and requires its conservatively projected
   price-per-block cost through the complete remaining paid runtime to fit the
   same ceiling. The projection assumes at least one billable block per second;
-  fixed escrow remains the hard loss bound if blocks arrive faster;
+  exact funded escrow remains the hard loss bound if blocks arrive faster;
+- retain the signed pre/post Console account-total change as secondary
+  reconciliation only. `/v1/balances.total` is a point-in-time, account-wide
+  value without a lifecycle-run identity or observation height, not a
+  run-attributable gross-spend ledger. A positive total change MUST be reported
+  as a credit or timing adjustment rather than fail solely because it is
+  positive, and MUST NOT reduce or replace the owned `transferred` amount. Account-total
+  changes are diagnostic and MUST NOT participate in the spend-limit decision;
 - disable auto top-up as soon as a deployment identifier is known unless the
   scenario explicitly tests it.
 
@@ -7503,18 +7519,20 @@ account keeps only the capped balance needed for the run.
 
 The mutation deadline expires before the overall test deadline and leaves a
 fixed cleanup reserve. Cleanup has separate bounded phases for ambiguous-write
-discovery, auto-top-up disablement and close requests, and terminal-state plus
-final-spend observation. No discovery loop or single subprocess may consume the
-final observation reserve. When a create outcome is ambiguous, cleanup finds
-only post-baseline deployments carrying the run's unique SDL hash; once it
-finds one, it disables auto top-up before attempting close.
+discovery, auto-top-up disablement and close requests, and terminal escrow,
+account reconciliation, and cleanup observation. No discovery loop or single
+subprocess may consume the final observation reserve. When a create outcome is
+ambiguous, cleanup finds only post-baseline deployments carrying the run's
+unique SDL hash; once it finds one, it disables auto top-up before attempting
+close.
 The ambiguous-create discovery allowance MUST be no shorter than the normal
 post-create indexer-observation allowance. The current 90-second cleanup
 reserve assigns up to 30 seconds to discovery, retains 40 seconds for
 auto-top-up disablement and close, and retains the final 20 seconds for
-terminal-state and balance observation.
+terminal-state, exact transferred-spend, and account-total reconciliation
+observations.
 
-**Current implementation boundary (2026-08-12):** the opt-in live suite covers
+**Current implementation boundary (2026-08-14):** the opt-in live suite covers
 create, bid, lease, provider status, deposit, settings, update, and idempotent
 close. The repeated close runs only after the raw observer establishes terminal
 state. It must succeed through the public binary, emit the exact DSEQ, closed
@@ -7522,10 +7540,11 @@ state, and an `already_closed` boolean, append one successful close action, and
 leave the deployment independently observable as closed or absent with no
 active lease. The boolean's value is not an idempotency oracle because the API
 may use the same successful response for the initial transition and the
-already-closed no-op. Its independent raw observer and final balance delta are
-Console-side proof only. It also requires a provider-reported workload URI to
-serve a bounded non-empty 2xx response through an independent standard HTTP client,
-non-empty structured log and event streams, and an exact sentinel from
+already-closed no-op. Its independent raw observer, exact owned escrow
+`transferred` value, and signed account-total reconciliation are Console-side
+proof only. It also requires a provider-reported workload URI to
+serve a bounded non-empty 2xx response through an independent standard HTTP
+client, non-empty structured log and event streams, and an exact sentinel from
 deterministic non-interactive shell execution. The shell operation must produce
 exactly one successful `provider/lease-shell` action while status, logs, and
 events produce none. The child API-key scenario proves the one-time credential

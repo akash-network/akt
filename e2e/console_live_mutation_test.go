@@ -279,6 +279,13 @@ func TestConsoleLiveManagedWalletLifecycle(t *testing.T) {
 	if active := consoleActiveLeaseCount(createdDetail); active != 0 {
 		t.Fatalf("new deployment %s had %d active leases before akt accepted a bid", dseq, active)
 	}
+	createdFunded, createdTransferred, err := consoleEscrowAccountingForDenom(createdDetail, "uact")
+	if err != nil {
+		t.Fatalf("new deployment %s had unproved escrow accounting: %v", dseq, err)
+	}
+	if createdFunded.Cmp(big.NewRat(500_000, 1)) != 0 || createdTransferred.Sign() != 0 {
+		t.Fatalf("new deployment %s did not contain exactly $%.2f funded escrow and zero transferred spend", dseq, consoleCreateDepositUSD)
+	}
 	cliDetail, _, err := getConsoleDeployment(lifecycleCtx, t, home, dseq)
 	if err != nil {
 		t.Fatalf("exercise akt console deployment get for %s: %v", dseq, err)
@@ -331,6 +338,7 @@ func TestConsoleLiveManagedWalletLifecycle(t *testing.T) {
 
 	expectedDepositMicros := new(big.Rat).SetInt(big.NewInt(int64(math.Round(consoleAdditionalDepositUSD * 1e6))))
 	depositObserveCtx, cancelDepositObserve := context.WithTimeout(lifecycleCtx, 30*time.Second)
+	var preLeaseDetail consoleDeploymentObservation
 	err = waitForConsoleCondition(depositObserveCtx, 2*time.Second, func() (bool, string, error) {
 		detail, err := observer.getDeployment(depositObserveCtx, dseq)
 		if err != nil {
@@ -345,6 +353,7 @@ func TestConsoleLiveManagedWalletLifecycle(t *testing.T) {
 			return false, fmt.Sprintf("escrow omitted denomination %s", bid.Price.Denom), nil
 		}
 		if delta.Cmp(expectedDepositMicros) == 0 {
+			preLeaseDetail = detail
 			return true, "escrow increased by the exact requested deposit", nil
 		}
 		return false, fmt.Sprintf("escrow delta in %s is %s, waiting for %s", bid.Price.Denom, delta, expectedDepositMicros), nil
@@ -353,6 +362,14 @@ func TestConsoleLiveManagedWalletLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("deposit succeeded but independent escrow state did not increase by exactly %.2f USD for dseq %s: %v", consoleAdditionalDepositUSD, dseq, err)
 	}
+	preLeaseFunded, preLeaseTransferred, err := consoleEscrowAccountingForDenom(preLeaseDetail, "uact")
+	if err != nil {
+		t.Fatalf("pre-lease deployment %s had unproved escrow accounting: %v", dseq, err)
+	}
+	if preLeaseFunded.Cmp(big.NewRat(1_000_000, 1)) != 0 || preLeaseTransferred.Sign() != 0 {
+		t.Fatalf("pre-lease deployment %s did not contain exactly $%.2f funded escrow and zero transferred spend", dseq, consoleLifecycleRequestUSD)
+	}
+	tracker.recordTransferredBaseline(dseq, preLeaseTransferred)
 
 	var leased consoleDeploymentObservation
 	requireConsoleJSON(t,

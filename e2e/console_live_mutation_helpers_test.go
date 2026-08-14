@@ -741,18 +741,20 @@ type consoleDeploymentObservation struct {
 	Leases        []consoleLeaseObservation `json:"leases"`
 	EscrowAccount struct {
 		State struct {
-			Funds consoleCoinObservations `json:"funds"`
+			Funds       consoleCoinObservations `json:"funds"`
+			Transferred consoleCoinObservations `json:"transferred"`
 		} `json:"state"`
 	} `json:"escrow_account"`
-	deploymentPresent  bool
-	identityPresent    bool
-	ownerPresent       bool
-	dseqPresent        bool
-	statePresent       bool
-	hashPresent        bool
-	leasesPresent      bool
-	escrowPresent      bool
-	escrowFundsPresent bool
+	deploymentPresent        bool
+	identityPresent          bool
+	ownerPresent             bool
+	dseqPresent              bool
+	statePresent             bool
+	hashPresent              bool
+	leasesPresent            bool
+	escrowPresent            bool
+	escrowFundsPresent       bool
+	escrowTransferredPresent bool
 }
 
 func (observation *consoleDeploymentObservation) UnmarshalJSON(data []byte) error {
@@ -800,6 +802,8 @@ func (observation *consoleDeploymentObservation) UnmarshalJSON(data []byte) erro
 		if json.Unmarshal(escrow.State, &state) == nil {
 			funds, ok := state["funds"]
 			wire.escrowFundsPresent = ok && !bytes.Equal(bytes.TrimSpace(funds), []byte("null"))
+			transferred, ok := state["transferred"]
+			wire.escrowTransferredPresent = ok && !bytes.Equal(bytes.TrimSpace(transferred), []byte("null"))
 		}
 	}
 
@@ -1682,6 +1686,105 @@ func consoleEscrowFunds(detail consoleDeploymentObservation) (map[string]*big.Ra
 	return funds, nil
 }
 
+func consoleEscrowTransferred(detail consoleDeploymentObservation) (map[string]*big.Rat, error) {
+	if !detail.escrowTransferredPresent {
+		return nil, errors.New("deployment detail omitted escrow transferred")
+	}
+	transferred := make(map[string]*big.Rat, len(detail.EscrowAccount.State.Transferred))
+	for _, coin := range detail.EscrowAccount.State.Transferred {
+		if coin.Denom == "" {
+			return nil, errors.New("escrow transferred coin omitted its denomination")
+		}
+		amount, err := parseConsoleObservedEscrowAmount(coin.Amount.String())
+		if err != nil {
+			return nil, fmt.Errorf("escrow transferred amount %q for %s is not a valid fixed-point decimal: %w", coin.Amount, coin.Denom, err)
+		}
+		if amount.Sign() < 0 {
+			return nil, fmt.Errorf("escrow transferred amount for %s must be non-negative", coin.Denom)
+		}
+		if current := transferred[coin.Denom]; current != nil {
+			amount.Add(amount, current)
+		}
+		transferred[coin.Denom] = amount
+	}
+	return transferred, nil
+}
+
+func consoleEscrowAmountForDenom(coins map[string]*big.Rat, denom, field string) (*big.Rat, error) {
+	denoms := make([]string, 0, len(coins))
+	for coinDenom := range coins {
+		denoms = append(denoms, coinDenom)
+	}
+	sort.Strings(denoms)
+	for _, coinDenom := range denoms {
+		if coinDenom != denom {
+			return nil, fmt.Errorf("escrow %s used unexpected denomination %s instead of %s", field, coinDenom, denom)
+		}
+		if coins[coinDenom] == nil {
+			return nil, fmt.Errorf("escrow %s for %s had no amount", field, coinDenom)
+		}
+	}
+	if amount := coins[denom]; amount != nil {
+		return new(big.Rat).Set(amount), nil
+	}
+	return new(big.Rat), nil
+}
+
+func consoleEscrowAccountingForDenom(detail consoleDeploymentObservation, denom string) (*big.Rat, *big.Rat, error) {
+	funds, err := consoleEscrowFunds(detail)
+	if err != nil {
+		return nil, nil, err
+	}
+	transferred, err := consoleEscrowTransferred(detail)
+	if err != nil {
+		return nil, nil, err
+	}
+	fundsAmount, err := consoleEscrowAmountForDenom(funds, denom, "funds")
+	if err != nil {
+		return nil, nil, err
+	}
+	transferredAmount, err := consoleEscrowAmountForDenom(transferred, denom, "transferred")
+	if err != nil {
+		return nil, nil, err
+	}
+	return new(big.Rat).Add(fundsAmount, transferredAmount), transferredAmount, nil
+}
+
+func consoleTransferredSpend(before, after *big.Rat) (*big.Rat, error) {
+	if before == nil || after == nil {
+		return nil, errors.New("Console transferred spend requires pre-lease and terminal observations")
+	}
+	if before.Sign() < 0 || after.Sign() < 0 {
+		return nil, errors.New("Console cumulative transferred amount cannot be negative")
+	}
+	spend := new(big.Rat).Sub(new(big.Rat).Set(after), before)
+	if spend.Sign() < 0 {
+		return nil, errors.New("Console cumulative transferred amount regressed after the lease")
+	}
+	return spend, nil
+}
+
+func consoleTerminalTransferredSpend(detail consoleDeploymentObservation, baseline *big.Rat, requirePositive bool) (*big.Rat, error) {
+	if problem := consoleTerminalDeploymentProblem(detail); problem != "" {
+		return nil, fmt.Errorf("terminal escrow was not terminal: %s", problem)
+	}
+	funded, transferred, err := consoleEscrowAccountingForDenom(detail, "uact")
+	if err != nil {
+		return nil, err
+	}
+	if funded.Cmp(transferred) != 0 {
+		return nil, errors.New("terminal escrow retained nonzero funds")
+	}
+	spend, err := consoleTransferredSpend(baseline, transferred)
+	if err != nil {
+		return nil, err
+	}
+	if requirePositive && spend.Sign() == 0 {
+		return nil, errors.New("leased deployment reported no provider spend")
+	}
+	return spend, nil
+}
+
 func parseConsoleObservedEscrowAmount(raw string) (*big.Rat, error) {
 	amount, err := sdkmath.LegacyNewDecFromStr(raw)
 	if err != nil {
@@ -1752,13 +1855,8 @@ func consoleTerminalState(ctx context.Context, observer *consoleAPIObserver, dse
 			return false, "", err
 		}
 	} else {
-		if !strings.EqualFold(detail.Deployment.State, "closed") {
-			return false, fmt.Sprintf("deployment state is %q", detail.Deployment.State), nil
-		}
-		for _, lease := range detail.Leases {
-			if strings.EqualFold(lease.State, "active") || lease.State == "" {
-				return false, fmt.Sprintf("lease %s/%d/%d at %s is still %q", lease.ID.DSeq, lease.ID.GSeq, lease.ID.OSeq, lease.ID.Provider, lease.State), nil
-			}
+		if problem := consoleTerminalDeploymentProblem(detail); problem != "" {
+			return false, problem, nil
 		}
 		getObservation = "deployment get reports closed with no active lease"
 	}
@@ -1775,20 +1873,61 @@ func consoleTerminalState(ctx context.Context, observer *consoleAPIObserver, dse
 	return true, getObservation + "; deployment list reports closed or absent", nil
 }
 
+func consoleTerminalDeploymentProblem(detail consoleDeploymentObservation) string {
+	if !strings.EqualFold(detail.Deployment.State, "closed") {
+		return fmt.Sprintf("deployment state is %q", detail.Deployment.State)
+	}
+	for _, lease := range detail.Leases {
+		if strings.EqualFold(lease.State, "active") || lease.State == "" {
+			return fmt.Sprintf("lease %s/%d/%d at %s is still %q", lease.ID.DSeq, lease.ID.GSeq, lease.ID.OSeq, lease.ID.Provider, lease.State)
+		}
+	}
+	return ""
+}
+
 func waitForConsoleTerminalState(ctx context.Context, observer *consoleAPIObserver, dseq string) error {
 	return waitForConsoleCondition(ctx, 2*time.Second, func() (bool, string, error) {
 		return consoleTerminalState(ctx, observer, dseq)
 	})
 }
 
-func consoleObservedSpendUSD(beforeTotal, afterTotal int64) (float64, error) {
+func consoleObservedAccountNetChangeMicros(beforeTotal, afterTotal int64) (int64, error) {
 	if beforeTotal < 0 || afterTotal < 0 {
 		return 0, errors.New("Console total balance cannot be negative")
 	}
-	if afterTotal > beforeTotal {
-		return 0, fmt.Errorf("Console total balance increased by $%.6f during an isolated mutation run", float64(afterTotal-beforeTotal)/1e6)
+	return afterTotal - beforeTotal, nil
+}
+
+func validateConsoleGrossSpendLimit(grossSpendMicros *big.Rat, maxSpendUSD float64) error {
+	if grossSpendMicros == nil {
+		return errors.New("Console gross provider spend must be observed")
 	}
-	return float64(beforeTotal-afterTotal) / 1e6, nil
+	if grossSpendMicros.Sign() < 0 {
+		return errors.New("Console gross provider spend cannot be negative")
+	}
+	maxSpend := new(big.Rat).SetFloat64(maxSpendUSD)
+	if maxSpend == nil || maxSpend.Sign() <= 0 {
+		return errors.New("Console maximum spend must be positive")
+	}
+	maxSpendMicros := new(big.Rat).Mul(maxSpend, big.NewRat(1_000_000, 1))
+	if grossSpendMicros.Cmp(maxSpendMicros) > 0 {
+		return fmt.Errorf("Console gross provider spend exceeded the $%.6f limit", maxSpendUSD)
+	}
+	return nil
+}
+
+func consoleSpendSummary(grossSpendMicros *big.Rat, accountNetChangeMicros *int64, maxSpendUSD float64) string {
+	grossSpendUSD := new(big.Rat).Quo(new(big.Rat).Set(grossSpendMicros), big.NewRat(1_000_000, 1))
+	accountChange := "unproved"
+	if accountNetChangeMicros != nil {
+		accountChange = fmt.Sprintf("%+.6f", float64(*accountNetChangeMicros)/1e6)
+	}
+	return fmt.Sprintf(
+		"Console mutation gross_spend_usd=%s account_net_change_usd=%s max_spend_usd=%.6f",
+		grossSpendUSD.FloatString(6),
+		accountChange,
+		maxSpendUSD,
+	)
 }
 
 func consoleBoundedDeadline(parent context.Context, desired time.Time) (time.Time, bool) {
@@ -1817,6 +1956,7 @@ type consoleResourceTracker struct {
 	hashes          map[string]struct{}
 	known           map[string]struct{}
 	confirmed       map[string]struct{}
+	transferredBase map[string]*big.Rat
 	createAttempted bool
 }
 
@@ -1840,18 +1980,19 @@ func newConsoleResourceTracker(
 		ownedHashes[hash] = struct{}{}
 	}
 	return &consoleResourceTracker{
-		t:              t,
-		home:           home,
-		contextName:    contextName,
-		deadline:       deadline,
-		observer:       observer,
-		baseline:       baselineIDs,
-		baselineTotal:  baselineTotal,
-		maxSpendUSD:    config.MaxSpendUSD,
-		maxDeployments: config.MaxDeployments,
-		hashes:         ownedHashes,
-		known:          make(map[string]struct{}),
-		confirmed:      make(map[string]struct{}),
+		t:               t,
+		home:            home,
+		contextName:     contextName,
+		deadline:        deadline,
+		observer:        observer,
+		baseline:        baselineIDs,
+		baselineTotal:   baselineTotal,
+		maxSpendUSD:     config.MaxSpendUSD,
+		maxDeployments:  config.MaxDeployments,
+		hashes:          ownedHashes,
+		known:           make(map[string]struct{}),
+		confirmed:       make(map[string]struct{}),
+		transferredBase: make(map[string]*big.Rat),
 	}
 }
 
@@ -1864,6 +2005,12 @@ func (tracker *consoleResourceTracker) track(dseq string) {
 func (tracker *consoleResourceTracker) confirm(dseq string) {
 	if _, known := tracker.known[dseq]; known {
 		tracker.confirmed[dseq] = struct{}{}
+	}
+}
+
+func (tracker *consoleResourceTracker) recordTransferredBaseline(dseq string, amount *big.Rat) {
+	if dseq != "" && amount != nil {
+		tracker.transferredBase[dseq] = new(big.Rat).Set(amount)
 	}
 }
 
@@ -2014,16 +2161,38 @@ func (tracker *consoleResourceTracker) cleanup() {
 	if finalStateDeadline.Before(time.Now()) {
 		finalStateDeadline = time.Now()
 	}
+	grossSpendMicros := new(big.Rat)
+	grossSpendProved := len(ids) > 0
 	if time.Now().Before(finalStateDeadline) {
 		finalStateCtx, cancelFinalState := context.WithDeadline(context.Background(), finalStateDeadline)
 		for _, dseq := range ids {
 			if err := waitForConsoleTerminalState(finalStateCtx, tracker.observer, dseq); err != nil {
 				tracker.t.Errorf("Console cleanup did not verify terminal state for %s: %v", dseq, err)
+				grossSpendProved = false
+				continue
 			}
+			detail, err := tracker.observer.getDeployment(finalStateCtx, dseq)
+			if err != nil {
+				tracker.t.Errorf("Console cleanup could not observe terminal escrow for %s: %v", dseq, err)
+				grossSpendProved = false
+				continue
+			}
+			baseline, hasBaseline := tracker.transferredBase[dseq]
+			if !hasBaseline {
+				baseline = new(big.Rat)
+			}
+			spend, err := consoleTerminalTransferredSpend(detail, baseline, hasBaseline)
+			if err != nil {
+				tracker.t.Errorf("Console cleanup could not prove terminal provider spend for %s: %v", dseq, err)
+				grossSpendProved = false
+				continue
+			}
+			grossSpendMicros.Add(grossSpendMicros, spend)
 		}
 		cancelFinalState()
 	} else if len(ids) > 0 {
 		tracker.t.Errorf("Console cleanup exhausted the terminal-observation phase")
+		grossSpendProved = false
 	}
 
 	if len(ids) > 0 {
@@ -2047,24 +2216,28 @@ func (tracker *consoleResourceTracker) cleanup() {
 		}
 	}
 
+	var accountNetChangeMicros *int64
 	if !time.Now().Before(tracker.deadline) {
-		tracker.t.Errorf("Console cleanup exhausted the final balance-observation phase")
-		return
+		tracker.t.Errorf("Console cleanup exhausted the final account-reconciliation phase")
+	} else {
+		balanceCtx, cancelBalance := context.WithDeadline(context.Background(), tracker.deadline)
+		finalBalances, err := tracker.observer.getBalances(balanceCtx)
+		cancelBalance()
+		if err != nil {
+			tracker.t.Errorf("Console cleanup could not observe final account reconciliation: %v", err)
+		} else {
+			netChange, changeErr := consoleObservedAccountNetChangeMicros(tracker.baselineTotal, finalBalances.Total)
+			if changeErr != nil {
+				tracker.t.Errorf("Console cleanup could not reconcile the signed account-total change: %v", changeErr)
+			} else {
+				accountNetChangeMicros = &netChange
+			}
+		}
 	}
-	balanceCtx, cancelBalance := context.WithDeadline(context.Background(), tracker.deadline)
-	finalBalances, err := tracker.observer.getBalances(balanceCtx)
-	cancelBalance()
-	if err != nil {
-		tracker.t.Errorf("Console cleanup could not observe final total balance: %v", err)
-		return
+	if grossSpendProved {
+		if err := validateConsoleGrossSpendLimit(grossSpendMicros, tracker.maxSpendUSD); err != nil {
+			tracker.t.Errorf("Console mutation exceeded its spend contract: %v", err)
+		}
+		tracker.t.Log(consoleSpendSummary(grossSpendMicros, accountNetChangeMicros, tracker.maxSpendUSD))
 	}
-	observedSpend, err := consoleObservedSpendUSD(tracker.baselineTotal, finalBalances.Total)
-	if err != nil {
-		tracker.t.Errorf("Console cleanup could not prove isolated spend: %v", err)
-		return
-	}
-	if observedSpend > tracker.maxSpendUSD+1e-9 {
-		tracker.t.Errorf("Console mutation observed $%.6f spend, above the $%.6f limit", observedSpend, tracker.maxSpendUSD)
-	}
-	tracker.t.Logf("Console mutation observed_spend_usd=%.6f max_spend_usd=%.6f", observedSpend, tracker.maxSpendUSD)
 }

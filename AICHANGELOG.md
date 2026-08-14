@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- **Console sandbox spend accounting now uses the owned deployment ledger**:
+  the point-in-time account total has no lifecycle-run identity or observation
+  height, so its pre/post change cannot prove one deployment's spend. The
+  lifecycle now proves the exact pre-lease funded escrow, derives gross provider
+  spend from the owned closed escrow's cumulative `uact` `transferred` value,
+  requires zero terminal funds and positive paid-lease transfer, and keeps the
+  signed account total change as secondary reconciliation.
+  Credits and timing adjustments no longer cause false failures or reduce the
+  independently measured gross spend, while missing, malformed, negative,
+  regressing, wrong-denomination, or over-budget transferred state still fails
+  closed.
+
 - **Ledger prefix selection added on current main is now protected by the
   coverage gate**: the rebased keys command obtains the Bech32 account prefix
   from the Cosmos SDK configuration rather than passing a literal `cosmos`

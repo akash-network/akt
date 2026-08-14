@@ -1881,21 +1881,35 @@ every listed provider must be a unique canonical Akash bech32 address. The
 mutation-capable lane additionally requires at least one aggregate provider
 membership before enabling a deployment lifecycle.
 
-The target live Console harness distinguishes money requested from money spent. Every
-USD-bearing request is charged to an attempted-request budget before the
+The target live Console harness distinguishes money requested, gross provider
+spend attributable to its owned deployment, and signed account reconciliation.
+Every USD-bearing request is charged to an attempted-request budget before the
 subprocess starts, and an ambiguous request is never refunded to that budget.
-Actual spend is the decrease in the Console account's authoritative total
-balance between the pre-mutation snapshot and the post-cleanup observation.
-Those are separate limits and reports: moving credit into deployment escrow is
-not described as spend. The tenant must be isolated and mutation runs for one
-tenant must be serialized so another writer cannot hide or inflate the balance
-delta. The fixed escrow request must nevertheless fit wholly inside the hard
-loss ceiling. Before lease creation, the CLI and independent raw observer must
-agree on the exact bid identity and numeric price; selection is price-first,
-accepts only the Console settlement denomination, and rejects a bid whose
+Before lease creation, the independent observer proves that exact funded
+escrow (`funds` plus cumulative `transferred`) equals the reserved request,
+that cumulative `transferred` is still zero, and that deployment auto-top-up
+is disabled. After terminal cleanup, gross spend is the owned escrow's exact
+non-negative cumulative `uact` `transferred` value. Missing, malformed,
+negative, regressing, or unexpected-denomination transfer state fails closed.
+For the successfully leased bounded scenario, the deployment must be closed
+with no active lease, current `funds` must be exactly zero, and cumulative
+`transferred` must have increased from its zero pre-lease baseline. Positive
+residual funds indicate incomplete close settlement; negative funds indicate
+unsettled overdrawn liability. Either condition fails the bounded success lane,
+even though signed funds remain valid wire data.
+
+The Console account total is a point-in-time, account-wide reconciliation
+value, not a versioned ledger scoped to one lifecycle run. Its signed pre/post
+change is therefore retained only as a secondary signal. A positive change is
+reported as a credit or timing adjustment and never reduces or replaces owned
+gross spend. Only the owned transferred ledger is used for the run's spend
+ceiling. The tenant must still be isolated and mutation runs for one tenant
+serialized. Before lease creation, the CLI and independent raw observer agree
+on the exact bid identity and numeric price; selection is price-first, accepts
+only the Console settlement denomination, and rejects a bid whose
 one-block-per-second full-remaining-runtime projection exceeds that ceiling.
-The disabled-auto-top-up escrow balance remains the absolute bound if blocks
-arrive faster than the conservative projection interval.
+The exact funded escrow with auto-top-up disabled remains the absolute loss
+bound if blocks arrive faster than the conservative projection interval.
 
 The harness observes Console state with a small raw HTTP client that is
 independent of the `akt console` command and its Console client package. Command
@@ -1928,7 +1942,7 @@ Mutation time and cleanup time have separate deadlines. The lifecycle context
 expires before the overall test deadline, leaving a fixed cleanup reserve.
 Cleanup subdivides that reserve so discovery or one close request cannot consume
 the time needed to disable auto top-up, verify terminal state, and observe final
-spend. Cleanup starts before the first write is issued and retains both the
+escrow accounting. Cleanup starts before the first write is issued and retains both the
 pre-state DSEQ set and unique SDL hashes so an ambiguous create can be found
 without closing another run's deployment.
 The discovery phase is at least as long as normal create-state observation;
@@ -1936,12 +1950,13 @@ cleanup therefore cannot abandon an accepted create merely because the
 Console indexer exposes it after the ordinary success path would still wait.
 The fixed reserve separately retains forty seconds for disabling auto top-up
 and closing after discovery, then twenty seconds for terminal-state and final
-balance observation.
+escrow and account-reconciliation observation.
 
-**Current live-suite boundary (2026-08-12):** the opt-in managed-wallet suite
-implements the raw Console observer, attempted-request and observed-spend
-limits, direct action-log inspection, bounded redacted diagnostics, and phased
-in-process cleanup for create, bid, lease, status, deposit, settings, update,
+**Current live-suite boundary (2026-08-14):** the opt-in managed-wallet suite
+implements the raw Console observer, attempted-request and exact
+transferred-spend limits, direct action-log inspection, bounded redacted
+diagnostics, and phased in-process cleanup for create, bid, lease, status,
+deposit, settings, update,
 logs, events, deterministic non-interactive shell, child API-key lifecycle,
 and close. The provider-reported public workload URI must also return a
 bounded non-empty successful response through a standard HTTP client that does

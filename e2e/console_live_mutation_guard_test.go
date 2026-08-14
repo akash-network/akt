@@ -1075,6 +1075,9 @@ func TestConsoleCleanupPhaseDeadlinesReserveFinalObservation(t *testing.T) {
 	if got := mutations.Sub(discovery); got != consoleCleanupMutationReserve {
 		t.Fatalf("post-discovery mutation reserve = %s, want %s", got, consoleCleanupMutationReserve)
 	}
+	if consoleCleanupBalanceReserve >= consoleCleanupObservationReserve {
+		t.Fatalf("terminal accounting must retain a positive reserve before the %s account-reconciliation reserve", consoleCleanupBalanceReserve)
+	}
 }
 
 func TestConsoleCleanupPhaseDeadlinesClampWithoutStealingFinalObservation(t *testing.T) {
@@ -1428,6 +1431,108 @@ func TestConsoleEscrowFundsRejectsInvalidAmounts(t *testing.T) {
 	}
 }
 
+func TestConsoleEscrowTransferredAcceptsExactNonNegativeAmounts(t *testing.T) {
+	var detail consoleDeploymentObservation
+	if err := json.Unmarshal([]byte(`{
+		"escrow_account": {"state": {"transferred": [
+			{"denom":"uact","amount":"0.100000000000000001"},
+			{"denom":"uact","amount":"24.899999999999999999"}
+		]}}
+	}`), &detail); err != nil {
+		t.Fatalf("decode fixed-scale transferred fixture: %v", err)
+	}
+
+	transferred, err := consoleEscrowTransferred(detail)
+	if err != nil {
+		t.Fatalf("fixed-scale transferred amount failed: %v", err)
+	}
+	if got := transferred["uact"]; got == nil || got.Cmp(big.NewRat(25, 1)) != 0 {
+		t.Fatalf("uact transferred = %v, want 25", got)
+	}
+}
+
+func TestConsoleEscrowTransferredRejectsUnprovedAmounts(t *testing.T) {
+	tests := []struct {
+		name   string
+		amount string
+		denom  string
+		want   string
+	}{
+		{name: "negative", amount: "-0.000000000000000001", denom: "uact", want: "must be non-negative"},
+		{name: "malformed", amount: "not-a-decimal", denom: "uact", want: "not a valid fixed-point decimal"},
+		{name: "blank denomination", amount: "1", want: "omitted its denomination"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var detail consoleDeploymentObservation
+			detail.escrowTransferredPresent = true
+			detail.EscrowAccount.State.Transferred = consoleCoinObservations{{
+				Denom:  tc.denom,
+				Amount: consoleFlexibleID(tc.amount),
+			}}
+			if _, err := consoleEscrowTransferred(detail); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("consoleEscrowTransferred() error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+
+	if _, err := consoleEscrowTransferred(consoleDeploymentObservation{}); err == nil || !strings.Contains(err.Error(), "omitted escrow transferred") {
+		t.Fatalf("missing transferred error = %v", err)
+	}
+}
+
+func TestConsoleEscrowFundingAndSpendAreExactAndDoNotMutateInputs(t *testing.T) {
+	var detail consoleDeploymentObservation
+	if err := json.Unmarshal([]byte(`{
+		"escrow_account": {"state": {
+			"funds": [{"denom":"uact","amount":"975.000000000000000001"}],
+			"transferred": [{"denom":"uact","amount":"24.999999999999999999"}]
+		}}
+	}`), &detail); err != nil {
+		t.Fatalf("decode escrow accounting fixture: %v", err)
+	}
+
+	funded, transferred, err := consoleEscrowAccountingForDenom(detail, "uact")
+	if err != nil {
+		t.Fatalf("consoleEscrowAccountingForDenom() error = %v", err)
+	}
+	wantTransferred, ok := new(big.Rat).SetString("24.999999999999999999")
+	if !ok {
+		t.Fatal("construct exact transferred expectation")
+	}
+	if funded.Cmp(big.NewRat(1000, 1)) != 0 || transferred.Cmp(wantTransferred) != 0 {
+		t.Fatalf("funded = %v, transferred = %v; want 1000, %v", funded, transferred, wantTransferred)
+	}
+
+	baseline := new(big.Rat).Set(transferred)
+	final := new(big.Rat).Add(new(big.Rat).Set(transferred), big.NewRat(5, 1))
+	wantBaseline := new(big.Rat).Set(baseline)
+	wantFinal := new(big.Rat).Set(final)
+	spend, err := consoleTransferredSpend(baseline, final)
+	if err != nil || spend.Cmp(big.NewRat(5, 1)) != 0 {
+		t.Fatalf("consoleTransferredSpend() = %v, %v; want 5, nil", spend, err)
+	}
+	if baseline.Cmp(wantBaseline) != 0 || final.Cmp(wantFinal) != 0 {
+		t.Fatal("consoleTransferredSpend mutated an input amount")
+	}
+	if _, err := consoleTransferredSpend(final, baseline); err == nil || !strings.Contains(err.Error(), "regressed") {
+		t.Fatalf("regressing transferred error = %v", err)
+	}
+
+	var wrongDenom consoleDeploymentObservation
+	if err := json.Unmarshal([]byte(`{
+		"escrow_account": {"state": {
+			"funds": [{"denom":"uact","amount":"1000"}],
+			"transferred": [{"denom":"uakt","amount":"1"}]
+		}}
+	}`), &wrongDenom); err != nil {
+		t.Fatalf("decode wrong-denomination fixture: %v", err)
+	}
+	if _, _, err := consoleEscrowAccountingForDenom(wrongDenom, "uact"); err == nil || !strings.Contains(err.Error(), "unexpected denomination") {
+		t.Fatalf("wrong-denomination accounting error = %v", err)
+	}
+}
+
 func TestConsoleBidSelectionUsesCorroboratedLowestBudgetSafePrice(t *testing.T) {
 	makeBid := func(provider, denom, amount string) consoleBidObservation {
 		return consoleBidObservation{
@@ -1511,28 +1616,142 @@ func TestConsoleDeploymentComparisonUsesCompleteStableRecords(t *testing.T) {
 	}
 }
 
-func TestConsoleObservedSpendUsesTotalBalanceDelta(t *testing.T) {
+func TestConsoleObservedAccountNetChangeAcceptsCredits(t *testing.T) {
 	tests := []struct {
 		name    string
 		before  int64
 		after   int64
-		want    float64
+		want    int64
 		wantErr bool
 	}{
 		{name: "unchanged", before: 2_000_000, after: 2_000_000},
-		{name: "spent", before: 2_000_000, after: 1_875_000, want: 0.125},
-		{name: "concurrent credit makes proof ambiguous", before: 2_000_000, after: 2_000_001, wantErr: true},
+		{name: "net debit", before: 2_000_000, after: 1_875_000, want: -125_000},
+		{name: "point-in-time account adjustment appears as credit", before: 2_000_000, after: 2_000_028, want: 28},
 		{name: "negative boundary", before: -1, after: 0, wantErr: true},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got, err := consoleObservedSpendUSD(tc.before, tc.after)
+			got, err := consoleObservedAccountNetChangeMicros(tc.before, tc.after)
 			if (err != nil) != tc.wantErr {
-				t.Fatalf("consoleObservedSpendUSD(%d, %d) error = %v, wantErr %t", tc.before, tc.after, err, tc.wantErr)
+				t.Fatalf("consoleObservedAccountNetChangeMicros(%d, %d) error = %v, wantErr %t", tc.before, tc.after, err, tc.wantErr)
 			}
 			if !tc.wantErr && got != tc.want {
-				t.Fatalf("consoleObservedSpendUSD(%d, %d) = %f, want %f", tc.before, tc.after, got, tc.want)
+				t.Fatalf("consoleObservedAccountNetChangeMicros(%d, %d) = %d, want %d", tc.before, tc.after, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestConsoleGrossSpendLimitUsesExactTransferredAmount(t *testing.T) {
+	fractionalOverLimit := new(big.Rat).Add(
+		big.NewRat(1_000_000, 1),
+		big.NewRat(1, 1_000_000_000_000_000_000),
+	)
+	tests := []struct {
+		name        string
+		grossMicros *big.Rat
+		wantErr     string
+	}{
+		{name: "bounded spend", grossMicros: big.NewRat(25, 1)},
+		{name: "exact limit", grossMicros: big.NewRat(1_000_000, 1)},
+		{name: "one attomicro over limit", grossMicros: fractionalOverLimit, wantErr: "gross provider spend"},
+		{name: "whole micro over limit", grossMicros: big.NewRat(1_000_001, 1), wantErr: "gross provider spend"},
+		{name: "negative gross is invalid", grossMicros: big.NewRat(-1, 1), wantErr: "cannot be negative"},
+		{name: "missing gross is invalid", wantErr: "must be observed"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			err := validateConsoleGrossSpendLimit(tc.grossMicros, 1)
+			if tc.wantErr == "" && err != nil {
+				t.Fatalf("validateConsoleGrossSpendLimit() error = %v", err)
+			}
+			if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
+				t.Fatalf("validateConsoleGrossSpendLimit() error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+func TestConsoleSpendSummaryKeepsAccountReconciliationSecondary(t *testing.T) {
+	credit := int64(28)
+	got := consoleSpendSummary(big.NewRat(25, 1), &credit, 1)
+	if !strings.Contains(got, "gross_spend_usd=0.000025") ||
+		!strings.Contains(got, "account_net_change_usd=+0.000028") {
+		t.Fatalf("credit summary = %q", got)
+	}
+
+	unproved := consoleSpendSummary(big.NewRat(25, 1), nil, 1)
+	if !strings.Contains(unproved, "account_net_change_usd=unproved") || strings.Contains(unproved, "+0.000000") {
+		t.Fatalf("unproved summary = %q", unproved)
+	}
+}
+
+func TestConsoleTerminalDeploymentValidationUsesTheAccountingResponse(t *testing.T) {
+	detail := consoleDeploymentObservation{}
+	detail.Deployment.State = "closed"
+	detail.Leases = []consoleLeaseObservation{{
+		ID:    consoleLeaseID{DSeq: "7", GSeq: 1, OSeq: 1, Provider: "akash1provider"},
+		State: "closed",
+	}}
+	if problem := consoleTerminalDeploymentProblem(detail); problem != "" {
+		t.Fatalf("closed accounting response rejected: %s", problem)
+	}
+
+	detail.Deployment.State = "active"
+	if problem := consoleTerminalDeploymentProblem(detail); !strings.Contains(problem, "deployment state") {
+		t.Fatalf("regressed accounting response problem = %q", problem)
+	}
+	detail.Deployment.State = "closed"
+	detail.Leases[0].State = "active"
+	if problem := consoleTerminalDeploymentProblem(detail); !strings.Contains(problem, "still") {
+		t.Fatalf("active-lease accounting response problem = %q", problem)
+	}
+	detail.Leases[0].State = ""
+	if problem := consoleTerminalDeploymentProblem(detail); !strings.Contains(problem, "still") {
+		t.Fatalf("blank-lease accounting response problem = %q", problem)
+	}
+}
+
+func TestConsoleTerminalTransferredSpendFailsClosed(t *testing.T) {
+	decode := func(state, funds, transferred string) consoleDeploymentObservation {
+		t.Helper()
+		var detail consoleDeploymentObservation
+		body := fmt.Sprintf(`{
+			"deployment":{"id":{"owner":"akash1owner","dseq":"7"},"state":%q,"hash":"hash"},
+			"leases":[],
+			"escrow_account":{"state":{"funds":%s,"transferred":%s}}
+		}`, state, funds, transferred)
+		if err := json.Unmarshal([]byte(body), &detail); err != nil {
+			t.Fatalf("decode terminal accounting fixture: %v", err)
+		}
+		return detail
+	}
+
+	baseline := new(big.Rat)
+	valid := decode("closed", `[{"denom":"uact","amount":"0.000000000000000000"}]`, `[{"denom":"uact","amount":"25.000000000000000000"}]`)
+	spend, err := consoleTerminalTransferredSpend(valid, baseline, true)
+	if err != nil || spend.Cmp(big.NewRat(25, 1)) != 0 {
+		t.Fatalf("terminal spend = %v, %v; want 25, nil", spend, err)
+	}
+
+	tests := []struct {
+		name            string
+		detail          consoleDeploymentObservation
+		requirePositive bool
+		want            string
+	}{
+		{name: "nonterminal response", detail: decode("active", `[{"denom":"uact","amount":"0"}]`, `[{"denom":"uact","amount":"25"}]`), want: "not terminal"},
+		{name: "unsettled funds", detail: decode("closed", `[{"denom":"uact","amount":"1"}]`, `[{"denom":"uact","amount":"25"}]`), want: "retained nonzero funds"},
+		{name: "overdrawn funds", detail: decode("closed", `[{"denom":"uact","amount":"-0.000000000000000001"}]`, `[{"denom":"uact","amount":"25"}]`), want: "retained nonzero funds"},
+		{name: "missing transferred field", detail: decode("closed", `[]`, `null`), want: "omitted escrow transferred"},
+		{name: "paid lifecycle without transfer", detail: decode("closed", `[]`, `[]`), requirePositive: true, want: "no provider spend"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if _, err := consoleTerminalTransferredSpend(tc.detail, baseline, tc.requirePositive); err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("consoleTerminalTransferredSpend() error = %v, want %q", err, tc.want)
 			}
 		})
 	}
