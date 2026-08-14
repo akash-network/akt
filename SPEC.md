@@ -1286,6 +1286,12 @@ unless `--no-backup` was selected. Recovered keys never repeat their input
 mnemonic. The selected output format applies equally to local, Ledger, and
 multisig keys.
 
+When `--ledger` is selected, the command MUST pass the current Cosmos SDK
+Bech32 account-address prefix to `SaveLedgerKey`. It MUST NOT hardcode either
+`cosmos` or `akash`: the SDK configuration is authoritative for the active
+network. Tests MUST verify this call through a keyring boundary double and MUST
+NOT require physical Ledger hardware.
+
 #### `akt context keys show <name|address>`
 
 Show key details. By default prints name, type, address, and public key. Use `--address` (short `-a`) to print only the bech32 address for scripting.

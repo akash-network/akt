@@ -3,12 +3,14 @@ package keys
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
@@ -18,6 +20,27 @@ import (
 )
 
 const keysTestAddress = "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx"
+
+type ledgerPrefixKeyring struct {
+	sdkkeyring.Keyring
+	prefix string
+	stop   error
+}
+
+func (keyring *ledgerPrefixKeyring) Key(string) (*sdkkeyring.Record, error) {
+	return nil, errors.New("key not found")
+}
+
+func (keyring *ledgerPrefixKeyring) SaveLedgerKey(
+	_ string,
+	_ sdkkeyring.SignatureAlgo,
+	prefix string,
+	_, _, _ uint32,
+) (*sdkkeyring.Record, error) {
+	keyring.prefix = prefix
+
+	return nil, keyring.stop
+}
 
 func testKeyring(t *testing.T) sdkkeyring.Keyring {
 	t.Helper()
@@ -99,6 +122,23 @@ func runKeysCommandWithInput(t *testing.T, kr sdkkeyring.Keyring, input string, 
 
 	err = cmd.Execute()
 	return out.String(), errOut.String(), err
+}
+
+func TestKeysAddLedgerUsesConfiguredAccountPrefix(t *testing.T) {
+	configuredPrefix := sdk.GetConfig().GetBech32AccountAddrPrefix()
+	if configuredPrefix == "cosmos" {
+		t.Fatal("test configuration must distinguish the Akash account prefix from the SDK default")
+	}
+
+	stop := errors.New("ledger boundary reached")
+	keyring := &ledgerPrefixKeyring{stop: stop}
+	_, err := runKeysCommand(t, keyring, "add", "ledger", "--ledger")
+	if !errors.Is(err, stop) {
+		t.Fatalf("ledger add error = %v, want boundary error", err)
+	}
+	if keyring.prefix != configuredPrefix {
+		t.Errorf("SaveLedgerKey prefix = %q, want configured account prefix %q", keyring.prefix, configuredPrefix)
+	}
 }
 
 func TestKeysAddRecoveryHonorsStructuredOutput(t *testing.T) {

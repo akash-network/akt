@@ -4,6 +4,14 @@
 
 ### Fixed
 
+- **Ledger prefix selection added on current main is now protected by the
+  coverage gate**: the rebased keys command obtains the Bech32 account prefix
+  from the Cosmos SDK configuration rather than passing a literal `cosmos`
+  prefix to Ledger key registration. A command-level keyring boundary test
+  proves the exact prefix supplied to `SaveLedgerKey` without requiring
+  hardware, covering the statement that entered the active denominator after
+  PR #84 instead of lowering the checked coverage baseline.
+
 - **Console deposits no longer report false failure while sandbox state is
   propagating**: The client now treats a successful deposit response as proof
   only when its deployment identity and exact `funds` plus `transferred` delta

@@ -651,6 +651,12 @@ The config root is always `$XDG_CONFIG_HOME/akt` (typically `~/.config/akt`). Th
 
 Key distinction: `keyrings/` and `networks` (in config.yaml) are **shared** resources referenced by name. `contexts/` directories contain data **unique** to each context (state store and action log).
 
+Ledger key registration is network-aware. The keys command passes the Cosmos
+SDK's configured Bech32 account-address prefix to the keyring rather than
+embedding a Cosmos or Akash prefix in the command. A command-level test captures
+that keyring boundary without requiring Ledger hardware, so a network-prefix
+regression fails before a device is contacted.
+
 ### 3.4 Sync Engine
 
 The sync engine runs as a background goroutine during active CLI/TUI sessions. It keeps the local deployment store in sync with on-chain state.
