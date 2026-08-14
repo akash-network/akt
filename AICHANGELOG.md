@@ -10,7 +10,9 @@
   prefix to Ledger key registration. A command-level keyring boundary test
   proves the exact prefix supplied to `SaveLedgerKey` without requiring
   hardware, covering the statement that entered the active denominator after
-  PR #84 instead of lowering the checked coverage baseline.
+  PR #84. The Linux active baseline is raised to the newly measured
+  18,877/22,180 aggregate and 272/333 keys-package counts; no threshold is
+  lowered.
 
 - **Console deposits no longer report false failure while sandbox state is
   propagating**: The client now treats a successful deposit response as proof

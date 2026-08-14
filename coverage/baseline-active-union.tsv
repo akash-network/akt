@@ -8,7 +8,7 @@ pkg.akt.dev/akt/internal/cli/chain	4466	6263
 pkg.akt.dev/akt/internal/cli/chain/flags	415	484
 pkg.akt.dev/akt/internal/cli/console	611	757
 pkg.akt.dev/akt/internal/cli/context	411	510
-pkg.akt.dev/akt/internal/cli/keys	267	332
+pkg.akt.dev/akt/internal/cli/keys	272	333
 pkg.akt.dev/akt/internal/cli/network	70	86
 pkg.akt.dev/akt/internal/cli/provider	348	468
 pkg.akt.dev/akt/internal/cli/sdl	302	325
@@ -51,4 +51,4 @@ pkg.akt.dev/akt/internal/workflow	199	202
 pkg.akt.dev/akt/internal/workflow/adapters	393	446
 pkg.akt.dev/akt/internal/workflow/builtin	11	14
 pkg.akt.dev/akt/internal/workflow/steps	272	275
-@total	18872	22179
+@total	18877	22180
