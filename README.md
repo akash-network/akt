@@ -171,7 +171,8 @@ and a fresh single-validator chain E2E. CI instruments the real `akt` binary,
 collects subprocess counters through `GOCOVERDIR`, and publishes their statement
 union rather than averaging job percentages. Package membership is explicit in
 [`coverage/packages.tsv`](coverage/packages.tsv); the badge reports the active
-union, while repository and experimental-TUI profiles remain separately visible.
+union, while repository, experimental-TUI, and tooling profiles remain
+separately visible.
 
 ```bash
 # Duplicate-free cross-package unit profile and package report
@@ -191,8 +192,8 @@ AKT_E2E_LOCALNET=1 \
   GOWORK=off go test ./e2e/ -run TestLocalnet -v -count=1 -timeout 15m
 GOWORK=off make test-coverage-shard-ready COVERAGE_SHARD=e2e-localnet
 
-# Merge all blocking lanes and enforce the checked-in package ratchets
-GOWORK=off make test-coverage-report BASE_REF=HEAD^
+# Merge all blocking lanes and generate current statement reports
+GOWORK=off make test-coverage-report
 
 # Enforce 100% coverage for changed executable active lines
 GOWORK=off make test-coverage-patch BASE_REF=origin/main
@@ -203,8 +204,16 @@ files. CI supplies immutable base and head commits for pull requests and pushes.
 The paths above assume the bare-checkout `.cache` default; if `AKT_DEVCACHE` is
 set, use the absolute shard path printed by `test-coverage-e2e-prepare`.
 
-Reports are written to `.cache/coverage/reports/`. Coverage exceptions require
-an owner, evidence, and review deadline in
+Reports are written to `.cache/coverage/reports/`. Their aggregate and
+per-package TSV values describe the current run; they are diagnostics, not
+checked-in numeric floors. In CI, Codecov compares aggregate line coverage for
+pull requests targeting `main` across the active-union, experimental-TUI, and
+tooling profiles with their exact main-branch bases. The local patch command
+separately requires every changed
+executable line in active Go code to map to an executed Go statement or exact
+synthetic-edge counter. Exact patch exceptions are keyed by line; the same
+registry holds explicit test-support package denominator exclusions.
+Every exception requires an owner, evidence, and review deadline in
 [`coverage/exceptions.tsv`](coverage/exceptions.tsv); there are no implicit path
 exclusions.
 

@@ -32,6 +32,9 @@ jobs:
   quality:
     runs-on: ubuntu-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+      statuses: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -159,10 +162,60 @@ jobs:
           GOCOVERDIR="$GITHUB_WORKSPACE/.cache/coverage/covdata/e2e-localnet" \
             go test ./e2e/ -run TestLocalnet -v -count=1 -timeout 15m
           make test-coverage-shard-ready COVERAGE_SHARD=e2e-localnet
-      - name: Enforce coverage ratchets and changed lines
+      - name: Generate coverage reports and enforce changed lines
         run: |
           make test-coverage-report
           make test-coverage-patch
+      - name: Require dynamic Codecov conclusions for tagged commit
+        if: github.event_name == 'push'
+        timeout-minutes: 12
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+          TESTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          required_contexts='codecov/project/active codecov/project/experimental-tui codecov/project/tooling codecov/patch/active'
+          attempt=1
+          while test "$attempt" -le 40; do
+            statuses="$(gh api "repos/$REPOSITORY/commits/$TESTED_SHA/status?per_page=100")"
+            waiting=false
+            for context in $required_contexts; do
+              state="$(jq -r --arg context "$context" '
+                ([.statuses[] | select(.context == $context)] |
+                sort_by(.updated_at) | last | .state) // "missing"
+              ' <<<"$statuses")"
+              case "$state" in
+                success) ;;
+                pending|missing)
+                  waiting=true
+                  ;;
+                error|failure)
+                  echo "$context is $state for release commit $TESTED_SHA" >&2
+                  exit 1
+                  ;;
+                *)
+                  echo "$context returned unexpected state $state" >&2
+                  exit 1
+                  ;;
+              esac
+            done
+            if test "$waiting" = false; then
+              echo "all required Codecov contexts succeeded for $TESTED_SHA"
+              exit 0
+            fi
+            sleep 15
+            attempt=$((attempt + 1))
+          done
+          echo "required Codecov contexts did not complete for $TESTED_SHA" >&2
+          for context in $required_contexts; do
+            jq -r --arg context "$context" '
+              ([.statuses[] | select(.context == $context)] |
+              sort_by(.updated_at) | last | .state) // "missing" |
+              "\($context): \(.)"
+            ' <<<"$statuses" >&2
+          done
+          exit 1
 
   publish:
     needs: quality
@@ -315,3 +368,4 @@ jobs:
             .cache/goreleaser/*checksums.txt
           if-no-files-found: error
           retention-days: 7
+          overwrite: true

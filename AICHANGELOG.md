@@ -10,9 +10,8 @@
   prefix to Ledger key registration. A command-level keyring boundary test
   proves the exact prefix supplied to `SaveLedgerKey` without requiring
   hardware, covering the statement that entered the active denominator after
-  PR #84. The Linux active baseline is raised to the newly measured
-  18,877/22,180 aggregate and 272/333 keys-package counts; no threshold is
-  lowered.
+  PR #84. Current counts remain generated report output rather than changelog
+  policy.
 
 - **Console deposits no longer report false failure while sandbox state is
   propagating**: The client now treats a successful deposit response as proof
@@ -26,8 +25,8 @@
   timing policy, bounded cancellation, and no replay.
   Secret-safe live diagnostics now classify this local failure as
   `console_deposit_outcome_unknown` without exposing stderr.
-  The Linux active-union coverage ratchet rises by the exact eleven newly
-  covered statements to 18,860/22,176 (85.05%).
+  The generated active-union report includes the newly exercised path without
+  turning that run's count into a checked-in coverage floor.
 
 - **Current-main provider attestation code now satisfies the coverage gates**:
   semantic tests exercise gRPC authentication, TLS certificate trust,
@@ -37,8 +36,8 @@
   address before their on-chain registration is trusted, so another provider's
   valid certificate cannot terminate a JWT-bearing connection. The Console log
   oracle's equivalent service/pod predicate also uses the lint-approved
-  positive form. Coverage baselines remain ratchets and were raised with that
-  change rather than lowered for the larger denominator.
+  positive form. The generated reports include the larger denominator and its
+  new coverage instead of treating a current-run TSV as an accepted floor.
 
 - **The live Console log check now follows the provider stream contract**:
   sandbox providers report runtime pod names such as
@@ -59,9 +58,9 @@
   deterministically while record delivery is backpressured. Additional
   semantic boundary tests cover output failure, stdin EOF/error behavior,
   failed audit enrichment, and malformed provider attributes instead of
-  lowering the coverage ratchet after removing the unsafe compatibility code.
-  The Linux active-union ratchet advances to 18,872/22,179 (85.09%), with the
-  provider package at 522/524 statements (99.62%).
+  weakening coverage requirements after removing the unsafe compatibility code.
+  The generated active-union report exposes the remaining provider gap without
+  treating that run's package counts as policy.
 
 - **Console repeated-close E2E follows the live idempotency contract**: The
   Console backend can return the same successful close envelope for both an
@@ -84,6 +83,55 @@
   verifies the owned resource.
 
 ### Changed
+
+- **Coverage gates now compare exact Codecov bases instead of checked-in
+  statement snapshots**: main-target pull-request and main CI upload active-union,
+  experimental-TUI, and tooling profiles for aggregate line comparison with
+  each exact main-branch base. Each project status uses an automatic target,
+  zero regression threshold, disabled removed-code leniency, and no pseudo-base
+  fallback. Active code alone retains the required 100% Codecov patch status
+  and the repository-owned gate that maps changed executable Go lines to exact
+  statement or synthetic-edge counters.
+  Generated aggregate and per-package TSVs remain current-run diagnostics, not
+  numeric floors. The report job publishes full diagnostics, a profile-only
+  main artifact, and a comparison artifact. Main uploads directly; pull-request
+  CI performs no public tokenless upload. Instead, a
+  trusted default-branch `workflow_run` validates the completed source run,
+  two-parent merge identity, and generated run manifest before consuming only
+  its three comparison profiles. Both checkout-free upload paths
+  use OIDC, and the PR path uses only the validated PR number for its synthetic
+  branch. Fixed-name artifacts explicitly replace their own prior attempt when
+  a producing job is rerun, while partial reruns retain successful prerequisite
+  artifacts under the same run ID. Strict-main status enforcement becomes active
+  after this configuration lands on `main`, the three flags are seeded there,
+  and the four external status contexts are added to the repository ruleset
+  without bypass and bound to the integration ID observed on AKT's seeded
+  statuses. An authorized bypass of a failing coverage result explicitly
+  resets the dynamic base, so the repository configuration does not pretend it
+  can preserve a ratchet across an administrative override.
+  Until that bootstrap is complete, `required-ci` proves profile generation and
+  the applicable main upload but not Codecov's asynchronous comparison
+  conclusions. The
+  default-branch follow-up cannot run for the pull request that first adds it;
+  bootstrap therefore requires explicit core review, a main seed, and a later
+  test pull request before the app-bound Codecov contexts become required. The
+  comparison reports also reject every Go-cover-instrumentable classified
+  source file that disappears, including a file omitted from an otherwise
+  measured package. Declaration- or package-initializer-only files may remain
+  absent because Go emits no positive statement block for them; changed
+  initializers remain subject to the stricter fail-closed line-to-counter gate.
+  The completeness check uses the pinned Go cover instrumenter rather than an
+  approximate syntax classifier. Default-branch push-tip upload jobs are never
+  canceled or displaced and wait for all required comparison uploads on the
+  exact predecessor to be accepted,
+  preserving the dynamic base chain during rapid pushes. Main-target
+  pull-request uploads perform the same bounded readiness check against their
+  exact main base; stacked pull requests retain the local gate but skip Codecov
+  comparison uploads. Version-tag
+  publication requires the same four successful Codecov
+  conclusions on the exact tagged main commit, so removing the local snapshots
+  does not weaken release coverage. The mutation-score baseline and ratchet
+  remain separate and unchanged.
 
 - **Chain CLI tests now use the chain-sdk argument-builder pattern without
   compiling test support into the release package**: the recurring offline
@@ -150,14 +198,11 @@
   both directions, instead of relying on `sort.Slice` to choose one direction
   while iterating a map-derived version set.
 
-- **The accepted coverage baseline now reflects a clean three-shard run**:
-  unit, offline-binary E2E, and one-validator localnet E2E merge to
-  18,683/21,999 active statements (84.93%) and 21,278/25,649 repository
-  statements (82.96%). This replaces the prior accepted active result of
-  17,909/21,925 (81.68%); every one of the 3,961 executable lines changed in
-  this worktree is covered, with no reviewed exceptions. Experimental TUI and
-  coverage-tooling baselines remain explicit at 1,086/2,063 (52.64%) and
-  1,509/1,587 (95.09%) respectively.
+- **The generated coverage reports now reflect all three hermetic shards**:
+  unit, offline-binary E2E, and one-validator localnet E2E merge into separate
+  active, repository, experimental-TUI, and tooling diagnostics. The patch gate
+  independently checks every changed executable active line. Counts and
+  percentages remain outputs of each run instead of accepted changelog floors.
 
 - **Monitor, provider-workflow, and Console tests now exercise their semantic
   state machines instead of only their constructors**: monitor tests drive
@@ -221,7 +266,7 @@
 - **Code-owner review now has an actual owner**: the repository adopts the
   Akash Go-project default `@akash-network/core` owner for the whole tree, so
   the existing ruleset can protect its workflows, coverage controls, policy,
-  baselines, and ownership file instead of evaluating an empty ownership map.
+  exceptions, and ownership file instead of evaluating an empty ownership map.
 
 - **Codecov no longer advertises unavailable inline annotations**: the
   flag-scoped active patch status, pull-request report, and badge remain, while
@@ -236,7 +281,7 @@
 - **Chain flag coverage now exercises value-bearing boundaries**: focused tests
   cover complete and empty BME ledger filters, reject malformed owner
   addresses, accept documented provider bid-close reasons, and reject values
-  outside the provider range. The focused profile raises the accepted active
+  outside the provider range. The focused profile raises the generated active
   union for `internal/cli/chain/flags` from 370/484 to 388/484 statements.
 
 - **The coverage pass now verifies cryptographic and protocol semantics through
@@ -288,9 +333,10 @@
   orphan metadata, missing report profiles, overflowing totals, invalid counter
   coordinates, path-alias
   duplicates, mutable comparison refs, diff-header source spoofing, symlinked
-  source escapes, and tab-unsafe manifest records. Exact tooling coverage is
-  now 1,509/1,587 statements (95.09%). Sync reconciliation likewise rejects a
-  repeated non-empty pagination key before another request can loop forever.
+  source escapes, and tab-unsafe manifest records. The generated tooling report
+  remains the diagnostic for this package class. Sync reconciliation likewise
+  rejects a repeated non-empty pagination key before another request can loop
+  forever.
 
 - **Coverage parsing now accepts Go's synthetic empty control-flow blocks**:
   zero-statement records are discarded from profile filtering, reports, and
@@ -386,8 +432,9 @@
 - **Release publication now depends on exact-commit evidence**: version tags
   must point to a commit reachable from `main`, and the release workflow reruns
   the current hermetic lint, build/unit, race, offline E2E, fresh-chain E2E,
-  ratchet, and changed-line gates before publishing. The GoReleaser cross-build
-  image is pinned to an OCI digest instead of trusting a movable version tag.
+  coverage-report, and changed-line gates before publishing. The
+  GoReleaser cross-build image is pinned to an OCI digest instead of trusting a
+  movable version tag.
   Missing target lanes remain explicitly outside this interim release gate.
 
 - **Monitor event setup now fails closed on local startup errors**: the shipped
@@ -403,8 +450,8 @@
   stable instrumented build records the exact binary and source-manifest
   SHA-256 digests. Preparation and collection-side publication fail closed if
   the binary is missing or replaced, report jobs revalidate the manifest
-  binding, and the primary active-union Codecov upload now runs before narrower
-  informational profiles. Boundary tests raise the tooling ratchet from
+  binding, and the primary Codecov uploads now run before narrower informational
+  profiles. Boundary tests raise the generated tooling result from
   1,185/1,353 to 1,295/1,471 statements while covering the new command paths at
   95–100% except for operating-system-only file I/O failure branches.
 
@@ -540,27 +587,15 @@
   those events to the outer `MsgExec`; repeated inner messages can no longer
   display the first event value more than once.
 
-- **Coverage ratchets now compare all accepted counts without overflow**:
-  exact 128-bit cross-products prevent a forged large-count baseline from
-  wrapping signed arithmetic and hiding a coverage regression. The advertised
-  local coverage check now runs both the union ratchets and the changed-line
-  gate. Codecov publishes its active project and 100% patch signals from
-  trusted default-branch uploads, and its active-project status no longer
-  applies removed-code leniency that diverges from the repository's strict
-  ratchet.
-  Baselines now require the exact current statement counts even when an old and
-  new denominator happen to have the same ratio, package classification moves
-  retain their former coverage floor, and release validation requires every
-  GoReleaser build to target `cmd/akt` as well as matching its build tags. CI
-  exposes one stable `required-ci` check covering lint, build/unit, active race,
-  and repository coverage gates; Codecov upload is isolated to trusted default-
-  branch runs, and coverage binaries use reproducible trimmed paths. Every CI
-  and release action is pinned to an immutable commit, and the coverage-policy
-  validator rejects future floating workflow action references. Repository-
-  backed tests now also prove that package history follows classification moves
-  across coverage denominators and that conflicting historical records fail
-  closed; the tooling ratchet records the resulting 1,185/1,353 statement
-  baseline.
+- **Coverage infrastructure now fails closed around exact artifacts**: the local
+  coverage command generates the union reports and runs the changed active
+  line-to-counter gate, while Codecov performs the aggregate line comparisons.
+  Release validation requires every GoReleaser build to target `cmd/akt` and
+  match its build tags. CI exposes one stable `required-ci` check covering lint,
+  build/unit, active race, report generation, the local patch gate, and the
+  applicable upload job. Coverage binaries use reproducible trimmed paths,
+  every CI and release action is pinned to an immutable commit, and the policy
+  validator rejects future floating workflow action references.
 
 - **Test-only chain flag builders no longer ship in `akt`**: a 1,025-line
   helper file, including two package globals, was compiled into every release
@@ -568,14 +603,6 @@
   chain-ID argument constructions. Those constructions now live in the
   classified test-support package, removing 351 dead statements from the
   active denominator without excluding any user-reachable behavior.
-
-- **The initial coverage ratchet can bootstrap legacy code without weakening
-  new-package floors**: when the comparison revision has no coverage files,
-  the gate now derives legacy package presence from that revision's complete
-  non-test Go source tree. Existing low-coverage packages receive their first
-  audited snapshot, while a package added by the bootstrap change still starts
-  at 80%, or 95% when critical, and all changed active lines remain subject to
-  the independent 100% patch gate.
 
 - **Fresh-chain mutations now require an independent node oracle**: the public
   `akt` binary remains the system under test, while the pinned node image's
@@ -606,10 +633,10 @@
   worktree-dependent file fixups. Successful protected pull-request Console
   runs now feed separate `live` and informational `union-live` artifacts;
   sandbox writes still require the independent exact mutation opt-in, and the
-  live merge retains the actual pull-request base needed by the local ratchet.
-  Codecov's downloaded CLI is version-pinned and any signature, checksum, or
-  upload error fails closed inside its OIDC job; service availability remains
-  informational only through job-level continuation.
+  live merge reuses the already-validated hermetic profiles without fetching
+  unrelated history. Codecov's downloaded CLI is version-pinned, and any
+  signature, checksum, or upload error fails closed; a missing required service
+  status blocks merge until the retained report can be uploaded again.
   Sandbox reads and mutations use one protected environment credential. The
   sandbox jobs queue by tenant, and the live shard publishes its own
   active-package statement report before the informational union. Fork and
@@ -619,8 +646,8 @@
   as normal create observation while preserving separate 40-second mutation
   and 20-second final-observation reserves, preventing a delayed accepted
   deployment from escaping auto-top-up disablement and close.
-  Manual dispatch runs only the upstream node drift check; it cannot authorize
-  the spending Console sandbox lifecycle.
+  Manual dispatch cannot authorize the spending Console sandbox lifecycle; it
+  exposes the upstream node drift job alongside the ordinary secretless checks.
   The fixed Console lifecycle escrow now fits wholly inside its hard spend
   ceiling, and lease creation first selects the cheapest bid corroborated by
   both the CLI and raw observer whose conservative full-runtime cost also fits
@@ -634,24 +661,18 @@
   golden data from being paired with current coverage metadata. The collection
   CI, Make, and GoReleaser recipes are bound directly; release tags and the
   shipped main package are checked against the same GoReleaser recipe.
-  Reporting-only baseline, exception, and Codecov changes no longer invalidate
-  otherwise current raw counters. First-baseline bootstrap distinguishes
-  packages that existed at the comparison revision from packages introduced by
-  the bootstrap change, enforcing the 80% package and 95% critical-package
-  entry floors only for the latter while the changed-line gate remains
-  universal.
+  Reporting-only exception and Codecov policy changes do not invalidate
+  otherwise current raw counters.
   Taxonomy validation now also rejects active or experimental packages that are
   absent from the release dependency closure, making shipped classification a
   two-way invariant, and allows only the reviewed root-CLI bridge to import the
-  experimental shell. Zero-statement baselines can grow only at 100%, while
-  bootstrap legacy discovery now respects nested-module and ignored-directory
-  boundaries from the comparison revision.
+  experimental shell.
   Release dependency directory validation rejects repository-local nested
   modules that would otherwise ship outside every coverage denominator.
   Repository-import discovery preserves the empty import-list field on valid
   zero-import packages instead of rejecting its own `go list` output.
-  Reviewed line exceptions no longer imply a baseline-lowering path: package
-  and aggregate ratios remain monotonic and require compensating coverage.
+  Reviewed line exceptions affect only the local active line-to-counter gate; they do
+  not bypass aggregate Codecov statuses and may require compensating coverage.
   Coverage shards now reject unexpected entries before artifact upload and
   again after download, limiting unit evidence to the source manifest and Go
   covdata and E2E evidence to those files plus its verified binary identity;
@@ -698,14 +719,16 @@
   in-use database cannot hang validation indefinitely. Fresh E2E runners now
   create both the instrumented binary and source-manifest parent directories,
   so coverage collection cannot fail before the selected suite starts. The
-  changed-line gate also normalizes module-root Go files to the module package,
-  preventing a future root package from bypassing the 100% patch contract.
+  changed-line gate also normalizes module-root Go files to the module
+  package, preventing a future root package from bypassing the 100% patch
+  contract.
   Store imports now reject encoded envelopes above 64 MiB before allocating the
   whole input. MCP schema validation permits blank optional filters while still
   rejecting required or `minLength` strings; every deployment and market query
   handler now pins operation-specific dependency failures, preventing an
-  aggregate coverage ratchet from hiding lost error paths. Multi-message transaction
-  output no longer reuses an unindexed aggregate event for every message.
+  aggregate coverage percentage from hiding lost error paths. Multi-message
+  transaction output no longer reuses an unindexed aggregate event for every
+  message.
 
 - **Consensus reconnects could leave the monitor on a silent feed**: CometBFT
   reconnects the WebSocket transport but does not restore connection-scoped
@@ -736,21 +759,23 @@
   through the on-chain registry instead of accepting an arbitrary
   credential-bearing endpoint, and protected calls use granular provider,
   deployment, and operation-scoped JWT claims instead of full lease access.
-  Coverage taxonomy discovery includes packages
-  made entirely of build-constrained source, while repository-owned coverage
-  tooling receives a separate unit-coverage ratchet.
+  Coverage taxonomy discovery includes packages made entirely of
+  build-constrained source, while repository-owned coverage tooling receives a
+  separate unit report and aggregate Codecov project comparison.
 
 - **Coverage could pass while most shipped behavior remained unmeasured**:
   DESIGN and SPEC now define separate repository, active shipped, and
   experimental-TUI denominators; cross-package unit coverage; instrumented
   subprocess coverage through `GOCOVERDIR`; unit, E2E, live, and union
-  profiles; per-package no-regression and 100% changed-line gates; and Codecov
-  reporting for the active union. A generated CLI and MCP manifest must assign
-  every runnable action to a state-based scenario. Fresh-chain, provider,
+  profiles; aggregate exact-base comparisons for active, experimental-TUI, and
+  tooling code; and a 100% changed-line-to-counter gate for active code. A generated
+  CLI and MCP manifest must assign every runnable action to a state-based
+  scenario. Fresh-chain, provider,
   dual-chain, pinned `testnetify`, real-Console, monitor, and fault lanes now
   have explicit cadence, credential, spending, independent-oracle, action-log,
   and cleanup rules. Race, fuzz, and mutation gates complement the staged 95%+
-  active coverage floor, which continues to ratchet toward 100%. The same
+  active-union Codecov line-coverage floor; dynamic comparison preserves later
+  gains while work continues toward 100%. The same
   denominator audit moved the shipped standalone monitor runner and its
   cache/event lifecycle out of the experimental shell package, so `akt
   monitor` can no longer disappear from the active coverage gate. Taxonomy
@@ -760,17 +785,16 @@
   Go/CGO build environment and evaluated Make build tags/options, preventing
   counters compiled under a different source-selection configuration from
   being merged as current. Unit collection now uses those same release tags.
-  Its CI checkout also retains the tested commit's parent, so the tooling
-  baseline guard can inspect `HEAD^` instead of failing on a shallow clone.
+  CI retains the actual comparison revision for the local changed-line
+  gate instead of assuming a shallow checkout contains `HEAD^`.
   Hosted coverage builds now receive the cache-library path required by the
   release linker flags instead of passing an invalid bare `-L` to the linker.
-  Historical baseline discovery now treats Git lookup failures as errors and
-  reserves the one-time bootstrap path for a baseline that is truly absent.
   Release-tag validation parses every GoReleaser build and rejects an untagged
   build, so a matching comment or sibling build cannot mask source-set drift;
   taxonomy validation also rejects tooling linked into the shipped binary.
-  Codecov's active project and patch statuses now fail when their active-union
-  report is absent instead of accepting the service's permissive default.
+  Codecov's active-union, experimental-TUI, and tooling project statuses and
+  active patch status fail when their required reports are absent instead of
+  accepting the service's permissive default.
   The documents distinguish that target from the currently delivered three
   blocking coverage lanes and list the provider, dual-chain, testnetify,
   monitor, fault, multi-actor, and mutation-testing work that remains. The same
@@ -783,20 +807,21 @@
   help list**: CI now merges raw cross-package unit counters with coverage from
   instrumented `akt` subprocesses in the offline and fresh-chain lanes. A
   checked-in package taxonomy publishes repository, active, and experimental
-  TUI profiles; per-package baselines and a local 100% changed-line gate fail
-  independently of Codecov. Codecov receives stable lane and union flags, and
-  README shows the active-union badge. Coverage artifact uploads explicitly
+  TUI profiles plus a separate tooling report. Codecov performs exact-base
+  aggregate line comparisons for active-union, experimental-TUI, and tooling,
+  while a local 100% changed-line-to-counter gate checks active code independently.
+  Generated per-package TSVs are current diagnostics, and README shows the
+  active-union badge. Coverage artifact uploads explicitly
   include the reviewed hidden directory and fail on an empty match, preventing
   a silently incomplete cross-job union. The aggregate gate now runs even
   after a failed or cancelled shard and explicitly rejects any non-successful
   dependency; every downloaded shard must contain non-empty Go coverage
-  metadata and matching counters before conversion or merge. Improved package
-  or aggregate ratios require their raised baseline in the same change, so
-  later test deletion cannot spend unrecorded gains. Ratchets reject alternate
-  baseline paths, and changed active source with executable statements cannot
-  disappear behind an unmeasured build constraint. The changed-line gate runs
-  on pull requests and default-branch pushes against the event's actual base,
-  including multi-commit pushes; its local default also includes staged,
+  metadata and matching counters before conversion or merge. Dynamic project
+  comparison preserves aggregate improvements without a checked-in numeric
+  snapshot, and changed active source with executable statements cannot
+  disappear behind an unmeasured build constraint. The changed-line gate
+  runs on pull requests and default-branch pushes against the event's actual
+  base, including multi-commit pushes; its local default also includes staged,
   unstaged, and untracked Go files. An explicitly selected Docker localnet now
   fails when Docker is unavailable instead of reporting a green skip, and its
   blocking node image is pinned by immutable digest. Every raw shard now also
@@ -1736,7 +1761,7 @@
 
 - **Lint gate (`.golangci.yml` + CI job)**: the repo never had a lint config — TASKS.md T001 claimed one, and CI's own comment admitted lint was unwired. Adds a curated config (govet, staticcheck, errcheck, ineffassign, unused, nilerr, errorlint, bodyclose, unconvert, gochecknoinits, revive, misspell, gofmt/goimports) that took the tree from 1045 findings to 0. `internal/cli/chain` is style-excluded but keeps correctness linters, since it is a clean copy maintained by re-copying from chain-sdk; every exclusion is commented in-file with its reason, and `gochecknoglobals` was evaluated and dropped rather than blanket-excluded. The Makefile pin moved v2.3.0 → v2.11.4: v2.3.0 is built with Go 1.24 and refuses to load a config targeting this module's `go 1.26.1`.
 
-- **Coverage measurement and gate (`make/testing.mk` + CI job)**: nothing measured coverage before. Three package sets — repo-wide (reported), akt-authored, and the 13 risk-carrying core packages (gated at 65%, currently 68.7%, up from 54.9%). 136 new test functions target money paths, credential handling, capability decisions, action-log writes, and the transport layer. Repo-wide is 30.9%: `internal/cli/chain` is 37.6% of all statements at 3.5%, so TASKS.md T126's ">80% overall" was never reachable as written — that is now stated plainly rather than aspirationally.
+- **Coverage measurement and gate (`make/testing.mk` + CI job)**: nothing measured coverage before. At that stage, three package sets — repo-wide (reported), akt-authored, and the 13 risk-carrying core packages (gated at 65%, then 68.7%, up from 54.9%) — established the first gate. 136 new test functions target money paths, credential handling, capability decisions, action-log writes, and the transport layer. Repo-wide was 30.9%: `internal/cli/chain` was 37.6% of all statements at 3.5%, so TASKS.md T126's ">80% overall" was never reachable as written — that was stated plainly rather than aspirationally.
 
 - **Manual upstream-drift check**: an explicitly selected `e2e-localnet-latest` job runs the localnet suite against `ghcr.io/akash-network/node:latest`, while the blocking PR job stays pinned to the harness default. An upstream release can no longer redden an unrelated pull request, but drift remains available before release. The pinned default moved 2.1.0 → 2.1.1 (verified against both that and `latest`), and the version now lives only in `e2e/localnet_test.go` instead of being duplicated in CI.
 

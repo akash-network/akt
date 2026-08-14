@@ -1393,17 +1393,18 @@ an easy or unfinished package cannot hide risk in shipped code:
 | Denominator | Contents | Purpose |
 |---|---|---|
 | Repository | Every production Go statement in this module, including clean-copied chain commands, the disabled experimental TUI shell, and repository-owned executable tooling | Reports the complete maintenance burden; never used to make the shipped result look better |
-| Active owned shipped | Code reachable through the default release binary, including chain commands, Console, MCP, provider, workflows, store, sync, events, output, and `akt monitor` | Primary release gate and the staged 95%+ target |
-| Experimental TUI | The disabled shell under `internal/tui` and its shell-only dependencies; the standalone monitor entry point is isolated under `internal/monitor/runtime` | Separate profile and ratchet until the shell ships; it cannot lower or raise the active denominator |
+| Active owned shipped | Code reachable through the default release binary, including chain commands, Console, MCP, provider, workflows, store, sync, events, output, and `akt monitor` | Primary release gate and the staged 95%+ Codecov line-coverage target |
+| Experimental TUI | The disabled shell under `internal/tui` and its shell-only dependencies; the standalone monitor entry point is isolated under `internal/monitor/runtime` | Separate report and Codecov flag until the shell ships; it cannot lower or raise the active denominator |
 
 The active denominator includes clean-copied code because users execute it
-through `akt`. Generated code, test-only helpers, and code that cannot be
-reached in the release binary may be excluded only by a checked-in exception
-with an owner, concrete reason, and review deadline. Package selection and
-exceptions are machine-readable and reviewed like source changes. A helper
-used only by tests belongs in a `_test.go` file or the classified test-support
-package; it must not remain in a release-compiled file merely to make it
-importable from tests.
+through `akt`. The implemented package-scope exclusion is limited to a
+classified test-support package with a checked-in exception carrying an owner,
+concrete reason, and review deadline. Generated or release-unreachable
+production code remains classified until a comparably narrow machine-readable
+scope exists; prose alone cannot remove it. Package selection and exceptions
+are reviewed like source changes. A helper used only by tests belongs in a
+`_test.go` file or the classified test-support package; it must not remain in a
+release-compiled file merely to make it importable from tests.
 Chain command tests build recurring flag arguments with the small immutable
 `FlagsSet` builder in `internal/cli/chain/testutil`. The builder follows the
 `chain-sdk/go/cli` `TestFlags` contract, uses the same registered flag-name
@@ -1414,7 +1415,7 @@ command and flag spellings so a shared constant change cannot silently rewrite
 both the implementation and its expected interface.
 Taxonomy validation walks non-test Go source independently of the default build
 tags, closing the build-constrained-package gap. Repository tooling is reported
-and ratcheted separately from shipped code; test-only helpers are excluded.
+separately from shipped code; test-only helpers are excluded.
 Release dependency validation also resolves each package's source directory.
 Any dependency sourced from inside the repository but absent from the
 main-module taxonomy fails, closing the nested-module/local-replace escape.
@@ -1448,29 +1449,38 @@ collect its counters through `GOCOVERDIR`.
 Statement profiles canonicalize repository-relative source identity before
 aggregation. An import path and absolute path that resolve to the same range
 are duplicates and fail rather than increasing its count twice.
-Coverage used as a ratchet is deterministic: no accepted counter relies on map
-iteration order, scheduler timing, or the direction in which a sorting
-implementation happens to invoke a comparator. Directional branches receive
-direct cases instead of incidental execution through an unordered caller.
+Coverage evidence used for comparison is deterministic: no accepted counter
+relies on map iteration order, scheduler timing, or the direction in which a
+sorting implementation happens to invoke a comparator. Directional branches
+receive direct cases instead of incidental execution through an unordered
+caller.
 Compiler-emitted zero-statement control-flow blocks are removed from statement
 profiles and every coverage denominator. They contribute no Go statements and
 may use zero-width source ranges. The changed-source gate nevertheless retains
 their exact range and execution count in a separate edge-evidence index: a
 changed `case` or `select` edge may pass only when its own synthetic counter ran.
 That evidence cannot cover neighboring syntax, satisfy an enclosing statement,
-or enter filtering, publication, reports, or ratchets. Positive-statement
+or enter filtering, publication, reports, or Codecov uploads. Positive-statement
 blocks retain strict range and duplicate validation.
 Unit, hermetic end-to-end, and live-service profiles remain distinct, then a
 union profile reports the code proven by the full suite. The union cannot
 replace the separate profiles because each one answers a different question.
-Codecov reports the unit, hermetic E2E, repository, experimental-TUI, and
-active-union profiles from trusted default-branch runs. Live and union-live
-profiles remain pull-request artifacts. Repository-owned scripts remain the
-authoritative merge gate. The README badge shows the default branch's active
-union coverage. Its project and patch statuses are review signals for uploaded
-commits, not pull-request credentials or merge controls. Removed-code status
-leniency is disabled so a fully covered patch cannot make an aggregate
-regression appear successful.
+Codecov receives the active-union, experimental-TUI, and tooling profiles for
+the exact tested merge commit of each pull request targeting `main` and for each
+successful default-branch push tip. After the default branch contains the
+strict policy and seed reports, a
+required project status for each profile compares aggregate line
+coverage with the exact base report by using an automatic target, a zero
+regression threshold, and no removed-code leniency. Pseudo-base comparison is
+disabled, so a missing exact base report fails instead of silently selecting an
+older substitute. Active code alone has a required 100% Codecov patch status
+and the repository-owned patch gate. Both select changed lines, but the local
+gate maps each changed executable line to the exact Go statement or synthetic
+edge counter that can prove it ran. The two line results can therefore differ.
+The README badge shows the default branch's
+active-union line coverage. Main may also upload unit, hermetic E2E, and
+repository profiles as separate informational flags; live and union-live
+profiles remain pull-request artifacts.
 
 Trusted CI collects the Console `live` shard on same-repository pull requests
 whose base branch is `main`. The shard runs the read contracts and bounded
@@ -1508,7 +1518,9 @@ share one queue that retains up to 100 waiting jobs. A running lifecycle and
 its pull-request workflow are not automatically cancelled while they may own
 resources. Every pull-request workflow uses that non-cancelling policy because
 a retargeted pull request can become ineligible after an earlier run acquired
-sandbox resources. Push and manual workflows may still replace an older run.
+sandbox resources. No running CI workflow is automatically canceled. Push
+workflow identities are commit-unique so no push can displace another pending
+push; manual runs may still displace an older pending manual run.
 There is no scheduled or manual sandbox mutation run.
 
 This checked-in policy prevents ordinary superseding events; it is not a
@@ -1533,11 +1545,11 @@ This makes a missing shard a collection failure instead of silently producing
 an incomplete union. Each shard carries a deterministic manifest of its Go
 sources, default/release/test `go:embed` inputs, package `testdata` fixtures,
 dependency locks, collection-relevant package taxonomy, and build recipes. It
-deliberately excludes reporting-only baselines, reviewed exceptions, and
-Codecov presentation policy because those inputs cannot change raw counters.
-The merge job regenerates that
-manifest from the reporting checkout and rejects missing, malformed,
-mixed-revision, or locally stale shards before interpreting their counters.
+deliberately excludes reporting-only inputs such as reviewed exceptions and
+Codecov policy because those inputs cannot change raw counters. The merge job
+regenerates that manifest from the reporting checkout and rejects missing,
+malformed, mixed-revision, or locally stale shards before interpreting their
+counters.
 Coverage evidence therefore cannot be reused after source, embedded workflow,
 golden, or fixture behavior changes even when the statement map itself is
 unchanged. The manifest also hashes tracked environment recipes, every
@@ -1557,60 +1569,144 @@ suite. A stale or replaced executable therefore fails closed even when its
 source manifest was left behind. Report jobs do not need the executable, but
 they require every E2E identity and verify its manifest digest before accepting
 the transferred shard. Unit shards carry no binary identity.
+Fixed-name Actions artifacts opt into replacement when their producing job is
+rerun. GitHub retains an earlier successful artifact when only failed dependent
+jobs rerun, while a rerun of the producer replaces its own stale attempt instead
+of failing on the immutable artifact name.
 
 Coverage analysis and Codecov authentication are separate trust boundaries.
 The report job checks out and executes repository code with read-only
-repository permissions, then publishes only generated profiles. A distinct
-upload-only job on the trusted default branch downloads the hermetic profiles
-and holds the OIDC permission; it does
-not check out the repository or execute project scripts. It reconstructs only
-the tested commit's Git object database and index, which gives Codecov a source
-network without materializing source files. Both the action and its downloaded CLI are
-pinned, with signature and checksum failures fatal inside the OIDC job. A
-Codecov outage stays non-blocking at the job boundary; verification failure
-cannot fall through to execution of the downloaded file. Pull-request
-workflows never receive an OIDC token, so an untrusted workflow edit cannot
-turn coverage reporting into a credential exfiltration path. The live profile
-remains a CI artifact because it exists only on the pull-request run; it is not
-forwarded through an OIDC job.
+permissions. It publishes complete generated diagnostics for review, a
+profile-only artifact for the trusted main uploader, and a second artifact
+containing only the three comparison profiles plus a generated run-identity
+manifest. Pull-request CI receives neither
+a Codecov secret nor an OIDC token and performs no Codecov upload. After a
+successful PR run, a `workflow_run` workflow loaded from the default branch
+checks the source workflow path, exact two-parent merge/base/head metadata, and
+a successful `required-ci` job before downloading that run's comparison-only
+artifact. Its
+upload job does not check out source or execute a repository command, and uses
+repository OIDC rather than the public tokenless upload path. The synthetic
+branch name is derived only from the validated numeric pull-request ID; the
+contributor-controlled head ref is never passed to the Codecov CLI. The
+default-branch uploader follows the same checkout-free/profile-only OIDC shape.
+An upload job may reconstruct the tested commit's Git object database and index
+for Codecov network metadata, but it does not materialize a worktree. The
+actions and downloaded CLI are pinned, and artifact-integrity, profile-shape,
+signature, checksum, or upload failure is fatal. Codecov policy is loaded
+strictly from `main`, and pseudo-base comparison is disabled. This prevents a
+pull request from weakening either the credentialed upload workflow or the
+status definitions and prevents Codecov from silently falling back to an older
+report. Codecov's OIDC verifier authenticates the repository, not one exact
+workflow path, so OIDC is not the only trust control. Full-tree CODEOWNERS,
+external-run approval, default-branch ownership of the follow-up, source-run
+validation, and app-bound required statuses remain mandatory.
+Live and union-live profiles remain pull-request artifacts and do not cross the
+Codecov authentication boundary.
 
-Repository-owned statement ratchets and the changed-statement gate are the
-authoritative merge controls. Codecov computes line coverage, so its active
-flag and badge are a default-branch visualization rather than a claim that its
-percentage is numerically identical to Go statement coverage. The workflow
-uploads the authoritative active-union profile before narrower informational
-profiles, so a later per-lane upload failure cannot suppress the primary
-Codecov signal. GitHub line annotations are disabled because Codecov cannot
-produce them for a patch status scoped to a flag and is deprecating that
-annotation path; the status and pull-request report remain available. The workflow
-exposes a stable `required-ci` aggregate over lint, build and unit tests, the
-active race suite, repository coverage enforcement, and the protected Console
+Codecov computes line coverage while the repository coverage tool computes Go
+statement coverage. The generated package and aggregate TSV files report the
+current statement counts and percentages for diagnosis; they are not accepted
+numeric floors and are not compared with checked-in snapshots. The Codecov
+project statuses for active-union, experimental-TUI, and tooling are the
+aggregate no-regression comparisons. Active alone has a changed-line companion
+status.
+Before publication, each comparison profile must contain a coverage block with
+positive statement weight for every non-test Go source file in its class that
+contains syntax the Go cover tool instruments. A file containing only
+declarations or package-level initializers may be absent and such a package may
+report `0/0`; Go does not emit
+positive statement blocks for those initializers. Omitting an instrumentable
+file from an otherwise instrumented package fails profile generation instead of
+improving the aggregate by shrinking its denominator. The stricter changed-line
+gate continues to treat a changed package initializer as executable and fails
+closed when Go provides no counter, requiring a refactor or reviewed exception.
+Completeness asks the repository's pinned `go tool cover` to instrument each
+otherwise absent candidate file and reads its positive statement weights; it
+does not approximate the toolchain's handling of empty blocks, ignored
+functions, or other syntax with a separate AST heuristic.
+The repository-owned active patch gate remains the exact check for changed
+executable Go lines, using statement and synthetic-edge counters as evidence.
+The three comparison profiles upload before narrower
+informational profiles, so a later per-lane upload failure cannot suppress a
+merge signal. GitHub line annotations are disabled because Codecov cannot
+produce them for a flag-scoped patch status; the status and pull-request report
+remain available.
+
+The workflow exposes a stable `required-ci` aggregate over lint, build and unit
+tests, the active race suite, coverage generation, the exact changed-line gate,
+the main upload-only job on default-branch pushes, and the protected Console
 sandbox job for eligible same-repository pull requests. Branch protection must
-require that aggregate; defining the job or uploading to Codecov cannot
-substitute for the external repository rule. Repository ownership follows the
-same Akash Go-project convention as node and provider: `@akash-network/core`
-owns the tree, including the ownership file itself, so required code-owner
-review also protects workflow, coverage-policy, baseline, and release changes.
+require that aggregate plus the project statuses for active-union, experimental-TUI, and
+tooling and the active-union patch status after the default branch contains this
+strict policy and has been seeded. Before that one-time bootstrap completes,
+`required-ci` proves successful profile generation and, on main, upload, not
+Codecov's asynchronous comparison conclusions. The trusted pull-request
+follow-up publishes those conclusions only after the source `required-ci`
+succeeds. Because GitHub loads `workflow_run` definitions only from the default
+branch, the bootstrap change itself cannot exercise that follow-up: it requires
+explicit core review, then a main seed, then proof on a later test pull request
+before the four app-bound contexts become required. A Codecov outage thereafter
+blocks the external checks until the retained report artifact can be uploaded
+again.
+Default-branch runs use commit-unique concurrency identities so no push-tip run
+can be canceled or displaced from GitHub's pending slot. Before a
+main upload begins, it waits until Codecov reports merged uploads for all three
+required comparison flags on the push's exact `before` revision; the first
+policy-bearing commit alone skips that wait when its predecessor predates the
+Codecov policy. This preserves an accepted report for each tested base even
+when main receives several pushes in quick succession.
+Pull-request upload jobs for changes targeting `main` apply the same readiness
+check to their exact base SHA, avoiding a pseudo-base failure when a pull
+request starts immediately after a new main commit but before Codecov has
+accepted that commit's reports. Stacked pull requests targeting another branch
+still run the repository-owned patch gate but do not publish Codecov comparison
+profiles, because their feature-branch bases have no trusted main upload.
+Each public-API attempt has explicit connection and request timeouts, and the
+upload job has a deadline longer than the bounded readiness window, so a hung
+network call cannot extend the wait to the runner's default six-hour limit.
+Defining these checks in the repository does not substitute for the external
+ruleset. The dynamic ratchet assumes `required-ci` and all four Codecov contexts
+are required without bypass after bootstrap. An authorized bypass that lands a
+failing coverage result explicitly resets the dynamic base; repository policy
+cannot prevent an administrator from exercising a configured bypass.
+Each Codecov required context must also be bound to the integration ID observed
+on AKT's own seeded status. A context-name-only rule can accept an identically
+named status from another status-writing actor and is not an adequate source
+constraint.
+Repository ownership
+follows the same Akash Go-project convention as node and provider:
+`@akash-network/core` owns the tree, including the ownership file itself, so
+required code-owner review also protects workflow, coverage-policy, exception,
+and release changes. GitHub reads CODEOWNERS from the pull request base, so the
+bootstrap pull request that introduces this file still requires an explicit
+core-team review before merge; later pull requests receive the configured
+code-owner check.
 
-Two independent rules prevent untested changes from hiding inside an aggregate
-percentage. Every active package has a checked-in no-regression ratchet, and
-added or changed executable lines require 100% coverage. A reviewed exception
-is allowed only for a line that cannot be exercised meaningfully. Exceptions
-are narrow, expire, and never excuse a missing behavioral scenario. They exempt
-only the exact changed-line check; they never authorize lowering a package or
-aggregate ratio, so compensating coverage must land in the same change. Once active
-owned shipped coverage reaches 95%, that floor is permanent and continues to
-ratchet toward 100%. A coverage improvement and its exact raised baseline land
-in the same change; leaving the baseline stale would allow a later test-only
-deletion to give the improvement back without crossing the older floor.
-The baseline stores the exact measured statement counts, so an equivalent ratio
-with a changed denominator is stale too. Moving a package between active,
-experimental, and tooling classifications carries its prior package ratio into
-the destination and cannot reopen a new-package history window.
-Ratchets accept only their canonical baseline path, preventing a rename from
-reopening the one-time bootstrap path. The patch gate also fails closed when a
-changed active source file has executable statements but is absent from the
-release-equivalent profile, including omission by a newly added build tag.
+The three project statuses compare active-union, experimental-TUI, and tooling
+aggregate line coverage with their exact default-branch base reports by using
+`target: auto`, `threshold: 0%`, and `removed_code_behavior: off`.
+Independently, every added or changed executable line in active Go code must map
+to executed statement or synthetic-edge evidence. Experimental and tooling code
+do not have a patch gate. Because
+each Codecov comparison is aggregate, coverage gained in one package can offset
+a regression in another package in the same profile; the generated per-package
+TSV makes that movement visible but does not enforce a per-package ratchet. The
+design therefore makes no claim of per-package no-regression enforcement.
+
+A reviewed exception is allowed only for a changed executable line that cannot
+be exercised meaningfully. Exceptions are narrow, expire, and never excuse a
+missing behavioral scenario. They exempt only the repository-owned exact
+line-to-counter check and do not bypass any aggregate Codecov status, so
+compensating coverage may still be required. Once active-union Codecov line
+coverage reaches 95%, maintainers must add and require a separate fixed 95% Codecov
+project floor beside the automatic base comparison. With those checks enforced
+without bypass, later improvements are preserved by dynamic comparison without
+editing a repository-owned numeric snapshot.
+
+The patch gate fails closed when a changed active source file has executable
+statements but is absent from the release-equivalent profile, including omission
+by a newly added build tag.
 Go can attribute a multiline statement's counter to only part of its syntax.
 When a changed executable token has no directly intersecting positive-statement
 counter, the gate first checks for an exact synthetic edge-evidence match. Only
@@ -1618,36 +1714,19 @@ when none exists does it use the first positive-statement counter region
 belonging to the token's smallest enclosing statement. The token passes only
 when the selected edge or statement executed. An initializer or other
 executable syntax with neither kind of evidence in its enclosing region still
-fails closed. This preserves the statement contract without demanding
+fails closed. This preserves the line-to-counter contract without demanding
 exceptions for covered closing delimiters, function arguments, or
 composite-literal fields.
-The first checked-in baseline may capture legacy packages below the entry floor,
-but it is not a way to smuggle in a new under-tested package. Package presence
-at the comparison revision's complete non-test Go source tree distinguishes
-legacy code from packages introduced by the bootstrap change; this does not
-depend on the old revision already having coverage metadata. The latter still
-start at 80%, or 95% when critical.
-The independent 100% changed-active-line rule covers every executable line
-added by that change.
-Coverage ratios are compared with overflow-safe exact arithmetic across the
-complete accepted counter range; an oversized but syntactically valid baseline
-cannot wrap a cross-product and disguise a regression. The advertised local
-coverage-check target runs both the union ratchets and changed-line gate, even
-though CI presents them as separate steps for clearer diagnostics.
 Release-profile validation also pins every GoReleaser build's main package to
 `cmd/akt`; matching tags on a different executable cannot validate the shipped
 CLI denominator.
-Presence discovery models nested-module and ignored-directory boundaries from
-the comparison tree, preventing a removed `go.mod` or ignored path from turning
-newly admitted source into a false legacy package. A `0/0` package baseline is
-treated as fully covered, so its first executable statements must all execute.
 CI resolves the event's actual comparison revision and runs that patch gate on
 both pull requests and default-branch pushes, including multi-commit pushes.
 For local use, the same gate compares the base with the complete worktree,
 including untracked Go files, rather than silently testing only the last commit.
 The base name is peeled to one immutable commit before any historical source or
-baseline lookup; a mutable branch or tag cannot be verified at one revision and
-then reused at another during the same command.
+diff lookup; a mutable branch or tag cannot be verified at one revision and then
+reused at another during the same command.
 Changed-line diff state is driven only by Git file headers before a hunk starts;
 source code containing a header-looking `+++ b/...` line cannot spoof the file
 that owns a later hunk.
@@ -1882,9 +1961,9 @@ is implemented.
 Race tests run over active packages. The target test system gives boundary
 parsers and decoders short pull-request fuzz runs and longer scheduled runs,
 and mutation-tests critical state, money, credential, transport, and workflow
-packages. Changed critical logic must not introduce a surviving
-non-equivalent mutant; package mutation scores ratchet upward like statement
-coverage. The current implementation has two native fuzz targets and no CI
+packages. Changed critical logic must not introduce a surviving non-equivalent
+mutant; package mutation scores retain their independent upward ratchet. The
+current implementation has two native fuzz targets and no CI
 fuzz campaign or mutation gate, so this remains delivery work rather than a
 property of the present merge gate.
 
@@ -1896,7 +1975,10 @@ The release builder container is pinned by OCI digest as well as its human-
 readable version tag. A version-tag release first proves that the exact tagged
 commit is reachable from `main`, then reruns the current hermetic blocking
 matrix—lint, build/unit, active race, offline E2E, and fresh-chain E2E—against
-that checkout before publishing. The comparison range starts at the commit
+that checkout before publishing. Publication also requires successful
+active-union, experimental-TUI, tooling, and active patch Codecov statuses on
+that exact commit; regenerating profiles without checking the asynchronous
+dynamic comparisons is insufficient. The comparison range starts at the commit
 peeled from the nearest earlier reachable semantic-version tag, never at the
 tagged commit's first parent merely because it is convenient. A missing,
 invalid, or non-ancestor release base aborts the run. The event tag must be the
@@ -2008,8 +2090,12 @@ never handle.
 - Performance optimization: lazy loading, virtual scrolling for large lists
 - Testing and verification contract from SPEC §12, including complete command
   and MCP inventory, cross-package and subprocess coverage, state-based E2E
-  lanes, and a 95%+ active owned shipped coverage floor that ratchets toward
-  100%
+  lanes, a 100% changed-executable-line gate backed by Go counters for active
+  code, and aggregate
+  active-union, experimental-TUI, and tooling line coverage that cannot regress
+  against the exact default-branch results; after active-union Codecov line
+  coverage reaches 95%, a fixed service-side floor remains while work continues
+  toward 100%
 - Documentation and user guide
 
 ---

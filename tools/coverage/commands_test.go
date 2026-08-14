@@ -33,10 +33,6 @@ func TestRunDispatchRejectsMissingAndUnknownCommands(t *testing.T) {
 		{name: "filter flags", args: []string{"filter", "-unknown"}, want: "flag provided but not defined"},
 		{name: "report arguments", args: []string{"report"}, want: "requires -profile"},
 		{name: "report flags", args: []string{"report", "-unknown"}, want: "flag provided but not defined"},
-		{name: "baseline arguments", args: []string{"baseline"}, want: "requires -profile"},
-		{name: "baseline flags", args: []string{"baseline", "-unknown"}, want: "flag provided but not defined"},
-		{name: "ratchet arguments", args: []string{"ratchet"}, want: "requires -profile and -baseline"},
-		{name: "ratchet flags", args: []string{"ratchet", "-unknown"}, want: "flag provided but not defined"},
 		{name: "patch arguments", args: []string{"patch"}, want: "requires -profile, -base, and -head"},
 		{name: "patch flags", args: []string{"patch", "-unknown"}, want: "flag provided but not defined"},
 	}
@@ -232,7 +228,108 @@ func TestRunReportRejectsMissingProfileBeforePublication(t *testing.T) {
 	}
 }
 
-func TestRunFilterReportAndBaselineWriteExactArtifacts(t *testing.T) {
+func TestRunReportRequireCompleteRejectsMissingExecutablePackage(t *testing.T) {
+	root := commandTestModule(t, "example.test/complete")
+	t.Chdir(root)
+
+	module := "example.test/complete"
+	packagesFile := commandTestWriteFile(t, root, "coverage/packages.tsv", strings.Join([]string{
+		"package\tclass\tcritical",
+		module + "/internal/present\texperimental-tui\tfalse",
+		module + "/internal/missing\texperimental-tui\tfalse",
+		"",
+	}, "\n"))
+	commandTestWriteFile(t, root, "internal/present/present.go", "package present\n\nfunc Present() { println(\"present\") }\n")
+	commandTestWriteFile(t, root, "internal/missing/missing.go", "package missing\n\nfunc Missing() { println(\"missing\") }\n")
+	profileFile := commandTestWriteFile(t, root, "coverage/profile.out", strings.Join([]string{
+		"mode: atomic",
+		module + "/internal/present/present.go:3.16,3.36 1 1",
+		"",
+	}, "\n"))
+	reportFile := filepath.Join(root, "coverage/report.tsv")
+
+	err := run([]string{
+		"report", "-packages", packagesFile, "-profile", profileFile,
+		"-class", classExperimentalTUI, "-require-complete", "-out", reportFile,
+	})
+	if err == nil || !strings.Contains(err.Error(), module+"/internal/missing") {
+		t.Fatalf("complete report error = %v, want missing executable package", err)
+	}
+	if _, statErr := os.Stat(reportFile); !os.IsNotExist(statErr) {
+		t.Fatalf("report artifact exists after incomplete profile: %v", statErr)
+	}
+}
+
+func TestRunReportRequireCompleteRejectsMissingExecutableFile(t *testing.T) {
+	root := commandTestModule(t, "example.test/filecomplete")
+	t.Chdir(root)
+
+	module := "example.test/filecomplete"
+	packagesFile := commandTestWriteFile(t, root, "coverage/packages.tsv", strings.Join([]string{
+		"package\tclass\tcritical",
+		module + "/internal/tui\texperimental-tui\tfalse",
+		"",
+	}, "\n"))
+	commandTestWriteFile(t, root, "internal/tui/covered.go", "package tui\n\nfunc Covered() { println(\"covered\") }\n")
+	commandTestWriteFile(t, root, "internal/tui/missing.go", "package tui\n\nfunc Missing() { println(\"missing\") }\n")
+	commandTestWriteFile(t, root, "internal/tui/declarations.go", "package tui\n\ntype Ready struct{}\n")
+	profileFile := commandTestWriteFile(t, root, "coverage/profile.out", strings.Join([]string{
+		"mode: atomic",
+		module + "/internal/tui/covered.go:3.16,3.36 1 1",
+		"",
+	}, "\n"))
+	reportFile := filepath.Join(root, "coverage/report.tsv")
+
+	err := run([]string{
+		"report", "-packages", packagesFile, "-profile", profileFile,
+		"-class", classExperimentalTUI, "-require-complete", "-out", reportFile,
+	})
+	if err == nil || !strings.Contains(err.Error(), "internal/tui/missing.go") {
+		t.Fatalf("complete report error = %v, want missing executable file", err)
+	}
+	if _, statErr := os.Stat(reportFile); !os.IsNotExist(statErr) {
+		t.Fatalf("report artifact exists after incomplete profile: %v", statErr)
+	}
+}
+
+func TestRunReportRequireCompleteAllowsDeclarationsOnlyPackage(t *testing.T) {
+	root := commandTestModule(t, "example.test/declarations")
+	t.Chdir(root)
+
+	module := "example.test/declarations"
+	packagesFile := commandTestWriteFile(t, root, "coverage/packages.tsv", strings.Join([]string{
+		"package\tclass\tcritical",
+		module + "/internal/messages\texperimental-tui\tfalse",
+		module + "/internal/tui\texperimental-tui\tfalse",
+		"",
+	}, "\n"))
+	commandTestWriteFile(t, root, "internal/tui/tui.go", "package tui\n\nfunc Run() { println(\"run\") }\n")
+	commandTestWriteFile(t, root, "internal/messages/messages.go", "package messages\n\ntype Ready struct{}\n\nvar Default = Ready{}\n")
+	commandTestWriteFile(t, root, "internal/messages/_ignored.go", "package messages\n\nfunc Ignored() { println(\"ignored\") }\n")
+	commandTestWriteFile(t, root, "internal/messages/messages_test.go", "package messages\n\nfunc testOnly() { println(\"test\") }\n")
+	commandTestWriteFile(t, root, "internal/messages/notes.txt", "not Go source\n")
+	profileFile := commandTestWriteFile(t, root, "coverage/profile.out", strings.Join([]string{
+		"mode: atomic",
+		module + "/internal/tui/tui.go:3.12,3.28 1 1",
+		"",
+	}, "\n"))
+	reportFile := filepath.Join(root, "coverage/report.tsv")
+
+	if err := run([]string{
+		"report", "-packages", packagesFile, "-profile", profileFile,
+		"-class", classExperimentalTUI, "-require-complete", "-out", reportFile,
+	}); err != nil {
+		t.Fatalf("complete report with declarations-only package: %v", err)
+	}
+	if report := commandTestReadFile(t, reportFile); !strings.Contains(
+		report,
+		module+"/internal/messages\t0\t0\t100.00%",
+	) {
+		t.Fatalf("declarations-only package missing from report:\n%s", report)
+	}
+}
+
+func TestRunFilterAndReportWriteExactArtifacts(t *testing.T) {
 	root := commandTestModule(t, "example.test/coveragecmd")
 	t.Chdir(root)
 
@@ -273,17 +370,6 @@ func TestRunFilterReportAndBaselineWriteExactArtifacts(t *testing.T) {
 		"",
 	}, "\n"))
 
-	baseline := filepath.Join(root, "coverage", "active.tsv")
-	if err := run([]string{"baseline", "-packages", packagesFile, "-profile", profileFile, "-class", classActive, "-out", baseline}); err != nil {
-		t.Fatalf("run baseline: %v", err)
-	}
-	commandTestRequireFile(t, baseline, strings.Join([]string{
-		"package\tcovered\ttotal",
-		module + "/internal/active\t2\t2",
-		"@total\t2\t2",
-		"",
-	}, "\n"))
-
 	for _, command := range []string{"filter", "report"} {
 		args := []string{command, "-packages", packagesFile, "-profile", profileFile, "-class", "bogus"}
 		if command == "filter" {
@@ -293,10 +379,6 @@ func TestRunFilterReportAndBaselineWriteExactArtifacts(t *testing.T) {
 			t.Fatalf("%s invalid class error = %v", command, err)
 		}
 	}
-	if err := run([]string{"baseline", "-packages", packagesFile, "-profile", profileFile, "-class", "repository", "-out", baseline}); err == nil || !strings.Contains(err.Error(), "baseline class must be") {
-		t.Fatalf("baseline invalid class error = %v", err)
-	}
-
 	unclassified := commandTestWriteFile(t, root, "coverage/unclassified.out", "mode: atomic\n"+module+"/internal/missing/a.go:1.1,2.2 1 1\n")
 	if err := run([]string{"filter", "-packages", packagesFile, "-profile", unclassified, "-out", filtered}); err == nil || !strings.Contains(err.Error(), "does not belong to a classified package") {
 		t.Fatalf("filter unclassified profile error = %v", err)
@@ -529,126 +611,6 @@ func TestRunValidateChecksRealTemporaryModule(t *testing.T) {
 	}
 	if err := run([]string{"validate", "-packages", packagesFile, "-exceptions", exceptionsFile, "-release-tags", "netgo"}); err == nil || !strings.Contains(err.Error(), "parse goreleaser configuration") {
 		t.Fatalf("validate malformed goreleaser error = %v", err)
-	}
-}
-
-func TestRunRatchetGuardsBootstrapAndCommittedBaseline(t *testing.T) {
-	root := commandTestModule(t, "example.test/ratchet")
-	t.Chdir(root)
-	module := "example.test/ratchet"
-	commandTestWriteFile(t, root, "internal/active/a.go", "package active\n\nfunc Value() int { return 1 }\n")
-	packagesFile := commandTestWriteFile(t, root, "coverage/packages.tsv", "package\tclass\tcritical\n"+module+"/internal/active\tactive\tfalse\n")
-	profileFile := commandTestWriteFile(t, root, "coverage/profile.out", "mode: atomic\n"+module+"/internal/active/a.go:3.1,3.30 10 1\n")
-	baselineFile := filepath.Join(root, activeBaselinePath)
-	baseline := "package\tcovered\ttotal\n" + module + "/internal/active\t10\t10\n@total\t10\t10\n"
-
-	runTestGit(t, root, "init", "--quiet")
-	runTestGit(t, root, "config", "user.email", "coverage-test@example.invalid")
-	runTestGit(t, root, "config", "user.name", "coverage test")
-	runTestGit(t, root, "add", "go.mod", "internal", "coverage/packages.tsv", "coverage/profile.out")
-	runTestGit(t, root, "commit", "--quiet", "-m", "initial source")
-	if err := os.WriteFile(baselineFile, []byte(baseline), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	stdout, err := commandTestCaptureStdout(t, func() error {
-		return run([]string{"ratchet", "-packages", packagesFile, "-profile", profileFile, "-class", classActive, "-baseline", activeBaselinePath, "-base", "HEAD"})
-	})
-	if err != nil {
-		t.Fatalf("bootstrap ratchet: %v", err)
-	}
-	if !strings.Contains(stdout, "base has no baseline (one-time bootstrap)") || !strings.Contains(stdout, "100.00%, no package regressed") {
-		t.Fatalf("bootstrap ratchet stdout = %q", stdout)
-	}
-
-	runTestGit(t, root, "add", activeBaselinePath)
-	runTestGit(t, root, "commit", "--quiet", "-m", "coverage baseline")
-	stdout, err = commandTestCaptureStdout(t, func() error {
-		return run([]string{"ratchet", "-packages", packagesFile, "-profile", profileFile, "-class", classActive, "-baseline", activeBaselinePath, "-base", "HEAD"})
-	})
-	if err != nil {
-		t.Fatalf("committed-baseline ratchet: %v", err)
-	}
-	if stdout != "active coverage ratchet: 100.00%, no package regressed\n" {
-		t.Fatalf("committed-baseline ratchet stdout = %q", stdout)
-	}
-	if err := run([]string{"ratchet", "-packages", packagesFile, "-profile", profileFile, "-class", classActive, "-baseline", activeBaselinePath, "-base=-unsafe"}); err == nil || !strings.Contains(err.Error(), "may not start with '-'") {
-		t.Fatalf("ratchet unsafe base error = %v", err)
-	}
-	if err := run([]string{"ratchet", "-packages", packagesFile, "-profile", profileFile, "-class", "repository", "-baseline", activeBaselinePath}); err == nil || !strings.Contains(err.Error(), "ratchet class must be") {
-		t.Fatalf("ratchet invalid class error = %v", err)
-	}
-	if err := run([]string{"ratchet", "-packages", packagesFile, "-profile", profileFile, "-class", classActive, "-baseline", "coverage/renamed.tsv"}); err == nil || !strings.Contains(err.Error(), "canonical path") {
-		t.Fatalf("ratchet redirected baseline error = %v", err)
-	}
-	if err := run([]string{"ratchet", "-packages", packagesFile, "-profile", profileFile, "-class", classActive, "-baseline", activeBaselinePath, "-base", "missing-ref"}); err == nil || !strings.Contains(err.Error(), "verify base revision") {
-		t.Fatalf("ratchet missing base error = %v", err)
-	}
-	staleCounts := strings.ReplaceAll(baseline, "10\t10", "11\t11")
-	if err := os.WriteFile(baselineFile, []byte(staleCounts), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := run([]string{"ratchet", "-packages", packagesFile, "-profile", profileFile, "-class", classActive, "-baseline", activeBaselinePath}); err == nil || !strings.Contains(err.Error(), "baseline counts are stale") {
-		t.Fatalf("ratchet stale counts error = %v", err)
-	}
-	if err := os.WriteFile(baselineFile, []byte(baseline), 0o600); err != nil {
-		t.Fatal(err)
-	}
-
-	weakened := strings.ReplaceAll(baseline, "10\t10", "9\t10")
-	if err := os.WriteFile(baselineFile, []byte(weakened), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	if err := run([]string{"ratchet", "-packages", packagesFile, "-profile", profileFile, "-class", classActive, "-baseline", activeBaselinePath, "-base", "HEAD"}); err == nil || !strings.Contains(err.Error(), "was lowered") {
-		t.Fatalf("ratchet weakened baseline error = %v", err)
-	}
-}
-
-func TestLoadBaselineAtRevisionUsesResolvedCommit(t *testing.T) {
-	root := t.TempDir()
-	const commit = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-	git := commandTestWriteFile(t, root, "git", `#!/bin/sh
-case "$1" in
-  rev-parse)
-    printf '%s\n' '`+commit+`'
-    ;;
-  ls-tree)
-    if [ "$4" != '`+commit+`' ]; then
-      printf 'mutable revision was reused: %s\n' "$4" >&2
-      exit 2
-    fi
-    printf '100644 blob object\tcoverage/baseline.tsv\000'
-    ;;
-  show)
-    if [ "$2" != '`+commit+`:coverage/baseline.tsv' ]; then
-      printf 'mutable revision was reused: %s\n' "$2" >&2
-      exit 2
-    fi
-    printf 'package\tcovered\ttotal\nexample.test/pkg\t1\t2\n@total\t1\t2\n'
-    ;;
-  *)
-    exit 3
-    ;;
-esac
-`)
-	if err := os.Chmod(git, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	t.Setenv("PATH", root)
-
-	baseline, exists, err := loadBaselineAtRevision("moving-ref", "coverage/baseline.tsv")
-	if err != nil {
-		t.Fatalf("loadBaselineAtRevision() reused a mutable revision: %v", err)
-	}
-	if !exists || baseline["@total"] != (statementCount{Covered: 1, Total: 2}) {
-		t.Fatalf("loadBaselineAtRevision() = (%#v, %t), want resolved baseline", baseline, exists)
-	}
-
-	if err := os.WriteFile(git, []byte("#!/bin/sh\nprintf 'not-an-object-id\\n'\n"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := resolveGitCommit("moving-ref"); err == nil || !strings.Contains(err.Error(), "malformed object ID") {
-		t.Fatalf("resolveGitCommit() error = %v, want malformed-object rejection", err)
 	}
 }
 
@@ -885,7 +847,7 @@ func TestLoadExceptionsAcceptsReviewedScopesAndRejectsMalformedRows(t *testing.T
 	}
 }
 
-func TestTaxonomyProfileAndBaselineParsersRejectAmbiguousInput(t *testing.T) {
+func TestTaxonomyAndProfileParsersRejectAmbiguousInput(t *testing.T) {
 	module, err := moduleName()
 	if err != nil {
 		t.Fatal(err)
@@ -987,30 +949,6 @@ func TestTaxonomyProfileAndBaselineParsersRejectAmbiguousInput(t *testing.T) {
 		}
 	})
 
-	baselineTests := []struct {
-		name string
-		body string
-		want string
-	}{
-		{name: "malformed TSV", body: "\"unterminated", want: "parse error"},
-		{name: "bad header", body: "package\tcovered\n", want: "baseline header"},
-		{name: "wrong fields", body: "package\tcovered\ttotal\npkg\t1\n", want: "expected 3 fields"},
-		{name: "covered not integer", body: "package\tcovered\ttotal\npkg\tx\t1\n", want: "covered"},
-		{name: "total not integer", body: "package\tcovered\ttotal\npkg\t1\tx\n", want: "total"},
-		{name: "impossible", body: "package\tcovered\ttotal\npkg\t2\t1\n", want: "impossible counts"},
-		{name: "duplicate", body: "package\tcovered\ttotal\npkg\t1\t1\npkg\t1\t1\n", want: "duplicate package"},
-	}
-	for _, test := range baselineTests {
-		t.Run("baseline "+test.name, func(t *testing.T) {
-			_, err := parseBaseline(strings.NewReader(test.body))
-			if err == nil || !strings.Contains(err.Error(), test.want) {
-				t.Fatalf("parseBaseline() error = %v, want containing %q", err, test.want)
-			}
-		})
-	}
-	if _, err := loadBaseline(filepath.Join(t.TempDir(), "missing.tsv")); err == nil || !strings.Contains(err.Error(), "open baseline") {
-		t.Fatalf("missing baseline error = %v", err)
-	}
 }
 
 func TestLoadProfileSeparatesSyntheticZeroStatementBlocks(t *testing.T) {
@@ -1056,7 +994,7 @@ func TestOutputAndClassificationHelpersHandleBoundaryValues(t *testing.T) {
 	packages := packageSet{Module: module, Entries: []packageEntry{active}, ByName: map[string]packageEntry{active.Name: active}}
 	counts := map[string]statementCount{active.Name: {}, "@total": {}}
 	stdout, err := commandTestCaptureStdout(t, func() error {
-		return writeCounts("", packages, counts, classActive, true)
+		return writeCounts("", packages, counts, classActive)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -1091,9 +1029,6 @@ func TestOutputAndClassificationHelpersHandleBoundaryValues(t *testing.T) {
 	}
 	if got, err := canonicalBuildTags(" \n\t"); err == nil || got != "" || !strings.Contains(err.Error(), "empty") {
 		t.Fatalf("empty canonical tags = %q, error %v", got, err)
-	}
-	if _, err := requireCanonicalBaselinePath("unknown", "coverage/baseline.tsv"); err == nil || !strings.Contains(err.Error(), "unknown baseline class") {
-		t.Fatalf("unknown canonical baseline class error = %v", err)
 	}
 }
 

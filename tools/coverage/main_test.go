@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 )
@@ -355,7 +354,6 @@ func TestBuildSourceManifestTracksCoverageInputsOnly(t *testing.T) {
 		"go.work":                             "go 1.25\n",
 		"make/testing.mk":                     "test:\n\tgo test ./...\n",
 		"coverage/packages.tsv":               "package\tclass\tcritical\n",
-		"coverage/baseline-active.tsv":        "package\tcovered\ttotal\n",
 		"codecov.yml":                         "coverage:\n  precision: 2\n",
 		"README.md":                           "documentation does not alter collection\n",
 		".cache/generated/stale.go":           "package stale\n",
@@ -387,7 +385,7 @@ func TestBuildSourceManifestTracksCoverageInputsOnly(t *testing.T) {
 	}
 	for _, excluded := range []string{
 		"README.md\t", ".cache/generated/stale.go\t", "go.work\t",
-		"coverage/baseline-active.tsv\t", "codecov.yml\t",
+		"codecov.yml\t",
 	} {
 		if strings.Contains(manifest, excluded) {
 			t.Errorf("source manifest unexpectedly contains %q", excluded)
@@ -403,17 +401,6 @@ func TestBuildSourceManifestTracksCoverageInputsOnly(t *testing.T) {
 	}
 	if string(afterDocs) != string(first) {
 		t.Fatal("documentation-only edit changed source manifest")
-	}
-
-	if err := os.WriteFile(filepath.Join(root, "coverage/baseline-active.tsv"), []byte("package\tcovered\ttotal\n@total\t1\t1\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	afterBaseline, err := buildSourceManifest(root, "ledger,netgo", "static-link")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if string(afterBaseline) != string(first) {
-		t.Fatal("reporting-only baseline edit changed source manifest")
 	}
 
 	if err := os.WriteFile(filepath.Join(root, "internal/example/workflow.yaml"), []byte("name: changed-embedded-workflow\n"), 0o600); err != nil {
@@ -1299,6 +1286,45 @@ func TestFileHasExecutableStatementsIgnoresDeclarationOnlyFiles(t *testing.T) {
 	}
 }
 
+func TestFileCoverageStatementsExcludePackageInitializers(t *testing.T) {
+	t.Parallel()
+
+	root := t.TempDir()
+	tests := []struct {
+		name       string
+		source     string
+		statements bool
+	}{
+		{name: "package initializer", source: "package example\n\ntype Ready struct{}\n\nvar Default = Ready{}\n"},
+		{name: "empty function", source: "package example\n\nfunc empty() {}\n"},
+		{name: "ignored function", source: "package example\n\nfunc _() { println(\"ignored\") }\n"},
+		{name: "nested empty block", source: "package example\n\nfunc nested() { {} }\n", statements: true},
+		{name: "return statement", source: "package example\n\nfunc value() int { return 1 }\n", statements: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			filename := strings.ReplaceAll(test.name, " ", "-") + ".go"
+			if err := os.WriteFile(filepath.Join(root, filename), []byte(test.source), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			got, err := fileHasCoverageStatements(root, filename)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != test.statements {
+				t.Errorf("fileHasCoverageStatements() = %t, want %t", got, test.statements)
+			}
+		})
+	}
+	hasExecutableStatements, err := fileHasExecutableStatements(root, "package-initializer.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !hasExecutableStatements {
+		t.Fatal("changed-line gate did not classify package initializer as executable")
+	}
+}
+
 func TestFileExecutableLinesIgnoresBlankAndClosingDelimiterLines(t *testing.T) {
 	t.Parallel()
 
@@ -1391,6 +1417,66 @@ func TestUncoveredChangedActiveLinesRejectsInitializerWithoutCoverageBlock(t *te
 	}
 	if len(uncovered) != 0 || checked != 1 || exempted != 1 {
 		t.Fatalf("reviewed initializer exception result = uncovered %q, checked/exempted %d/%d", uncovered, checked, exempted)
+	}
+}
+
+func TestUncoveredChangedActiveLinesAllowsInitializerOnlyException(t *testing.T) {
+	t.Parallel()
+
+	const packageName = "pkg.akt.dev/akt/internal/active"
+	packages := packageSet{
+		Module:  "pkg.akt.dev/akt",
+		Entries: []packageEntry{{Name: packageName, Class: classActive}},
+		ByName: map[string]packageEntry{
+			packageName: {Name: packageName, Class: classActive},
+		},
+	}
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "internal", "active"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const filename = "internal/active/aliases.go"
+	if err := os.WriteFile(
+		filepath.Join(root, filepath.FromSlash(filename)),
+		[]byte("package active\n\nvar initialized = buildValue()\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	changed := map[string]map[int]bool{filename: {3: true}}
+
+	uncovered, checked, exempted, err := uncoveredChangedActiveLines(
+		packages,
+		coverProfile{Mode: "atomic"},
+		nil,
+		changed,
+		root,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(uncovered) != 1 || !strings.Contains(uncovered[0], filename+":3") || checked != 1 || exempted != 0 {
+		t.Fatalf("initializer-only result = uncovered %q, checked/exempted %d/%d", uncovered, checked, exempted)
+	}
+
+	uncovered, checked, exempted, err = uncoveredChangedActiveLines(
+		packages,
+		coverProfile{Mode: "atomic"},
+		map[string]exception{
+			exceptionKey(packageName, filename, 3): {
+				Package: packageName,
+				File:    filename,
+				Line:    3,
+			},
+		},
+		changed,
+		root,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(uncovered) != 0 || checked != 1 || exempted != 1 {
+		t.Fatalf("initializer-only exception = uncovered %q, checked/exempted %d/%d", uncovered, checked, exempted)
 	}
 }
 
@@ -1705,7 +1791,7 @@ func TestValidateActiveProfileRejectsEmptyProfile(t *testing.T) {
 		},
 	}
 
-	err := validateActiveProfile(packages, coverProfile{Mode: "atomic"})
+	err := validateActiveProfile(packages, coverProfile{Mode: "atomic"}, t.TempDir())
 	if err == nil || !strings.Contains(err.Error(), "no executable statements") {
 		t.Fatalf("validateActiveProfile() error = %v, want empty-profile rejection", err)
 	}
@@ -1715,10 +1801,12 @@ func TestValidateActiveProfileRejectsMissingActivePackage(t *testing.T) {
 	t.Parallel()
 
 	const (
-		present = "pkg.akt.dev/akt/internal/present"
-		missing = "pkg.akt.dev/akt/internal/missing"
+		module  = "pkg.akt.dev/akt"
+		present = module + "/internal/present"
+		missing = module + "/internal/missing"
 	)
 	packages := packageSet{
+		Module: module,
 		Entries: []packageEntry{
 			{Name: missing, Class: classActive},
 			{Name: present, Class: classActive},
@@ -1728,63 +1816,94 @@ func TestValidateActiveProfileRejectsMissingActivePackage(t *testing.T) {
 			present: {Name: present, Class: classActive},
 		},
 	}
+	root := t.TempDir()
+	commandTestWriteFile(t, root, "internal/present/present.go", "package present\n\nfunc Present() { println(\"present\") }\n")
+	commandTestWriteFile(t, root, "internal/missing/missing.go", "package missing\n\nfunc Missing() { println(\"missing\") }\n")
 	profile := coverProfile{Mode: "atomic", Blocks: []coverBlock{{
 		File: present + "/present.go", Statements: 1, Count: 1,
 	}}}
 
-	err := validateActiveProfile(packages, profile)
+	err := validateActiveProfile(packages, profile, root)
 	if err == nil || !strings.Contains(err.Error(), missing) {
 		t.Fatalf("validateActiveProfile() error = %v, want missing-package rejection", err)
 	}
 }
 
-func TestRatioLessUsesExactCounts(t *testing.T) {
+func TestValidateActiveProfileAllowsDeclarationsOnlyPackage(t *testing.T) {
 	t.Parallel()
 
-	tests := []struct {
-		name string
-		got  statementCount
-		want statementCount
-		less bool
-	}{
-		{name: "same ratio different denominator", got: statementCount{9, 10}, want: statementCount{90, 100}, less: false},
-		{name: "one statement regression", got: statementCount{89, 100}, want: statementCount{9, 10}, less: true},
-		{name: "improvement", got: statementCount{91, 100}, want: statementCount{9, 10}, less: false},
-		{name: "missing uncovered denominator", got: statementCount{}, want: statementCount{0, 80}, less: true},
-		{name: "empty baseline", got: statementCount{}, want: statementCount{}, less: false},
-		{name: "empty baseline to uncovered code", got: statementCount{0, 1}, want: statementCount{}, less: true},
-		{name: "empty baseline to fully covered code", got: statementCount{1, 1}, want: statementCount{}, less: false},
-		{
-			name: "large counters cannot overflow into a false non-regression",
-			got: statementCount{
-				Covered: math.MaxInt64/3 - 1,
-				Total:   math.MaxInt64 / 3,
-			},
-			want: statementCount{
-				Covered: math.MaxInt64 - 2,
-				Total:   math.MaxInt64 - 1,
-			},
-			less: true,
+	const (
+		module       = "pkg.akt.dev/akt"
+		declarations = module + "/internal/declarations"
+		present      = module + "/internal/present"
+	)
+	packages := packageSet{
+		Module: module,
+		Entries: []packageEntry{
+			{Name: declarations, Class: classActive},
+			{Name: present, Class: classActive},
+		},
+		ByName: map[string]packageEntry{
+			declarations: {Name: declarations, Class: classActive},
+			present:      {Name: present, Class: classActive},
 		},
 	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			if got := ratioLess(test.got, test.want); got != test.less {
-				t.Fatalf("ratioLess(%+v, %+v) = %t, want %t", test.got, test.want, got, test.less)
-			}
-		})
+	root := t.TempDir()
+	commandTestWriteFile(t, root, "internal/declarations/messages.go", "package declarations\n\ntype Ready struct{}\n")
+	commandTestWriteFile(t, root, "internal/present/present.go", "package present\n\nfunc Present() { println(\"present\") }\n")
+	profile := coverProfile{Mode: "atomic", Blocks: []coverBlock{{
+		File: present + "/present.go", Statements: 1, Count: 1,
+	}}}
+
+	if err := validateActiveProfile(packages, profile, root); err != nil {
+		t.Fatalf("validateActiveProfile() declarations-only package: %v", err)
 	}
 }
 
-func TestPercentFloorUsesExactCounts(t *testing.T) {
+func TestPackageSourceFilesBoundaries(t *testing.T) {
 	t.Parallel()
 
-	if !belowPercentFloor(statementCount{Covered: 1, Total: math.MaxInt64}, 80) {
-		t.Fatal("belowPercentFloor() accepted near-zero large-count coverage")
+	const module = "example.test/sourcecheck"
+	root := t.TempDir()
+	commandTestWriteFile(t, root, "root.go", "package sourcecheck\n\ntype Root struct{}\n")
+	commandTestWriteFile(t, root, "internal/executable/code.go", "package executable\n\nfunc Value() chan int { return make(chan int) }\n")
+	commandTestWriteFile(t, root, "internal/invalid/code.go", "package invalid\n\nfunc broken(\n")
+	commandTestWriteFile(t, root, "internal/not-directory", "not a directory\n")
+	commandTestWriteFile(t, root, "internal/symlink/target.txt", "package symlink\n")
+	if err := os.Symlink(
+		filepath.Join(root, "internal/symlink/target.txt"),
+		filepath.Join(root, "internal/symlink/code.go"),
+	); err != nil {
+		t.Fatal(err)
 	}
-	if belowPercentFloor(statementCount{Covered: math.MaxInt64 - 1, Total: math.MaxInt64}, 95) {
-		t.Fatal("belowPercentFloor() rejected near-complete large-count coverage")
+
+	if got, err := packageSourceFiles(root, module, module); err != nil || len(got) != 1 || got[0] != "root.go" {
+		t.Fatalf("declarations-only module root = (%v, %v), want ([root.go], nil)", got, err)
+	}
+	if got, err := packageSourceFiles(root, module, module+"/internal/executable"); err != nil ||
+		len(got) != 1 || got[0] != "internal/executable/code.go" {
+		t.Fatalf("executable package = (%v, %v), want ([internal/executable/code.go], nil)", got, err)
+	}
+
+	tests := []struct {
+		name        string
+		packageName string
+		want        string
+	}{
+		{name: "outside module", packageName: "example.invalid/package", want: "outside module"},
+		{name: "unsafe path", packageName: module + "/../escape", want: "unsafe source path"},
+		{name: "missing directory", packageName: module + "/internal/missing", want: "inspect classified package"},
+		{name: "non-directory", packageName: module + "/internal/not-directory", want: "not a directory"},
+		{name: "invalid source", packageName: module + "/internal/invalid", want: "parse changed active source"},
+		{name: "symlink source", packageName: module + "/internal/symlink", want: "not a regular file"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := packageSourceFiles(root, module, test.packageName); err == nil ||
+				!strings.Contains(err.Error(), test.want) {
+				t.Fatalf("packageSourceFiles() error = %v, want containing %q", err, test.want)
+			}
+		})
 	}
 }
 
@@ -1802,407 +1921,6 @@ func TestIntersectingBlocksRequiresEveryRangeOnChangedLine(t *testing.T) {
 	}
 	if got[0].Count != 1 || got[1].Count != 0 {
 		t.Fatalf("intersectingBlocks() = %+v, want covered and uncovered ranges", got)
-	}
-}
-
-func TestGuardBaselineRejectsLoweredAndUndercoveredNewPackages(t *testing.T) {
-	t.Parallel()
-
-	packages := packageSet{
-		Entries: []packageEntry{
-			{Name: "pkg.akt.dev/akt/internal/existing", Class: classActive},
-			{Name: "pkg.akt.dev/akt/internal/new", Class: classActive, Critical: true},
-		},
-		ByName: map[string]packageEntry{
-			"pkg.akt.dev/akt/internal/existing": {Name: "pkg.akt.dev/akt/internal/existing", Class: classActive},
-			"pkg.akt.dev/akt/internal/new":      {Name: "pkg.akt.dev/akt/internal/new", Class: classActive, Critical: true},
-		},
-	}
-	current := map[string]statementCount{
-		"pkg.akt.dev/akt/internal/existing": {Covered: 89, Total: 100},
-		"pkg.akt.dev/akt/internal/new":      {Covered: 94, Total: 100},
-	}
-	head := map[string]statementCount{
-		"pkg.akt.dev/akt/internal/existing": {Covered: 89, Total: 100},
-		"pkg.akt.dev/akt/internal/new":      {Covered: 94, Total: 100},
-		"@total":                            {Covered: 183, Total: 200},
-	}
-	prior := map[string]statementCount{
-		"pkg.akt.dev/akt/internal/existing": {Covered: 90, Total: 100},
-		"@total":                            {Covered: 90, Total: 100},
-	}
-
-	err := guardBaseline(packages, current, head, prior, nil, classActive)
-	if err == nil {
-		t.Fatal("guardBaseline() succeeded, want failures")
-	}
-	if !strings.Contains(err.Error(), "baseline for pkg.akt.dev/akt/internal/existing was lowered") {
-		t.Fatalf("guardBaseline() error %q does not identify lowered baseline", err)
-	}
-	if !strings.Contains(err.Error(), "new package pkg.akt.dev/akt/internal/new is 94.00%; minimum is 95%") {
-		t.Fatalf("guardBaseline() error %q does not enforce critical-package floor", err)
-	}
-}
-
-func TestGuardInitialBaselineEnforcesOnlyPackagesAddedByBootstrap(t *testing.T) {
-	t.Parallel()
-
-	const (
-		legacy   = "pkg.akt.dev/akt/internal/legacy"
-		ordinary = "pkg.akt.dev/akt/internal/ordinary"
-		critical = "pkg.akt.dev/akt/internal/critical"
-		tooling  = "pkg.akt.dev/akt/tools/new-tool"
-	)
-	packages := packageSet{
-		Entries: []packageEntry{
-			{Name: legacy, Class: classActive},
-			{Name: ordinary, Class: classActive},
-			{Name: critical, Class: classActive, Critical: true},
-			{Name: tooling, Class: classTooling},
-		},
-		ByName: map[string]packageEntry{
-			legacy:   {Name: legacy, Class: classActive},
-			ordinary: {Name: ordinary, Class: classActive},
-			critical: {Name: critical, Class: classActive, Critical: true},
-			tooling:  {Name: tooling, Class: classTooling},
-		},
-	}
-	current := map[string]statementCount{
-		legacy:   {Covered: 1, Total: 100},
-		ordinary: {Covered: 79, Total: 100},
-		critical: {Covered: 94, Total: 100},
-		tooling:  {Covered: 1, Total: 100},
-	}
-
-	err := guardInitialBaseline(packages, current, map[string]bool{legacy: true}, classActive)
-	if err == nil {
-		t.Fatal("guardInitialBaseline() succeeded, want minimum failures")
-	}
-	for _, want := range []string{
-		"initial package " + ordinary + " is 79.00%; minimum is 80%",
-		"initial package " + critical + " is 94.00%; minimum is 95%",
-	} {
-		if !strings.Contains(err.Error(), want) {
-			t.Fatalf("guardInitialBaseline() error %q does not contain %q", err, want)
-		}
-	}
-	if strings.Contains(err.Error(), legacy) {
-		t.Fatalf("guardInitialBaseline() rejected legacy package: %v", err)
-	}
-	if err := guardInitialBaseline(packages, current, map[string]bool{}, classTooling); err != nil {
-		t.Fatalf("tooling bootstrap should ratchet from its measured value: %v", err)
-	}
-}
-
-func TestSourcePackagesFromTreeUsesNULTerminatedGitPaths(t *testing.T) {
-	t.Parallel()
-
-	tree := []byte("cmd/akt/main.go\x00internal/example/example.go\x00internal/example/example_test.go\x00nested/go.mod\x00nested/hidden/hidden.go\x00vendor/vendor.go\x00_hidden/hidden.go\x00README.md\x00")
-	got, err := sourcePackagesFromTree("example.test/repo", tree)
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, want := range []string{"example.test/repo/cmd/akt", "example.test/repo/internal/example"} {
-		if !got[want] {
-			t.Errorf("sourcePackagesFromTree() omitted %s: %#v", want, got)
-		}
-	}
-	if len(got) != 2 {
-		t.Fatalf("sourcePackagesFromTree() = %#v, want two production packages", got)
-	}
-	if _, err := sourcePackagesFromTree("example.test/repo", []byte("../escape.go\x00")); err == nil {
-		t.Fatal("sourcePackagesFromTree() accepted an unsafe path")
-	}
-	if _, err := sourcePackagesAtRevision("definitely-missing-ref", "example.test/repo"); err == nil || !strings.Contains(err.Error(), "inspect source packages") {
-		t.Fatalf("sourcePackagesAtRevision() error = %v, want missing-revision rejection", err)
-	}
-}
-
-func TestGuardBaselineAllowsRemovedPackageButProtectsTotal(t *testing.T) {
-	t.Parallel()
-
-	packages := packageSet{ByName: map[string]packageEntry{}}
-	prior := map[string]statementCount{
-		"pkg.akt.dev/akt/internal/removed": {Covered: 5, Total: 10},
-		"@total":                           {Covered: 5, Total: 10},
-	}
-	head := map[string]statementCount{"@total": {Covered: 5, Total: 10}}
-	if err := guardBaseline(packages, nil, head, prior, nil, classActive); err != nil {
-		t.Fatalf("guardBaseline() rejected a package removed from taxonomy: %v", err)
-	}
-	delete(head, "@total")
-	if err := guardBaseline(packages, nil, head, prior, nil, classActive); err == nil || !strings.Contains(err.Error(), "baseline removed protected entry: @total") {
-		t.Fatalf("guardBaseline() missing-total error = %v", err)
-	}
-}
-
-func TestGuardBaselineCarriesHistoryAcrossClassMigration(t *testing.T) {
-	t.Parallel()
-
-	const packageName = "pkg.akt.dev/akt/internal/migrated"
-	packages := packageSet{ByName: map[string]packageEntry{
-		packageName: {Name: packageName, Class: classActive},
-	}}
-	current := map[string]statementCount{packageName: {Covered: 89, Total: 100}}
-	head := map[string]statementCount{
-		packageName: {Covered: 89, Total: 100},
-		"@total":    {Covered: 89, Total: 100},
-	}
-	prior := map[string]statementCount{"@total": {Covered: 89, Total: 100}}
-	migrationPrior := map[string]statementCount{packageName: {Covered: 90, Total: 100}}
-
-	err := guardBaseline(packages, current, head, prior, migrationPrior, classActive)
-	if err == nil || !strings.Contains(err.Error(), "baseline for migrated package "+packageName+" was lowered") {
-		t.Fatalf("guardBaseline() migration error = %v", err)
-	}
-
-	// Removing the row from its old denominator is legal once taxonomy moved it.
-	oldPrior := map[string]statementCount{
-		packageName: {Covered: 90, Total: 100},
-		"@total":    {Covered: 90, Total: 100},
-	}
-	oldHead := map[string]statementCount{"@total": {Covered: 90, Total: 100}}
-	if err := guardBaseline(packages, nil, oldHead, oldPrior, nil, classExperimentalTUI); err != nil {
-		t.Fatalf("guardBaseline() rejected old-denominator migration: %v", err)
-	}
-}
-
-func TestLoadMigratedPackageBaselinesAtRevision(t *testing.T) {
-	repository := t.TempDir()
-	runTestGit(t, repository, "init", "--quiet")
-	runTestGit(t, repository, "config", "user.email", "coverage-test@example.invalid")
-	runTestGit(t, repository, "config", "user.name", "coverage test")
-
-	baselineDirectory := filepath.Join(repository, "coverage")
-	if err := os.MkdirAll(baselineDirectory, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	baselines := map[string]string{
-		activeBaselinePath:          "package\tcovered\ttotal\npkg.akt.dev/akt/internal/current\t1\t2\n@total\t1\t2\n",
-		experimentalTUIBaselinePath: "package\tcovered\ttotal\npkg.akt.dev/akt/internal/migrated-tui\t5\t10\n@total\t5\t10\n",
-		toolingBaselinePath:         "package\tcovered\ttotal\npkg.akt.dev/akt/internal/migrated-tool\t7\t8\n@total\t7\t8\n",
-	}
-	for filename, contents := range baselines {
-		if err := os.WriteFile(filepath.Join(repository, filename), []byte(contents), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	runTestGit(t, repository, "add", "coverage")
-	runTestGit(t, repository, "commit", "--quiet", "-m", "test baselines")
-	revision := strings.TrimSpace(runTestGit(t, repository, "rev-parse", "HEAD"))
-
-	t.Chdir(repository)
-	got, err := loadMigratedPackageBaselinesAtRevision(revision, activeBaselinePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := map[string]statementCount{
-		"pkg.akt.dev/akt/internal/migrated-tui":  {Covered: 5, Total: 10},
-		"pkg.akt.dev/akt/internal/migrated-tool": {Covered: 7, Total: 8},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("loadMigratedPackageBaselinesAtRevision() = %#v, want %#v", got, want)
-	}
-
-	const conflict = "package\tcovered\ttotal\npkg.akt.dev/akt/internal/migrated-tui\t6\t10\n@total\t6\t10\n"
-	if err := os.WriteFile(filepath.Join(repository, toolingBaselinePath), []byte(conflict), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runTestGit(t, repository, "add", toolingBaselinePath)
-	runTestGit(t, repository, "commit", "--quiet", "-m", "conflicting baseline")
-	revision = strings.TrimSpace(runTestGit(t, repository, "rev-parse", "HEAD"))
-	_, err = loadMigratedPackageBaselinesAtRevision(revision, activeBaselinePath)
-	if err == nil || !strings.Contains(err.Error(), "conflicting prior baselines") {
-		t.Fatalf("conflicting baselines error = %v", err)
-	}
-}
-
-func TestCompareRatchetRequiresEveryPackageInCheckedInBaseline(t *testing.T) {
-	t.Parallel()
-
-	const packageName = "pkg.akt.dev/akt/internal/new"
-	packages := packageSet{
-		Entries: []packageEntry{{Name: packageName, Class: classActive}},
-		ByName: map[string]packageEntry{
-			packageName: {Name: packageName, Class: classActive},
-		},
-	}
-	current := map[string]statementCount{
-		packageName: {Covered: 10, Total: 10},
-		"@total":    {Covered: 10, Total: 10},
-	}
-	baseline := map[string]statementCount{
-		"@total": {Covered: 10, Total: 10},
-	}
-
-	failures := compareRatchet(packages, current, baseline, classActive)
-	if len(failures) != 1 || failures[0] != "checked-in baseline is missing package: "+packageName {
-		t.Fatalf("compareRatchet() failures = %q", failures)
-	}
-
-	current[packageName] = statementCount{Covered: 1, Total: 10}
-	current["@total"] = statementCount{Covered: 1, Total: 10}
-	delete(baseline, "@total")
-	baseline["pkg.akt.dev/akt/internal/stale"] = statementCount{Covered: 1, Total: 1}
-	joined := strings.Join(compareRatchet(packages, current, baseline, classActive), "\n")
-	for _, want := range []string{
-		"new package " + packageName + " is 10.00%; minimum is 80%",
-		"baseline is missing @total",
-		"baseline has stale package: pkg.akt.dev/akt/internal/stale",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("compareRatchet() failures = %q, want %q", joined, want)
-		}
-	}
-}
-
-func TestCompareRatchetRequiresImprovementsInCheckedInBaseline(t *testing.T) {
-	t.Parallel()
-
-	const packageName = "pkg.akt.dev/akt/internal/example"
-	packages := packageSet{
-		Entries: []packageEntry{{Name: packageName, Class: classActive}},
-		ByName: map[string]packageEntry{
-			packageName: {Name: packageName, Class: classActive},
-		},
-	}
-	baseline := map[string]statementCount{
-		packageName: {Covered: 50, Total: 100},
-		"@total":    {Covered: 50, Total: 100},
-	}
-	improved := map[string]statementCount{
-		packageName: {Covered: 80, Total: 100},
-		"@total":    {Covered: 80, Total: 100},
-	}
-
-	failures := compareRatchet(packages, improved, baseline, classActive)
-	joined := strings.Join(failures, "\n")
-	if !strings.Contains(joined, packageName+" baseline is stale at 50.00%; raise it to the current 80.00%") ||
-		!strings.Contains(joined, "aggregate baseline is stale at 50.00%; raise it to the current 80.00%") {
-		t.Fatalf("compareRatchet() failures = %q, want package and aggregate stale-baseline failures", failures)
-	}
-
-	// Once the improvement is recorded, a later deletion of the tests that
-	// produced it cannot fall back to the old floor.
-	regressed := map[string]statementCount{
-		packageName: {Covered: 50, Total: 100},
-		"@total":    {Covered: 50, Total: 100},
-	}
-	failures = compareRatchet(packages, regressed, improved, classActive)
-	joined = strings.Join(failures, "\n")
-	if !strings.Contains(joined, packageName+" regressed from 80.00% to 50.00%") ||
-		!strings.Contains(joined, "aggregate regressed from 80.00% to 50.00%") {
-		t.Fatalf("second compareRatchet() failures = %q, want recorded-improvement regression", failures)
-	}
-}
-
-func TestCompareRatchetRequiresExactCountsForEquivalentRatios(t *testing.T) {
-	t.Parallel()
-
-	const packageName = "pkg.akt.dev/akt/internal/example"
-	packages := packageSet{Entries: []packageEntry{{Name: packageName, Class: classActive}}}
-	current := map[string]statementCount{
-		packageName: {Covered: 9, Total: 10},
-		"@total":    {Covered: 9, Total: 10},
-	}
-	baseline := map[string]statementCount{
-		packageName: {Covered: 90, Total: 100},
-		"@total":    {Covered: 90, Total: 100},
-	}
-
-	joined := strings.Join(compareRatchet(packages, current, baseline, classActive), "\n")
-	for _, want := range []string{
-		packageName + " baseline counts are stale at 90/100; record the current 9/10",
-		"aggregate baseline counts are stale at 90/100; record the current 9/10",
-	} {
-		if !strings.Contains(joined, want) {
-			t.Fatalf("compareRatchet() failures = %q, want %q", joined, want)
-		}
-	}
-}
-
-func TestRequireCanonicalBaselinePathRejectsRedirects(t *testing.T) {
-	t.Parallel()
-
-	got, err := requireCanonicalBaselinePath(classActive, "./coverage/baseline-active-union.tsv")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != activeBaselinePath {
-		t.Fatalf("canonical path = %q, want %q", got, activeBaselinePath)
-	}
-
-	_, err = requireCanonicalBaselinePath(classActive, "coverage/renamed-baseline.tsv")
-	if err == nil || !strings.Contains(err.Error(), activeBaselinePath) {
-		t.Fatalf("redirected baseline error = %v, want canonical-path rejection", err)
-	}
-
-	got, err = requireCanonicalBaselinePath(classTooling, "./coverage/baseline-tooling-unit.tsv")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != toolingBaselinePath {
-		t.Fatalf("tooling canonical path = %q, want %q", got, toolingBaselinePath)
-	}
-	got, err = requireCanonicalBaselinePath(classExperimentalTUI, "./coverage/baseline-experimental-tui-union.tsv")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got != experimentalTUIBaselinePath {
-		t.Fatalf("experimental TUI canonical path = %q, want %q", got, experimentalTUIBaselinePath)
-	}
-}
-
-func TestLoadBaselineAtRevisionFailsClosedOnGitLookupErrors(t *testing.T) {
-	repository := t.TempDir()
-	runTestGit(t, repository, "init", "--quiet")
-	runTestGit(t, repository, "config", "user.email", "coverage-test@example.invalid")
-	runTestGit(t, repository, "config", "user.name", "coverage test")
-
-	baselineDirectory := filepath.Join(repository, "coverage")
-	if err := os.MkdirAll(baselineDirectory, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	const baseline = "package\tcovered\ttotal\npkg.akt.dev/akt/internal/example\t1\t2\n@total\t1\t2\n"
-	if err := os.WriteFile(filepath.Join(baselineDirectory, "baseline.tsv"), []byte(baseline), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runTestGit(t, repository, "add", "coverage/baseline.tsv")
-	runTestGit(t, repository, "commit", "--quiet", "-m", "test baseline")
-	revision := strings.TrimSpace(runTestGit(t, repository, "rev-parse", "HEAD"))
-
-	t.Chdir(repository)
-	got, exists, err := loadBaselineAtRevision(revision, "coverage/baseline.tsv")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !exists || got["@total"] != (statementCount{Covered: 1, Total: 2}) {
-		t.Fatalf("loadBaselineAtRevision() = (%v, %t), want committed baseline", got, exists)
-	}
-	if _, exists, err := loadBaselineAtRevision(revision, "coverage/absent.tsv"); err != nil || exists {
-		t.Fatalf("absent baseline = (exists %t, error %v), want false and nil", exists, err)
-	}
-	if _, exists, err := loadBaselineAtRevision("missing-ref", "coverage/baseline.tsv"); err == nil || exists || !strings.Contains(err.Error(), "verify base revision") {
-		t.Fatalf("missing revision = (exists %t, error %v), want verification failure", exists, err)
-	}
-
-	if err := os.WriteFile(filepath.Join(baselineDirectory, "baseline.tsv"), []byte("not a baseline\n"), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	runTestGit(t, repository, "add", "coverage/baseline.tsv")
-	runTestGit(t, repository, "commit", "--quiet", "-m", "malformed baseline")
-	malformedRevision := strings.TrimSpace(runTestGit(t, repository, "rev-parse", "HEAD"))
-	if _, exists, err := loadBaselineAtRevision(malformedRevision, "coverage/baseline.tsv"); err == nil || exists || !strings.Contains(err.Error(), "parse") {
-		t.Fatalf("malformed committed baseline = (exists %t, error %v), want parse failure", exists, err)
-	}
-
-	tree := strings.TrimSpace(runTestGit(t, repository, "rev-parse", revision+"^{tree}"))
-	treeObject := filepath.Join(repository, ".git", "objects", tree[:2], tree[2:])
-	if err := os.Remove(treeObject); err != nil {
-		t.Fatal(err)
-	}
-	if _, exists, err := loadBaselineAtRevision(revision, "coverage/baseline.tsv"); err == nil || exists || !strings.Contains(err.Error(), "inspect baseline") {
-		t.Fatalf("corrupt tree = (exists %t, error %v), want fail-closed lookup error", exists, err)
 	}
 }
 

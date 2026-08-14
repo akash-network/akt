@@ -19,7 +19,6 @@ import (
 	"go/token"
 	"io"
 	"math"
-	"math/bits"
 	"os"
 	"os/exec"
 	"path"
@@ -40,10 +39,7 @@ const (
 	classTooling         = "tooling"
 	classSupport         = "support"
 
-	activeBaselinePath          = "coverage/baseline-active-union.tsv"
-	experimentalTUIBaselinePath = "coverage/baseline-experimental-tui-union.tsv"
-	toolingBaselinePath         = "coverage/baseline-tooling-unit.tsv"
-	binaryIdentityFilename      = "binary-identity.tsv"
+	binaryIdentityFilename = "binary-identity.tsv"
 )
 
 type packageEntry struct {
@@ -110,7 +106,7 @@ func main() {
 
 func run(args []string) error {
 	if len(args) == 0 {
-		return errors.New("expected one of: validate, source-manifest, binary-identity, verify-binary-identity, verify-shard, filter, report, baseline, ratchet, patch")
+		return errors.New("expected one of: validate, source-manifest, binary-identity, verify-binary-identity, verify-shard, filter, report, patch")
 	}
 
 	switch args[0] {
@@ -128,10 +124,6 @@ func run(args []string) error {
 		return runFilter(args[1:])
 	case "report":
 		return runReport(args[1:])
-	case "baseline":
-		return runBaseline(args[1:])
-	case "ratchet":
-		return runRatchet(args[1:])
 	case "patch":
 		return runPatch(args[1:])
 	default:
@@ -1249,6 +1241,7 @@ func runReport(args []string) error {
 	profileFile := fs.String("profile", "", "input Go coverage profile")
 	packagesFile := fs.String("packages", "coverage/packages.tsv", "package taxonomy")
 	class := fs.String("class", "repository", "repository, active, experimental-tui, or tooling")
+	requireComplete := fs.Bool("require-complete", false, "reject Go-cover-instrumentable classified source files missing from the profile")
 	outFile := fs.String("out", "", "TSV report path; stdout when empty")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -1267,132 +1260,12 @@ func runReport(args []string) error {
 	if err != nil {
 		return err
 	}
-	return writeCounts(*outFile, packages, counts, *class, true)
-}
-
-func runBaseline(args []string) error {
-	fs := flag.NewFlagSet("baseline", flag.ContinueOnError)
-	profileFile := fs.String("profile", "", "input Go coverage profile")
-	packagesFile := fs.String("packages", "coverage/packages.tsv", "package taxonomy")
-	class := fs.String("class", "active", "active, experimental-tui, or tooling")
-	outFile := fs.String("out", "", "baseline path; stdout when empty")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *profileFile == "" {
-		return errors.New("baseline requires -profile")
-	}
-	packages, profile, err := loadInputs(*packagesFile, *profileFile)
-	if err != nil {
-		return err
-	}
-	if *class != classActive && *class != classExperimentalTUI && *class != classTooling {
-		return errors.New("baseline class must be active, experimental-tui, or tooling")
-	}
-	counts, err := countStatements(packages, profile, *class)
-	if err != nil {
-		return err
-	}
-	return writeCounts(*outFile, packages, counts, *class, false)
-}
-
-func runRatchet(args []string) error {
-	fs := flag.NewFlagSet("ratchet", flag.ContinueOnError)
-	profileFile := fs.String("profile", "", "input Go coverage profile")
-	packagesFile := fs.String("packages", "coverage/packages.tsv", "package taxonomy")
-	class := fs.String("class", "active", "active, experimental-tui, or tooling")
-	baselineFile := fs.String("baseline", "", "checked-in baseline TSV")
-	base := fs.String("base", "", "base Git revision used to prevent baseline weakening")
-	if err := fs.Parse(args); err != nil {
-		return err
-	}
-	if *profileFile == "" || *baselineFile == "" {
-		return errors.New("ratchet requires -profile and -baseline")
-	}
-	packages, profile, err := loadInputs(*packagesFile, *profileFile)
-	if err != nil {
-		return err
-	}
-	if *class != classActive && *class != classExperimentalTUI && *class != classTooling {
-		return errors.New("ratchet class must be active, experimental-tui, or tooling")
-	}
-	canonicalBaseline, err := requireCanonicalBaselinePath(*class, *baselineFile)
-	if err != nil {
-		return err
-	}
-	current, err := countStatements(packages, profile, *class)
-	if err != nil {
-		return err
-	}
-	baseline, err := loadBaseline(canonicalBaseline)
-	if err != nil {
-		return err
-	}
-	if *base != "" {
-		if strings.HasPrefix(*base, "-") {
-			return errors.New("base Git revision may not start with '-'")
-		}
-		resolvedBase, err := resolveGitCommit(*base)
-		if err != nil {
+	if *requireComplete {
+		if err := validateCompleteProfile(packages, profile, *class, "."); err != nil {
 			return err
 		}
-		prior, exists, err := loadBaselineAtRevision(resolvedBase, canonicalBaseline)
-		if err != nil {
-			return err
-		}
-		if exists {
-			migrationPrior, err := loadMigratedPackageBaselinesAtRevision(resolvedBase, canonicalBaseline)
-			if err != nil {
-				return err
-			}
-			if err := guardBaseline(packages, current, baseline, prior, migrationPrior, *class); err != nil {
-				return err
-			}
-		} else {
-			legacyPackages, err := sourcePackagesAtRevision(resolvedBase, packages.Module)
-			if err != nil {
-				return err
-			}
-			if err := guardInitialBaseline(packages, current, legacyPackages, *class); err != nil {
-				return err
-			}
-			fmt.Printf("%s coverage ratchet: base has no baseline (one-time bootstrap)\n", *class)
-		}
 	}
-
-	gotTotal := current["@total"]
-	failures := compareRatchet(packages, current, baseline, *class)
-	sort.Strings(failures)
-	if len(failures) > 0 {
-		return errors.New(strings.Join(failures, "\n"))
-	}
-	fmt.Printf("%s coverage ratchet: %s, no package regressed\n", *class, percent(gotTotal))
-	return nil
-}
-
-func guardInitialBaseline(packages packageSet, current map[string]statementCount, legacyPackages map[string]bool, class string) error {
-	var failures []string
-	for _, entry := range packages.Entries {
-		if !classIncludes(class, entry.Class) {
-			continue
-		}
-		if legacyPackages[entry.Name] {
-			continue
-		}
-		minimum, enforced := packageEntryFloor(class, entry)
-		if !enforced {
-			continue
-		}
-		got := current[entry.Name]
-		if belowPercentFloor(got, minimum) {
-			failures = append(failures, fmt.Sprintf("initial package %s is %s; minimum is %d%%", entry.Name, percent(got), minimum))
-		}
-	}
-	sort.Strings(failures)
-	if len(failures) > 0 {
-		return errors.New(strings.Join(failures, "\n"))
-	}
-	return nil
+	return writeCounts(*outFile, packages, counts, *class)
 }
 
 func runPatch(args []string) error {
@@ -1430,7 +1303,7 @@ func runPatch(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := validateActiveProfile(packages, profile); err != nil {
+	if err := validateActiveProfile(packages, profile, "."); err != nil {
 		return err
 	}
 	changed, err := changedGoLines(*base, *head)
@@ -1449,7 +1322,7 @@ func runPatch(args []string) error {
 	return nil
 }
 
-func validateActiveProfile(packages packageSet, profile coverProfile) error {
+func validateActiveProfile(packages packageSet, profile coverProfile, sourceRoot string) error {
 	activeCounts, err := countStatements(packages, profile, classActive)
 	if err != nil {
 		return err
@@ -1457,16 +1330,97 @@ func validateActiveProfile(packages packageSet, profile coverProfile) error {
 	if activeCounts["@total"].Total == 0 {
 		return errors.New("active coverage profile contains no executable statements")
 	}
+	return validateCompleteProfile(packages, profile, classActive, sourceRoot)
+}
+
+func validateCompleteProfile(packages packageSet, profile coverProfile, class, sourceRoot string) error {
+	profileFiles := make(map[string]bool)
+	for _, block := range profile.Blocks {
+		entry, ok := packageForProfileFile(packages, block.File)
+		if !ok || !classIncludes(class, entry.Class) {
+			continue
+		}
+		relative, err := profileFileRelative(packages.Module, block.File)
+		if err != nil {
+			return err
+		}
+		profileFiles[relative] = true
+	}
+
 	var missing []string
 	for _, entry := range packages.Entries {
-		if entry.Class == classActive && activeCounts[entry.Name].Total == 0 {
-			missing = append(missing, entry.Name)
+		if !classIncludes(class, entry.Class) {
+			continue
+		}
+		sourceFiles, err := packageSourceFiles(sourceRoot, packages.Module, entry.Name)
+		if err != nil {
+			return err
+		}
+		for _, filename := range sourceFiles {
+			if profileFiles[filename] {
+				continue
+			}
+			hasStatements, err := fileHasCoverageStatements(sourceRoot, filename)
+			if err != nil {
+				return err
+			}
+			if hasStatements {
+				missing = append(missing, path.Join(packages.Module, filename))
+			}
 		}
 	}
 	if len(missing) > 0 {
-		return fmt.Errorf("active coverage profile contains no statements for classified packages:\n%s", strings.Join(missing, "\n"))
+		sort.Strings(missing)
+		return fmt.Errorf(
+			"coverage profile omits Go-cover-instrumentable classified source files:\n%s",
+			strings.Join(missing, "\n"),
+		)
 	}
 	return nil
+}
+
+func packageSourceFiles(root, module, packageName string) ([]string, error) {
+	relative := "."
+	if packageName != module {
+		prefix := module + "/"
+		if !strings.HasPrefix(packageName, prefix) {
+			return nil, fmt.Errorf("classified package %q is outside module %q", packageName, module)
+		}
+		relative = strings.TrimPrefix(packageName, prefix)
+	}
+	clean := path.Clean(relative)
+	if clean != relative || path.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
+		return nil, fmt.Errorf("classified package %q has unsafe source path %q", packageName, relative)
+	}
+	directory := filepath.Join(root, filepath.FromSlash(clean))
+	info, err := os.Lstat(directory)
+	if err != nil {
+		return nil, fmt.Errorf("inspect classified package %s: %w", packageName, err)
+	}
+	if !info.IsDir() {
+		return nil, fmt.Errorf("classified package %s source path is not a directory", packageName)
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return nil, fmt.Errorf("read classified package %s: %w", packageName, err)
+	}
+	var sourceFiles []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") ||
+			strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") {
+			continue
+		}
+		filename := name
+		if clean != "." {
+			filename = path.Join(clean, name)
+		}
+		if _, _, err := fileSyntax(root, filename, false); err != nil {
+			return nil, err
+		}
+		sourceFiles = append(sourceFiles, filename)
+	}
+	return sourceFiles, nil
 }
 
 func uncoveredChangedActiveLines(
@@ -1518,11 +1472,27 @@ func uncoveredChangedActiveLines(
 		}
 		blocks := blocksByFile[file]
 		if len(blocks) == 0 {
-			hasStatements, err := fileHasExecutableStatements(sourceRoot, file)
+			executableLines, _, err := fileExecutableSyntax(sourceRoot, file)
 			if err != nil {
 				return nil, 0, 0, err
 			}
-			if hasStatements {
+			matchedChangedLine := false
+			for line := range lines {
+				if !executableLines[line] {
+					continue
+				}
+				matchedChangedLine = true
+				checked++
+				if _, ok := exceptions[exceptionKey(pkgName, file, line)]; ok {
+					exempted++
+					continue
+				}
+				uncovered = append(uncovered, fmt.Sprintf(
+					"%s:%d (%s: executable syntax is absent from the coverage profile)",
+					file, line, pkgName,
+				))
+			}
+			if !matchedChangedLine && len(executableLines) > 0 {
 				uncovered = append(uncovered, fmt.Sprintf(
 					"%s (%s: active source contains executable statements but is absent from the coverage profile)",
 					file, pkgName,
@@ -1584,6 +1554,10 @@ func fileExecutableLines(root, filename string) (map[int]bool, error) {
 }
 
 func fileExecutableSyntax(root, filename string) (map[int]bool, []sourceRegion, error) {
+	return fileSyntax(root, filename, true)
+}
+
+func fileSyntax(root, filename string, includePackageInitializers bool) (map[int]bool, []sourceRegion, error) {
 	clean := path.Clean(filename)
 	if clean != filename || path.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
 		return nil, nil, fmt.Errorf("changed file has unsafe path %q", filename)
@@ -1637,18 +1611,20 @@ func fileExecutableSyntax(root, filename string) (map[int]bool, []sourceRegion, 
 		}
 		return true
 	})
-	for _, declaration := range parsed.Decls {
-		general, ok := declaration.(*ast.GenDecl)
-		if !ok || general.Tok != token.VAR {
-			continue
-		}
-		for _, spec := range general.Specs {
-			valueSpec, ok := spec.(*ast.ValueSpec)
-			if !ok {
+	if includePackageInitializers {
+		for _, declaration := range parsed.Decls {
+			general, ok := declaration.(*ast.GenDecl)
+			if !ok || general.Tok != token.VAR {
 				continue
 			}
-			for _, value := range valueSpec.Values {
-				mark(value, false)
+			for _, spec := range general.Specs {
+				valueSpec, ok := spec.(*ast.ValueSpec)
+				if !ok {
+					continue
+				}
+				for _, value := range valueSpec.Values {
+					mark(value, false)
+				}
 			}
 		}
 	}
@@ -1736,6 +1712,119 @@ func fileHasExecutableStatements(root, filename string) (bool, error) {
 		return false, err
 	}
 	return len(lines) > 0, nil
+}
+
+func fileHasCoverageStatements(root, filename string) (bool, error) {
+	if _, _, err := fileSyntax(root, filename, false); err != nil {
+		return false, err
+	}
+
+	output, err := os.CreateTemp("", "akt-cover-completeness-*.go")
+	if err != nil {
+		return false, fmt.Errorf("create coverage instrumenter output for %s: %w", filename, err)
+	}
+	outputName := output.Name()
+	if err := output.Close(); err != nil {
+		_ = os.Remove(outputName)
+		return false, fmt.Errorf("close coverage instrumenter output for %s: %w", filename, err)
+	}
+	defer func() {
+		_ = os.Remove(outputName)
+	}()
+
+	sourcePath := filepath.Join(root, filepath.FromSlash(path.Clean(filename)))
+	const coverageVariable = "AktCoverageCompleteness"
+	command := exec.Command(
+		"go", "tool", "cover",
+		"-mode=atomic",
+		"-var="+coverageVariable,
+		"-o", outputName,
+		sourcePath,
+	)
+	command.Env = replaceEnv(os.Environ(), "GOWORK", "off")
+	if commandOutput, commandErr := command.CombinedOutput(); commandErr != nil {
+		detail := strings.TrimSpace(string(commandOutput))
+		if detail == "" {
+			detail = commandErr.Error()
+		}
+		return false, fmt.Errorf("instrument coverage source %s: %s", filename, detail)
+	}
+
+	fileSet := token.NewFileSet()
+	instrumented, err := parser.ParseFile(fileSet, outputName, nil, parser.SkipObjectResolution)
+	if err != nil {
+		return false, fmt.Errorf("parse instrumented coverage source %s: %w", filename, err)
+	}
+	foundVariable := false
+	foundWeights := false
+	for _, declaration := range instrumented.Decls {
+		general, ok := declaration.(*ast.GenDecl)
+		if !ok || general.Tok != token.VAR {
+			continue
+		}
+		for _, specification := range general.Specs {
+			valueSpec, ok := specification.(*ast.ValueSpec)
+			if !ok {
+				continue
+			}
+			for nameIndex, name := range valueSpec.Names {
+				if name.Name != coverageVariable {
+					continue
+				}
+				foundVariable = true
+				valueIndex := nameIndex
+				if len(valueSpec.Values) == 1 {
+					valueIndex = 0
+				}
+				if valueIndex >= len(valueSpec.Values) {
+					return false, fmt.Errorf("instrumented coverage source %s has no %s value", filename, coverageVariable)
+				}
+				coverageValue, ok := valueSpec.Values[valueIndex].(*ast.CompositeLit)
+				if !ok {
+					return false, fmt.Errorf("instrumented coverage source %s has malformed %s value", filename, coverageVariable)
+				}
+				for _, element := range coverageValue.Elts {
+					keyValue, ok := element.(*ast.KeyValueExpr)
+					if !ok {
+						continue
+					}
+					key, ok := keyValue.Key.(*ast.Ident)
+					if !ok || key.Name != "NumStmt" {
+						continue
+					}
+					foundWeights = true
+					weights, ok := keyValue.Value.(*ast.CompositeLit)
+					if !ok {
+						return false, fmt.Errorf("instrumented coverage source %s has malformed NumStmt weights", filename)
+					}
+					for _, element := range weights.Elts {
+						value := element
+						if keyed, ok := element.(*ast.KeyValueExpr); ok {
+							value = keyed.Value
+						}
+						literal, ok := value.(*ast.BasicLit)
+						if !ok || literal.Kind != token.INT {
+							return false, fmt.Errorf("instrumented coverage source %s has a non-integer NumStmt weight", filename)
+						}
+						weight, err := strconv.ParseUint(literal.Value, 0, 16)
+						if err != nil {
+							return false, fmt.Errorf("parse instrumented coverage source %s NumStmt weight %q: %w", filename, literal.Value, err)
+						}
+						if weight > 0 {
+							return true, nil
+						}
+					}
+				}
+			}
+		}
+	}
+	if !foundVariable {
+		return false, fmt.Errorf("instrumented coverage source %s is missing %s", filename, coverageVariable)
+	}
+	if !foundWeights {
+		return false, fmt.Errorf("instrumented coverage source %s is missing NumStmt weights", filename)
+	}
+	return false, nil
 }
 
 func loadInputs(packagesFile, profileFile string) (packageSet, coverProfile, error) {
@@ -1985,21 +2074,17 @@ func countStatements(packages packageSet, profile coverProfile, class string) (m
 	return counts, nil
 }
 
-func writeCounts(filename string, packages packageSet, counts map[string]statementCount, class string, withPercent bool) error {
+func writeCounts(filename string, packages packageSet, counts map[string]statementCount, class string) error {
 	var output strings.Builder
-	if withPercent {
-		fmt.Fprintln(&output, "package\tcovered\ttotal\tpercent")
-	} else {
-		fmt.Fprintln(&output, "package\tcovered\ttotal")
-	}
+	fmt.Fprintln(&output, "package\tcovered\ttotal\tpercent")
 	for _, entry := range packages.Entries {
 		if !classIncludes(class, entry.Class) {
 			continue
 		}
 		count := counts[entry.Name]
-		writeCount(&output, entry.Name, count, withPercent)
+		writeCount(&output, entry.Name, count)
 	}
-	writeCount(&output, "@total", counts["@total"], withPercent)
+	writeCount(&output, "@total", counts["@total"])
 	if filename == "" {
 		fmt.Print(output.String())
 		return nil
@@ -2010,328 +2095,8 @@ func writeCounts(filename string, packages packageSet, counts map[string]stateme
 	return nil
 }
 
-func writeCount(writer *strings.Builder, name string, count statementCount, withPercent bool) {
-	if withPercent {
-		fmt.Fprintf(writer, "%s\t%d\t%d\t%s\n", name, count.Covered, count.Total, percent(count))
-		return
-	}
-	fmt.Fprintf(writer, "%s\t%d\t%d\n", name, count.Covered, count.Total)
-}
-
-func loadBaseline(filename string) (map[string]statementCount, error) {
-	file, err := os.Open(filename)
-	if err != nil {
-		return nil, fmt.Errorf("open baseline: %w", err)
-	}
-	defer func() { _ = file.Close() }()
-	return parseBaseline(file)
-}
-
-func requireCanonicalBaselinePath(class, filename string) (string, error) {
-	var canonical string
-	switch class {
-	case classActive:
-		canonical = activeBaselinePath
-	case classExperimentalTUI:
-		canonical = experimentalTUIBaselinePath
-	case classTooling:
-		canonical = toolingBaselinePath
-	default:
-		return "", fmt.Errorf("unknown baseline class %q", class)
-	}
-
-	clean := filepath.ToSlash(filepath.Clean(filename))
-	if clean != canonical {
-		return "", fmt.Errorf("%s ratchet baseline must use canonical path %q, got %q", class, canonical, filename)
-	}
-	return canonical, nil
-}
-
-func parseBaseline(reader io.Reader) (map[string]statementCount, error) {
-	records, err := readTSV(reader)
-	if err != nil {
-		return nil, err
-	}
-	if len(records) == 0 || !equalStrings(records[0], []string{"package", "covered", "total"}) {
-		return nil, errors.New("baseline header must be: package, covered, total")
-	}
-	result := make(map[string]statementCount)
-	for row, record := range records[1:] {
-		if len(record) != 3 {
-			return nil, fmt.Errorf("baseline row %d: expected 3 fields", row+2)
-		}
-		covered, err := strconv.ParseInt(record[1], 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("baseline row %d covered: %w", row+2, err)
-		}
-		total, err := strconv.ParseInt(record[2], 10, 64)
-		if err != nil {
-			return nil, fmt.Errorf("baseline row %d total: %w", row+2, err)
-		}
-		if covered < 0 || total < 0 || covered > total {
-			return nil, fmt.Errorf("baseline row %d has impossible counts", row+2)
-		}
-		if _, exists := result[record[0]]; exists {
-			return nil, fmt.Errorf("baseline has duplicate package %q", record[0])
-		}
-		result[record[0]] = statementCount{Covered: covered, Total: total}
-	}
-	return result, nil
-}
-
-func loadBaselineAtRevision(revision, filename string) (map[string]statementCount, bool, error) {
-	resolvedRevision, err := resolveGitCommit(revision)
-	if err != nil {
-		return nil, false, err
-	}
-	cleanFilename := path.Clean(filename)
-	listed := exec.Command("git", "ls-tree", "-z", "--full-tree", resolvedRevision, "--", cleanFilename)
-	listing, err := listed.CombinedOutput()
-	if err != nil {
-		return nil, false, fmt.Errorf(
-			"inspect baseline %s at revision %q: %s",
-			cleanFilename,
-			resolvedRevision,
-			strings.TrimSpace(string(listing)),
-		)
-	}
-	if len(listing) == 0 {
-		return nil, false, nil
-	}
-	object := resolvedRevision + ":" + cleanFilename
-	show := exec.Command("git", "show", object)
-	output, err := show.CombinedOutput()
-	if err != nil {
-		return nil, false, fmt.Errorf("read %s: %s", object, strings.TrimSpace(string(output)))
-	}
-	baseline, err := parseBaseline(strings.NewReader(string(output)))
-	if err != nil {
-		return nil, false, fmt.Errorf("parse %s: %w", object, err)
-	}
-	return baseline, true, nil
-}
-
-func resolveGitCommit(revision string) (string, error) {
-	verify := exec.Command("git", "rev-parse", "--verify", revision+"^{commit}")
-	output, err := verify.CombinedOutput()
-	if err != nil {
-		return "", fmt.Errorf("verify base revision %q: %s", revision, strings.TrimSpace(string(output)))
-	}
-	resolved := strings.TrimSpace(string(output))
-	valid, err := regexp.MatchString(`^[0-9a-f]{40}([0-9a-f]{24})?$`, resolved)
-	if err != nil {
-		return "", err
-	}
-	if !valid {
-		return "", fmt.Errorf("verify base revision %q returned malformed object ID %q", revision, resolved)
-	}
-	return resolved, nil
-}
-
-func loadMigratedPackageBaselinesAtRevision(revision, currentBaseline string) (map[string]statementCount, error) {
-	result := make(map[string]statementCount)
-	for _, filename := range []string{activeBaselinePath, experimentalTUIBaselinePath, toolingBaselinePath} {
-		if filename == currentBaseline {
-			continue
-		}
-		baseline, exists, err := loadBaselineAtRevision(revision, filename)
-		if err != nil {
-			return nil, err
-		}
-		if !exists {
-			continue
-		}
-		for name, count := range baseline {
-			if name == "@total" {
-				continue
-			}
-			if prior, duplicate := result[name]; duplicate && prior != count {
-				return nil, fmt.Errorf("package %s has conflicting prior baselines across denominators", name)
-			}
-			result[name] = count
-		}
-	}
-	return result, nil
-}
-
-func sourcePackagesAtRevision(revision, module string) (map[string]bool, error) {
-	root, err := moduleRoot()
-	if err != nil {
-		return nil, err
-	}
-	cmd := exec.Command("git", "ls-tree", "-rz", "--name-only", revision, "--")
-	cmd.Dir = root
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		return nil, fmt.Errorf(
-			"inspect source packages at revision %q: %s",
-			revision,
-			strings.TrimSpace(string(output)),
-		)
-	}
-	return sourcePackagesFromTree(module, output)
-}
-
-func sourcePackagesFromTree(module string, tree []byte) (map[string]bool, error) {
-	if strings.TrimSpace(module) == "" || strings.ContainsAny(module, "\t\r\n ") {
-		return nil, errors.New("module name is empty or malformed")
-	}
-	paths := make([]string, 0, bytes.Count(tree, []byte{0}))
-	for _, rawName := range bytes.Split(tree, []byte{0}) {
-		if len(rawName) == 0 {
-			continue
-		}
-		filename := filepath.ToSlash(string(rawName))
-		clean := path.Clean(filename)
-		if clean != filename || path.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, "../") {
-			return nil, fmt.Errorf("source package tree contains unsafe path %q", filename)
-		}
-		paths = append(paths, clean)
-	}
-	nestedModules := make(map[string]bool)
-	for _, filename := range paths {
-		if path.Base(filename) == "go.mod" && path.Dir(filename) != "." {
-			nestedModules[path.Dir(filename)] = true
-		}
-	}
-	result := make(map[string]bool)
-	for _, filename := range paths {
-		if path.Ext(filename) != ".go" || strings.HasSuffix(filename, "_test.go") || ignoredSourceTreePath(filename, nestedModules) {
-			continue
-		}
-		directory := path.Dir(filename)
-		packageName := module
-		if directory != "." {
-			packageName += "/" + directory
-		}
-		result[packageName] = true
-	}
-	return result, nil
-}
-
-func ignoredSourceTreePath(filename string, nestedModules map[string]bool) bool {
-	directory := path.Dir(filename)
-	for current := directory; current != "."; current = path.Dir(current) {
-		if nestedModules[current] {
-			return true
-		}
-		name := path.Base(current)
-		if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") || name == "testdata" || name == "vendor" {
-			return true
-		}
-	}
-	name := path.Base(filename)
-	return strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_")
-}
-
-func packageEntryFloor(class string, entry packageEntry) (int64, bool) {
-	if class == classTooling || entry.Class == classTooling {
-		return 0, false
-	}
-	if entry.Critical {
-		return 95, true
-	}
-	return 80, true
-}
-
-func guardBaseline(
-	packages packageSet,
-	current map[string]statementCount,
-	head map[string]statementCount,
-	prior map[string]statementCount,
-	migrationPrior map[string]statementCount,
-	class string,
-) error {
-	var failures []string
-	for name, oldCount := range prior {
-		newCount, exists := head[name]
-		if !exists {
-			if name != "@total" {
-				entry, stillClassified := packages.ByName[name]
-				if !stillClassified || !classIncludes(class, entry.Class) {
-					continue
-				}
-			}
-			failures = append(failures, "baseline removed protected entry: "+name)
-			continue
-		}
-		if ratioLess(newCount, oldCount) {
-			failures = append(failures, fmt.Sprintf("baseline for %s was lowered from %s to %s", name, percent(oldCount), percent(newCount)))
-		}
-	}
-	for name := range head {
-		if name == "@total" {
-			continue
-		}
-		if _, existed := prior[name]; existed {
-			continue
-		}
-		entry, ok := packages.ByName[name]
-		if !ok || !classIncludes(class, entry.Class) {
-			continue
-		}
-		minimum, enforced := packageEntryFloor(class, entry)
-		got := current[name]
-		if enforced && belowPercentFloor(got, minimum) {
-			failures = append(failures, fmt.Sprintf("new package %s is %s; minimum is %d%%", name, percent(got), minimum))
-		}
-		if oldCount, migrated := migrationPrior[name]; migrated && ratioLess(head[name], oldCount) {
-			failures = append(failures, fmt.Sprintf("baseline for migrated package %s was lowered from %s to %s", name, percent(oldCount), percent(head[name])))
-		}
-	}
-	sort.Strings(failures)
-	if len(failures) > 0 {
-		return errors.New(strings.Join(failures, "\n"))
-	}
-	return nil
-}
-
-func compareRatchet(packages packageSet, current, baseline map[string]statementCount, class string) []string {
-	remaining := make(map[string]statementCount, len(baseline))
-	for name, count := range baseline {
-		remaining[name] = count
-	}
-	var failures []string
-	for _, entry := range packages.Entries {
-		if !classIncludes(class, entry.Class) {
-			continue
-		}
-		got := current[entry.Name]
-		want, exists := remaining[entry.Name]
-		if !exists {
-			failures = append(failures, "checked-in baseline is missing package: "+entry.Name)
-			minimum, enforced := packageEntryFloor(class, entry)
-			if enforced && belowPercentFloor(got, minimum) {
-				failures = append(failures, fmt.Sprintf("new package %s is %s; minimum is %d%%", entry.Name, percent(got), minimum))
-			}
-			continue
-		}
-		if ratioLess(got, want) {
-			failures = append(failures, fmt.Sprintf("%s regressed from %s to %s", entry.Name, percent(want), percent(got)))
-		} else if ratioLess(want, got) {
-			failures = append(failures, fmt.Sprintf("%s baseline is stale at %s; raise it to the current %s", entry.Name, percent(want), percent(got)))
-		} else if got != want {
-			failures = append(failures, fmt.Sprintf("%s baseline counts are stale at %d/%d; record the current %d/%d", entry.Name, want.Covered, want.Total, got.Covered, got.Total))
-		}
-		delete(remaining, entry.Name)
-	}
-	gotTotal := current["@total"]
-	if wantTotal, ok := remaining["@total"]; !ok {
-		failures = append(failures, "baseline is missing @total")
-	} else {
-		if ratioLess(gotTotal, wantTotal) {
-			failures = append(failures, fmt.Sprintf("aggregate regressed from %s to %s", percent(wantTotal), percent(gotTotal)))
-		} else if ratioLess(wantTotal, gotTotal) {
-			failures = append(failures, fmt.Sprintf("aggregate baseline is stale at %s; raise it to the current %s", percent(wantTotal), percent(gotTotal)))
-		} else if gotTotal != wantTotal {
-			failures = append(failures, fmt.Sprintf("aggregate baseline counts are stale at %d/%d; record the current %d/%d", wantTotal.Covered, wantTotal.Total, gotTotal.Covered, gotTotal.Total))
-		}
-		delete(remaining, "@total")
-	}
-	for stale := range remaining {
-		failures = append(failures, "baseline has stale package: "+stale)
-	}
-	return failures
+func writeCount(writer *strings.Builder, name string, count statementCount) {
+	fmt.Fprintf(writer, "%s\t%d\t%d\t%s\n", name, count.Covered, count.Total, percent(count))
 }
 
 func loadExceptions(filename string, packages packageSet) (map[string]exception, error) {
@@ -2566,25 +2331,6 @@ func validateClass(class string) error {
 		return fmt.Errorf("invalid coverage class %q", class)
 	}
 	return nil
-}
-
-func ratioLess(got, want statementCount) bool {
-	if want.Total == 0 {
-		return got.Total > 0 && got.Covered != got.Total
-	}
-	if got.Total == 0 {
-		return true
-	}
-	gotHigh, gotLow := bits.Mul64(uint64(got.Covered), uint64(want.Total))
-	wantHigh, wantLow := bits.Mul64(uint64(want.Covered), uint64(got.Total))
-	if gotHigh != wantHigh {
-		return gotHigh < wantHigh
-	}
-	return gotLow < wantLow
-}
-
-func belowPercentFloor(got statementCount, minimum int64) bool {
-	return ratioLess(got, statementCount{Covered: minimum, Total: 100})
 }
 
 func percent(count statementCount) string {

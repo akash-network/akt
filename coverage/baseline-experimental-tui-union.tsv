@@ -1,8 +1,0 @@
-package	covered	total
-pkg.akt.dev/akt/internal/tui	188	565
-pkg.akt.dev/akt/internal/tui/commands	38	40
-pkg.akt.dev/akt/internal/tui/data	8	79
-pkg.akt.dev/akt/internal/tui/keys	4	14
-pkg.akt.dev/akt/internal/tui/messages	0	0
-pkg.akt.dev/akt/internal/tui/views	848	1365
-@total	1086	2063

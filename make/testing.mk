@@ -1,8 +1,9 @@
 # Coverage collection for SPEC.md section 12.
 #
 # coverage/packages.tsv is the denominator contract. Unit tests instrument the
-# entire repository package set in one invocation, while E2E jobs execute an
-# instrumented akt binary and write subprocess counters to their own shard.
+# entire measured repository set (all non-support classes) in one invocation,
+# while E2E jobs execute an instrumented akt binary and write subprocess
+# counters to their own shard.
 # Raw covdata is merged before any percentage is calculated: percentages from
 # separate jobs are never averaged.
 
@@ -39,10 +40,6 @@ COVERAGE_LIVE_PROFILE       := $(COVERAGE_REPORT_ROOT)/live.out
 COVERAGE_LIVE_ACTIVE_PROFILE := $(COVERAGE_REPORT_ROOT)/live-active.out
 COVERAGE_E2E_PROFILE        := $(COVERAGE_REPORT_ROOT)/e2e.out
 COVERAGE_UNION_LIVE_PROFILE := $(COVERAGE_REPORT_ROOT)/active-union-live.out
-COVERAGE_ACTIVE_BASELINE    := coverage/baseline-active-union.tsv
-COVERAGE_TUI_BASELINE       := coverage/baseline-experimental-tui-union.tsv
-COVERAGE_TOOLING_BASELINE   := coverage/baseline-tooling-unit.tsv
-
 COVERAGE_TEST_PACKAGES       := $(shell awk -F '\t' 'NR > 1 { print $$1 }' $(COVERAGE_PACKAGES_FILE))
 COVERAGE_REPOSITORY_PACKAGES := $(shell awk -F '\t' 'NR > 1 && $$2 != "support" { print $$1 }' $(COVERAGE_PACKAGES_FILE))
 COVERAGE_ACTIVE_PACKAGES     := $(shell awk -F '\t' 'NR > 1 && $$2 == "active" { print $$1 }' $(COVERAGE_PACKAGES_FILE))
@@ -88,9 +85,6 @@ test-coverage-unit: test-coverage-validate
 	$(COVERAGE_TOOL) report -packages $(COVERAGE_PACKAGES_FILE) \
 		-profile $(COVERAGE_TOOLING_PROFILE) -class tooling \
 		-out $(COVERAGE_REPORT_ROOT)/tooling-unit.tsv
-	$(COVERAGE_TOOL) ratchet -packages $(COVERAGE_PACKAGES_FILE) \
-		-profile $(COVERAGE_TOOLING_PROFILE) -class tooling \
-		-baseline $(COVERAGE_TOOLING_BASELINE) -base "$(BASE_REF)"
 	@tail -1 $(COVERAGE_REPORT_ROOT)/unit.tsv
 	@tail -1 $(COVERAGE_REPORT_ROOT)/tooling-unit.tsv
 
@@ -209,15 +203,19 @@ test-coverage-report: test-coverage-validate
 		-out $(COVERAGE_TUI_PROFILE)
 	$(COVERAGE_TOOL) report -packages $(COVERAGE_PACKAGES_FILE) \
 		-profile $(COVERAGE_REPOSITORY_PROFILE) -class repository \
+		-require-complete \
 		-out $(COVERAGE_REPORT_ROOT)/repository-union.tsv
 	$(COVERAGE_TOOL) report -packages $(COVERAGE_PACKAGES_FILE) \
 		-profile $(COVERAGE_ACTIVE_PROFILE) -class active \
+		-require-complete \
 		-out $(COVERAGE_REPORT_ROOT)/active-union.tsv
 	$(COVERAGE_TOOL) report -packages $(COVERAGE_PACKAGES_FILE) \
 		-profile $(COVERAGE_TUI_PROFILE) -class experimental-tui \
+		-require-complete \
 		-out $(COVERAGE_REPORT_ROOT)/experimental-tui-union.tsv
 	$(COVERAGE_TOOL) report -packages $(COVERAGE_PACKAGES_FILE) \
 		-profile $(COVERAGE_TOOLING_PROFILE) -class tooling \
+		-require-complete \
 		-out $(COVERAGE_REPORT_ROOT)/tooling-unit.tsv
 	$(GO) tool cover -func=$(COVERAGE_ACTIVE_PROFILE) > $(COVERAGE_REPORT_ROOT)/active-union-func.txt
 	$(GO) tool cover -html=$(COVERAGE_ACTIVE_PROFILE) -o $(COVERAGE_REPORT_ROOT)/active-union.html
@@ -225,11 +223,10 @@ test-coverage-report: test-coverage-validate
 	@echo "active union:          $$(tail -1 $(COVERAGE_REPORT_ROOT)/active-union.tsv)"
 	@echo "experimental TUI union:$$(tail -1 $(COVERAGE_REPORT_ROOT)/experimental-tui-union.tsv)"
 	@echo "tooling unit:          $$(tail -1 $(COVERAGE_REPORT_ROOT)/tooling-unit.tsv)"
-	$(MAKE) test-coverage-ratchet
 
 # Merge a successful externally hosted Console shard into a separate
-# informational profile. This never changes the blocking active union or its
-# ratchets; external availability cannot hide a hermetic coverage gap.
+# informational profile. This never changes the blocking active union or the
+# changed-line gate; external availability cannot hide a hermetic coverage gap.
 .PHONY: test-coverage-live-report
 test-coverage-live-report: test-coverage-report
 	mkdir -p $(COVERAGE_REPORT_ROOT)
@@ -262,18 +259,6 @@ test-coverage-live-report: test-coverage-report
 	@echo "live active:        $$(tail -1 $(COVERAGE_REPORT_ROOT)/live-active.tsv)"
 	@echo "active union + live:$$(tail -1 $(COVERAGE_REPORT_ROOT)/active-union-live.tsv)"
 
-.PHONY: test-coverage-ratchet
-test-coverage-ratchet:
-	$(COVERAGE_TOOL) ratchet -packages $(COVERAGE_PACKAGES_FILE) \
-		-profile $(COVERAGE_ACTIVE_PROFILE) -class active \
-		-baseline $(COVERAGE_ACTIVE_BASELINE) -base "$(BASE_REF)"
-	$(COVERAGE_TOOL) ratchet -packages $(COVERAGE_PACKAGES_FILE) \
-		-profile $(COVERAGE_TUI_PROFILE) -class experimental-tui \
-		-baseline $(COVERAGE_TUI_BASELINE) -base "$(BASE_REF)"
-	$(COVERAGE_TOOL) ratchet -packages $(COVERAGE_PACKAGES_FILE) \
-		-profile $(COVERAGE_TOOLING_PROFILE) -class tooling \
-		-baseline $(COVERAGE_TOOLING_BASELINE) -base "$(BASE_REF)"
-
 .PHONY: test-coverage-patch
 test-coverage-patch:
 	$(COVERAGE_TOOL) patch -packages $(COVERAGE_PACKAGES_FILE) \
@@ -281,21 +266,6 @@ test-coverage-patch:
 		-profile $(COVERAGE_ACTIVE_PROFILE) \
 		-edge-profile $(COVERAGE_REPORT_ROOT)/union-raw.out \
 		-base "$(BASE_REF)" -head "$(HEAD_REF)"
-
-# Generate reviewable candidates under .cache. Updating a checked-in baseline
-# remains an explicit reviewed change; this target never overwrites it.
-.PHONY: test-coverage-baseline-candidates
-test-coverage-baseline-candidates:
-	$(COVERAGE_TOOL) baseline -packages $(COVERAGE_PACKAGES_FILE) \
-		-profile $(COVERAGE_ACTIVE_PROFILE) -class active \
-		-out $(COVERAGE_REPORT_ROOT)/baseline-active-union.candidate.tsv
-	$(COVERAGE_TOOL) baseline -packages $(COVERAGE_PACKAGES_FILE) \
-		-profile $(COVERAGE_TUI_PROFILE) -class experimental-tui \
-		-out $(COVERAGE_REPORT_ROOT)/baseline-experimental-tui-union.candidate.tsv
-	$(COVERAGE_TOOL) baseline -packages $(COVERAGE_PACKAGES_FILE) \
-		-profile $(COVERAGE_TOOLING_PROFILE) -class tooling \
-		-out $(COVERAGE_REPORT_ROOT)/baseline-tooling-unit.candidate.tsv
-	@echo "baseline candidates are in $(COVERAGE_REPORT_ROOT)"
 
 # Compatibility aliases. `test-coverage` remains the useful local unit report;
 # `test-coverage-check` is the complete local gate. CI invokes its report and
@@ -307,7 +277,7 @@ test-coverage-check: test-coverage-report
 test-coverage-own: test-coverage-unit
 	@echo "test-coverage-own is deprecated; use the named active-union report"
 test-coverage-core: test-coverage-unit
-	@echo "test-coverage-core is deprecated; the active-union ratchet is authoritative"
+	@echo "test-coverage-core is deprecated; use the active-union report and changed-line gate"
 
 .PHONY: test-coverage-html
 test-coverage-html: test-coverage-report
