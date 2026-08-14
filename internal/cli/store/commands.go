@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
@@ -213,7 +215,7 @@ func exportCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 			defer func() { _ = s.Close() }()
 
 			format := sstore.FormatYAML
-			if o, _ := cmd.Flags().GetString("output"); o == "json" {
+			if o, _ := cmd.Flags().GetString(flagdefs.FlagOutput); o == "json" {
 				format = sstore.FormatJSON
 			}
 

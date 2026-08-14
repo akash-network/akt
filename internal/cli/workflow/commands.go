@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -107,7 +109,7 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 		},
 		PreRunE: func(cmd *cobra.Command, args []string) error {
 			// Dry runs never need clients.
-			if dryRun, _ := cmd.Flags().GetBool("dry-run"); dryRun {
+			if dryRun, _ := cmd.Flags().GetBool(flagdefs.FlagDryRun); dryRun {
 				return nil
 			}
 
@@ -200,7 +202,7 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 				return err
 			}
 
-			dryRun, _ := cmd.Flags().GetBool("dry-run")
+			dryRun, _ := cmd.Flags().GetBool(flagdefs.FlagDryRun)
 			out := cmd.OutOrStdout()
 			jsonl := outputFormat(cmd) == outputJSONL
 
@@ -250,8 +252,8 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 	}
 
 	// Common workflow flags.
-	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation prompts")
-	cmd.Flags().Bool("dry-run", false, "Show execution plan without broadcasting transactions")
+	cmd.Flags().BoolP(flagdefs.FlagSkipConfirmation, "y", false, "Skip confirmation prompts")
+	cmd.Flags().Bool(flagdefs.FlagDryRun, false, "Show execution plan without broadcasting transactions")
 	cmd.Flags().VarP(output.NewFormatFlag(cflags.OutputPretty, outputJSONL), cflags.FlagOutput, "o", "Output format (pretty|json|yaml|jsonl)")
 
 	// Standard chain tx flags (--from, --gas, --node, ...) so keyring-auth
@@ -788,7 +790,7 @@ func emitDryRunJSONL(out io.Writer, def *wf.WorkflowDef) error {
 // defaulting to "pretty" when the flag is not registered (e.g. bare command
 // execution in tests).
 func outputFormat(cmd *cobra.Command) string {
-	if f := cmd.Flags().Lookup("output"); f != nil && f.Value.String() != "" {
+	if f := cmd.Flags().Lookup(flagdefs.FlagOutput); f != nil && f.Value.String() != "" {
 		return f.Value.String()
 	}
 

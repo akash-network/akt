@@ -6,6 +6,8 @@ import (
 	"sort"
 	"strings"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkquery "github.com/cosmos/cosmos-sdk/types/query"
@@ -72,7 +74,7 @@ func (s leaseScope) leaseID(provider string) mtypes.LeaseID {
 func leaseScopeFromCmd(cmd *cobra.Command, args []string) (leaseScope, error) {
 	cctx := sdkclient.GetClientContextFromCmd(cmd)
 
-	dseq, _ := cmd.Flags().GetUint64("dseq")
+	dseq, _ := cmd.Flags().GetUint64(flagdefs.FlagDSeq)
 
 	dseq, err := cflags.DSeqFromArgs(args, dseq)
 	if err != nil {
@@ -83,16 +85,16 @@ func leaseScopeFromCmd(cmd *cobra.Command, args []string) (leaseScope, error) {
 		return leaseScope{}, missingDSeqError(cmd)
 	}
 
-	gseq, _ := cmd.Flags().GetUint32("gseq")
-	oseq, _ := cmd.Flags().GetUint32("oseq")
+	gseq, _ := cmd.Flags().GetUint32(flagdefs.FlagGSeq)
+	oseq, _ := cmd.Flags().GetUint32(flagdefs.FlagOSeq)
 
 	return leaseScope{
 		Owner:   cctx.GetFromAddress().String(),
 		DSeq:    dseq,
 		GSeq:    gseq,
 		OSeq:    oseq,
-		GSeqSet: cmd.Flags().Changed("gseq"),
-		OSeqSet: cmd.Flags().Changed("oseq"),
+		GSeqSet: cmd.Flags().Changed(flagdefs.FlagGSeq),
+		OSeqSet: cmd.Flags().Changed(flagdefs.FlagOSeq),
 	}, nil
 }
 
@@ -100,7 +102,7 @@ func leaseScopeFromCmd(cmd *cobra.Command, args []string) (leaseScope, error) {
 // deployment sequence. Commands whose positional slot is the dseq must not be
 // told to pass a flag they do not register, and vice versa.
 func missingDSeqError(cmd *cobra.Command) error {
-	if cmd.Flags().Lookup("dseq") != nil {
+	if cmd.Flags().Lookup(flagdefs.FlagDSeq) != nil {
 		return fmt.Errorf("dseq is required: pass --dseq <dseq> (e.g. %s --dseq 12345)", cmd.CommandPath())
 	}
 
@@ -161,7 +163,7 @@ func resolveLeaseWith(
 // lease supplies the provider and, unless the user named them, its own
 // gseq/oseq.
 func resolveLeaseProvider(cmd *cobra.Command, scope leaseScope, leases leaseQuery) (mtypes.LeaseID, error) {
-	if addrStr, _ := cmd.Flags().GetString("provider"); addrStr != "" {
+	if addrStr, _ := cmd.Flags().GetString(flagdefs.FlagProvider); addrStr != "" {
 		addr, err := sdk.AccAddressFromBech32(addrStr)
 		if err != nil {
 			return mtypes.LeaseID{}, fmt.Errorf("invalid provider address %q: %w", addrStr, err)
@@ -288,7 +290,7 @@ func leaseRemedy(scope leaseScope) string {
 // gatewayURL resolves the gateway base URL for a provider. An explicit
 // --provider-url remains an override for diagnostics and private gateways.
 func gatewayURL(cmd *cobra.Command, provider string, hostURI hostURIQuery) (string, error) {
-	if providerURL, _ := cmd.Flags().GetString("provider-url"); providerURL != "" {
+	if providerURL, _ := cmd.Flags().GetString(flagdefs.FlagProviderURL); providerURL != "" {
 		return providerURL, nil
 	}
 

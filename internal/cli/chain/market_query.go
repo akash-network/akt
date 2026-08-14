@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
@@ -201,7 +203,7 @@ than printing it.`,
 				return err
 			}
 
-			byProvider, _ := cmd.Flags().GetString("by")
+			byProvider, _ := cmd.Flags().GetString(flagdefs.FlagBy)
 
 			isByProvider, err := parseByPerspective(byProvider)
 			if err != nil {
@@ -316,7 +318,7 @@ than printing it.`,
 	cflags.AddQueryFlagsToCmd(cmd)
 	cflags.AddPaginationFlagsToCmd(cmd, "bids")
 	cflags.AddBidFilterFlags(cmd.Flags())
-	cmd.Flags().String("by", "owner", "Filter perspective: owner or provider")
+	cmd.Flags().String(flagdefs.FlagBy, "owner", "Filter perspective: owner or provider")
 
 	return cmd
 }
@@ -357,7 +359,7 @@ rather than printing it.`,
 				return err
 			}
 
-			byProvider, _ := cmd.Flags().GetString("by")
+			byProvider, _ := cmd.Flags().GetString(flagdefs.FlagBy)
 
 			isByProvider, err := parseByPerspective(byProvider)
 			if err != nil {
@@ -472,7 +474,7 @@ rather than printing it.`,
 	cflags.AddQueryFlagsToCmd(cmd)
 	cflags.AddPaginationFlagsToCmd(cmd, "leases")
 	cflags.AddLeaseFilterFlags(cmd.Flags())
-	cmd.Flags().String("by", "owner", "Filter perspective: owner or provider")
+	cmd.Flags().String(flagdefs.FlagBy, "owner", "Filter perspective: owner or provider")
 
 	return cmd
 }

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
@@ -38,7 +40,7 @@ func providerCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 			}
 
 			// The endpoint has no server-side paging; --limit trims locally.
-			limit, _ := cmd.Flags().GetInt("limit")
+			limit, _ := cmd.Flags().GetInt(flagdefs.FlagLimit)
 			if limit > 0 && len(providers) > limit {
 				providers = providers[:limit]
 			}
@@ -46,7 +48,7 @@ func providerCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 			return printJSON(cmd, providers)
 		},
 	}
-	list.Flags().Int("limit", 20, "Maximum providers to show (0 = all)")
+	list.Flags().Int(flagdefs.FlagLimit, 20, "Maximum providers to show (0 = all)")
 
 	get := &cobra.Command{
 		Use:     "get <address>",

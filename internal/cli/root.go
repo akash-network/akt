@@ -11,6 +11,8 @@ import (
 	"runtime/debug"
 	"strings"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
 	sdkserver "github.com/cosmos/cosmos-sdk/server"
@@ -89,7 +91,7 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 			return nil, fmt.Errorf("keyring manager not initialized")
 		}
 
-		ctxName := activeContextName(mgr, v.GetString("context"))
+		ctxName := activeContextName(mgr, v.GetString(flagdefs.FlagContext))
 
 		if ctxName == "" {
 			return krMgr.Get("default")
@@ -160,12 +162,12 @@ the deployment is created.`,
 
 			// 2. Bind persistent flags to Viper so the resolution chain
 			//    (flag > env > config > default) works automatically.
-			_ = v.BindPFlag("home", cmd.Flags().Lookup("home"))
-			_ = v.BindPFlag("context", cmd.Flags().Lookup("context"))
-			_ = v.BindPFlag("output", cmd.Flags().Lookup("output"))
-			_ = v.BindPFlag("interactive", cmd.Flags().Lookup("interactive"))
-			_ = v.BindPFlag("verbose", cmd.Flags().Lookup("verbose"))
-			_ = v.BindPFlag("quiet", cmd.Flags().Lookup("quiet"))
+			_ = v.BindPFlag(flagdefs.FlagHome, cmd.Flags().Lookup(flagdefs.FlagHome))
+			_ = v.BindPFlag(flagdefs.FlagContext, cmd.Flags().Lookup(flagdefs.FlagContext))
+			_ = v.BindPFlag(flagdefs.FlagOutput, cmd.Flags().Lookup(flagdefs.FlagOutput))
+			_ = v.BindPFlag(flagdefs.FlagInteractive, cmd.Flags().Lookup(flagdefs.FlagInteractive))
+			_ = v.BindPFlag(flagdefs.FlagVerbose, cmd.Flags().Lookup(flagdefs.FlagVerbose))
+			_ = v.BindPFlag(flagdefs.FlagQuiet, cmd.Flags().Lookup(flagdefs.FlagQuiet))
 			if fromFlag := cmd.Flags().Lookup(cflags.FlagFrom); fromFlag != nil {
 				_ = v.BindPFlag(cflags.FlagFrom, fromFlag)
 			}
@@ -180,11 +182,11 @@ the deployment is created.`,
 			_ = v.BindEnv(cflags.FlagKeyringDir, "AKT_KEYRING_DIR")
 
 			// Verbosity validation: -q and -v are mutually exclusive.
-			if v.GetBool("quiet") && v.GetInt("verbose") > 0 {
+			if v.GetBool(flagdefs.FlagQuiet) && v.GetInt(flagdefs.FlagVerbose) > 0 {
 				return fmt.Errorf("--quiet and --verbose are mutually exclusive")
 			}
 
-			cfgRoot, err := aktctx.ConfigHome(v.GetString("home"))
+			cfgRoot, err := aktctx.ConfigHome(v.GetString(flagdefs.FlagHome))
 			if err != nil {
 				return err
 			}
@@ -251,7 +253,7 @@ the deployment is created.`,
 				mgr,
 				krMgr,
 				encCfg,
-				v.GetString("context"),
+				v.GetString(flagdefs.FlagContext),
 				v.GetString(cflags.FlagFrom),
 				localIdentityMode(cmd),
 			)
@@ -268,7 +270,7 @@ the deployment is created.`,
 				return noContextError(mgr)
 			}
 			if resolved {
-				rc, resolveErr := mgr.Resolve(activeContextName(mgr, v.GetString("context")))
+				rc, resolveErr := mgr.Resolve(activeContextName(mgr, v.GetString(flagdefs.FlagContext)))
 				if resolveErr != nil {
 					return resolveErr
 				}
@@ -295,7 +297,7 @@ the deployment is created.`,
 			//     defaults.command-gating: dim | hide | off) and fail fast
 			//     with an explanation instead of erroring mid-transport.
 			if resolved {
-				if rc, rcErr := mgr.Resolve(activeContextName(mgr, v.GetString("context"))); rcErr == nil {
+				if rc, rcErr := mgr.Resolve(activeContextName(mgr, v.GetString(flagdefs.FlagContext))); rcErr == nil {
 					mode := capability.ParseMode(gatingMode(v, mgr))
 
 					// The feature set describes the configuration; explicit
@@ -316,7 +318,7 @@ the deployment is created.`,
 			}
 
 			// 5. Open the action log for the selected context (if any).
-			if selected := activeContextName(mgr, v.GetString("context")); selected != "" {
+			if selected := activeContextName(mgr, v.GetString(flagdefs.FlagContext)); selected != "" {
 				logPath := aktctx.ActionLogPath(cfgRoot, selected)
 				logger, logErr := actionlog.Open(logPath)
 				if logErr != nil {
@@ -363,7 +365,7 @@ the deployment is created.`,
 				})
 			}
 
-			if interactive, _ := cmd.Flags().GetBool("interactive"); interactive {
+			if interactive, _ := cmd.Flags().GetBool(flagdefs.FlagInteractive); interactive {
 				return fmt.Errorf("the TUI is currently disabled while UX feedback is collected; use the CLI commands or akt monitor")
 			}
 
@@ -382,8 +384,8 @@ the deployment is created.`,
 
 	// Global persistent flags. Values are read from Viper at point of use,
 	// not captured into Go variables.
-	root.PersistentFlags().String("home", "", "Home directory for config, contexts, and keyrings (default: $AKT_HOME or ~/.config/akt)")
-	root.PersistentFlags().String("context", "", "Active context name (overrides current-context in config)")
+	root.PersistentFlags().String(flagdefs.FlagHome, "", "Home directory for config, contexts, and keyrings (default: $AKT_HOME or ~/.config/akt)")
+	root.PersistentFlags().String(flagdefs.FlagContext, "", "Active context name (overrides current-context in config)")
 	// Key storage is a property of the invocation, not of signing: listing and
 	// adding keys need the same override a transaction does, and on a host
 	// whose configured backend is unavailable it is the only way in. Empty
@@ -398,9 +400,9 @@ the deployment is created.`,
 	// As a persistent flag it was advertised on all ~400 subcommands and
 	// silently discarded by every one of them -- `akt -i` refused with an
 	// explanation while `akt version -i` accepted it and did nothing.
-	root.Flags().BoolP("interactive", "i", false, "Launch the TUI. Currently disabled while UX feedback is collected; set AKT_EXPERIMENTAL_TUI=1 to opt in")
-	root.PersistentFlags().CountP("verbose", "v", "Increase output verbosity (-v verbose, -vv debug)")
-	root.PersistentFlags().BoolP("quiet", "q", false, "Suppress informational output; keep results and errors")
+	root.Flags().BoolP(flagdefs.FlagInteractive, "i", false, "Launch the TUI. Currently disabled while UX feedback is collected; set AKT_EXPERIMENTAL_TUI=1 to opt in")
+	root.PersistentFlags().CountP(flagdefs.FlagVerbose, "v", "Increase output verbosity (-v verbose, -vv debug)")
+	root.PersistentFlags().BoolP(flagdefs.FlagQuiet, "q", false, "Suppress informational output; keep results and errors")
 
 	// Register shell completion for the global --context flag.
 	_ = root.RegisterFlagCompletionFunc("context", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
@@ -434,7 +436,7 @@ the deployment is created.`,
 	// the context the user named.
 	ctxNameFn := func() string {
 		if mgr != nil {
-			return activeContextName(mgr, v.GetString("context"))
+			return activeContextName(mgr, v.GetString(flagdefs.FlagContext))
 		}
 		return ""
 	}
@@ -470,9 +472,9 @@ the deployment is created.`,
 			}
 		}
 
-		if cfgRoot, err := aktctx.ConfigHome(v.GetString("home")); err == nil {
+		if cfgRoot, err := aktctx.ConfigHome(v.GetString(flagdefs.FlagHome)); err == nil {
 			if m, mErr := aktctx.NewManager(cfgRoot); mErr == nil {
-				if ctxName := activeContextName(m, v.GetString("context")); ctxName != "" {
+				if ctxName := activeContextName(m, v.GetString(flagdefs.FlagContext)); ctxName != "" {
 					if rc, rcErr := m.Resolve(ctxName); rcErr == nil {
 						// Same mode resolution as enforcement (flag > env >
 						// config) so help and execution never disagree.
@@ -555,9 +557,9 @@ func applyProviderDefaults(cmd *cobra.Command, rc *aktctx.Context) error {
 		return nil
 	}
 
-	flag := cmd.Flags().Lookup("auth-type")
+	flag := cmd.Flags().Lookup(flagdefs.FlagAuthType)
 	if flag == nil {
-		flag = cmd.InheritedFlags().Lookup("auth-type")
+		flag = cmd.InheritedFlags().Lookup(flagdefs.FlagAuthType)
 	}
 	if flag == nil || flag.Changed {
 		return nil
@@ -832,7 +834,7 @@ func isHelpInvocation(cmd *cobra.Command, args []string) bool {
 // and the --interactive (-i) flag was not passed.
 func checkInteractive(v *viper.Viper) error {
 	// The -i flag overrides config.
-	if v.GetBool("interactive") {
+	if v.GetBool(flagdefs.FlagInteractive) {
 		return nil
 	}
 	// Config allows interactive mode.
@@ -877,7 +879,7 @@ func resolveMonitorRuntime(
 	cfgRoot := homeFn()
 	if cfgRoot == "" {
 		var err error
-		cfgRoot, err = aktctx.ConfigHome(v.GetString("home"))
+		cfgRoot, err = aktctx.ConfigHome(v.GetString(flagdefs.FlagHome))
 		if err != nil {
 			return monitorRuntime{}, err
 		}
@@ -885,7 +887,7 @@ func resolveMonitorRuntime(
 
 	var resolved *aktctx.Context
 	if mgr := mgrFn(); mgr != nil {
-		ctxName := activeContextName(mgr, v.GetString("context"))
+		ctxName := activeContextName(mgr, v.GetString(flagdefs.FlagContext))
 		if ctxName != "" {
 			var err error
 			resolved, err = mgr.Resolve(ctxName)
@@ -983,16 +985,16 @@ func monitorRunE(
 			return err
 		}
 
-		rpcEndpoint, _ := cmd.Flags().GetString("rpc")
-		restEndpoint, _ := cmd.Flags().GetString("rest")
-		cleanCache, _ := cmd.Flags().GetBool("clean-cache")
-		insecure, _ := cmd.Flags().GetBool("insecure")
+		rpcEndpoint, _ := cmd.Flags().GetString(flagdefs.FlagRPC)
+		restEndpoint, _ := cmd.Flags().GetString(flagdefs.FlagREST)
+		cleanCache, _ := cmd.Flags().GetBool(flagdefs.FlagCleanCache)
+		insecure, _ := cmd.Flags().GetBool(flagdefs.FlagInsecure)
 
 		// Positional argument overrides --rpc flag.
 		if len(args) > 0 {
 			rpcEndpoint = args[0]
 		}
-		rpcExplicit := len(args) > 0 || cmd.Flags().Changed("rpc")
+		rpcExplicit := len(args) > 0 || cmd.Flags().Changed(flagdefs.FlagRPC)
 
 		// Resolve endpoints from active akt context when not
 		// explicitly provided via flags.
@@ -1059,10 +1061,10 @@ func clearMonitorCache(cacheDir string) error {
 // addMonitorFlags adds the shared flags used by monitor and all its
 // subcommands.
 func addMonitorFlags(cmd *cobra.Command) {
-	cmd.Flags().String("rpc", "", "RPC endpoint URL (resolved from context if not set)")
-	cmd.Flags().String("rest", "", "REST endpoint URL (resolved from context if not set)")
-	cmd.Flags().Bool("clean-cache", false, "Delete monitor cache and start fresh")
-	cmd.Flags().Bool("insecure", false, "Skip TLS certificate verification for provider queries")
+	cmd.Flags().String(flagdefs.FlagRPC, "", "RPC endpoint URL (resolved from context if not set)")
+	cmd.Flags().String(flagdefs.FlagREST, "", "REST endpoint URL (resolved from context if not set)")
+	cmd.Flags().Bool(flagdefs.FlagCleanCache, false, "Delete monitor cache and start fresh")
+	cmd.Flags().Bool(flagdefs.FlagInsecure, false, "Skip TLS certificate verification for provider queries")
 }
 
 func monitorCmd(
@@ -1304,7 +1306,7 @@ func versionCmd(bi BuildInfo) *cobra.Command {
   akt version --long`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			out := output.NewCheckedWriter(cmd.OutOrStdout())
-			long, _ := cmd.Flags().GetBool("long")
+			long, _ := cmd.Flags().GetBool(flagdefs.FlagLong)
 
 			if f := output.FormatFromCmd(cmd); f != output.FormatTable {
 				payload := struct {
@@ -1364,7 +1366,7 @@ func versionCmd(bi BuildInfo) *cobra.Command {
 	}
 
 	// Build-time detail for bug reports (TASKS T035).
-	cmd.Flags().Bool("long", false, "Print full build information")
+	cmd.Flags().Bool(flagdefs.FlagLong, false, "Print full build information")
 
 	return cmd
 }

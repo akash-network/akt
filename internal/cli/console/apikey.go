@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
@@ -151,12 +153,12 @@ func jwtCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			ttl, _ := cmd.Flags().GetInt("ttl")
+			ttl, _ := cmd.Flags().GetInt(flagdefs.FlagTTL)
 			if ttl <= 0 {
 				return fmt.Errorf("--ttl must be a positive number of seconds, got %d", ttl)
 			}
 
-			scopeCSV, _ := cmd.Flags().GetString("scope")
+			scopeCSV, _ := cmd.Flags().GetString(flagdefs.FlagScope)
 
 			scope := defaultJWTScope
 			if scopeCSV != "" {
@@ -184,8 +186,8 @@ func jwtCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	create.Flags().Int("ttl", 300, "Token lifetime in seconds")
-	create.Flags().String("scope", "", "Comma-separated scopes (default: "+strings.Join(defaultJWTScope, ",")+")")
+	create.Flags().Int(flagdefs.FlagTTL, 300, "Token lifetime in seconds")
+	create.Flags().String(flagdefs.FlagScope, "", "Comma-separated scopes (default: "+strings.Join(defaultJWTScope, ",")+")")
 
 	cmd.AddCommand(create)
 

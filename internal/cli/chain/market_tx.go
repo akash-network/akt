@@ -3,6 +3,8 @@ package cli
 import (
 	"errors"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
@@ -54,7 +56,7 @@ func GetTxMarketBidCreateCmd() *cobra.Command {
 			cl := MustClientFromContext(ctx)
 			cctx := cl.ClientContext()
 
-			price, err := cmd.Flags().GetString("price")
+			price, err := cmd.Flags().GetString(flagdefs.FlagPrice)
 			if err != nil {
 				return err
 			}
@@ -96,7 +98,7 @@ func GetTxMarketBidCreateCmd() *cobra.Command {
 	cflags.AddTxFlagsToCmd(cmd)
 	cflags.AddOrderIDFlags(cmd.Flags())
 
-	cmd.Flags().String("price", "", "Bid Price")
+	cmd.Flags().String(flagdefs.FlagPrice, "", "Bid Price")
 	cflags.AddDepositFlags(cmd.Flags())
 
 	return cmd

@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"math/big"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
@@ -142,7 +144,7 @@ akt query cert list revoked`,
 	cflags.AddQueryFlagsToCmd(cmd)
 	cflags.AddPaginationFlagsToCmd(cmd, "certificates")
 
-	cmd.Flags().String("serial", "", "filter certificates by serial number")
+	cmd.Flags().String(flagdefs.FlagSerial, "", "filter certificates by serial number")
 	// FEEDBACK(2026-07): --owner disabled for the positional-only UX trial
 	// (use the positional form instead). Restore by uncommenting if users
 	// ask for the flag form back.

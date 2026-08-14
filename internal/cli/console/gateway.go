@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -162,8 +164,8 @@ func logsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			follow, _ := cmd.Flags().GetBool("follow")
-			tail, _ := cmd.Flags().GetInt64("tail")
+			follow, _ := cmd.Flags().GetBool(flagdefs.FlagFollow)
+			tail, _ := cmd.Flags().GetInt64(flagdefs.FlagTail)
 			if err := aktprovider.ValidateLogTail(follow, tail); err != nil {
 				return err
 			}
@@ -244,8 +246,8 @@ func logsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolP("follow", "f", false, "Follow log output")
-	cmd.Flags().Int64("tail", -1, "Number of lines to show from the end of the logs")
+	cmd.Flags().BoolP(flagdefs.FlagFollow, "f", false, "Follow log output")
+	cmd.Flags().Int64(flagdefs.FlagTail, -1, "Number of lines to show from the end of the logs")
 	// FEEDBACK(2026-07): --service disabled for the positional-only UX trial
 	// (use the positional form instead). Restore by uncommenting if users
 	// ask for the flag form back.
@@ -275,7 +277,7 @@ func eventsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			follow, _ := cmd.Flags().GetBool("follow")
+			follow, _ := cmd.Flags().GetBool(flagdefs.FlagFollow)
 
 			ttl := gatewayJWTTTLOneShot
 			if follow {
@@ -302,7 +304,7 @@ func eventsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolP("follow", "f", false, "Follow event output")
+	cmd.Flags().BoolP(flagdefs.FlagFollow, "f", false, "Follow event output")
 
 	return cmd
 }
@@ -333,8 +335,8 @@ func statusCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			watch, _ := cmd.Flags().GetBool("watch")
-			interval, _ := cmd.Flags().GetDuration("interval")
+			watch, _ := cmd.Flags().GetBool(flagdefs.FlagWatch)
+			interval, _ := cmd.Flags().GetDuration(flagdefs.FlagInterval)
 			if interval <= 0 {
 				interval = 5 * time.Second
 			}
@@ -379,8 +381,8 @@ func statusCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Bool("watch", false, "Keep polling and printing status snapshots until interrupted")
-	cmd.Flags().Duration("interval", 5*time.Second, "Polling interval used with --watch")
+	cmd.Flags().Bool(flagdefs.FlagWatch, false, "Keep polling and printing status snapshots until interrupted")
+	cmd.Flags().Duration(flagdefs.FlagInterval, 5*time.Second, "Polling interval used with --watch")
 
 	return cmd
 }
@@ -459,13 +461,13 @@ func shellCmdWithRunner(mgrFn func() *aktctx.Manager, run consoleLeaseShellRunne
 				return err
 			}
 			tty := term.IsTerminal(int(os.Stdin.Fd()))
-			stdinOverride, _ := cmd.Flags().GetBool("stdin")
+			stdinOverride, _ := cmd.Flags().GetBool(flagdefs.FlagStdin)
 			stdin := aktprovider.SelectShellStdin(
 				shellCtx,
 				os.Stdin,
 				interactive,
 				tty,
-				cmd.Flags().Changed("stdin"),
+				cmd.Flags().Changed(flagdefs.FlagStdin),
 				stdinOverride,
 			)
 
@@ -478,7 +480,7 @@ func shellCmdWithRunner(mgrFn func() *aktctx.Manager, run consoleLeaseShellRunne
 		},
 	}
 
-	cmd.Flags().Bool("stdin", false, "Force stdin attachment for an explicit terminal command")
+	cmd.Flags().Bool(flagdefs.FlagStdin, false, "Force stdin attachment for an explicit terminal command")
 
 	return cmd
 }

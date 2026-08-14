@@ -3,6 +3,8 @@ package network
 import (
 	"fmt"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
@@ -45,25 +47,25 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			m := mgr()
 			name := args[0]
 
-			template, _ := cmd.Flags().GetString("template")
+			template, _ := cmd.Flags().GetString(flagdefs.FlagTemplate)
 			if template != "" {
 				return m.CreateNetworkFromTemplate(name, template)
 			}
 
-			chainID, _ := cmd.Flags().GetString("chain-id")
+			chainID, _ := cmd.Flags().GetString(flagdefs.FlagChainID)
 			if chainID == "" {
 				return fmt.Errorf("--chain-id is required when not using --template")
 			}
 
-			rpc, _ := cmd.Flags().GetStringSlice("rpc")
+			rpc, _ := cmd.Flags().GetStringSlice(flagdefs.FlagRPC)
 			if len(rpc) == 0 {
 				return fmt.Errorf("at least one --rpc endpoint is required")
 			}
 
-			api, _ := cmd.Flags().GetStringSlice("api")
-			grpc, _ := cmd.Flags().GetStringSlice("grpc")
-			gasPrices, _ := cmd.Flags().GetString("gas-prices")
-			gasAdjustment, _ := cmd.Flags().GetString("gas-adjustment")
+			api, _ := cmd.Flags().GetStringSlice(flagdefs.FlagAPI)
+			grpc, _ := cmd.Flags().GetStringSlice(flagdefs.FlagGRPCEndpoint)
+			gasPrices, _ := cmd.Flags().GetString(flagdefs.FlagGasPrices)
+			gasAdjustment, _ := cmd.Flags().GetString(flagdefs.FlagGasAdjustment)
 
 			net := aktctx.Network{
 				Name:          name,
@@ -77,13 +79,13 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().String("template", "", "Use built-in template: mainnet, testnet, sandbox")
-	cmd.Flags().String("chain-id", "", "Chain ID (required if no --template)")
-	cmd.Flags().StringSlice("rpc", nil, "RPC endpoint URLs")
-	cmd.Flags().StringSlice("api", nil, "REST API endpoint URLs")
-	cmd.Flags().StringSlice("grpc", nil, "gRPC endpoint URLs")
-	cmd.Flags().String("gas-prices", "0.025uakt", "Default gas prices")
-	cmd.Flags().String("gas-adjustment", "1.5", "Gas estimation multiplier")
+	cmd.Flags().String(flagdefs.FlagTemplate, "", "Use built-in template: mainnet, testnet, sandbox")
+	cmd.Flags().String(flagdefs.FlagChainID, "", "Chain ID (required if no --template)")
+	cmd.Flags().StringSlice(flagdefs.FlagRPC, nil, "RPC endpoint URLs")
+	cmd.Flags().StringSlice(flagdefs.FlagAPI, nil, "REST API endpoint URLs")
+	cmd.Flags().StringSlice(flagdefs.FlagGRPCEndpoint, nil, "gRPC endpoint URLs")
+	cmd.Flags().String(flagdefs.FlagGasPrices, "0.025uakt", "Default gas prices")
+	cmd.Flags().String(flagdefs.FlagGasAdjustment, "1.5", "Gas estimation multiplier")
 
 	return cmd
 }
@@ -104,28 +106,28 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			m := mgr()
 
 			return m.UpdateNetwork(args[0], func(n *aktctx.Network) error {
-				if cmd.Flags().Changed("chain-id") {
-					n.ChainID, _ = cmd.Flags().GetString("chain-id")
+				if cmd.Flags().Changed(flagdefs.FlagChainID) {
+					n.ChainID, _ = cmd.Flags().GetString(flagdefs.FlagChainID)
 				}
 
-				if cmd.Flags().Changed("rpc") {
-					n.Endpoints.RPC, _ = cmd.Flags().GetStringSlice("rpc")
+				if cmd.Flags().Changed(flagdefs.FlagRPC) {
+					n.Endpoints.RPC, _ = cmd.Flags().GetStringSlice(flagdefs.FlagRPC)
 				}
 
-				if cmd.Flags().Changed("api") {
-					n.Endpoints.API, _ = cmd.Flags().GetStringSlice("api")
+				if cmd.Flags().Changed(flagdefs.FlagAPI) {
+					n.Endpoints.API, _ = cmd.Flags().GetStringSlice(flagdefs.FlagAPI)
 				}
 
-				if cmd.Flags().Changed("grpc") {
-					n.Endpoints.GRPC, _ = cmd.Flags().GetStringSlice("grpc")
+				if cmd.Flags().Changed(flagdefs.FlagGRPCEndpoint) {
+					n.Endpoints.GRPC, _ = cmd.Flags().GetStringSlice(flagdefs.FlagGRPCEndpoint)
 				}
 
-				if cmd.Flags().Changed("gas-prices") {
-					n.GasPrices, _ = cmd.Flags().GetString("gas-prices")
+				if cmd.Flags().Changed(flagdefs.FlagGasPrices) {
+					n.GasPrices, _ = cmd.Flags().GetString(flagdefs.FlagGasPrices)
 				}
 
-				if cmd.Flags().Changed("gas-adjustment") {
-					n.GasAdjustment, _ = cmd.Flags().GetString("gas-adjustment")
+				if cmd.Flags().Changed(flagdefs.FlagGasAdjustment) {
+					n.GasAdjustment, _ = cmd.Flags().GetString(flagdefs.FlagGasAdjustment)
 				}
 
 				return nil
@@ -133,12 +135,12 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().String("chain-id", "", "Chain ID")
-	cmd.Flags().StringSlice("rpc", nil, "RPC endpoint URLs")
-	cmd.Flags().StringSlice("api", nil, "REST API endpoint URLs")
-	cmd.Flags().StringSlice("grpc", nil, "gRPC endpoint URLs")
-	cmd.Flags().String("gas-prices", "", "Default gas prices")
-	cmd.Flags().String("gas-adjustment", "", "Gas estimation multiplier")
+	cmd.Flags().String(flagdefs.FlagChainID, "", "Chain ID")
+	cmd.Flags().StringSlice(flagdefs.FlagRPC, nil, "RPC endpoint URLs")
+	cmd.Flags().StringSlice(flagdefs.FlagAPI, nil, "REST API endpoint URLs")
+	cmd.Flags().StringSlice(flagdefs.FlagGRPCEndpoint, nil, "gRPC endpoint URLs")
+	cmd.Flags().String(flagdefs.FlagGasPrices, "", "Default gas prices")
+	cmd.Flags().String(flagdefs.FlagGasAdjustment, "", "Gas estimation multiplier")
 
 	return cmd
 }

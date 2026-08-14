@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -35,8 +37,8 @@ func Commands(mgrFn func() *aktctx.Manager) *cobra.Command {
 			"create, bid, lease, and manifest flow, use `akt deploy <sdl-file>`.",
 	}
 
-	cmd.PersistentFlags().String("console-api-url", "", "Console API base URL (overrides the context setting)")
-	cmd.PersistentFlags().String("console-api-key", "", "Console API key (overrides AKT_CONSOLE_API_KEY and the stored credential)")
+	cmd.PersistentFlags().String(flagdefs.FlagConsoleAPIURL, "", "Console API base URL (overrides the context setting)")
+	cmd.PersistentFlags().String(flagdefs.FlagConsoleAPIKey, "", "Console API key (overrides AKT_CONSOLE_API_KEY and the stored credential)")
 
 	cmd.AddCommand(
 		// Credential management and public marketplace/catalog commands
@@ -113,7 +115,7 @@ func loginCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return fmt.Errorf("no API key provided")
 			}
 
-			baseURL, _ := cmd.Flags().GetString("console-api-url")
+			baseURL, _ := cmd.Flags().GetString(flagdefs.FlagConsoleAPIURL)
 			if baseURL == "" {
 				baseURL = rc.ConsoleAPIURL
 			}
@@ -247,8 +249,8 @@ func clientFromCmd(cmd *cobra.Command, mgrFn func() *aktctx.Manager, requireKey 
 		rc, _ = resolveContextFromCmd(cmd, m) // missing context is OK for public endpoints
 	}
 
-	key, _ := cmd.Flags().GetString("console-api-key")
-	baseURL, _ := cmd.Flags().GetString("console-api-url")
+	key, _ := cmd.Flags().GetString(flagdefs.FlagConsoleAPIKey)
+	baseURL, _ := cmd.Flags().GetString(flagdefs.FlagConsoleAPIURL)
 
 	if rc != nil {
 		if key == "" {

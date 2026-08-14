@@ -3,6 +3,7 @@ package cli
 import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
+	flagdefs "pkg.akt.dev/akt/internal/flags"
 
 	chaincli "pkg.akt.dev/akt/internal/cli/chain"
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
@@ -32,7 +33,7 @@ func enforceOutputValidation(cmd *cobra.Command) {
 	var walk func(*cobra.Command)
 	walk = func(current *cobra.Command) {
 		for _, flags := range []*pflag.FlagSet{current.LocalFlags(), current.PersistentFlags()} {
-			flag := flags.Lookup("output")
+			flag := flags.Lookup(flagdefs.FlagOutput)
 			if flag == nil {
 				continue
 			}

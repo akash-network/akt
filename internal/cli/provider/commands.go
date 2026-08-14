@@ -12,6 +12,8 @@ import (
 	"os"
 	"time"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
@@ -48,9 +50,9 @@ func Commands() *cobra.Command {
 		Annotations: map[string]string{capability.AnnotationKey: string(capability.Provider)},
 	}
 
-	cmd.PersistentFlags().String("auth-type", "", "Provider auth type: jwt (default) or mtls")
-	cmd.PersistentFlags().String("provider", "", "Provider address (bech32); default: the deployment's active lease")
-	cmd.PersistentFlags().String("provider-url", "", "Provider gateway URL (e.g. https://provider.example.com:8443)")
+	cmd.PersistentFlags().String(flagdefs.FlagAuthType, "", "Provider auth type: jwt (default) or mtls")
+	cmd.PersistentFlags().String(flagdefs.FlagProvider, "", "Provider address (bech32); default: the deployment's active lease")
+	cmd.PersistentFlags().String(flagdefs.FlagProviderURL, "", "Provider gateway URL (e.g. https://provider.example.com:8443)")
 
 	cmd.AddCommand(
 		statusCmd(),
@@ -81,7 +83,7 @@ func statusCmd() *cobra.Command {
   akt provider status --provider akash1...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			if cmd.Flags().Changed("auth-type") {
+			if cmd.Flags().Changed(flagdefs.FlagAuthType) {
 				return fmt.Errorf("--auth-type does not apply to public provider status")
 			}
 
@@ -237,9 +239,9 @@ func leaseLogsCmd() *cobra.Command {
   akt provider lease-logs 12345 --provider akash1...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			follow, _ := cmd.Flags().GetBool("follow")
-			service, _ := cmd.Flags().GetString("service")
-			tail, _ := cmd.Flags().GetInt64("tail")
+			follow, _ := cmd.Flags().GetBool(flagdefs.FlagFollow)
+			service, _ := cmd.Flags().GetString(flagdefs.FlagService)
+			tail, _ := cmd.Flags().GetInt64(flagdefs.FlagTail)
 			if err := aktprovider.ValidateLogTail(follow, tail); err != nil {
 				return err
 			}
@@ -268,9 +270,9 @@ func leaseLogsCmd() *cobra.Command {
 	}
 
 	addLeaseFlags(cmd)
-	cmd.Flags().BoolP("follow", "f", false, "Follow log output")
-	cmd.Flags().String("service", "", "Filter logs by service name")
-	cmd.Flags().Int64("tail", -1, "Number of lines to show from the end of the logs")
+	cmd.Flags().BoolP(flagdefs.FlagFollow, "f", false, "Follow log output")
+	cmd.Flags().String(flagdefs.FlagService, "", "Filter logs by service name")
+	cmd.Flags().Int64(flagdefs.FlagTail, -1, "Number of lines to show from the end of the logs")
 
 	return cmd
 }
@@ -291,7 +293,7 @@ func leaseEventsCmd() *cobra.Command {
   akt provider lease-events 12345 --provider akash1...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
-			follow, _ := cmd.Flags().GetBool("follow")
+			follow, _ := cmd.Flags().GetBool(flagdefs.FlagFollow)
 
 			lid, providerURL, err := resolveAuthenticatedLease(cmd, args)
 			if err != nil {
@@ -317,7 +319,7 @@ func leaseEventsCmd() *cobra.Command {
 	}
 
 	addLeaseFlags(cmd)
-	cmd.Flags().BoolP("follow", "f", false, "Follow event output")
+	cmd.Flags().BoolP(flagdefs.FlagFollow, "f", false, "Follow event output")
 
 	return cmd
 }
@@ -364,18 +366,18 @@ func leaseShellCmd() *cobra.Command {
 				return err
 			}
 
-			service, _ := cmd.Flags().GetString("service")
+			service, _ := cmd.Flags().GetString(flagdefs.FlagService)
 			if service == "" {
 				return fmt.Errorf("--service is required for lease-shell")
 			}
-			tty, _ := cmd.Flags().GetBool("tty")
-			stdinOverride, _ := cmd.Flags().GetBool("stdin")
+			tty, _ := cmd.Flags().GetBool(flagdefs.FlagTTY)
+			stdinOverride, _ := cmd.Flags().GetBool(flagdefs.FlagStdin)
 			stdin := aktprovider.SelectShellStdin(
 				shellCtx,
 				os.Stdin,
 				interactive,
 				term.IsTerminal(int(os.Stdin.Fd())),
-				cmd.Flags().Changed("stdin"),
+				cmd.Flags().Changed(flagdefs.FlagStdin),
 				stdinOverride,
 			)
 
@@ -390,9 +392,9 @@ func leaseShellCmd() *cobra.Command {
 	}
 
 	addLeaseShellFlags(cmd)
-	cmd.Flags().String("service", "", "Service name (required)")
-	cmd.Flags().BoolP("tty", "t", true, "Allocate a TTY")
-	cmd.Flags().Bool("stdin", false, "Force stdin attachment for an explicit terminal command")
+	cmd.Flags().String(flagdefs.FlagService, "", "Service name (required)")
+	cmd.Flags().BoolP(flagdefs.FlagTTY, "t", true, "Allocate a TTY")
+	cmd.Flags().Bool(flagdefs.FlagStdin, false, "Force stdin attachment for an explicit terminal command")
 
 	return cmd
 }
@@ -457,7 +459,7 @@ func sendManifestCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Uint64("dseq", 0, "Deployment sequence number")
+	cmd.Flags().Uint64(flagdefs.FlagDSeq, 0, "Deployment sequence number")
 
 	return cmd
 }
@@ -466,7 +468,7 @@ func sendManifestCmd() *cobra.Command {
 // explicit --provider, or every provider with an active lease for the
 // deployment (SPEC §2.4).
 func sendManifestTargets(cmd *cobra.Command, scope leaseScope, leases leaseQuery) ([]string, error) {
-	if addrStr, _ := cmd.Flags().GetString("provider"); addrStr != "" {
+	if addrStr, _ := cmd.Flags().GetString(flagdefs.FlagProvider); addrStr != "" {
 		addr, err := sdk.AccAddressFromBech32(addrStr)
 		if err != nil {
 			return nil, fmt.Errorf("invalid provider address %q: %w", addrStr, err)
@@ -481,7 +483,7 @@ func sendManifestTargets(cmd *cobra.Command, scope leaseScope, leases leaseQuery
 	}
 
 	// A single explicit gateway URL cannot stand in for several providers.
-	if providerURL, _ := cmd.Flags().GetString("provider-url"); providerURL != "" && len(providers) > 1 {
+	if providerURL, _ := cmd.Flags().GetString(flagdefs.FlagProviderURL); providerURL != "" && len(providers) > 1 {
 		return nil, fmt.Errorf(
 			"--provider-url addresses one gateway but deployment %d has %d active leases; add --provider to choose one",
 			scope.DSeq, len(providers))
@@ -564,7 +566,7 @@ func migrateHostnamesCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 
-			hostnames, _ := cmd.Flags().GetStringSlice("hostnames")
+			hostnames, _ := cmd.Flags().GetStringSlice(flagdefs.FlagHostnames)
 			if len(hostnames) == 0 {
 				return fmt.Errorf("--hostnames is required")
 			}
@@ -591,9 +593,9 @@ func migrateHostnamesCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Uint64("dseq", 0, "Destination deployment sequence number")
-	cmd.Flags().Uint32("gseq", 1, "Destination group sequence number")
-	cmd.Flags().StringSlice("hostnames", nil, "Hostnames to migrate (comma-separated)")
+	cmd.Flags().Uint64(flagdefs.FlagDSeq, 0, "Destination deployment sequence number")
+	cmd.Flags().Uint32(flagdefs.FlagGSeq, 1, "Destination group sequence number")
+	cmd.Flags().StringSlice(flagdefs.FlagHostnames, nil, "Hostnames to migrate (comma-separated)")
 
 	return cmd
 }
@@ -614,7 +616,7 @@ func migrateEndpointsCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			ctx := cmd.Context()
 
-			endpoints, _ := cmd.Flags().GetStringSlice("endpoints")
+			endpoints, _ := cmd.Flags().GetStringSlice(flagdefs.FlagEndpoints)
 			if len(endpoints) == 0 {
 				return fmt.Errorf("--endpoints is required")
 			}
@@ -641,9 +643,9 @@ func migrateEndpointsCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Uint64("dseq", 0, "Destination deployment sequence number")
-	cmd.Flags().Uint32("gseq", 1, "Destination group sequence number")
-	cmd.Flags().StringSlice("endpoints", nil, "Endpoints to migrate (comma-separated)")
+	cmd.Flags().Uint64(flagdefs.FlagDSeq, 0, "Destination deployment sequence number")
+	cmd.Flags().Uint32(flagdefs.FlagGSeq, 1, "Destination group sequence number")
+	cmd.Flags().StringSlice(flagdefs.FlagEndpoints, nil, "Endpoints to migrate (comma-separated)")
 
 	return cmd
 }
@@ -658,17 +660,17 @@ func addLeaseFlags(cmd *cobra.Command) {
 	// (use the positional [dseq] argument instead). Restore by uncommenting
 	// if users ask for the flag form back.
 	// cmd.Flags().Uint64("dseq", 0, "Deployment sequence number")
-	cmd.Flags().Uint32("gseq", 1, "Group sequence number")
-	cmd.Flags().Uint32("oseq", 1, "Order sequence number")
+	cmd.Flags().Uint32(flagdefs.FlagGSeq, 1, "Group sequence number")
+	cmd.Flags().Uint32(flagdefs.FlagOSeq, 1, "Order sequence number")
 }
 
 // addLeaseShellFlags adds the lease identification flags for lease-shell,
 // which consumes its positional args as the remote command and therefore
 // keeps --dseq (no positional twin).
 func addLeaseShellFlags(cmd *cobra.Command) {
-	cmd.Flags().Uint64("dseq", 0, "Deployment sequence number")
-	cmd.Flags().Uint32("gseq", 1, "Group sequence number")
-	cmd.Flags().Uint32("oseq", 1, "Order sequence number")
+	cmd.Flags().Uint64(flagdefs.FlagDSeq, 0, "Deployment sequence number")
+	cmd.Flags().Uint32(flagdefs.FlagGSeq, 1, "Group sequence number")
+	cmd.Flags().Uint32(flagdefs.FlagOSeq, 1, "Order sequence number")
 }
 
 // resolveProvider resolves the provider address and its on-chain HostURI. An
@@ -721,7 +723,7 @@ func resolveProviderWithLookup(
 	if len(args) > 0 {
 		addrStr = args[0]
 	} else {
-		addrStr, _ = cmd.Flags().GetString("provider")
+		addrStr, _ = cmd.Flags().GetString(flagdefs.FlagProvider)
 	}
 
 	if addrStr == "" {
@@ -805,7 +807,7 @@ func grpcGatewayClientFromCmd(
 
 func gatewayAuthenticationFromCmd(cmd *cobra.Command) (sdkclient.Context, sdk.AccAddress, string, error) {
 	cctx := sdkclient.GetClientContextFromCmd(cmd)
-	authType, _ := cmd.Flags().GetString("auth-type")
+	authType, _ := cmd.Flags().GetString(flagdefs.FlagAuthType)
 	addr, err := aktclient.ResolveAccountAddress(cctx)
 	if err != nil {
 		return sdkclient.Context{}, nil, "", err

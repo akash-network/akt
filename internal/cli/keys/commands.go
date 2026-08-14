@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/crypto/hd"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
@@ -172,24 +174,24 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *c
 			algo := aktkeyring.DefaultAlgo()
 
 			// Multisig key.
-			multisigKeys, _ := cmd.Flags().GetString("multisig")
+			multisigKeys, _ := cmd.Flags().GetString(flagdefs.FlagMultisig)
 			if multisigKeys != "" {
-				threshold, _ := cmd.Flags().GetInt("multisig-threshold")
+				threshold, _ := cmd.Flags().GetInt(flagdefs.FlagMultisigThreshold)
 				return addMultisig(cmd, kr, recorder, name, multisigKeys, threshold)
 			}
 
-			coinType, _ := cmd.Flags().GetUint32("coin-type")
-			account, _ := cmd.Flags().GetUint32("account")
-			index, _ := cmd.Flags().GetUint32("index")
+			coinType, _ := cmd.Flags().GetUint32(flagdefs.FlagCoinType)
+			account, _ := cmd.Flags().GetUint32(flagdefs.FlagAccount)
+			index, _ := cmd.Flags().GetUint32(flagdefs.FlagIndex)
 
 			// Resolve HD path.
-			path, _ := cmd.Flags().GetString("hd-path")
+			path, _ := cmd.Flags().GetString(flagdefs.FlagHDPath)
 			if path == "" {
 				path = hd.CreateHDPath(coinType, account, index).String()
 			}
 
 			// Ledger hardware wallet key.
-			useLedger, _ := cmd.Flags().GetBool("ledger")
+			useLedger, _ := cmd.Flags().GetBool(flagdefs.FlagUseLedger)
 			if useLedger {
 				bech32PrefixAccAddr := sdk.GetConfig().GetBech32AccountAddrPrefix()
 				record, err := kr.SaveLedgerKey(name, algo, bech32PrefixAccAddr, coinType, account, index)
@@ -211,8 +213,8 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *c
 				})
 			}
 
-			recoverKey, _ := cmd.Flags().GetBool("recover")
-			source, _ := cmd.Flags().GetString("source")
+			recoverKey, _ := cmd.Flags().GetBool(flagdefs.FlagRecover)
+			source, _ := cmd.Flags().GetString(flagdefs.FlagMnemonicSource)
 
 			var mnemonic string
 
@@ -245,7 +247,7 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *c
 
 			var bip39Passphrase string
 
-			interactive, _ := cmd.Flags().GetBool("interactive")
+			interactive, _ := cmd.Flags().GetBool(flagdefs.FlagInteractive)
 			if interactive {
 				if _, err := fmt.Fprint(cmd.ErrOrStderr(), "Enter BIP39 passphrase (leave empty for none): "); err != nil {
 					return err
@@ -280,8 +282,8 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *c
 				return fmt.Errorf("get address: %w", err)
 			}
 
-			keyType, _ := cmd.Flags().GetString("key-type")
-			noBackup, _ := cmd.Flags().GetBool("no-backup")
+			keyType, _ := cmd.Flags().GetString(flagdefs.FlagKeyType)
+			noBackup, _ := cmd.Flags().GetBool(flagdefs.FlagNoBackup)
 
 			result := keyAddResult{
 				Name:    record.Name,
@@ -296,18 +298,18 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *c
 		},
 	}
 
-	cmd.Flags().Bool("recover", false, "Recover key from existing mnemonic")
-	cmd.Flags().Bool("no-backup", false, "Don't print mnemonic after creation")
-	cmd.Flags().BoolP("interactive", "i", false, "Interactive BIP39 passphrase prompt")
-	cmd.Flags().Bool("ledger", false, "Use Ledger hardware wallet")
-	cmd.Flags().Uint32("coin-type", 118, "BIP44 coin type")
-	cmd.Flags().Uint32("account", 0, "BIP44 account number")
-	cmd.Flags().Uint32("index", 0, "BIP44 address index")
-	cmd.Flags().String("hd-path", "", "Manual HD path override")
-	cmd.Flags().String("key-type", "secp256k1", "Signing algorithm")
-	cmd.Flags().String("multisig", "", "Comma-separated list of key names for multisig")
-	cmd.Flags().Int("multisig-threshold", 1, "K-of-N threshold for multisig")
-	cmd.Flags().String("source", "", "File path to read mnemonic from")
+	cmd.Flags().Bool(flagdefs.FlagRecover, false, "Recover key from existing mnemonic")
+	cmd.Flags().Bool(flagdefs.FlagNoBackup, false, "Don't print mnemonic after creation")
+	cmd.Flags().BoolP(flagdefs.FlagInteractive, "i", false, "Interactive BIP39 passphrase prompt")
+	cmd.Flags().Bool(flagdefs.FlagUseLedger, false, "Use Ledger hardware wallet")
+	cmd.Flags().Uint32(flagdefs.FlagCoinType, 118, "BIP44 coin type")
+	cmd.Flags().Uint32(flagdefs.FlagAccount, 0, "BIP44 account number")
+	cmd.Flags().Uint32(flagdefs.FlagIndex, 0, "BIP44 address index")
+	cmd.Flags().String(flagdefs.FlagHDPath, "", "Manual HD path override")
+	cmd.Flags().String(flagdefs.FlagKeyType, "secp256k1", "Signing algorithm")
+	cmd.Flags().String(flagdefs.FlagMultisig, "", "Comma-separated list of key names for multisig")
+	cmd.Flags().Int(flagdefs.FlagMultisigThreshold, 1, "K-of-N threshold for multisig")
+	cmd.Flags().String(flagdefs.FlagMnemonicSource, "", "File path to read mnemonic from")
 
 	return cmd
 }
@@ -405,7 +407,7 @@ func deleteCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder)
 				return fmt.Errorf("key %q not found", name)
 			}
 
-			yes, _ := cmd.Flags().GetBool("yes")
+			yes, _ := cmd.Flags().GetBool(flagdefs.FlagSkipConfirmation)
 			if !yes {
 				checked := output.NewCheckedWriter(cmd.ErrOrStderr())
 				if _, err := fmt.Fprintf(checked, "Delete key %q? [y/N]: ", name); err != nil {
@@ -433,7 +435,7 @@ func deleteCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder)
 		},
 	}
 
-	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation")
+	cmd.Flags().BoolP(flagdefs.FlagSkipConfirmation, "y", false, "Skip confirmation")
 
 	return cmd
 }
@@ -539,7 +541,7 @@ func showCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 				return fmt.Errorf("get address: %w", err)
 			}
 
-			addressOnly, _ := cmd.Flags().GetBool("address")
+			addressOnly, _ := cmd.Flags().GetBool(flagdefs.FlagAddress)
 			if addressOnly {
 				if output.FormatFromCmd(cmd) == output.FormatTable {
 					_, err := fmt.Fprintln(cmd.OutOrStdout(), addr.String())
@@ -578,7 +580,7 @@ func showCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolP("address", "a", false, "Print only the bech32 address")
+	cmd.Flags().BoolP(flagdefs.FlagAddress, "a", false, "Print only the bech32 address")
 
 	return cmd
 }

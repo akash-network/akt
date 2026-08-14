@@ -38,13 +38,6 @@ import (
 	wtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 )
 
-// Proposal flags
-const (
-	flagVoter     = "voter"
-	flagDepositor = "depositor"
-	flagStatus    = "status"
-)
-
 // ProposalFlags defines the core required fields of a legacy proposal. It is used to
 // verify that these values are not provided in conjunction with a JSON proposal
 // file.

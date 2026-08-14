@@ -14,6 +14,7 @@ import (
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	aktcodec "pkg.akt.dev/akt/internal/codec"
+	flagdefs "pkg.akt.dev/akt/internal/flags"
 	aktkeyring "pkg.akt.dev/akt/internal/keyring"
 )
 
@@ -144,15 +145,15 @@ func TestCertificateFlagsRemainLeafLocal(t *testing.T) {
 	clientGenerate := GetTxCertGenerateClientCmd()
 	serverGenerate := GetTxCertGenerateServerCmd()
 	for name, value := range map[string]string{
-		flagStart:            "2026-01-02T03:04:05Z",
-		flagValidTime:        "2h",
-		cflags.FlagOverwrite: "true",
+		flagdefs.FlagStartTime:     "2026-01-02T03:04:05Z",
+		flagdefs.FlagValidDuration: "2h",
+		cflags.FlagOverwrite:       "true",
 	} {
 		if err := clientGenerate.Flags().Set(name, value); err != nil {
 			t.Fatalf("set client --%s: %v", name, err)
 		}
 	}
-	if err := serverGenerate.Flags().Set(flagStart, "2030-01-02T03:04:05Z"); err != nil {
+	if err := serverGenerate.Flags().Set(flagdefs.FlagStartTime, "2030-01-02T03:04:05Z"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -179,7 +180,7 @@ func TestCertificateFlagsRemainLeafLocal(t *testing.T) {
 
 	clientPublish := GetTxCertPublishClientCmd()
 	serverPublish := GetTxCertPublishServerCmd()
-	if err := clientPublish.Flags().Set(flagToGenesis, "true"); err != nil {
+	if err := clientPublish.Flags().Set(flagdefs.FlagToGenesis, "true"); err != nil {
 		t.Fatal(err)
 	}
 	if !certToGenesisFromCmd(clientPublish) || certToGenesisFromCmd(serverPublish) {
@@ -188,10 +189,10 @@ func TestCertificateFlagsRemainLeafLocal(t *testing.T) {
 
 	clientRevoke := GetTxCertsRevokeClientCmd()
 	serverRevoke := GetTxCertRevokeServerCmd()
-	if err := clientRevoke.Flags().Set(flagSerial, "11"); err != nil {
+	if err := clientRevoke.Flags().Set(flagdefs.FlagSerial, "11"); err != nil {
 		t.Fatal(err)
 	}
-	if err := serverRevoke.Flags().Set(flagSerial, "22"); err != nil {
+	if err := serverRevoke.Flags().Set(flagdefs.FlagSerial, "22"); err != nil {
 		t.Fatal(err)
 	}
 	if got := certSerialFromCmd(clientRevoke); got != "11" {

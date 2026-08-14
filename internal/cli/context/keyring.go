@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
@@ -57,7 +59,7 @@ func keyringCreateCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			}
 
 			m := mgr()
-			dir, _ := cmd.Flags().GetString("dir")
+			dir, _ := cmd.Flags().GetString(flagdefs.FlagDir)
 
 			if err := m.CreateKeyring(aktctx.Keyring{Name: name, Backend: backend, Dir: dir}); err != nil {
 				return err
@@ -73,7 +75,7 @@ func keyringCreateCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().String("dir", "", "Keyring directory (default: <home>/keyrings/<name>/)")
+	cmd.Flags().String(flagdefs.FlagDir, "", "Keyring directory (default: <home>/keyrings/<name>/)")
 
 	return cmd
 }
@@ -180,8 +182,8 @@ where they are; re-add or import them under the new backend.`,
 				previous = existing.Backend
 			}
 
-			dirChanged := cmd.Flags().Changed("dir")
-			dir, _ := cmd.Flags().GetString("dir")
+			dirChanged := cmd.Flags().Changed(flagdefs.FlagDir)
+			dir, _ := cmd.Flags().GetString(flagdefs.FlagDir)
 
 			if err := m.UpdateKeyring(name, func(kr *aktctx.Keyring) error {
 				kr.Backend = backend
@@ -215,7 +217,7 @@ where they are; re-add or import them under the new backend.`,
 		},
 	}
 
-	cmd.Flags().String("dir", "", "Keyring directory (default: <home>/keyrings/<name>/)")
+	cmd.Flags().String(flagdefs.FlagDir, "", "Keyring directory (default: <home>/keyrings/<name>/)")
 
 	return cmd
 }

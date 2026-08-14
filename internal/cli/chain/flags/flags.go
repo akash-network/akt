@@ -11,7 +11,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
-	cmcli "github.com/cometbft/cometbft/libs/cli"
+	flagdefs "pkg.akt.dev/akt/internal/flags"
 
 	"pkg.akt.dev/akt/internal/output"
 )
@@ -46,103 +46,103 @@ const (
 )
 
 const (
-	FlagGenesisTime = "genesis-time"
-	FlagGenTxDir    = "gentx-dir"
-	FlagRecover     = "recover"
+	FlagGenesisTime = flagdefs.FlagGenesisTime
+	FlagGenTxDir    = flagdefs.FlagGenTxDir
+	FlagRecover     = flagdefs.FlagRecover
 	// FlagDefaultBondDenom defines the default denom to use in the genesis file.
-	FlagDefaultBondDenom = "default-denom"
+	FlagDefaultBondDenom = flagdefs.FlagDefaultBondDenom
 	// FlagConsensusKeyAlgo defines the algorithm to use for the consensus signing key.
-	FlagConsensusKeyAlgo = "consensus-key-algo"
+	FlagConsensusKeyAlgo = flagdefs.FlagConsensusKeyAlgo
 
-	FlagDenom                     = "denom"
-	FlagVestingStart              = "vesting-start-time"
-	FlagVestingEnd                = "vesting-end-time"
-	FlagVestingAmt                = "vesting-amount"
-	FlagAppendMode                = "append"
-	FlagEvents                    = "events"
-	FlagType                      = "type"
-	FlagMultisig                  = "multisig"
-	FlagSkipSignatureVerification = "skip-signature-verification"
-	FlagOverwrite                 = "overwrite"
-	FlagSigOnly                   = "signature-only"
-	FlagAmino                     = "amino"
-	FlagNoAutoIncrement           = "no-auto-increment"
-	FlagAppend                    = "append"
-	FlagTitle                     = "title"
-	FlagMetadata                  = "metadata"
-	FlagSummary                   = "summary"
-	FlagExpedited                 = "expedited"
-	FlagNoValidate                = "no-validate"
-	FlagDaemonName                = "daemon-name"
-	FlagPeriod                    = "period"
-	FlagPeriodLimit               = "period-limit"
-	FlagAllowedMsgs               = "allowed-messages"
-	FlagMsgType                   = "msg-type"
-	FlagAllowedValidators         = "allowed-validators"
-	FlagDenyValidators            = "deny-validators"
-	FlagAllowList                 = "allow-list"
-	FlagStatus                    = "status"
-	FlagState                     = "state"
-	FlagOwner                     = "owner"
-	FlagDSeq                      = "dseq"
-	FlagGSeq                      = "gseq"
-	FlagOSeq                      = "oseq"
-	FlagProvider                  = "provider"
-	FlagClosedReason              = "reason"
-	FlagSerial                    = "serial"
-	FlagPrice                     = "price"
-	FlagDeposit                   = "deposit"
-	FlagDepositSources            = "deposit-sources"
-	FlagExpiration                = "expiration"
-	FlagSpendLimit                = "spend-limit"
-	FlagScope                     = "scope"
-	FlagHome                      = cmcli.HomeFlag
-	FlagKeyringDir                = "keyring-dir"
-	FlagUseLedger                 = "ledger"
-	FlagChainID                   = "chain-id"
-	FlagNode                      = "node"
-	FlagGRPC                      = "grpc-addr"
-	FlagGRPCInsecure              = "grpc-insecure"
-	FlagHeight                    = "height"
-	FlagGasAdjustment             = "gas-adjustment"
-	FlagFrom                      = "from"
-	FlagName                      = "name"
-	FlagAccountNumber             = "account-number"
-	FlagSequence                  = "sequence"
-	FlagNote                      = "note"
-	FlagFees                      = "fees"
-	FlagGas                       = "gas"
-	FlagGasPrices                 = "gas-prices"
-	FlagBroadcastMode             = "broadcast-mode"
-	FlagDryRun                    = "dry-run"
-	FlagGenerateOnly              = "generate-only"
-	FlagOffline                   = "offline"
-	FlagModulesToExport           = "modules-to-export"
-	FlagOutputDocument            = "output-document" // inspired by wget -O
-	FlagForZeroHeight             = "for-zero-height"
-	FlagJailAllowedAddrs          = "jail-allowed-addrs"
-	FlagSkipConfirmation          = "yes"
-	FlagProve                     = "prove"
-	FlagKeyringBackend            = "keyring-backend"
-	FlagPage                      = "page"
-	FlagLimit                     = "limit"
-	FlagSignMode                  = "sign-mode"
-	FlagPageKey                   = "page-key"
-	FlagOffset                    = "offset"
-	FlagCountTotal                = "count-total"
-	FlagTimeoutHeight             = "timeout-height"
-	FlagKeyType                   = "key-type"
-	FlagFeePayer                  = "fee-payer"
-	FlagFeeGranter                = "fee-granter"
-	FlagReverse                   = "reverse"
-	FlagTip                       = "tip"
-	FlagAux                       = "aux"
-	FlagInitHeight                = "initial-height"
-	FlagDelayed                   = "delayed"
-	FlagSkipRPCInit               = "skip-rpc-init"
+	FlagDenom                     = flagdefs.FlagDenom
+	FlagVestingStart              = flagdefs.FlagVestingStart
+	FlagVestingEnd                = flagdefs.FlagVestingEnd
+	FlagVestingAmt                = flagdefs.FlagVestingAmt
+	FlagAppendMode                = flagdefs.FlagAppendMode
+	FlagEvents                    = flagdefs.FlagEvents
+	FlagType                      = flagdefs.FlagType
+	FlagMultisig                  = flagdefs.FlagMultisig
+	FlagSkipSignatureVerification = flagdefs.FlagSkipSignatureVerification
+	FlagOverwrite                 = flagdefs.FlagOverwrite
+	FlagSigOnly                   = flagdefs.FlagSigOnly
+	FlagAmino                     = flagdefs.FlagAmino
+	FlagNoAutoIncrement           = flagdefs.FlagNoAutoIncrement
+	FlagAppend                    = flagdefs.FlagAppendMode
+	FlagTitle                     = flagdefs.FlagTitle
+	FlagMetadata                  = flagdefs.FlagMetadata
+	FlagSummary                   = flagdefs.FlagSummary
+	FlagExpedited                 = flagdefs.FlagExpedited
+	FlagNoValidate                = flagdefs.FlagNoValidate
+	FlagDaemonName                = flagdefs.FlagDaemonName
+	FlagPeriod                    = flagdefs.FlagPeriod
+	FlagPeriodLimit               = flagdefs.FlagPeriodLimit
+	FlagAllowedMsgs               = flagdefs.FlagAllowedMsgs
+	FlagMsgType                   = flagdefs.FlagMsgType
+	FlagAllowedValidators         = flagdefs.FlagAllowedValidators
+	FlagDenyValidators            = flagdefs.FlagDenyValidators
+	FlagAllowList                 = flagdefs.FlagAllowList
+	FlagStatus                    = flagdefs.FlagStatus
+	FlagState                     = flagdefs.FlagState
+	FlagOwner                     = flagdefs.FlagOwner
+	FlagDSeq                      = flagdefs.FlagDSeq
+	FlagGSeq                      = flagdefs.FlagGSeq
+	FlagOSeq                      = flagdefs.FlagOSeq
+	FlagProvider                  = flagdefs.FlagProvider
+	FlagClosedReason              = flagdefs.FlagClosedReason
+	FlagSerial                    = flagdefs.FlagSerial
+	FlagPrice                     = flagdefs.FlagPrice
+	FlagDeposit                   = flagdefs.FlagDeposit
+	FlagDepositSources            = flagdefs.FlagDepositSources
+	FlagExpiration                = flagdefs.FlagExpiration
+	FlagSpendLimit                = flagdefs.FlagSpendLimit
+	FlagScope                     = flagdefs.FlagScope
+	FlagHome                      = flagdefs.FlagHome
+	FlagKeyringDir                = flagdefs.FlagKeyringDir
+	FlagUseLedger                 = flagdefs.FlagUseLedger
+	FlagChainID                   = flagdefs.FlagChainID
+	FlagNode                      = flagdefs.FlagNode
+	FlagGRPC                      = flagdefs.FlagGRPC
+	FlagGRPCInsecure              = flagdefs.FlagGRPCInsecure
+	FlagHeight                    = flagdefs.FlagHeight
+	FlagGasAdjustment             = flagdefs.FlagGasAdjustment
+	FlagFrom                      = flagdefs.FlagFrom
+	FlagName                      = flagdefs.FlagName
+	FlagAccountNumber             = flagdefs.FlagAccountNumber
+	FlagSequence                  = flagdefs.FlagSequence
+	FlagNote                      = flagdefs.FlagNote
+	FlagFees                      = flagdefs.FlagFees
+	FlagGas                       = flagdefs.FlagGas
+	FlagGasPrices                 = flagdefs.FlagGasPrices
+	FlagBroadcastMode             = flagdefs.FlagBroadcastMode
+	FlagDryRun                    = flagdefs.FlagDryRun
+	FlagGenerateOnly              = flagdefs.FlagGenerateOnly
+	FlagOffline                   = flagdefs.FlagOffline
+	FlagModulesToExport           = flagdefs.FlagModulesToExport
+	FlagOutputDocument            = flagdefs.FlagOutputDocument // inspired by wget -O
+	FlagForZeroHeight             = flagdefs.FlagForZeroHeight
+	FlagJailAllowedAddrs          = flagdefs.FlagJailAllowedAddrs
+	FlagSkipConfirmation          = flagdefs.FlagSkipConfirmation
+	FlagProve                     = flagdefs.FlagProve
+	FlagKeyringBackend            = flagdefs.FlagKeyringBackend
+	FlagPage                      = flagdefs.FlagPage
+	FlagLimit                     = flagdefs.FlagLimit
+	FlagSignMode                  = flagdefs.FlagSignMode
+	FlagPageKey                   = flagdefs.FlagPageKey
+	FlagOffset                    = flagdefs.FlagOffset
+	FlagCountTotal                = flagdefs.FlagCountTotal
+	FlagTimeoutHeight             = flagdefs.FlagTimeoutHeight
+	FlagKeyType                   = flagdefs.FlagKeyType
+	FlagFeePayer                  = flagdefs.FlagFeePayer
+	FlagFeeGranter                = flagdefs.FlagFeeGranter
+	FlagReverse                   = flagdefs.FlagReverse
+	FlagTip                       = flagdefs.FlagTip
+	FlagAux                       = flagdefs.FlagAux
+	FlagInitHeight                = flagdefs.FlagInitHeight
+	FlagDelayed                   = flagdefs.FlagDelayed
+	FlagSkipRPCInit               = flagdefs.FlagSkipRPCInit
 	// FlagOutput is the flag to set the output format.
 	// This differs from FlagOutputDocument that is used to set the output file.
-	FlagOutput = cmcli.OutputFlag
+	FlagOutput = flagdefs.FlagOutput
 
 	// OutputPretty is the value for --output that renders human-friendly pretty output.
 	OutputPretty = "pretty"
@@ -150,109 +150,109 @@ const (
 	OutputJSON = "json"
 	// OutputYAML is the value for --output that renders machine-readable YAML.
 	OutputYAML = "yaml"
-	FlagSplit  = "split"
+	FlagSplit  = flagdefs.FlagSplit
 
-	TimeoutDuration  = "timeout-duration"
-	FlagUnordered    = "unordered"
-	FlagKeyAlgorithm = "algo"
+	TimeoutDuration  = flagdefs.FlagTimeoutDuration
+	FlagUnordered    = flagdefs.FlagUnordered
+	FlagKeyAlgorithm = flagdefs.FlagKeyAlgorithm
 
 	// CometBFT logging flags
 
-	FlagLogLevel     = "log_level"
-	FlagLogFormat    = "log_format"
-	FlagLogNoColor   = "log_no_color"
-	FlagLogColor     = "log_color"
-	FlagLogTimestamp = "log_timestamp"
-	FlagTrace        = "trace"
+	FlagLogLevel     = flagdefs.FlagLogLevel
+	FlagLogFormat    = flagdefs.FlagLogFormat
+	FlagLogNoColor   = flagdefs.FlagLogNoColor
+	FlagLogColor     = flagdefs.FlagLogColor
+	FlagLogTimestamp = flagdefs.FlagLogTimestamp
+	FlagTrace        = flagdefs.FlagTrace
 
-	FlagAddressValidator    = "validator"
-	FlagAddressValidatorSrc = "addr-validator-source"
-	FlagAddressValidatorDst = "addr-validator-dest"
-	FlagPubKey              = "pubkey"
-	FlagAmount              = "amount"
-	FlagSharesAmount        = "shares-amount"
-	FlagSharesFraction      = "shares-fraction"
+	FlagAddressValidator    = flagdefs.FlagAddressValidator
+	FlagAddressValidatorSrc = flagdefs.FlagAddressValidatorSrc
+	FlagAddressValidatorDst = flagdefs.FlagAddressValidatorDst
+	FlagPubKey              = flagdefs.FlagPubKey
+	FlagAmount              = flagdefs.FlagAmount
+	FlagSharesAmount        = flagdefs.FlagSharesAmount
+	FlagSharesFraction      = flagdefs.FlagSharesFraction
 
-	FlagMoniker         = "moniker"
-	FlagEditMoniker     = "new-moniker"
-	FlagIdentity        = "identity"
-	FlagWebsite         = "website"
-	FlagSecurityContact = "security-contact"
-	FlagDetails         = "details"
+	FlagMoniker         = flagdefs.FlagMoniker
+	FlagEditMoniker     = flagdefs.FlagEditMoniker
+	FlagIdentity        = flagdefs.FlagIdentity
+	FlagWebsite         = flagdefs.FlagWebsite
+	FlagSecurityContact = flagdefs.FlagSecurityContact
+	FlagDetails         = flagdefs.FlagDetails
 
-	FlagCommission              = "commission"
-	FlagCommissionRate          = "commission-rate"
-	FlagCommissionMaxRate       = "commission-max-rate"
-	FlagCommissionMaxChangeRate = "commission-max-change-rate"
-	FlagMinSelfDelegation       = "min-self-delegation"
+	FlagCommission              = flagdefs.FlagCommission
+	FlagCommissionRate          = flagdefs.FlagCommissionRate
+	FlagCommissionMaxRate       = flagdefs.FlagCommissionMaxRate
+	FlagCommissionMaxChangeRate = flagdefs.FlagCommissionMaxChangeRate
+	FlagMinSelfDelegation       = flagdefs.FlagMinSelfDelegation
 
-	FlagGenesisFormat = "genesis-format"
-	FlagNodeID        = "node-id"
-	FlagIP            = "ip"
-	FlagP2PPort       = "p2p-port"
+	FlagGenesisFormat = flagdefs.FlagGenesisFormat
+	FlagNodeID        = flagdefs.FlagNodeID
+	FlagIP            = flagdefs.FlagIP
+	FlagP2PPort       = flagdefs.FlagP2PPort
 
-	FlagNoChecksumRequired = "no-checksum-required"
-	FlagAuthority          = "authority"
+	FlagNoChecksumRequired = flagdefs.FlagNoChecksumRequired
+	FlagAuthority          = flagdefs.FlagAuthority
 
-	FlagModuleName = "module-name"
+	FlagModuleName = flagdefs.FlagModuleName
 
 	// Tendermint full-node start flags
 
-	FlagWithTendermint     = "with-tendermint"
-	FlagWithComet          = "with-comet"
-	FlagAddress            = "address"
-	FlagTransport          = "transport"
-	FlagTraceStore         = "trace-store"
-	FlagCPUProfile         = "cpu-profile"
-	FlagMinGasPrices       = "minimum-gas-prices"
-	FlagQueryGasLimit      = "query-gas-limit"
-	FlagHaltHeight         = "halt-height"
-	FlagHaltTime           = "halt-time"
-	FlagInterBlockCache    = "inter-block-cache"
-	FlagUnsafeSkipUpgrades = "unsafe-skip-upgrades"
-	FlagInvCheckPeriod     = "inv-check-period"
+	FlagWithTendermint     = flagdefs.FlagWithTendermint
+	FlagWithComet          = flagdefs.FlagWithComet
+	FlagAddress            = flagdefs.FlagAddress
+	FlagTransport          = flagdefs.FlagTransport
+	FlagTraceStore         = flagdefs.FlagTraceStore
+	FlagCPUProfile         = flagdefs.FlagCPUProfile
+	FlagMinGasPrices       = flagdefs.FlagMinGasPrices
+	FlagQueryGasLimit      = flagdefs.FlagQueryGasLimit
+	FlagHaltHeight         = flagdefs.FlagHaltHeight
+	FlagHaltTime           = flagdefs.FlagHaltTime
+	FlagInterBlockCache    = flagdefs.FlagInterBlockCache
+	FlagUnsafeSkipUpgrades = flagdefs.FlagUnsafeSkipUpgrades
+	FlagInvCheckPeriod     = flagdefs.FlagInvCheckPeriod
 
-	FlagPruning             = "pruning"
-	FlagPruningKeepRecent   = "pruning-keep-recent"
-	FlagPruningInterval     = "pruning-interval"
-	FlagIndexEvents         = "index-events"
-	FlagMinRetainBlocks     = "min-retain-blocks"
-	FlagIAVLCacheSize       = "iavl-cache-size"
-	FlagDisableIAVLFastNode = "iavl-disable-fastnode"
-	FlagIAVLLazyLoading     = "iavl-lazy-loading"
-	FlagIAVLSyncPruning     = "iavl-sync-pruning"
-	FlagShutdownGrace       = "shutdown-grace"
+	FlagPruning             = flagdefs.FlagPruning
+	FlagPruningKeepRecent   = flagdefs.FlagPruningKeepRecent
+	FlagPruningInterval     = flagdefs.FlagPruningInterval
+	FlagIndexEvents         = flagdefs.FlagIndexEvents
+	FlagMinRetainBlocks     = flagdefs.FlagMinRetainBlocks
+	FlagIAVLCacheSize       = flagdefs.FlagIAVLCacheSize
+	FlagDisableIAVLFastNode = flagdefs.FlagDisableIAVLFastNode
+	FlagIAVLLazyLoading     = flagdefs.FlagIAVLLazyLoading
+	FlagIAVLSyncPruning     = flagdefs.FlagIAVLSyncPruning
+	FlagShutdownGrace       = flagdefs.FlagShutdownGrace
 
 	// state sync-related flags
 
-	FlagStateSyncSnapshotInterval   = "state-sync.snapshot-interval"
-	FlagStateSyncSnapshotKeepRecent = "state-sync.snapshot-keep-recent"
+	FlagStateSyncSnapshotInterval   = flagdefs.FlagStateSyncSnapshotInterval
+	FlagStateSyncSnapshotKeepRecent = flagdefs.FlagStateSyncSnapshotKeepRecent
 
 	// api-related flags
 
-	FlagAPIEnable             = "api.enable"
-	FlagAPISwagger            = "api.swagger"
-	FlagAPIAddress            = "api.address"
-	FlagAPIMaxOpenConnections = "api.max-open-connections"
-	FlagRPCReadTimeout        = "api.rpc-read-timeout"
-	FlagRPCWriteTimeout       = "api.rpc-write-timeout"
-	FlagRPCMaxBodyBytes       = "api.rpc-max-body-bytes"
-	FlagAPIEnableUnsafeCORS   = "api.enabled-unsafe-cors"
+	FlagAPIEnable             = flagdefs.FlagAPIEnable
+	FlagAPISwagger            = flagdefs.FlagAPISwagger
+	FlagAPIAddress            = flagdefs.FlagAPIAddress
+	FlagAPIMaxOpenConnections = flagdefs.FlagAPIMaxOpenConnections
+	FlagRPCReadTimeout        = flagdefs.FlagRPCReadTimeout
+	FlagRPCWriteTimeout       = flagdefs.FlagRPCWriteTimeout
+	FlagRPCMaxBodyBytes       = flagdefs.FlagRPCMaxBodyBytes
+	FlagAPIEnableUnsafeCORS   = flagdefs.FlagAPIEnableUnsafeCORS
 
 	// gRPC-related flags
 
-	FlagGRPCOnly            = "grpc-only"
-	FlagGRPCEnable          = "grpc.enable"
-	FlagGRPCAddress         = "grpc.address"
-	FlagGRPCWebEnable       = "grpc-web.enable"
-	FlagGRPCSkipCheckHeader = "grpc.skip-check-header"
+	FlagGRPCOnly            = flagdefs.FlagGRPCOnly
+	FlagGRPCEnable          = flagdefs.FlagGRPCEnable
+	FlagGRPCAddress         = flagdefs.FlagGRPCAddress
+	FlagGRPCWebEnable       = flagdefs.FlagGRPCWebEnable
+	FlagGRPCSkipCheckHeader = flagdefs.FlagGRPCSkipCheckHeader
 
 	// mempool flags
 
-	FlagMempoolMaxTxs = "mempool.max-txs"
+	FlagMempoolMaxTxs = flagdefs.FlagMempoolMaxTxs
 
-	FlagQuery   = "query"
-	FlagOrderBy = "order_by"
+	FlagQuery   = flagdefs.FlagQuery
+	FlagOrderBy = flagdefs.FlagOrderBy
 
 	TypeHash   = "hash"
 	TypeAccSeq = "acc_seq"
@@ -261,50 +261,50 @@ const (
 
 	// testnet keys
 
-	FlagTestnetRootDir = "testnet-rootdir"
+	FlagTestnetRootDir = flagdefs.FlagTestnetRootDir
 	KeyTestnetRootDir  = FlagTestnetRootDir
 
 	KeyIsTestnet             = "is-testnet"
 	KeyTestnetConfig         = "testnet-config"
 	KeyTestnetTriggerUpgrade = "testnet-trigger-upgrade"
 
-	FlagLabel                     = "label"
-	FlagSource                    = "code-source-url"
-	FlagBuilder                   = "builder"
-	FlagCodeHash                  = "code-hash"
-	FlagAdmin                     = "admin"
-	FlagNoAdmin                   = "no-admin"
-	FlagFixMsg                    = "fix-msg"
-	FlagRunAs                     = "run-as"
-	FlagInstantiateByEverybody    = "instantiate-everybody"
-	FlagInstantiateNobody         = "instantiate-nobody"
-	FlagInstantiateByAddress      = "instantiate-only-address"
-	FlagInstantiateByAnyOfAddress = "instantiate-anyof-addresses"
-	FlagUnpinCode                 = "unpin-code"
-	FlagAllowedMsgKeys            = "allow-msg-keys"
-	FlagAllowedRawMsgs            = "allow-raw-msgs"
-	FlagMaxCalls                  = "max-calls"
-	FlagMaxFunds                  = "max-funds"
-	FlagAllowAllMsgs              = "allow-all-messages"
-	FlagNoTokenTransfer           = "no-token-transfer" //nolint: gosec
-	FlagExpedite                  = "expedite"
+	FlagLabel                     = flagdefs.FlagLabel
+	FlagSource                    = flagdefs.FlagSource
+	FlagBuilder                   = flagdefs.FlagBuilder
+	FlagCodeHash                  = flagdefs.FlagCodeHash
+	FlagAdmin                     = flagdefs.FlagAdmin
+	FlagNoAdmin                   = flagdefs.FlagNoAdmin
+	FlagFixMsg                    = flagdefs.FlagFixMsg
+	FlagRunAs                     = flagdefs.FlagRunAs
+	FlagInstantiateByEverybody    = flagdefs.FlagInstantiateByEverybody
+	FlagInstantiateNobody         = flagdefs.FlagInstantiateNobody
+	FlagInstantiateByAddress      = flagdefs.FlagInstantiateByAddress
+	FlagInstantiateByAnyOfAddress = flagdefs.FlagInstantiateByAnyOfAddress
+	FlagUnpinCode                 = flagdefs.FlagUnpinCode
+	FlagAllowedMsgKeys            = flagdefs.FlagAllowedMsgKeys
+	FlagAllowedRawMsgs            = flagdefs.FlagAllowedRawMsgs
+	FlagMaxCalls                  = flagdefs.FlagMaxCalls
+	FlagMaxFunds                  = flagdefs.FlagMaxFunds
+	FlagAllowAllMsgs              = flagdefs.FlagAllowAllMsgs
+	FlagNoTokenTransfer           = flagdefs.FlagNoTokenTransfer //nolint: gosec
+	FlagExpedite                  = flagdefs.FlagExpedite
 
 	// oracle flags
 
-	FlagAssetDenom = "asset-denom"
-	FlagBaseDenom  = "base-denom"
+	FlagAssetDenom = flagdefs.FlagAssetDenom
+	FlagBaseDenom  = flagdefs.FlagBaseDenom
 
 	// bme flags
 
-	FlagTo      = "to"
-	FlagToDenom = "to-denom"
+	FlagTo      = flagdefs.FlagTo
+	FlagToDenom = flagdefs.FlagToDenom
 
 	// wasm flags
 
-	FlagWasmMemoryCacheSize        = "wasm.memory_cache_size"
-	FlagWasmQueryGasLimit          = "wasm.query_gas_limit"
-	FlagWasmSimulationGasLimit     = "wasm.simulation_gas_limit"
-	FlagWasmSkipWasmVMVersionCheck = "wasm.skip_wasmvm_version_check" //nolint: gosec
+	FlagWasmMemoryCacheSize        = flagdefs.FlagWasmMemoryCacheSize
+	FlagWasmQueryGasLimit          = flagdefs.FlagWasmQueryGasLimit
+	FlagWasmSimulationGasLimit     = flagdefs.FlagWasmSimulationGasLimit
+	FlagWasmSkipWasmVMVersionCheck = flagdefs.FlagWasmSkipWasmVMVersionCheck //nolint: gosec
 )
 
 // List of supported output formats
@@ -315,15 +315,15 @@ const (
 
 const (
 	// FlagProposal only used for v1beta1 legacy proposals.
-	FlagProposal = "proposal"
+	FlagProposal = flagdefs.FlagProposal
 	// FlagDescription only used for v1beta1 legacy proposals.
-	FlagDescription = "description"
+	FlagDescription = flagdefs.FlagDescription
 	// FlagProposalType only used for v1beta1 legacy proposals.
-	FlagProposalType = "type"
+	FlagProposalType = flagdefs.FlagType
 	// FlagUpgradeHeight only used for v1beta1 legacy proposals.
-	FlagUpgradeHeight = "upgrade-height"
+	FlagUpgradeHeight = flagdefs.FlagUpgradeHeight
 	// FlagUpgradeInfo only used for v1beta1 legacy proposals.
-	FlagUpgradeInfo = "upgrade-info"
+	FlagUpgradeInfo = flagdefs.FlagUpgradeInfo
 )
 
 // common flagsets to add to various functions

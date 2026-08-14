@@ -869,6 +869,11 @@
   final balance observation separate cleanup deadlines. Ambiguous creates are
   rediscovered by unique post-baseline SDL hash; in-process cleanup attempts
   every match and an unresolved, duplicate, or unclosed outcome fails the run.
+- **CLI flag names were scattered across command implementations as string
+  literals and package-local constants**: every statically declared flag name
+  now has one canonical definition in `internal/flags`. Registrations, reads,
+  change checks, Viper bindings, and chain flag aliases use that registry while
+  preserving the existing flag names, defaults, shorthands, and help text.
 
 - **Exports showed every `record_version` as zero without explaining the other
   version fields**: bbolt now assigns revision 1 to a new deployment, lease, or

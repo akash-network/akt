@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/flags"
 	"github.com/spf13/cobra"
@@ -53,7 +55,7 @@ Write tools, unlocked only by --enable-writes:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cctx := sdkclient.GetClientContextFromCmd(cmd)
-			enableWrites, _ := cmd.Flags().GetBool("enable-writes")
+			enableWrites, _ := cmd.Flags().GetBool(flagdefs.FlagEnableWrites)
 			if enableWrites && selectedMCPContext(cmd, mgrFn) == "" {
 				return fmt.Errorf("MCP writes require an active context so every mutation has a per-context action log; create or select a context, or omit --enable-writes")
 			}
@@ -118,9 +120,9 @@ Write tools, unlocked only by --enable-writes:
 		},
 	}
 
-	cmd.Flags().String("console-api-key", "",
+	cmd.Flags().String(flagdefs.FlagConsoleAPIKey, "",
 		"Console API key. Overrides the context credential and AKT_CONSOLE_API_KEY.")
-	cmd.Flags().Bool("enable-writes", false,
+	cmd.Flags().Bool(flagdefs.FlagEnableWrites, false,
 		"Enable write tools (on-chain transactions and provider mutations). "+
 			"Without this flag, only read-only query tools are available.")
 
@@ -152,7 +154,7 @@ func selectedMCPContext(cmd *cobra.Command, mgrFn func() *aktctx.Manager) string
 		return ""
 	}
 	override := ""
-	if flag := cmd.Flags().Lookup("context"); flag != nil {
+	if flag := cmd.Flags().Lookup(flagdefs.FlagContext); flag != nil {
 		override = flag.Value.String()
 	}
 	return m.ActiveContext(override)
@@ -167,12 +169,12 @@ func selectedMCPContext(cmd *cobra.Command, mgrFn func() *aktctx.Manager) string
 // setup, and registering Console tools that would fail on every call is worse
 // than not offering them.
 func consoleClientFor(cmd *cobra.Command, mgrFn func() *aktctx.Manager) *console.Client {
-	key, _ := cmd.Flags().GetString("console-api-key")
+	key, _ := cmd.Flags().GetString(flagdefs.FlagConsoleAPIKey)
 
 	baseURL := ""
 	if m := mgrFn(); m != nil {
 		override := ""
-		if f := cmd.Flags().Lookup("context"); f != nil {
+		if f := cmd.Flags().Lookup(flagdefs.FlagContext); f != nil {
 			override = f.Value.String()
 		}
 
