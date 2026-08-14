@@ -191,7 +191,8 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *c
 			// Ledger hardware wallet key.
 			useLedger, _ := cmd.Flags().GetBool("ledger")
 			if useLedger {
-				record, err := kr.SaveLedgerKey(name, algo, "cosmos", coinType, account, index)
+				bech32PrefixAccAddr := sdk.GetConfig().GetBech32AccountAddrPrefix()
+				record, err := kr.SaveLedgerKey(name, algo, bech32PrefixAccAddr, coinType, account, index)
 				recorder.record(cmd, actionKeysAdd, err, keyMutationDetails(name, keyTypeLedger, record))
 
 				if err != nil {
