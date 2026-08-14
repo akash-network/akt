@@ -1398,6 +1398,14 @@ exceptions are machine-readable and reviewed like source changes. A helper
 used only by tests belongs in a `_test.go` file or the classified test-support
 package; it must not remain in a release-compiled file merely to make it
 importable from tests.
+Chain command tests build recurring flag arguments with the small immutable
+`FlagsSet` builder in `internal/cli/chain/testutil`. The builder follows the
+`chain-sdk/go/cli` `TestFlags` contract, uses the same registered flag-name
+constants as the command implementation, and stays outside the release
+dependency graph. It does not replace positional arguments, subprocess
+execution, or semantic assertions. Public CLI contract tests retain literal
+command and flag spellings so a shared constant change cannot silently rewrite
+both the implementation and its expected interface.
 Taxonomy validation walks non-test Go source independently of the default build
 tags, closing the build-constrained-package gap. Repository tooling is reported
 and ratcheted separately from shipped code; test-only helpers are excluded.

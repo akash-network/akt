@@ -6804,6 +6804,19 @@ test-support package. Removing accidentally release-linked test support is a
 correction to the shipped source set, not a coverage exclusion; the support
 package still requires the §12.4 exception record.
 
+The shared builder for recurring chain-command test flags MUST be the immutable
+`FlagsSet` implementation in `internal/cli/chain/testutil`, derived from
+`chain-sdk/go/cli.TestFlags`; a test-only API MUST NOT be restored to the
+release-compiled chain package. Builder methods MUST use the registered flag
+constants and MUST return a copy so a shared base argument set cannot be
+mutated by a sibling test case. Values that the command defines as positional
+remain positional. Tests that specify the public CLI contract MUST assert
+literal command and flag spellings independently of the constants used by
+registration; the builder is for invocation setup, not an oracle for the
+public interface. Using it does not replace decoding transactions, inspecting
+recorded query requests, or invoking the instrumented `akt` subprocess in
+end-to-end tests.
+
 ### 12.2 Coverage collection and profiles
 
 Unit coverage MUST be cross-package coverage. The unit command supplies

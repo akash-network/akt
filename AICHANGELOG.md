@@ -75,6 +75,16 @@
 
 ### Changed
 
+- **Chain CLI tests now use the chain-sdk argument-builder pattern without
+  compiling test support into the release package**: the recurring offline
+  transaction and signing arguments are assembled through a focused immutable
+  `FlagsSet` builder in the already-classified chain test-support package. The
+  builder follows `chain-sdk/go/cli.TestFlags` and registered flag constants,
+  while positional inputs and literal public-interface assertions remain
+  independent. This replaces the former 1,025-line release-compiled helper,
+  whose broad API had only three AKT call sites, without adding the deprecated
+  `pkg.akt.dev/go/cli` module as a dependency.
+
 - **Console sandbox verification now gates trusted pull requests instead of
   running on a timer**: CI removes the daily and manual mutation paths, runs
   real reads plus the capped managed-wallet lifecycle for same-repository pull

@@ -64,15 +64,14 @@ func (f generatedTxFixture) executeOffline(
 ) ([]byte, error) {
 	t.Helper()
 
-	callArgs := append([]string{}, args...)
-	callArgs = append(callArgs,
-		fmt.Sprintf("--%s=%s", cflags.FlagFrom, f.from.String()),
-		fmt.Sprintf("--%s=true", cflags.FlagGenerateOnly),
-		fmt.Sprintf("--%s=true", cflags.FlagOffline),
-		fmt.Sprintf("--%s=200000", cflags.FlagGas),
-		fmt.Sprintf("--%s=%s", cflags.FlagChainID, f.cctx.ChainID),
-		fmt.Sprintf("--%s=%s", cflags.FlagOutput, cflags.OutputJSON),
-	)
+	callArgs := chaintest.TestFlags().
+		With(args...).
+		WithFrom(f.from.String()).
+		WithGenerateOnly().
+		WithOffline().
+		WithGas(200000).
+		WithChainID(f.cctx.ChainID).
+		WithOutputJSON()
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
