@@ -86,8 +86,8 @@ func GetOraclePricesCmd() *cobra.Command {
 			}
 
 			// Get filter flags
-			assetDenom, _ := cmd.Flags().GetString(cflags.FlagAssetDenom)
-			baseDenom, _ := cmd.Flags().GetString(cflags.FlagBaseDenom)
+			assetDenom, _ := cmd.Flags().GetString(flagdefs.FlagAssetDenom)
+			baseDenom, _ := cmd.Flags().GetString(flagdefs.FlagBaseDenom)
 			startTimeStr, _ := cmd.Flags().GetString(flagdefs.FlagStartTime)
 			endTimeStr, _ := cmd.Flags().GetString(flagdefs.FlagEndTime)
 
@@ -135,8 +135,8 @@ func GetOraclePricesCmd() *cobra.Command {
 
 	cflags.AddQueryFlagsToCmd(cmd)
 	cflags.AddPaginationFlagsToCmd(cmd, "prices")
-	cmd.Flags().String(cflags.FlagAssetDenom, "", "Filter by asset denomination as the oracle keys it, i.e. the base denom (e.g., akt)")
-	cmd.Flags().String(cflags.FlagBaseDenom, "", "Filter by base denomination (e.g., usd)")
+	cmd.Flags().String(flagdefs.FlagAssetDenom, "", "Filter by asset denomination as the oracle keys it, i.e. the base denom (e.g., akt)")
+	cmd.Flags().String(flagdefs.FlagBaseDenom, "", "Filter by base denomination (e.g., usd)")
 	cmd.Flags().String(flagdefs.FlagStartTime, "", "Filter by start time (RFC3339 format, e.g., 2024-01-01T00:00:00Z)")
 	cmd.Flags().String(flagdefs.FlagEndTime, "", "Filter by end time (RFC3339 format, e.g., 2024-01-01T00:00:00Z)")
 

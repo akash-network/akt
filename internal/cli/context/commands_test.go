@@ -1,6 +1,8 @@
 package context
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	stdcontext "context"
 	"encoding/json"
@@ -312,7 +314,7 @@ func TestEmptyContextListUsesStructuredCommandWriter(t *testing.T) {
 		t.Run(format, func(t *testing.T) {
 			m := newTestManager(t)
 			cmd := listCmd(func() *aktctx.Manager { return m })
-			cmd.Flags().String("output", "pretty", "test output format")
+			cmd.Flags().String(flagdefs.FlagOutput, "pretty", "test output format")
 			out := runOutput(t, cmd, "--output", format)
 			if !strings.HasSuffix(strings.TrimSpace(out), "[]") {
 				t.Fatalf("empty %s context list = %q, want an empty sequence", format, out)
@@ -390,8 +392,8 @@ func TestShowHonorsContextOverrideAndIncludesResolvedPaths(t *testing.T) {
 	}
 
 	cmd := currentCmd(mgrFn)
-	cmd.Flags().String("context", "", "test context override")
-	cmd.Flags().String("output", "pretty", "test output format")
+	cmd.Flags().String(flagdefs.FlagContext, "", "test context override")
+	cmd.Flags().String(flagdefs.FlagOutput, "pretty", "test output format")
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
@@ -429,8 +431,8 @@ func TestShowHonorsContextOverrideAndIncludesResolvedPaths(t *testing.T) {
 	}
 
 	yamlCmd := currentCmd(mgrFn)
-	yamlCmd.Flags().String("context", "", "test context override")
-	yamlCmd.Flags().String("output", "pretty", "test output format")
+	yamlCmd.Flags().String(flagdefs.FlagContext, "", "test context override")
+	yamlCmd.Flags().String(flagdefs.FlagOutput, "pretty", "test output format")
 	var yamlOut bytes.Buffer
 	yamlCmd.SetOut(&yamlOut)
 	yamlCmd.SetErr(&bytes.Buffer{})
@@ -464,8 +466,8 @@ func TestShowHonorsAKTContext(t *testing.T) {
 	t.Setenv("AKT_CONTEXT", "staging")
 
 	cmd := currentCmd(mgrFn)
-	cmd.Flags().String("context", "", "test context override")
-	cmd.Flags().String("output", "pretty", "test output format")
+	cmd.Flags().String(flagdefs.FlagContext, "", "test context override")
+	cmd.Flags().String(flagdefs.FlagOutput, "pretty", "test output format")
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 	cmd.SetErr(&bytes.Buffer{})
@@ -628,7 +630,7 @@ func TestLogHonorsContextOverride(t *testing.T) {
 	_ = logger.Close()
 
 	cmd := logCmd(mgrFn)
-	cmd.Flags().String("context", "", "test context override")
+	cmd.Flags().String(flagdefs.FlagContext, "", "test context override")
 	out := runOutput(t, cmd, "--context", "staging")
 	if !strings.Contains(out, "staging-only-action") {
 		t.Errorf("override log output = %q", out)
@@ -656,7 +658,7 @@ func TestLogHonorsAKTContext(t *testing.T) {
 	t.Setenv("AKT_CONTEXT", "staging")
 
 	cmd := logCmd(mgrFn)
-	cmd.Flags().String("context", "", "test context override")
+	cmd.Flags().String(flagdefs.FlagContext, "", "test context override")
 	out := runOutput(t, cmd)
 	if !strings.Contains(out, "staging-env-action") {
 		t.Errorf("AKT_CONTEXT log output = %q", out)
@@ -726,6 +728,66 @@ func TestEditForkNetworkRequiresANetworkField(t *testing.T) {
 	}
 	if m.GetNetwork("mainnet-prod") != nil {
 		t.Fatal("rejected fork left a network behind")
+	}
+}
+
+func TestCanonicalContextFlagsApplyEveryEditableField(t *testing.T) {
+	m := newTestManager(t)
+	mgrFn := func() *aktctx.Manager { return m }
+
+	if err := m.CreateNetworkFromTemplate("sandbox", "sandbox"); err != nil {
+		t.Fatal(err)
+	}
+	runOK(t, keyringCreateCmd(mgrFn), "alternate", sdkkeyring.BackendTest, "--dir", filepath.Join(t.TempDir(), "keys"))
+	runOK(t, createCmd(mgrFn), "prod", "--network", "mainnet")
+	runOK(t, editCmd(mgrFn),
+		"prod",
+		"--network", "sandbox",
+		"--keyring", "alternate",
+		"--default-account", "bob",
+		"--gas", "333333",
+		"--fees", "4uakt",
+		"--provider-auth-type", aktctx.ProviderAuthMTLS,
+		"--auth-method", aktctx.AuthMethodConsoleAPI,
+		"--console-api-url", "https://console.example.test",
+		"--rpc", "https://rpc.example.test:443",
+		"--api", "https://api.example.test:443",
+		"--grpc", "grpc.example.test:443",
+		"--gas-prices", "0.03uakt",
+		"--gas-adjustment", "1.5",
+		"--yes",
+	)
+
+	got := m.GetContext("prod")
+	if got == nil {
+		t.Fatal("edited context is missing")
+	}
+	if got.Network.Name != "sandbox" || got.Keyring.Name != "alternate" || got.DefaultAccount != "bob" || got.Gas != "333333" || got.Fees != "4uakt" {
+		t.Fatalf("edited context = %+v", got)
+	}
+	if got.ProviderDefaults.AuthType != aktctx.ProviderAuthMTLS || got.AuthMethod != aktctx.AuthMethodConsoleAPI || got.ConsoleAPIURL != "https://console.example.test" {
+		t.Fatalf("edited context transport settings = %+v", got)
+	}
+	network := m.GetNetwork("sandbox")
+	if network == nil {
+		t.Fatal("edited network is missing")
+	}
+	if strings.Join(network.Endpoints.RPC, ",") != "https://rpc.example.test:443" || strings.Join(network.Endpoints.API, ",") != "https://api.example.test:443" || strings.Join(network.Endpoints.GRPC, ",") != "grpc.example.test:443" {
+		t.Fatalf("edited endpoints = %+v", network.Endpoints)
+	}
+	if network.GasPrices != "0.03uakt" || network.GasAdjustment != "1.5" {
+		t.Fatalf("edited gas defaults = %+v", network)
+	}
+
+	for _, cmd := range []*cobra.Command{createCmd(mgrFn), editCmd(mgrFn)} {
+		complete, ok := cmd.GetFlagCompletionFunc(flagdefs.FlagNetwork)
+		if !ok {
+			t.Fatal("network completion is not registered")
+		}
+		names, directive := complete(cmd, nil, "")
+		if directive != cobra.ShellCompDirectiveNoFileComp || len(names) < 2 {
+			t.Fatalf("network completions = %v, directive = %v", names, directive)
+		}
 	}
 }
 

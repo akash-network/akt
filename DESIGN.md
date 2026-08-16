@@ -1020,7 +1020,9 @@ change that public behavior.
 - **Cobra** handles command parsing, flag management, help generation, and shell completion for CLI mode. It is the standard in the Go and Cosmos SDK ecosystem.
 - **Static flag names have one owner**: every statically declared Cobra flag
   name is defined once in `internal/flags`. Registration, lookup, change
-  detection, and Viper binding use those constants. Data-driven workflow
+  detection, and Viper binding import those constants directly. The
+  `internal/cli/chain/flags` package owns chain flag builders, parsers, defaults,
+  and allowed values but does not re-export flag names. Data-driven workflow
   parameters remain dynamic because their definitions are the source of truth.
 - **Boundary validation** is applied uniformly to the assembled Cobra tree:
   pure command groups reject unknown positional tokens instead of treating

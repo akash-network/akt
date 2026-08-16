@@ -7,6 +7,8 @@ import (
 	"os"
 	"strconv"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 
 	"github.com/cosmos/cosmos-sdk/client"
@@ -75,7 +77,7 @@ timestamp.`,
 				return err
 			}
 
-			delayed, _ := cmd.Flags().GetBool(cflags.FlagDelayed)
+			delayed, _ := cmd.Flags().GetBool(flagdefs.FlagDelayed)
 
 			msg := types.NewMsgCreateVestingAccount(cctx.GetFromAddress(), toAddr, amount, endTime, delayed)
 
@@ -88,7 +90,7 @@ timestamp.`,
 		},
 	}
 
-	cmd.Flags().Bool(cflags.FlagDelayed, false, "Create a delayed vesting account if true")
+	cmd.Flags().Bool(flagdefs.FlagDelayed, false, "Create a delayed vesting account if true")
 	cflags.AddTxFlagsToCmd(cmd)
 
 	return cmd

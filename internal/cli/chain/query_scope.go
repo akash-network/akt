@@ -3,9 +3,9 @@ package cli
 import (
 	"fmt"
 
-	"github.com/spf13/pflag"
+	flagdefs "pkg.akt.dev/akt/internal/flags"
 
-	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"github.com/spf13/pflag"
 )
 
 // requireOwnerScope refuses an owner-mode list query that has no owner to
@@ -53,7 +53,7 @@ func requireProviderScope(resource string) error {
 // a caller summing the pages counted the same balances repeatedly. Refuse them
 // rather than answer with the wrong page.
 func rejectUnsupportedPaging(flags *pflag.FlagSet, resource string) error {
-	for _, name := range []string{cflags.FlagOffset, cflags.FlagPage, cflags.FlagReverse} {
+	for _, name := range []string{flagdefs.FlagOffset, flagdefs.FlagPage, flagdefs.FlagReverse} {
 		if flags.Changed(name) {
 			return fmt.Errorf("%s: --%s is not supported by this endpoint; page with --limit and --page-key", resource, name)
 		}

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"fmt"
 	"os"
 	"strings"
@@ -62,18 +64,18 @@ The SIGN_MODE_DIRECT sign mode is not supported.'
 		Args: cobra.MinimumNArgs(3),
 	}
 
-	cmd.Flags().Bool(cflags.FlagSkipSignatureVerification, false, "Skip signature verification")
-	cmd.Flags().Bool(cflags.FlagSigOnly, false, "Print only the generated signature, then exit")
-	cmd.Flags().String(cflags.FlagOutputDocument, "", "The document is written to the given file instead of STDOUT")
+	cmd.Flags().Bool(flagdefs.FlagSkipSignatureVerification, false, "Skip signature verification")
+	cmd.Flags().Bool(flagdefs.FlagSigOnly, false, "Print only the generated signature, then exit")
+	cmd.Flags().String(flagdefs.FlagOutputDocument, "", "The document is written to the given file instead of STDOUT")
 	cflags.AddTxFlagsToCmd(cmd)
-	_ = cmd.Flags().MarkHidden(cflags.FlagOutput)
+	_ = cmd.Flags().MarkHidden(flagdefs.FlagOutput)
 
 	return cmd
 }
 
 func makeMultiSignCmd() func(cmd *cobra.Command, args []string) (err error) {
 	return func(cmd *cobra.Command, args []string) (err error) {
-		_ = cmd.Flags().Set(cflags.FlagFrom, args[1])
+		_ = cmd.Flags().Set(flagdefs.FlagFrom, args[1])
 
 		cctx, err := client.GetClientTxContext(cmd)
 		if err != nil {
@@ -110,7 +112,7 @@ func makeMultiSignCmd() func(cmd *cobra.Command, args []string) (err error) {
 
 		// avoid signature verification if the sender of the tx is different than
 		// the multisig key (useful for nested multisigs).
-		skipSigVerify, err := cmd.Flags().GetBool(cflags.FlagSkipSignatureVerification)
+		skipSigVerify, err := cmd.Flags().GetBool(flagdefs.FlagSkipSignatureVerification)
 		if err != nil {
 			return err
 		}
@@ -183,7 +185,7 @@ func makeMultiSignCmd() func(cmd *cobra.Command, args []string) (err error) {
 			return err
 		}
 
-		sigOnly, _ := cmd.Flags().GetBool(cflags.FlagSigOnly)
+		sigOnly, _ := cmd.Flags().GetBool(flagdefs.FlagSigOnly)
 
 		var json []byte
 		json, err = marshalSignatureJSON(txCfg, txBuilder, sigOnly)

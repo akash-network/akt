@@ -292,8 +292,8 @@ $ %[1]s query gov votes 1 --page=2 --limit=100
 
 			propStatus := proposalRes.GetProposal().Status
 			if (propStatus != v1.StatusVotingPeriod) && (propStatus != v1.StatusDepositPeriod) {
-				page, _ := cmd.Flags().GetInt(cflags.FlagPage)
-				limit, _ := cmd.Flags().GetInt(cflags.FlagLimit)
+				page, _ := cmd.Flags().GetInt(flagdefs.FlagPage)
+				limit, _ := cmd.Flags().GetInt(flagdefs.FlagLimit)
 
 				params := v1.NewQueryProposalVotesParams(proposalID, page, limit)
 				resByTxQuery, err := cutils.QueryVotesByTxQuery(ctx, cctx, params)

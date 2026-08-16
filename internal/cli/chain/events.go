@@ -3,15 +3,14 @@ package cli
 import (
 	"context"
 	"errors"
-	"fmt"
+
+	flagdefs "pkg.akt.dev/akt/internal/flags"
 
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 	"golang.org/x/sync/errgroup"
 
 	"github.com/cosmos/cosmos-sdk/client"
-
-	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 
 	"pkg.akt.dev/go/util/events"
 	"pkg.akt.dev/go/util/pubsub"
@@ -29,10 +28,8 @@ func EventsCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().String(cflags.FlagNode, "tcp://localhost:26657", "The node address")
-	if err := viper.BindPFlag(cflags.FlagNode, cmd.Flags().Lookup(cflags.FlagNode)); err != nil {
-		panic(fmt.Sprintf("failed to bind flag %s: %v", cflags.FlagNode, err))
-	}
+	cmd.Flags().String(flagdefs.FlagNode, "tcp://localhost:26657", "The node address")
+	_ = viper.BindPFlag(flagdefs.FlagNode, cmd.Flags().Lookup(flagdefs.FlagNode))
 
 	return cmd
 }

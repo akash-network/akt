@@ -62,7 +62,7 @@ func enforceTransactionModeValidation(cmd *cobra.Command) {
 		allowed []string
 	}
 	constraints := map[string]constraint{
-		cflags.FlagSignMode: {
+		flagdefs.FlagSignMode: {
 			def:   cflags.SignModeDirect,
 			usage: "Choose sign mode (direct|amino-json|direct-aux|eip-191), this is an advanced feature",
 			allowed: []string{
@@ -72,7 +72,7 @@ func enforceTransactionModeValidation(cmd *cobra.Command) {
 				cflags.SignModeEIP191,
 			},
 		},
-		cflags.FlagBroadcastMode: {
+		flagdefs.FlagBroadcastMode: {
 			def:   cflags.BroadcastSync,
 			usage: "Transaction broadcasting mode (sync|async|block)",
 			allowed: []string{

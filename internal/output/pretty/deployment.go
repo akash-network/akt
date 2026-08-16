@@ -1,6 +1,8 @@
 package pretty
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -156,7 +158,7 @@ func RenderGroupsList(groups dvbeta.Groups) string {
 // PrintGroupsList formats a list of deployment groups for display.
 // This is used when querying groups for a deployment (no gseq specified).
 func PrintGroupsList(cmd *cobra.Command, cctx sdkclient.Context, groups dvbeta.Groups) error {
-	output, _ := cmd.Flags().GetString(cflags.FlagOutput)
+	output, _ := cmd.Flags().GetString(flagdefs.FlagOutput)
 	checked := clioutput.NewCheckedWriter(cmd.OutOrStdout())
 	cctx = cctx.WithOutput(checked)
 	if output == cflags.OutputJSON || output == cflags.OutputYAML {

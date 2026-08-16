@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/pflag"
 
 	mv1 "pkg.akt.dev/go/node/market/v1"
@@ -43,10 +45,10 @@ func TestBMELedgerFiltersFromFlags(t *testing.T) {
 			AddBMELedgerFilterFlags(flagSet)
 
 			for name, value := range map[string]string{
-				FlagOwner:   test.owner,
-				FlagDenom:   test.denom,
-				FlagToDenom: test.toDenom,
-				FlagStatus:  test.status,
+				flagdefs.FlagOwner:   test.owner,
+				flagdefs.FlagDenom:   test.denom,
+				flagdefs.FlagToDenom: test.toDenom,
+				flagdefs.FlagStatus:  test.status,
 			} {
 				if err := flagSet.Set(name, value); err != nil {
 					t.Fatalf("set --%s: %v", name, err)
@@ -89,8 +91,8 @@ func TestBidClosedReasonFromFlags(t *testing.T) {
 			flagSet := pflag.NewFlagSet(test.name, pflag.ContinueOnError)
 			AddBidClosedReasonFlag(flagSet)
 			if test.value != "" {
-				if err := flagSet.Set(FlagClosedReason, test.value); err != nil {
-					t.Fatalf("set --%s: %v", FlagClosedReason, err)
+				if err := flagSet.Set(flagdefs.FlagClosedReason, test.value); err != nil {
+					t.Fatalf("set --%s: %v", flagdefs.FlagClosedReason, err)
 				}
 			}
 

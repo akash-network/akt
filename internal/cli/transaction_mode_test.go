@@ -4,6 +4,8 @@ import (
 	"strings"
 	"testing"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -16,21 +18,21 @@ func TestAssembledTransactionModeFlagsAreClosedEnums(t *testing.T) {
 	counts := map[string]int{}
 
 	allowed := map[string][]string{
-		cflags.FlagSignMode: {
+		flagdefs.FlagSignMode: {
 			cflags.SignModeDirect,
 			cflags.SignModeLegacyAminoJSON,
 			cflags.SignModeDirectAux,
 			cflags.SignModeEIP191,
 		},
-		cflags.FlagBroadcastMode: {
+		flagdefs.FlagBroadcastMode: {
 			cflags.BroadcastSync,
 			cflags.BroadcastAsync,
 			cflags.BroadcastBlock,
 		},
 	}
 	defaults := map[string]string{
-		cflags.FlagSignMode:      cflags.SignModeDirect,
-		cflags.FlagBroadcastMode: cflags.BroadcastSync,
+		flagdefs.FlagSignMode:      cflags.SignModeDirect,
+		flagdefs.FlagBroadcastMode: cflags.BroadcastSync,
 	}
 
 	var walk func(*cobra.Command)

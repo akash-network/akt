@@ -1,6 +1,8 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"context"
 	"errors"
@@ -33,12 +35,12 @@ func runCanceledMCP(t *testing.T, stderr io.Writer, quiet bool) (string, error) 
 	t.Helper()
 
 	cmd := mcpCmd(func() *aktctx.Manager { return nil })
-	cmd.Flags().Bool("quiet", false, "test quiet mode")
-	if err := cmd.Flags().Set("console-api-key", "test-api-key"); err != nil {
+	cmd.Flags().Bool(flagdefs.FlagQuiet, false, "test quiet mode")
+	if err := cmd.Flags().Set(flagdefs.FlagConsoleAPIKey, "test-api-key"); err != nil {
 		t.Fatalf("set Console API key: %v", err)
 	}
 	if quiet {
-		if err := cmd.Flags().Set("quiet", "true"); err != nil {
+		if err := cmd.Flags().Set(flagdefs.FlagQuiet, "true"); err != nil {
 			t.Fatalf("set quiet: %v", err)
 		}
 	}

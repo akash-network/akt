@@ -1,6 +1,8 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"context"
 	"encoding/json"
 	"errors"
@@ -167,7 +169,7 @@ func runGovQueryWithWriter(
 
 	cmd.SetOut(writer)
 	cmd.SetErr(writer)
-	require.NoError(t, cmd.Flags().Set("output", "json"))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagOutput, "json"))
 	ctx := context.WithValue(context.Background(), ContextTypeQueryClient, lightClient)
 	cmd.SetContext(ctx)
 
@@ -442,6 +444,24 @@ func TestGovQueryExactRequestsAndStructuredResults(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, "0.550000000000000000", tally["threshold"])
 	})
+}
+
+func TestGovEndedVotesReadCanonicalPaginationFlags(t *testing.T) {
+	recorder := &govQueryRecorder{proposalResponse: &govv1.QueryProposalResponse{
+		Proposal: &govv1.Proposal{Id: 901, Status: govv1.StatusPassed},
+	}}
+	cmd := GetQueryGovVotesCmd()
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagPage, "3"))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagLimit, "8"))
+
+	_ = runGovQueryWithWriter(
+		t,
+		cmd,
+		&govAggregateQuery{gov: recorder},
+		io.Discard,
+		"901",
+	)
+	require.Equal(t, []string{"proposal"}, recorder.calls)
 }
 
 //nolint:staticcheck // the command intentionally exposes Cosmos' deprecated split parameter views.

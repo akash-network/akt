@@ -1,6 +1,8 @@
 package cli_test
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"context"
 	"fmt"
@@ -20,7 +22,6 @@ import (
 	"github.com/stretchr/testify/require"
 
 	chain "pkg.akt.dev/akt/internal/cli/chain"
-	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	chaintest "pkg.akt.dev/akt/internal/cli/chain/testutil"
 	aktcodec "pkg.akt.dev/akt/internal/codec"
 )
@@ -182,20 +183,20 @@ func TestCoreTransactionCommandContracts(t *testing.T) {
 	require.Error(t, send.Args(send, []string{"to"}))
 
 	multiSend := directChild(tests[0].group, "multi-send")
-	require.NotNil(t, multiSend.Flags().Lookup(cflags.FlagSplit))
+	require.NotNil(t, multiSend.Flags().Lookup(flagdefs.FlagSplit))
 	require.Error(t, multiSend.Args(multiSend, []string{"from", "to", "1uakt"}))
 
 	withdrawRewards := directChild(distribution, "withdraw-rewards")
-	require.NotNil(t, withdrawRewards.Flags().Lookup(chain.FlagCommission))
+	require.NotNil(t, withdrawRewards.Flags().Lookup(flagdefs.FlagCommission))
 	withdrawAll := directChild(distribution, "withdraw-all-rewards")
-	require.NotNil(t, withdrawAll.Flags().Lookup(chain.FlagMaxMessagesPerTx))
+	require.NotNil(t, withdrawAll.Flags().Lookup(flagdefs.FlagMaxMessagesPerTx))
 
 	cancelUnbond := directChild(tests[2].group, "cancel-unbond")
 	require.NoError(t, cancelUnbond.Args(cancelUnbond, []string{"validator", "1uakt", "7"}))
 	require.Error(t, cancelUnbond.Args(cancelUnbond, []string{"validator", "1uakt"}))
-	require.NotNil(t, directChild(tests[2].group, "edit-validator").Flags().Lookup(cflags.FlagCommissionRate))
+	require.NotNil(t, directChild(tests[2].group, "edit-validator").Flags().Lookup(flagdefs.FlagCommissionRate))
 	createValidator := directChild(tests[2].group, "create-validator")
-	require.Equal(t, "26656", createValidator.Flags().Lookup(cflags.FlagP2PPort).DefValue)
+	require.Equal(t, "26656", createValidator.Flags().Lookup(flagdefs.FlagP2PPort).DefValue)
 }
 
 func TestBankSendGeneratesValidatedMessages(t *testing.T) {
@@ -235,6 +236,23 @@ func TestBankSendGeneratesValidatedMessages(t *testing.T) {
 		require.Equal(t, f.recipientA.String(), msg.ToAddress)
 		require.Equal(t, "9uakt", msg.Amount.String())
 	})
+}
+
+func TestBankCanonicalSenderFlagPreservesSetErrors(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		cmd  *cobra.Command
+		args []string
+	}{
+		{name: "send", cmd: chain.GetTxBankSendTxCmd(), args: []string{"from", "to", "1uakt"}},
+		{name: "multi-send", cmd: chain.GetTxBankMultiSendTxCmd(), args: []string{"from", "to-a", "to-b", "1uakt"}},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			bare := &cobra.Command{Use: "missing-from-flag"}
+			err := test.cmd.PersistentPreRunE(bare, test.args)
+			require.ErrorContains(t, err, "no such flag")
+		})
+	}
 }
 
 func TestBankMultiSendPreservesOrSplitsAmounts(t *testing.T) {
@@ -389,9 +407,9 @@ func TestStakingGeneratesValidatedMessages(t *testing.T) {
 			t,
 			chain.GetTxStakingEditValidatorCmd(),
 			f.from,
-			fmt.Sprintf("--%s=contract-validator", cflags.FlagEditMoniker),
-			fmt.Sprintf("--%s=0.12", cflags.FlagCommissionRate),
-			fmt.Sprintf("--%s=5", cflags.FlagMinSelfDelegation),
+			fmt.Sprintf("--%s=contract-validator", flagdefs.FlagEditMoniker),
+			fmt.Sprintf("--%s=0.12", flagdefs.FlagCommissionRate),
+			fmt.Sprintf("--%s=5", flagdefs.FlagMinSelfDelegation),
 		)
 		msg, ok := msgs[0].(*stakingtypes.MsgEditValidator)
 		require.True(t, ok, "message type = %T", msgs[0])
@@ -431,9 +449,9 @@ func TestStakingCreateValidatorGeneratesValidMessage(t *testing.T) {
 		chain.GetTxStakingCreateValidatorCmd(),
 		f.from,
 		path,
-		fmt.Sprintf("--%s=node-contract-id", cflags.FlagNodeID),
-		fmt.Sprintf("--%s=203.0.113.8", cflags.FlagIP),
-		fmt.Sprintf("--%s=27656", cflags.FlagP2PPort),
+		fmt.Sprintf("--%s=node-contract-id", flagdefs.FlagNodeID),
+		fmt.Sprintf("--%s=203.0.113.8", flagdefs.FlagIP),
+		fmt.Sprintf("--%s=27656", flagdefs.FlagP2PPort),
 	)
 	msgs := tx.GetMsgs()
 	require.Len(t, msgs, 1)
@@ -455,7 +473,7 @@ func TestStakingCreateValidatorGeneratesValidMessage(t *testing.T) {
 				t,
 				chain.GetTxStakingCreateValidatorCmd(),
 				path,
-				fmt.Sprintf("--%s=%s", cflags.FlagP2PPort, port),
+				fmt.Sprintf("--%s=%s", flagdefs.FlagP2PPort, port),
 			)
 			require.Error(t, err, "command output:\n%s", output)
 			require.Contains(t, err.Error(), "must be between 1 and 65535")
@@ -500,13 +518,13 @@ func TestStakingTransactionsRejectInvalidInputsBeforeGeneration(t *testing.T) {
 		{
 			name: "edit commission",
 			cmd:  chain.GetTxStakingEditValidatorCmd,
-			args: []string{fmt.Sprintf("--%s=not-a-rate", cflags.FlagCommissionRate)},
+			args: []string{fmt.Sprintf("--%s=not-a-rate", flagdefs.FlagCommissionRate)},
 			want: "invalid new commission rate",
 		},
 		{
 			name: "edit minimum self delegation",
 			cmd:  chain.GetTxStakingEditValidatorCmd,
-			args: []string{fmt.Sprintf("--%s=not-an-integer", cflags.FlagMinSelfDelegation)},
+			args: []string{fmt.Sprintf("--%s=not-an-integer", flagdefs.FlagMinSelfDelegation)},
 			want: "positive integer",
 		},
 	}
@@ -531,7 +549,7 @@ func TestDistributionGeneratesValidatedMessages(t *testing.T) {
 			chain.GetTxDistributionWithdrawRewardsCmd(),
 			f.from,
 			ownValidator.String(),
-			fmt.Sprintf("--%s=true", chain.FlagCommission),
+			fmt.Sprintf("--%s=true", flagdefs.FlagCommission),
 		)
 		require.Len(t, msgs, 2)
 		reward, ok := msgs[0].(*distrtypes.MsgWithdrawDelegatorReward)
@@ -629,6 +647,12 @@ func TestDistributionTransactionsRejectInvalidAndOfflineInputs(t *testing.T) {
 			require.False(t, bytes.Contains(output, []byte(`"body"`)), "invalid input generated a transaction")
 		})
 	}
+}
+
+func TestAuthzExecReadsCanonicalOfflineFlagBeforeInput(t *testing.T) {
+	f := newGeneratedTxFixture(t)
+	output, err := f.executeOffline(t, chain.GetTxAuthzExecAuthorizationCmd(), "missing.json")
+	require.ErrorContains(t, err, "cannot broadcast tx during offline mode", "command output:\n%s", output)
 }
 
 func directChild(parent *cobra.Command, name string) *cobra.Command {

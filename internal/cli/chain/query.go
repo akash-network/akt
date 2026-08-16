@@ -3,13 +3,14 @@ package cli
 import (
 	"context"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 
 	ibctransfer "github.com/cosmos/ibc-go/v10/modules/apps/transfer"
 	ibccore "github.com/cosmos/ibc-go/v10/modules/core"
 
 	"pkg.akt.dev/akt/internal/capability"
-	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	"pkg.akt.dev/akt/internal/cliutil"
 	aclient "pkg.akt.dev/go/node/client/discovery"
 )
@@ -17,8 +18,8 @@ import (
 func QueryPersistentPreRunE(cmd *cobra.Command, _ []string) error {
 	ctx := cmd.Context()
 
-	if cmd.Flags().Changed(cflags.FlagNode) {
-		rpcURI, _ := cmd.Flags().GetString(cflags.FlagNode)
+	if cmd.Flags().Changed(flagdefs.FlagNode) {
+		rpcURI, _ := cmd.Flags().GetString(flagdefs.FlagNode)
 		ctx = context.WithValue(ctx, ContextTypeRPCURI, rpcURI)
 		cmd.SetContext(ctx)
 	}
@@ -89,7 +90,7 @@ func QueryCmd() *cobra.Command {
 		GetQueryModuleNameToAddressCmd(),
 	)
 
-	cmd.PersistentFlags().String(cflags.FlagChainID, "", "The network chain ID")
+	cmd.PersistentFlags().String(flagdefs.FlagChainID, "", "The network chain ID")
 
 	return cmd
 }

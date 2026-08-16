@@ -254,7 +254,7 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 	// Common workflow flags.
 	cmd.Flags().BoolP(flagdefs.FlagSkipConfirmation, "y", false, "Skip confirmation prompts")
 	cmd.Flags().Bool(flagdefs.FlagDryRun, false, "Show execution plan without broadcasting transactions")
-	cmd.Flags().VarP(output.NewFormatFlag(cflags.OutputPretty, outputJSONL), cflags.FlagOutput, "o", "Output format (pretty|json|yaml|jsonl)")
+	cmd.Flags().VarP(output.NewFormatFlag(cflags.OutputPretty, outputJSONL), flagdefs.FlagOutput, "o", "Output format (pretty|json|yaml|jsonl)")
 
 	// Standard chain tx flags (--from, --gas, --node, ...) so keyring-auth
 	// execution can discover a chain client; flags already defined above

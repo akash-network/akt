@@ -10,6 +10,8 @@ import (
 	"os/signal"
 	"syscall"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	errorsmod "cosmossdk.io/errors"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/cosmos/cosmos-sdk/types/query"
@@ -18,7 +20,6 @@ import (
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
-	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	aclient "pkg.akt.dev/go/node/client"
 	dtypes "pkg.akt.dev/go/node/deployment/v1beta4"
 	mtypes "pkg.akt.dev/go/node/market/v1beta5"
@@ -30,7 +31,7 @@ func DetectDeploymentDeposit(ctx context.Context, flags *pflag.FlagSet, cl aclie
 	var depositStr string
 	var err error
 
-	if !flags.Changed(cflags.FlagDeposit) {
+	if !flags.Changed(flagdefs.FlagDeposit) {
 		resp, err := cl.Deployment().Params(ctx, &dtypes.QueryParamsRequest{})
 		if err != nil {
 			return sdk.Coin{}, err
@@ -48,7 +49,7 @@ func DetectDeploymentDeposit(ctx context.Context, flags *pflag.FlagSet, cl aclie
 			return sdk.Coin{}, fmt.Errorf("couldn't query default deposit amount for uAKT")
 		}
 	} else {
-		depositStr, err = flags.GetString(cflags.FlagDeposit)
+		depositStr, err = flags.GetString(flagdefs.FlagDeposit)
 		if err != nil {
 			return sdk.Coin{}, err
 		}
@@ -67,7 +68,7 @@ func DetectBidDeposit(ctx context.Context, flags *pflag.FlagSet, cl aclient.Quer
 	var depositStr string
 	var err error
 
-	if !flags.Changed(cflags.FlagDeposit) {
+	if !flags.Changed(flagdefs.FlagDeposit) {
 		resp, err := cl.Market().Params(ctx, &mtypes.QueryParamsRequest{})
 		if err != nil {
 			return sdk.Coin{}, err
@@ -75,7 +76,7 @@ func DetectBidDeposit(ctx context.Context, flags *pflag.FlagSet, cl aclient.Quer
 
 		depositStr = resp.Params.BidMinDeposit.String()
 	} else {
-		depositStr, err = flags.GetString(cflags.FlagDeposit)
+		depositStr, err = flags.GetString(flagdefs.FlagDeposit)
 		if err != nil {
 			return sdk.Coin{}, err
 		}
@@ -90,7 +91,7 @@ func DetectBidDeposit(ctx context.Context, flags *pflag.FlagSet, cl aclient.Quer
 }
 
 func DepositSources(flags *pflag.FlagSet) (deposit.Sources, error) {
-	sourcesStr, err := flags.GetStringSlice(cflags.FlagDepositSources)
+	sourcesStr, err := flags.GetStringSlice(flagdefs.FlagDepositSources)
 	if err != nil {
 		return nil, err
 	}
@@ -191,12 +192,12 @@ func PrintJSON(ctx sdkclient.Context, v interface{}) error {
 
 // ReadPageRequest reads and builds the necessary page request flags for pagination.
 func ReadPageRequest(flagSet *pflag.FlagSet) (*query.PageRequest, error) {
-	pageKeyStr, _ := flagSet.GetString(cflags.FlagPageKey)
-	offset, _ := flagSet.GetUint64(cflags.FlagOffset)
-	limit, _ := flagSet.GetUint64(cflags.FlagLimit)
-	countTotal, _ := flagSet.GetBool(cflags.FlagCountTotal)
-	page, _ := flagSet.GetUint64(cflags.FlagPage)
-	reverse, _ := flagSet.GetBool(cflags.FlagReverse)
+	pageKeyStr, _ := flagSet.GetString(flagdefs.FlagPageKey)
+	offset, _ := flagSet.GetUint64(flagdefs.FlagOffset)
+	limit, _ := flagSet.GetUint64(flagdefs.FlagLimit)
+	countTotal, _ := flagSet.GetBool(flagdefs.FlagCountTotal)
+	page, _ := flagSet.GetUint64(flagdefs.FlagPage)
+	reverse, _ := flagSet.GetBool(flagdefs.FlagReverse)
 
 	if page > 1 && offset > 0 {
 		return nil, errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "page and offset cannot be used together")

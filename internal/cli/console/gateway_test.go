@@ -1,6 +1,8 @@
 package console
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"context"
 	"encoding/json"
@@ -610,7 +612,7 @@ func streamOutputCommand(t *testing.T, format string) (*cobra.Command, *bytes.Bu
 	t.Helper()
 
 	cmd := &cobra.Command{}
-	cmd.Flags().String("output", format, "")
+	cmd.Flags().String(flagdefs.FlagOutput, format, "")
 	var buf bytes.Buffer
 	cmd.SetOut(&buf)
 
@@ -623,7 +625,7 @@ func TestShellRejectsStructuredInteractiveModeBeforeContextResolution(t *testing
 		resolved = true
 		return nil
 	})
-	cmd.Flags().String("output", "json", "")
+	cmd.Flags().String(flagdefs.FlagOutput, "json", "")
 	cmd.SetArgs([]string{"12345", "web"})
 
 	err := cmd.Execute()
@@ -637,7 +639,7 @@ func TestShellRejectsStructuredInteractiveModeBeforeContextResolution(t *testing
 
 func TestShellStdinOverrideDefaultsToAutomaticSelection(t *testing.T) {
 	cmd := shellCmd(func() *aktctx.Manager { return nil })
-	flag := cmd.Flags().Lookup("stdin")
+	flag := cmd.Flags().Lookup(flagdefs.FlagStdin)
 	if flag == nil {
 		t.Fatal("console shell has no --stdin override")
 		return
@@ -698,10 +700,10 @@ func TestShellRecordsProviderActionOutcomeExactlyOnce(t *testing.T) {
 			}
 
 			cmd := shellCmdWithRunner(func() *aktctx.Manager { return m }, runner)
-			cmd.Flags().VarP(output.NewFormatFlag("pretty"), "output", "o", "Output format: pretty, json, yaml")
-			cmd.Flags().String("context", "", "Active context name")
-			cmd.Flags().String("console-api-url", consoleSrv.URL, "Console API base URL")
-			cmd.Flags().String("console-api-key", "", "Console API key")
+			cmd.Flags().VarP(output.NewFormatFlag("pretty"), flagdefs.FlagOutput, "o", "Output format: pretty, json, yaml")
+			cmd.Flags().String(flagdefs.FlagContext, "", "Active context name")
+			cmd.Flags().String(flagdefs.FlagConsoleAPIURL, consoleSrv.URL, "Console API base URL")
+			cmd.Flags().String(flagdefs.FlagConsoleAPIKey, "", "Console API key")
 			cmd.SetContext(cliutil.WithActionLog(context.Background(), logger))
 			cmd.SetArgs([]string{"777", "web", "--", "echo", "ok"})
 			var outputBuffer bytes.Buffer

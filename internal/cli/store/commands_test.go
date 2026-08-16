@@ -1,6 +1,8 @@
 package store
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"context"
 	"encoding/json"
@@ -123,7 +125,7 @@ func TestStatusStructuredOutputReportsCompletedReconciliation(t *testing.T) {
 	require.NoError(t, s.Close())
 
 	cmd := statusCmd(func() string { return home }, func() string { return "mainnet" })
-	cmd.Flags().String("output", "pretty", "output format")
+	cmd.Flags().String(flagdefs.FlagOutput, "pretty", "output format")
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&bytes.Buffer{})
@@ -307,7 +309,7 @@ func TestExportWritesSelectedFormatToCommandOutput(t *testing.T) {
 	require.NoError(t, s.Close())
 
 	cmd := exportCmd(func() string { return home }, func() string { return "mainnet" })
-	cmd.Flags().String("output", "pretty", "output format")
+	cmd.Flags().String(flagdefs.FlagOutput, "pretty", "output format")
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
 	cmd.SetErr(&bytes.Buffer{})
@@ -463,7 +465,7 @@ func TestImportQuietSuppressesInformationalMessages(t *testing.T) {
 			require.NoError(t, os.WriteFile(path, []byte(tc.content), 0o600))
 
 			cmd := importCmd(func() string { return home }, func() string { return "mainnet" })
-			cmd.Flags().Bool("quiet", false, "quiet")
+			cmd.Flags().Bool(flagdefs.FlagQuiet, false, "quiet")
 			var stdout, stderr bytes.Buffer
 			cmd.SetOut(&stdout)
 			cmd.SetErr(&stderr)
@@ -620,7 +622,7 @@ func TestImportReplaceRequiresExplicitConfirmation(t *testing.T) {
 			path := filepath.Join(t.TempDir(), "backup.json")
 			require.NoError(t, os.WriteFile(path, []byte(payload), 0o600))
 			cmd := importCmd(func() string { return home }, func() string { return "mainnet" })
-			cmd.Flags().Bool("quiet", false, "quiet")
+			cmd.Flags().Bool(flagdefs.FlagQuiet, false, "quiet")
 			cmd.SetIn(strings.NewReader(tc.input))
 			cmd.SetOut(&bytes.Buffer{})
 			var stderr bytes.Buffer

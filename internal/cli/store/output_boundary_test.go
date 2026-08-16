@@ -1,6 +1,8 @@
 package store
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"context"
 	"errors"
 	"io"
@@ -112,7 +114,7 @@ func TestStoreImportNoticesPropagateDestinationFailures(t *testing.T) {
 					}
 
 					cmd := importCmd(func() string { return home }, func() string { return "mainnet" })
-					cmd.Flags().Bool("quiet", false, "test quiet mode")
+					cmd.Flags().Bool(flagdefs.FlagQuiet, false, "test quiet mode")
 					cmd.SetOut(io.Discard)
 					cmd.SetErr(failure.writer)
 					args := []string{path}
@@ -182,7 +184,7 @@ func TestStoreImportCancellationPropagatesDestinationFailure(t *testing.T) {
 	writeErr := errors.New("cancellation notice destination failed")
 	diagnostics := &storeMatchingWriter{err: writeErr, match: "Import cancelled."}
 	cmd := importCmd(func() string { return home }, func() string { return "mainnet" })
-	cmd.Flags().Bool("quiet", false, "test quiet mode")
+	cmd.Flags().Bool(flagdefs.FlagQuiet, false, "test quiet mode")
 	cmd.SetIn(strings.NewReader("no\n"))
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(diagnostics)

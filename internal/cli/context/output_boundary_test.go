@@ -1,6 +1,8 @@
 package context
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -159,7 +161,7 @@ func TestEmptyActionLogStructuredOutput(t *testing.T) {
 
 	t.Run("empty sequence", func(t *testing.T) {
 		cmd := logCmd(mgrFn)
-		cmd.Flags().Var(output.NewFormatFlag("pretty"), "output", "test output format")
+		cmd.Flags().Var(output.NewFormatFlag("pretty"), flagdefs.FlagOutput, "test output format")
 		var stdout bytes.Buffer
 		cmd.SetOut(&stdout)
 		cmd.SetErr(&bytes.Buffer{})
@@ -180,7 +182,7 @@ func TestEmptyActionLogStructuredOutput(t *testing.T) {
 	t.Run("destination failure", func(t *testing.T) {
 		writeErr := errors.New("action-log output unavailable")
 		cmd := logCmd(mgrFn)
-		cmd.Flags().Var(output.NewFormatFlag("pretty"), "output", "test output format")
+		cmd.Flags().Var(output.NewFormatFlag("pretty"), flagdefs.FlagOutput, "test output format")
 		cmd.SetOut(contextFaultWriter{err: writeErr})
 		cmd.SetErr(&bytes.Buffer{})
 		cmd.SetArgs([]string{"--type", "workflow", "--output", "json"})

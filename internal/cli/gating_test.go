@@ -1,6 +1,8 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"strings"
 	"testing"
 
@@ -242,12 +244,12 @@ func TestLocalIdentityModes(t *testing.T) {
 	}
 
 	mcp := &cobra.Command{Use: "mcp"}
-	mcp.Flags().Bool("enable-writes", false, "")
+	mcp.Flags().Bool(flagdefs.FlagEnableWrites, false, "")
 	root.AddCommand(mcp)
 	if got := localIdentityMode(mcp); got != aktclient.LocalIdentityOnDemand {
 		t.Errorf("read-only mcp mode = %v, want on demand", got)
 	}
-	require.NoError(t, mcp.Flags().Set("enable-writes", "true"))
+	require.NoError(t, mcp.Flags().Set(flagdefs.FlagEnableWrites, "true"))
 	if got := localIdentityMode(mcp); got != aktclient.LocalIdentityRequired {
 		t.Errorf("write-enabled mcp mode = %v, want required", got)
 	}
@@ -266,14 +268,14 @@ func TestLocalIdentityModes(t *testing.T) {
 
 	tx := &cobra.Command{Use: "tx"}
 	send := &cobra.Command{Use: "send"}
-	send.Flags().Bool("generate-only", false, "")
-	send.Flags().Bool("dry-run", false, "")
+	send.Flags().Bool(flagdefs.FlagGenerateOnly, false, "")
+	send.Flags().Bool(flagdefs.FlagDryRun, false, "")
 	tx.AddCommand(send)
 	root.AddCommand(tx)
 	if got := localIdentityMode(send); got != aktclient.LocalIdentityRequired {
 		t.Errorf("ordinary tx mode = %v, want required", got)
 	}
-	require.NoError(t, send.Flags().Set("generate-only", "true"))
+	require.NoError(t, send.Flags().Set(flagdefs.FlagGenerateOnly, "true"))
 	if got := localIdentityMode(send); got != aktclient.LocalIdentityOnDemand {
 		t.Errorf("generate-only tx mode = %v, want on demand", got)
 	}

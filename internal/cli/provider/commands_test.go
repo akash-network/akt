@@ -1,6 +1,8 @@
 package provider
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"context"
 	"encoding/json"
@@ -23,9 +25,9 @@ func newProviderCmd(t *testing.T, args ...string) *cobra.Command {
 	t.Helper()
 
 	cmd := &cobra.Command{Use: "test", RunE: func(*cobra.Command, []string) error { return nil }}
-	cmd.Flags().String("auth-type", "", "")
-	cmd.Flags().String("provider", "", "")
-	cmd.Flags().String("provider-url", "", "")
+	cmd.Flags().String(flagdefs.FlagAuthType, "", "")
+	cmd.Flags().String(flagdefs.FlagProvider, "", "")
+	cmd.Flags().String(flagdefs.FlagProviderURL, "", "")
 	addLeaseShellFlags(cmd)
 
 	cmd.SetOut(&bytes.Buffer{})
@@ -283,7 +285,7 @@ func TestPrintJSON(t *testing.T) {
 func TestPrintJSONHonorsYAML(t *testing.T) {
 	var buf bytes.Buffer
 	cmd := &cobra.Command{}
-	cmd.Flags().String("output", "yaml", "")
+	cmd.Flags().String(flagdefs.FlagOutput, "yaml", "")
 	cmd.SetOut(&buf)
 
 	value := struct {
@@ -324,7 +326,7 @@ func TestLeaseShellDefaultsToBinSh(t *testing.T) {
 
 func TestLeaseShellRejectsStructuredInteractiveModeBeforeProviderResolution(t *testing.T) {
 	cmd := leaseShellCmd()
-	cmd.Flags().String("output", "json", "")
+	cmd.Flags().String(flagdefs.FlagOutput, "json", "")
 
 	err := cmd.Execute()
 	if err == nil || !strings.Contains(err.Error(), "explicit remote command") {
@@ -332,6 +334,38 @@ func TestLeaseShellRejectsStructuredInteractiveModeBeforeProviderResolution(t *t
 	}
 	if strings.Contains(err.Error(), "provider address") {
 		t.Fatalf("lease-shell reached provider resolution before refusal: %v", err)
+	}
+}
+
+func TestLeaseShellReadsCanonicalExecutionFlags(t *testing.T) {
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		http.Error(w, "stop after lease-shell flags", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	root := Commands()
+	root.PersistentFlags().StringP(flagdefs.FlagOutput, "o", "pretty", "output format")
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{
+		"lease-shell",
+		"--" + flagdefs.FlagDSeq, "12345",
+		"--" + flagdefs.FlagProvider, testProviderAddr,
+		"--" + flagdefs.FlagProviderURL, srv.URL,
+		"--" + flagdefs.FlagService, "web",
+		"--" + flagdefs.FlagTTY + "=false",
+		"--" + flagdefs.FlagStdin,
+		"--", "echo", "ready",
+	})
+
+	err := root.ExecuteContext(newAttestationCommandContext(t))
+	if err == nil {
+		t.Fatal("lease-shell unexpectedly succeeded")
+	}
+	if requests == 0 {
+		t.Fatalf("lease-shell did not reach the gateway after reading its flags: %v", err)
 	}
 }
 
@@ -454,17 +488,17 @@ func TestPositionalDSeqCommandsDoNotRegisterDSeqFlag(t *testing.T) {
 	for _, sub := range cmd.Commands() {
 		switch {
 		case positional[sub.Name()]:
-			if sub.Flags().Lookup("dseq") != nil {
+			if sub.Flags().Lookup(flagdefs.FlagDSeq) != nil {
 				t.Errorf("%s must take dseq positionally, not via --dseq", sub.Name())
 			}
-			if sub.Flags().Lookup("gseq") == nil || sub.Flags().Lookup("oseq") == nil {
+			if sub.Flags().Lookup(flagdefs.FlagGSeq) == nil || sub.Flags().Lookup(flagdefs.FlagOSeq) == nil {
 				t.Errorf("%s should still expose --gseq/--oseq", sub.Name())
 			}
 
 		case sub.Name() == "lease-shell":
 			// lease-shell consumes its positional args as the remote command,
 			// so it keeps --dseq.
-			if sub.Flags().Lookup("dseq") == nil {
+			if sub.Flags().Lookup(flagdefs.FlagDSeq) == nil {
 				t.Error("lease-shell must keep --dseq (its positionals are the remote command)")
 			}
 		}

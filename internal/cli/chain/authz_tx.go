@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"cosmossdk.io/core/address"
 	"github.com/CosmWasm/wasmd/x/wasm/types"
 	"github.com/spf13/cobra"
@@ -82,7 +84,7 @@ Examples:
 			var authorization authz.Authorization
 			switch args[1] {
 			case "deposit":
-				scopesS, err := cmd.Flags().GetStringSlice(cflags.FlagScope)
+				scopesS, err := cmd.Flags().GetStringSlice(flagdefs.FlagScope)
 				if err != nil {
 					return err
 				}
@@ -105,7 +107,7 @@ Examples:
 					scopes = append(scopes, ev1.DepositAuthorization_Scope(id))
 				}
 
-				limit, err := cmd.Flags().GetString(cflags.FlagSpendLimit)
+				limit, err := cmd.Flags().GetString(flagdefs.FlagSpendLimit)
 				if err != nil {
 					return err
 				}
@@ -121,7 +123,7 @@ Examples:
 
 				authorization = ev1.NewDepositAuthorization(scopes, spendLimit)
 			case "send":
-				limit, err := cmd.Flags().GetString(cflags.FlagSpendLimit)
+				limit, err := cmd.Flags().GetString(flagdefs.FlagSpendLimit)
 				if err != nil {
 					return err
 				}
@@ -135,7 +137,7 @@ Examples:
 					return fmt.Errorf("spend-limit should be greater than zero")
 				}
 
-				allowList, err := cmd.Flags().GetStringSlice(cflags.FlagAllowList)
+				allowList, err := cmd.Flags().GetStringSlice(flagdefs.FlagAllowList)
 				if err != nil {
 					return err
 				}
@@ -156,24 +158,24 @@ Examples:
 
 				authorization = bank.NewSendAuthorization(spendLimit, allowed)
 			case "generic":
-				msgType, err := cmd.Flags().GetString(cflags.FlagMsgType)
+				msgType, err := cmd.Flags().GetString(flagdefs.FlagMsgType)
 				if err != nil {
 					return err
 				}
 
 				authorization = authz.NewGenericAuthorization(msgType)
 			case delegate, unbond, redelegate:
-				limit, err := cmd.Flags().GetString(cflags.FlagSpendLimit)
+				limit, err := cmd.Flags().GetString(flagdefs.FlagSpendLimit)
 				if err != nil {
 					return err
 				}
 
-				allowValidators, err := cmd.Flags().GetStringSlice(cflags.FlagAllowedValidators)
+				allowValidators, err := cmd.Flags().GetStringSlice(flagdefs.FlagAllowedValidators)
 				if err != nil {
 					return err
 				}
 
-				denyValidators, err := cmd.Flags().GetStringSlice(cflags.FlagDenyValidators)
+				denyValidators, err := cmd.Flags().GetStringSlice(flagdefs.FlagDenyValidators)
 				if err != nil {
 					return err
 				}
@@ -250,13 +252,13 @@ Examples:
 
 	cflags.AddTxFlagsToCmd(cmd)
 
-	cmd.Flags().String(cflags.FlagMsgType, "", "The Msg method name for which we are creating a GenericAuthorization")
-	cmd.Flags().String(cflags.FlagSpendLimit, "", "SpendLimit for Send|Deposit Authorizations, an array of Coins allowed spend")
-	cmd.Flags().StringSlice(cflags.FlagAllowedValidators, []string{}, "Allowed validators addresses separated by ,")
-	cmd.Flags().StringSlice(cflags.FlagDenyValidators, []string{}, "Deny validators addresses separated by ,")
-	cmd.Flags().StringSlice(cflags.FlagAllowList, []string{}, "Allowed addresses grantee is allowed to send funds separated by ,")
-	cmd.Flags().Int64(cflags.FlagExpiration, 0, "Expire time as Unix timestamp. Set zero (0) for no expiry. Default is 0.")
-	cmd.Flags().StringSlice(cflags.FlagScope, []string{}, "Scopes for Deposit authorization, array of values. Allowed values deployment|bid")
+	cmd.Flags().String(flagdefs.FlagMsgType, "", "The Msg method name for which we are creating a GenericAuthorization")
+	cmd.Flags().String(flagdefs.FlagSpendLimit, "", "SpendLimit for Send|Deposit Authorizations, an array of Coins allowed spend")
+	cmd.Flags().StringSlice(flagdefs.FlagAllowedValidators, []string{}, "Allowed validators addresses separated by ,")
+	cmd.Flags().StringSlice(flagdefs.FlagDenyValidators, []string{}, "Deny validators addresses separated by ,")
+	cmd.Flags().StringSlice(flagdefs.FlagAllowList, []string{}, "Allowed addresses grantee is allowed to send funds separated by ,")
+	cmd.Flags().Int64(flagdefs.FlagExpiration, 0, "Expire time as Unix timestamp. Set zero (0) for no expiry. Default is 0.")
+	cmd.Flags().StringSlice(flagdefs.FlagScope, []string{}, "Scopes for Deposit authorization, array of values. Allowed values deployment|bid")
 
 	cmd.AddCommand(
 		GetTxAuthzGrantContractAuthorizationCmd(),
@@ -296,27 +298,27 @@ $ %s tx grant contract <grantee_addr> execution <contract_addr> --allow-all-mess
 				return err
 			}
 
-			msgKeys, err := cmd.Flags().GetStringSlice(cflags.FlagAllowedMsgKeys)
+			msgKeys, err := cmd.Flags().GetStringSlice(flagdefs.FlagAllowedMsgKeys)
 			if err != nil {
 				return err
 			}
 
-			rawMsgs, err := cmd.Flags().GetStringSlice(cflags.FlagAllowedRawMsgs)
+			rawMsgs, err := cmd.Flags().GetStringSlice(flagdefs.FlagAllowedRawMsgs)
 			if err != nil {
 				return err
 			}
 
-			maxFundsStr, err := cmd.Flags().GetString(cflags.FlagMaxFunds)
+			maxFundsStr, err := cmd.Flags().GetString(flagdefs.FlagMaxFunds)
 			if err != nil {
 				return fmt.Errorf("max funds: %s", err)
 			}
 
-			maxCalls, err := cmd.Flags().GetUint64(cflags.FlagMaxCalls)
+			maxCalls, err := cmd.Flags().GetUint64(flagdefs.FlagMaxCalls)
 			if err != nil {
 				return err
 			}
 
-			exp, err := cmd.Flags().GetInt64(cflags.FlagExpiration)
+			exp, err := cmd.Flags().GetInt64(flagdefs.FlagExpiration)
 			if err != nil {
 				return err
 			}
@@ -324,12 +326,12 @@ $ %s tx grant contract <grantee_addr> execution <contract_addr> --allow-all-mess
 				return errors.New("expiration flag is required and must be a non-zero Unix timestamp")
 			}
 
-			allowAllMsgs, err := cmd.Flags().GetBool(cflags.FlagAllowAllMsgs)
+			allowAllMsgs, err := cmd.Flags().GetBool(flagdefs.FlagAllowAllMsgs)
 			if err != nil {
 				return err
 			}
 
-			noTokenTransfer, err := cmd.Flags().GetBool(cflags.FlagNoTokenTransfer)
+			noTokenTransfer, err := cmd.Flags().GetBool(flagdefs.FlagNoTokenTransfer)
 			if err != nil {
 				return err
 			}
@@ -411,13 +413,13 @@ $ %s tx grant contract <grantee_addr> execution <contract_addr> --allow-all-mess
 
 	cflags.AddTxFlagsToCmd(cmd)
 
-	cmd.Flags().StringSlice(cflags.FlagAllowedMsgKeys, []string{}, "Allowed msg keys")
-	cmd.Flags().StringSlice(cflags.FlagAllowedRawMsgs, []string{}, "Allowed raw msgs")
-	cmd.Flags().Uint64(cflags.FlagMaxCalls, 0, "Maximal number of calls to the contract")
-	cmd.Flags().String(cflags.FlagMaxFunds, "", "Maximal amount of tokens transferable to the contract.")
-	cmd.Flags().Int64(cflags.FlagExpiration, 0, "The Unix timestamp.")
-	cmd.Flags().Bool(cflags.FlagAllowAllMsgs, false, "Allow all messages")
-	cmd.Flags().Bool(cflags.FlagNoTokenTransfer, false, "Don't allow token transfer")
+	cmd.Flags().StringSlice(flagdefs.FlagAllowedMsgKeys, []string{}, "Allowed msg keys")
+	cmd.Flags().StringSlice(flagdefs.FlagAllowedRawMsgs, []string{}, "Allowed raw msgs")
+	cmd.Flags().Uint64(flagdefs.FlagMaxCalls, 0, "Maximal number of calls to the contract")
+	cmd.Flags().String(flagdefs.FlagMaxFunds, "", "Maximal amount of tokens transferable to the contract.")
+	cmd.Flags().Int64(flagdefs.FlagExpiration, 0, "The Unix timestamp.")
+	cmd.Flags().Bool(flagdefs.FlagAllowAllMsgs, false, "Allow all messages")
+	cmd.Flags().Bool(flagdefs.FlagNoTokenTransfer, false, "Don't allow token transfer")
 
 	return cmd
 }
@@ -475,13 +477,13 @@ $ %s tx grant store-code <grantee_addr> *:%s1l2rsakp388kuv9k8qzq6lrm9taddae7fpx5
 	}
 
 	cflags.AddTxFlagsToCmd(cmd)
-	cmd.Flags().Int64(cflags.FlagExpiration, 0, "The Unix timestamp.")
+	cmd.Flags().Int64(flagdefs.FlagExpiration, 0, "The Unix timestamp.")
 
 	return cmd
 }
 
 func getExpireTime(cmd *cobra.Command) (*time.Time, error) {
-	exp, err := cmd.Flags().GetInt64(cflags.FlagExpiration)
+	exp, err := cmd.Flags().GetInt64(flagdefs.FlagExpiration)
 	if err != nil {
 		return nil, err
 	}
@@ -554,7 +556,7 @@ Example:
 
 			grantee := cctx.GetFromAddress()
 
-			if offline, _ := cmd.Flags().GetBool(cflags.FlagOffline); offline {
+			if offline, _ := cmd.Flags().GetBool(flagdefs.FlagOffline); offline {
 				return errors.New("cannot broadcast tx during offline mode")
 			}
 

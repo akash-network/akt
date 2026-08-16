@@ -1,6 +1,8 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -108,9 +110,9 @@ func newMCPConsoleClientCommand(ctx context.Context, t *testing.T) *cobra.Comman
 
 	cmd := &cobra.Command{Use: "mcp"}
 	cmd.SetContext(ctx)
-	cmd.Flags().String("console-api-key", "", "")
-	cmd.Flags().String("context", "", "")
-	if err := cmd.Flags().Set("console-api-key", "test-key"); err != nil {
+	cmd.Flags().String(flagdefs.FlagConsoleAPIKey, "", "")
+	cmd.Flags().String(flagdefs.FlagContext, "", "")
+	if err := cmd.Flags().Set(flagdefs.FlagConsoleAPIKey, "test-key"); err != nil {
 		t.Fatalf("set Console API key: %v", err)
 	}
 

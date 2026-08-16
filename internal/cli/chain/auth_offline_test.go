@@ -1,6 +1,8 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"context"
 	"errors"
@@ -21,8 +23,6 @@ import (
 	signingtypes "github.com/cosmos/cosmos-sdk/types/tx/signing"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	"github.com/spf13/cobra"
-
-	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	aktcodec "pkg.akt.dev/akt/internal/codec"
 	aktkeyring "pkg.akt.dev/akt/internal/keyring"
 )
@@ -143,6 +143,34 @@ func TestAuthTransactionInputDecoding(t *testing.T) {
 	}
 	if _, err := ReadTxsFromInput(cfg); err == nil || !strings.Contains(err.Error(), "no file") {
 		t.Fatalf("empty filenames error = %v", err)
+	}
+}
+
+func TestDecodeCommandReadsCanonicalHexFlag(t *testing.T) {
+	encoding := aktcodec.MakeEncodingConfig()
+	builder := encoding.TxConfig.NewTxBuilder()
+	builder.SetMemo("decode-canonical-hex")
+	payload, err := encoding.TxConfig.TxEncoder()(builder.GetTx())
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := GetDecodeCommand()
+	if err := cmd.Flags().Set(flagdefs.FlagHex, "true"); err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	cmd.SetOut(&output)
+	cmd.SetContext(context.Background())
+	cctx := client.Context{}.WithTxConfig(encoding.TxConfig).WithOutput(&output)
+	if err := client.SetCmdClientContext(cmd, cctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.RunE(cmd, []string{fmt.Sprintf("%x", payload)}); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "decode-canonical-hex") {
+		t.Fatalf("decoded transaction = %q", output.String())
 	}
 }
 
@@ -274,11 +302,157 @@ func TestMultisigOfflineBoundaries(t *testing.T) {
 	}
 }
 
+func TestMultiSignCommandReadsCanonicalFlags(t *testing.T) {
+	encoding := aktcodec.MakeEncodingConfig()
+	member := secp256k1.GenPrivKey().PubKey()
+	multisigKey := kmultisig.NewLegacyAminoPubKey(1, []cryptotypes.PubKey{member})
+	keys := aktkeyring.NewInMemory(encoding.Codec)
+	if _, err := keys.SaveMultisig("group", multisigKey); err != nil {
+		t.Fatal(err)
+	}
+
+	txPath := writeAuthTestFile(t, "multisig-transaction.json", encodedAuthTestTx(t, encoding.TxConfig, "multisig"))
+	signature := signingtypes.SignatureV2{
+		PubKey: member,
+		Data: &signingtypes.SingleSignatureData{
+			SignMode:  signingtypes.SignMode_SIGN_MODE_LEGACY_AMINO_JSON,
+			Signature: []byte("test-signature"),
+		},
+		Sequence: 3,
+	}
+	signatureJSON, err := encoding.TxConfig.MarshalSignatureJSON([]signingtypes.SignatureV2{signature})
+	if err != nil {
+		t.Fatal(err)
+	}
+	signaturePath := writeAuthTestFile(t, "member-signature.json", signatureJSON)
+
+	cmd := GetAuthMultiSignCmd()
+	for name, value := range map[string]string{
+		flagdefs.FlagOffline:                   "true",
+		flagdefs.FlagChainID:                   "multisig-chain",
+		flagdefs.FlagAccountNumber:             "2",
+		flagdefs.FlagSequence:                  "3",
+		flagdefs.FlagSkipSignatureVerification: "true",
+		flagdefs.FlagSigOnly:                   "true",
+	} {
+		if err := cmd.Flags().Set(name, value); err != nil {
+			t.Fatalf("set --%s: %v", name, err)
+		}
+	}
+	var output bytes.Buffer
+	cmd.SetOut(&output)
+	cmd.SetContext(context.Background())
+	cctx := client.Context{}.
+		WithCodec(encoding.Codec).
+		WithLegacyAmino(encoding.Amino).
+		WithInterfaceRegistry(encoding.InterfaceRegistry).
+		WithTxConfig(encoding.TxConfig).
+		WithKeyring(keys).
+		WithChainID("multisig-chain").
+		WithOffline(true).
+		WithOutput(&output)
+	if err := client.SetCmdClientContext(cmd, cctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.RunE(cmd, []string{txPath, "group", signaturePath}); err != nil {
+		t.Fatal(err)
+	}
+	if output.Len() == 0 {
+		t.Fatal("multi-sign produced no signature")
+	}
+}
+
+func TestSignBatchReadsCanonicalSignerFlags(t *testing.T) {
+	encoding := aktcodec.MakeEncodingConfig()
+	keys := aktkeyring.NewInMemory(encoding.Codec)
+	record, _, err := keys.NewMnemonic(
+		"alice",
+		keyring.English,
+		"m/44'/118'/0'/0/0",
+		"",
+		aktkeyring.DefaultAlgo(),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	signer, err := record.GetAddress()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	builder := authTestSendBuilder(t, encoding.TxConfig, signer)
+	txJSON, err := encoding.TxConfig.TxJSONEncoder()(builder.GetTx())
+	if err != nil {
+		t.Fatal(err)
+	}
+	txPath := writeAuthTestFile(t, "batch.json", append(txJSON, '\n'))
+
+	t.Run("online account lookup", func(t *testing.T) {
+		wantErr := errors.New("stop after signer lookup")
+		cmd := GetSignBatchCommand()
+		if err := cmd.Flags().Set(flagdefs.FlagFrom, "alice"); err != nil {
+			t.Fatal(err)
+		}
+		cctx := client.Context{}.
+			WithTxConfig(encoding.TxConfig).
+			WithKeyring(keys).
+			WithAccountRetriever(fixedAccountRetriever{err: wantErr})
+		cmd.SetContext(context.Background())
+		if err := client.SetCmdClientContext(cmd, cctx); err != nil {
+			t.Fatal(err)
+		}
+		err := cmd.RunE(cmd, []string{txPath})
+		if !errors.Is(err, wantErr) {
+			t.Fatalf("online batch error = %v", err)
+		}
+	})
+
+	t.Run("append mode", func(t *testing.T) {
+		cmd := GetSignBatchCommand()
+		for name, value := range map[string]string{
+			flagdefs.FlagFrom:          "alice",
+			flagdefs.FlagOffline:       "true",
+			flagdefs.FlagAppendMode:    "true",
+			flagdefs.FlagChainID:       "batch-chain",
+			flagdefs.FlagAccountNumber: "7",
+			flagdefs.FlagSequence:      "11",
+		} {
+			if err := cmd.Flags().Set(name, value); err != nil {
+				t.Fatalf("set --%s: %v", name, err)
+			}
+		}
+		var output bytes.Buffer
+		cmd.SetOut(&output)
+		cmd.SetContext(context.Background())
+		cctx := client.Context{}.
+			WithCodec(encoding.Codec).
+			WithLegacyAmino(encoding.Amino).
+			WithInterfaceRegistry(encoding.InterfaceRegistry).
+			WithTxConfig(encoding.TxConfig).
+			WithKeyring(keys).
+			WithChainID("batch-chain").
+			WithOffline(true).
+			WithFrom("alice").
+			WithFromName("alice").
+			WithFromAddress(signer).
+			WithOutput(&output)
+		if err := client.SetCmdClientContext(cmd, cctx); err != nil {
+			t.Fatal(err)
+		}
+		if err := cmd.RunE(cmd, []string{txPath}); err != nil {
+			t.Fatal(err)
+		}
+		if output.Len() == 0 {
+			t.Fatal("append-mode batch produced no signed transaction")
+		}
+	})
+}
+
 func TestAuthOutputAndSignatureReportBoundaries(t *testing.T) {
 	path := writeAuthTestFile(t, "signed.json", []byte("old"))
 	cmd := &cobra.Command{}
-	cmd.Flags().String(cflags.FlagOutputDocument, "", "")
-	if err := cmd.Flags().Set(cflags.FlagOutputDocument, path); err != nil {
+	cmd.Flags().String(flagdefs.FlagOutputDocument, "", "")
+	if err := cmd.Flags().Set(flagdefs.FlagOutputDocument, path); err != nil {
 		t.Fatal(err)
 	}
 	closeOutput, err := setOutputFile(cmd)
@@ -293,11 +467,11 @@ func TestAuthOutputAndSignatureReportBoundaries(t *testing.T) {
 	}
 
 	signCmd := GetSignCommand()
-	if err := signCmd.Flags().Set(cflags.FlagOffline, "true"); err != nil {
+	if err := signCmd.Flags().Set(flagdefs.FlagOffline, "true"); err != nil {
 		t.Fatal(err)
 	}
 	preSignCmd(signCmd, nil)
-	for _, name := range []string{cflags.FlagAccountNumber, cflags.FlagSequence} {
+	for _, name := range []string{flagdefs.FlagAccountNumber, flagdefs.FlagSequence} {
 		flag := signCmd.Flags().Lookup(name)
 		if flag == nil || flag.Annotations[cobra.BashCompOneRequiredFlag] == nil {
 			t.Fatalf("--%s was not required offline", name)

@@ -171,7 +171,7 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	// --network is validated in RunE rather than MarkFlagRequired: console-api
 	// contexts are allowed to omit it (network-less, Console-only operation).
 
-	_ = cmd.RegisterFlagCompletionFunc("network", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	_ = cmd.RegisterFlagCompletionFunc(flagdefs.FlagNetwork, func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
 		m := mgr()
 		if m == nil {
 			return nil, cobra.ShellCompDirectiveNoFileComp
@@ -559,7 +559,7 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd.Flags().BoolP(flagdefs.FlagSkipConfirmation, "y", false, "Edit a shared parent network without prompting")
 	cmd.MarkFlagsMutuallyExclusive(flagdefs.FlagForkNetwork, flagdefs.FlagSkipConfirmation)
 
-	_ = cmd.RegisterFlagCompletionFunc("network", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	_ = cmd.RegisterFlagCompletionFunc(flagdefs.FlagNetwork, func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
 		m := mgr()
 		if m == nil {
 			return nil, cobra.ShellCompDirectiveNoFileComp

@@ -1,6 +1,8 @@
 package output
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -32,7 +34,7 @@ func TestPrintStreamRecordRejectsDestinationFailures(t *testing.T) {
 		} {
 			t.Run(format+"/"+tc.name, func(t *testing.T) {
 				cmd := &cobra.Command{}
-				cmd.Flags().String("output", format, "")
+				cmd.Flags().String(flagdefs.FlagOutput, format, "")
 				cmd.SetOut(tc.out)
 
 				err := PrintStreamRecord(cmd, record, "[web-a] ready")
@@ -77,7 +79,7 @@ func TestPrintStreamRecord(t *testing.T) {
 	} {
 		t.Run(tc.format, func(t *testing.T) {
 			cmd := &cobra.Command{}
-			cmd.Flags().String("output", tc.format, "")
+			cmd.Flags().String(flagdefs.FlagOutput, tc.format, "")
 			var buf bytes.Buffer
 			cmd.SetOut(&buf)
 

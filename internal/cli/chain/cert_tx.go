@@ -102,7 +102,7 @@ func certGenerateOptionsFromCmd(cmd *cobra.Command) (certGenerateOptions, error)
 	if err != nil {
 		return certGenerateOptions{}, err
 	}
-	allowOverwrite, err := cmd.Flags().GetBool(cflags.FlagOverwrite)
+	allowOverwrite, err := cmd.Flags().GetBool(flagdefs.FlagOverwrite)
 	if err != nil {
 		return certGenerateOptions{}, err
 	}
@@ -261,13 +261,13 @@ func GetTxCertGenerateCmd() *cobra.Command {
 func addTxCertGenerateFlags(cmd *cobra.Command) {
 	cmd.Flags().String(flagdefs.FlagStartTime, "", "certificate is not valid before this date. default current timestamp. RFC3339")
 	cmd.Flags().Duration(flagdefs.FlagValidDuration, time.Hour*24*365, "certificate is not valid after this date. RFC3339")
-	cmd.Flags().Bool(cflags.FlagOverwrite, false, "overwrite existing certificate if present")
+	cmd.Flags().Bool(flagdefs.FlagOverwrite, false, "overwrite existing certificate if present")
 
 	cflags.AddTxFlagsToCmd(cmd) // TODO - add just the keyring flags? not all the TX ones
 }
 
 func certGeneratePersistentPreRunE(cmd *cobra.Command, args []string) error {
-	err := cmd.Flags().Set(cflags.FlagOffline, "true")
+	err := cmd.Flags().Set(flagdefs.FlagOffline, "true")
 	if err != nil {
 		return err
 	}
@@ -279,7 +279,7 @@ func certPublishPersistentPreRunE(cmd *cobra.Command, args []string) error {
 	toGenesis := certToGenesisFromCmd(cmd)
 
 	if toGenesis {
-		err := cmd.Flags().Set(cflags.FlagOffline, "true")
+		err := cmd.Flags().Set(flagdefs.FlagOffline, "true")
 		if err != nil {
 			return err
 		}

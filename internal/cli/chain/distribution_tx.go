@@ -155,7 +155,7 @@ Note that if you use this command with --%[2]s=%[3]s or --%[2]s=%[4]s, the %[5]s
 Example:
 $ %[1]s tx distribution withdraw-all-rewards --from mykey
 `,
-				version.AppName, cflags.FlagBroadcastMode, cflags.BroadcastSync, cflags.BroadcastAsync, flagdefs.FlagMaxMessagesPerTx,
+				version.AppName, flagdefs.FlagBroadcastMode, cflags.BroadcastSync, cflags.BroadcastAsync, flagdefs.FlagMaxMessagesPerTx,
 			),
 		),
 		Args:              cobra.NoArgs,

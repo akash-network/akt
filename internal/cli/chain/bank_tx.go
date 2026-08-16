@@ -3,6 +3,8 @@ package cli
 import (
 	"fmt"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkmath "cosmossdk.io/math"
 	"github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -48,7 +50,7 @@ When using '--dry-run' a key name cannot be used, only a bech32 address.
 		Args: cobra.RangeArgs(2, 3),
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 3 {
-				if err := cmd.Flags().Set(cflags.FlagFrom, args[0]); err != nil {
+				if err := cmd.Flags().Set(flagdefs.FlagFrom, args[0]); err != nil {
 					return err
 				}
 			}
@@ -110,7 +112,7 @@ When using '--dry-run' a key name cannot be used, only a bech32 address.`,
 		Example: fmt.Sprintf("%s tx bank multi-send akash1... akash1... akash1... akash1... 10stake", version.AppName),
 		Args:    cobra.MinimumNArgs(4),
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			if err := cmd.Flags().Set(cflags.FlagFrom, args[0]); err != nil {
+			if err := cmd.Flags().Set(flagdefs.FlagFrom, args[0]); err != nil {
 				return err
 			}
 
@@ -132,7 +134,7 @@ When using '--dry-run' a key name cannot be used, only a bech32 address.`,
 				return fmt.Errorf("must send positive amount")
 			}
 
-			split, err := cmd.Flags().GetBool(cflags.FlagSplit)
+			split, err := cmd.Flags().GetBool(flagdefs.FlagSplit)
 			if err != nil {
 				return err
 			}
@@ -175,7 +177,7 @@ When using '--dry-run' a key name cannot be used, only a bech32 address.`,
 		},
 	}
 
-	cmd.Flags().Bool(cflags.FlagSplit, false, "Send the equally split token amount to each address")
+	cmd.Flags().Bool(flagdefs.FlagSplit, false, "Send the equally split token amount to each address")
 	cflags.AddTxFlagsToCmd(cmd)
 
 	return cmd

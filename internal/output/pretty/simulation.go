@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
 	"github.com/spf13/cobra"
@@ -101,7 +103,7 @@ func gasAdjustmentFromFlags(cmd *cobra.Command) float64 {
 		return cflags.DefaultGasAdjustment
 	}
 
-	adjustment, err := cmd.Flags().GetFloat64(cflags.FlagGasAdjustment)
+	adjustment, err := cmd.Flags().GetFloat64(flagdefs.FlagGasAdjustment)
 	if err != nil || adjustment <= 0 {
 		return cflags.DefaultGasAdjustment
 	}
@@ -118,7 +120,7 @@ func estimatedFee(cmd *cobra.Command, gas uint64) sdk.Coins {
 		return nil
 	}
 
-	if raw, err := cmd.Flags().GetString(cflags.FlagFees); err == nil && strings.TrimSpace(raw) != "" {
+	if raw, err := cmd.Flags().GetString(flagdefs.FlagFees); err == nil && strings.TrimSpace(raw) != "" {
 		fees, err := sdk.ParseCoinsNormalized(raw)
 		if err != nil {
 			return nil
@@ -127,7 +129,7 @@ func estimatedFee(cmd *cobra.Command, gas uint64) sdk.Coins {
 		return fees
 	}
 
-	raw, err := cmd.Flags().GetString(cflags.FlagGasPrices)
+	raw, err := cmd.Flags().GetString(flagdefs.FlagGasPrices)
 	if err != nil || strings.TrimSpace(raw) == "" {
 		return nil
 	}

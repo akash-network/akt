@@ -1,6 +1,8 @@
 package cli_test
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"context"
 	"errors"
@@ -23,7 +25,6 @@ import (
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
 	chain "pkg.akt.dev/akt/internal/cli/chain"
-	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	chaintest "pkg.akt.dev/akt/internal/cli/chain/testutil"
 	aktcodec "pkg.akt.dev/akt/internal/codec"
 	clientv1beta3 "pkg.akt.dev/go/node/client/v1beta3"
@@ -513,7 +514,7 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantAuthorizationCmd,
 			args:    []string{fixture.from.String(), "generic"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagMsgType, "/cosmos.gov.v1.MsgVote")
+				setAuthzFlag(t, cmd, flagdefs.FlagMsgType, "/cosmos.gov.v1.MsgVote")
 			},
 		},
 		{
@@ -521,7 +522,7 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantAuthorizationCmd,
 			args:    []string{"not-an-address", "generic"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagMsgType, "/cosmos.gov.v1.MsgVote")
+				setAuthzFlag(t, cmd, flagdefs.FlagMsgType, "/cosmos.gov.v1.MsgVote")
 			},
 		},
 		{
@@ -539,8 +540,8 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "deposit"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagScope, "lease")
-				setAuthzFlag(t, cmd, cflags.FlagSpendLimit, "1uakt")
+				setAuthzFlag(t, cmd, flagdefs.FlagScope, "lease")
+				setAuthzFlag(t, cmd, flagdefs.FlagSpendLimit, "1uakt")
 			},
 		},
 		{
@@ -548,8 +549,8 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "deposit"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagScope, "deployment,deployment")
-				setAuthzFlag(t, cmd, cflags.FlagSpendLimit, "1uakt")
+				setAuthzFlag(t, cmd, flagdefs.FlagScope, "deployment,deployment")
+				setAuthzFlag(t, cmd, flagdefs.FlagSpendLimit, "1uakt")
 			},
 		},
 		{
@@ -557,7 +558,7 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "deposit"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagScope, "deployment")
+				setAuthzFlag(t, cmd, flagdefs.FlagScope, "deployment")
 			},
 		},
 		{
@@ -565,8 +566,8 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "deposit"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagScope, "deployment")
-				setAuthzFlag(t, cmd, cflags.FlagSpendLimit, "not-coins")
+				setAuthzFlag(t, cmd, flagdefs.FlagScope, "deployment")
+				setAuthzFlag(t, cmd, flagdefs.FlagSpendLimit, "not-coins")
 			},
 		},
 		{
@@ -574,8 +575,8 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "send"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagSpendLimit, "1uakt")
-				setAuthzFlag(t, cmd, cflags.FlagAllowList, fixture.recipientA.String()+","+fixture.recipientA.String())
+				setAuthzFlag(t, cmd, flagdefs.FlagSpendLimit, "1uakt")
+				setAuthzFlag(t, cmd, flagdefs.FlagAllowList, fixture.recipientA.String()+","+fixture.recipientA.String())
 			},
 		},
 		{
@@ -583,8 +584,8 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "send"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagSpendLimit, "1uakt")
-				setAuthzFlag(t, cmd, cflags.FlagAllowList, "not-an-address")
+				setAuthzFlag(t, cmd, flagdefs.FlagSpendLimit, "1uakt")
+				setAuthzFlag(t, cmd, flagdefs.FlagAllowList, "not-an-address")
 			},
 		},
 		{
@@ -592,7 +593,7 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "send"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagSpendLimit, "0uakt")
+				setAuthzFlag(t, cmd, flagdefs.FlagSpendLimit, "0uakt")
 			},
 		},
 		{
@@ -600,7 +601,7 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "send"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagSpendLimit, "not-coins")
+				setAuthzFlag(t, cmd, flagdefs.FlagSpendLimit, "not-coins")
 			},
 		},
 		{
@@ -608,7 +609,7 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "delegate"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagSpendLimit, "1uatom")
+				setAuthzFlag(t, cmd, flagdefs.FlagSpendLimit, "1uatom")
 			},
 		},
 		{
@@ -616,7 +617,7 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "delegate"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagSpendLimit, "0uakt")
+				setAuthzFlag(t, cmd, flagdefs.FlagSpendLimit, "0uakt")
 			},
 		},
 		{
@@ -624,7 +625,7 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "delegate"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagSpendLimit, "not-a-coin")
+				setAuthzFlag(t, cmd, flagdefs.FlagSpendLimit, "not-a-coin")
 			},
 		},
 		{
@@ -632,8 +633,8 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "unbond"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagAllowedValidators, fixture.validatorA.String())
-				setAuthzFlag(t, cmd, cflags.FlagDenyValidators, fixture.validatorB.String())
+				setAuthzFlag(t, cmd, flagdefs.FlagAllowedValidators, fixture.validatorA.String())
+				setAuthzFlag(t, cmd, flagdefs.FlagDenyValidators, fixture.validatorB.String())
 			},
 		},
 		{
@@ -641,7 +642,7 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "redelegate"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagAllowedValidators, "not-a-validator")
+				setAuthzFlag(t, cmd, flagdefs.FlagAllowedValidators, "not-a-validator")
 			},
 		},
 		{
@@ -649,7 +650,7 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "redelegate"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagDenyValidators, "not-a-validator")
+				setAuthzFlag(t, cmd, flagdefs.FlagDenyValidators, "not-a-validator")
 			},
 		},
 		{
@@ -657,9 +658,9 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantContractAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "execution", fixture.recipientA.String()},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagMaxCalls, "1")
-				setAuthzFlag(t, cmd, cflags.FlagNoTokenTransfer, "true")
-				setAuthzFlag(t, cmd, cflags.FlagAllowAllMsgs, "true")
+				setAuthzFlag(t, cmd, flagdefs.FlagMaxCalls, "1")
+				setAuthzFlag(t, cmd, flagdefs.FlagNoTokenTransfer, "true")
+				setAuthzFlag(t, cmd, flagdefs.FlagAllowAllMsgs, "true")
 			},
 		},
 		{
@@ -667,8 +668,8 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantContractAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "execution", fixture.recipientA.String()},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagExpiration, fmt.Sprint(authzFutureExpiration))
-				setAuthzFlag(t, cmd, cflags.FlagAllowAllMsgs, "true")
+				setAuthzFlag(t, cmd, flagdefs.FlagExpiration, fmt.Sprint(authzFutureExpiration))
+				setAuthzFlag(t, cmd, flagdefs.FlagAllowAllMsgs, "true")
 			},
 		},
 		{
@@ -676,11 +677,11 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantContractAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "execution", fixture.recipientA.String()},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagExpiration, fmt.Sprint(authzFutureExpiration))
-				setAuthzFlag(t, cmd, cflags.FlagMaxCalls, "1")
-				setAuthzFlag(t, cmd, cflags.FlagMaxFunds, "1uakt")
-				setAuthzFlag(t, cmd, cflags.FlagNoTokenTransfer, "true")
-				setAuthzFlag(t, cmd, cflags.FlagAllowAllMsgs, "true")
+				setAuthzFlag(t, cmd, flagdefs.FlagExpiration, fmt.Sprint(authzFutureExpiration))
+				setAuthzFlag(t, cmd, flagdefs.FlagMaxCalls, "1")
+				setAuthzFlag(t, cmd, flagdefs.FlagMaxFunds, "1uakt")
+				setAuthzFlag(t, cmd, flagdefs.FlagNoTokenTransfer, "true")
+				setAuthzFlag(t, cmd, flagdefs.FlagAllowAllMsgs, "true")
 			},
 		},
 		{
@@ -688,10 +689,10 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantContractAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "execution", fixture.recipientA.String()},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagExpiration, fmt.Sprint(authzFutureExpiration))
-				setAuthzFlag(t, cmd, cflags.FlagMaxCalls, "1")
-				setAuthzFlag(t, cmd, cflags.FlagMaxFunds, "not-coins")
-				setAuthzFlag(t, cmd, cflags.FlagAllowAllMsgs, "true")
+				setAuthzFlag(t, cmd, flagdefs.FlagExpiration, fmt.Sprint(authzFutureExpiration))
+				setAuthzFlag(t, cmd, flagdefs.FlagMaxCalls, "1")
+				setAuthzFlag(t, cmd, flagdefs.FlagMaxFunds, "not-coins")
+				setAuthzFlag(t, cmd, flagdefs.FlagAllowAllMsgs, "true")
 			},
 		},
 		{
@@ -699,9 +700,9 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantContractAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "migration", fixture.recipientA.String()},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagExpiration, fmt.Sprint(authzFutureExpiration))
-				setAuthzFlag(t, cmd, cflags.FlagMaxFunds, "not-coins")
-				setAuthzFlag(t, cmd, cflags.FlagAllowedMsgKeys, "migrate")
+				setAuthzFlag(t, cmd, flagdefs.FlagExpiration, fmt.Sprint(authzFutureExpiration))
+				setAuthzFlag(t, cmd, flagdefs.FlagMaxFunds, "not-coins")
+				setAuthzFlag(t, cmd, flagdefs.FlagAllowedMsgKeys, "migrate")
 			},
 		},
 		{
@@ -709,11 +710,11 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantContractAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "execution", fixture.recipientA.String()},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagExpiration, fmt.Sprint(authzFutureExpiration))
-				setAuthzFlag(t, cmd, cflags.FlagMaxCalls, "1")
-				setAuthzFlag(t, cmd, cflags.FlagNoTokenTransfer, "true")
-				setAuthzFlag(t, cmd, cflags.FlagAllowAllMsgs, "true")
-				setAuthzFlag(t, cmd, cflags.FlagAllowedMsgKeys, "execute")
+				setAuthzFlag(t, cmd, flagdefs.FlagExpiration, fmt.Sprint(authzFutureExpiration))
+				setAuthzFlag(t, cmd, flagdefs.FlagMaxCalls, "1")
+				setAuthzFlag(t, cmd, flagdefs.FlagNoTokenTransfer, "true")
+				setAuthzFlag(t, cmd, flagdefs.FlagAllowAllMsgs, "true")
+				setAuthzFlag(t, cmd, flagdefs.FlagAllowedMsgKeys, "execute")
 			},
 		},
 		{
@@ -721,9 +722,9 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantContractAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "execution", fixture.recipientA.String()},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagExpiration, fmt.Sprint(authzFutureExpiration))
-				setAuthzFlag(t, cmd, cflags.FlagMaxCalls, "1")
-				setAuthzFlag(t, cmd, cflags.FlagNoTokenTransfer, "true")
+				setAuthzFlag(t, cmd, flagdefs.FlagExpiration, fmt.Sprint(authzFutureExpiration))
+				setAuthzFlag(t, cmd, flagdefs.FlagMaxCalls, "1")
+				setAuthzFlag(t, cmd, flagdefs.FlagNoTokenTransfer, "true")
 			},
 		},
 		{
@@ -731,9 +732,9 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantContractAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "migration", fixture.recipientA.String()},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagExpiration, fmt.Sprint(authzFutureExpiration))
-				setAuthzFlag(t, cmd, cflags.FlagMaxFunds, "1uakt")
-				setAuthzFlag(t, cmd, cflags.FlagAllowedMsgKeys, "migrate,migrate")
+				setAuthzFlag(t, cmd, flagdefs.FlagExpiration, fmt.Sprint(authzFutureExpiration))
+				setAuthzFlag(t, cmd, flagdefs.FlagMaxFunds, "1uakt")
+				setAuthzFlag(t, cmd, flagdefs.FlagAllowedMsgKeys, "migrate,migrate")
 			},
 		},
 		{
@@ -741,10 +742,10 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantContractAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "execution", fixture.recipientA.String()},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagExpiration, fmt.Sprint(authzFutureExpiration))
-				setAuthzFlag(t, cmd, cflags.FlagMaxCalls, "1")
-				setAuthzFlag(t, cmd, cflags.FlagNoTokenTransfer, "true")
-				setAuthzFlag(t, cmd, cflags.FlagAllowedRawMsgs, `{not-json}`)
+				setAuthzFlag(t, cmd, flagdefs.FlagExpiration, fmt.Sprint(authzFutureExpiration))
+				setAuthzFlag(t, cmd, flagdefs.FlagMaxCalls, "1")
+				setAuthzFlag(t, cmd, flagdefs.FlagNoTokenTransfer, "true")
+				setAuthzFlag(t, cmd, flagdefs.FlagAllowedRawMsgs, `{not-json}`)
 			},
 		},
 		{
@@ -752,10 +753,10 @@ func TestAuthzGrantRejectsInvalidOrAmbiguousAuthorizationsBeforeBroadcast(t *tes
 			command: chain.GetTxAuthzGrantContractAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "instantiate", fixture.recipientA.String()},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagExpiration, fmt.Sprint(authzFutureExpiration))
-				setAuthzFlag(t, cmd, cflags.FlagMaxCalls, "1")
-				setAuthzFlag(t, cmd, cflags.FlagNoTokenTransfer, "true")
-				setAuthzFlag(t, cmd, cflags.FlagAllowAllMsgs, "true")
+				setAuthzFlag(t, cmd, flagdefs.FlagExpiration, fmt.Sprint(authzFutureExpiration))
+				setAuthzFlag(t, cmd, flagdefs.FlagMaxCalls, "1")
+				setAuthzFlag(t, cmd, flagdefs.FlagNoTokenTransfer, "true")
+				setAuthzFlag(t, cmd, flagdefs.FlagAllowAllMsgs, "true")
 			},
 		},
 		{
@@ -824,8 +825,8 @@ func TestAuthzStakingGrantPropagatesParamsFailureBeforeBroadcast(t *testing.T) {
 	queryErr := errors.New("staking params unavailable")
 	fixture.cctx = fixture.cctx.WithGRPCClient(newAuthzStakingConnection(t, "uakt", queryErr))
 	cmd := chain.GetTxAuthzGrantAuthorizationCmd()
-	setAuthzFlag(t, cmd, cflags.FlagSpendLimit, "1uakt")
-	setAuthzFlag(t, cmd, cflags.FlagAllowedValidators, fixture.validatorA.String())
+	setAuthzFlag(t, cmd, flagdefs.FlagSpendLimit, "1uakt")
+	setAuthzFlag(t, cmd, flagdefs.FlagAllowedValidators, fixture.validatorA.String())
 	txClient := &authzCaptureTxClient{err: errors.New("unexpected authz broadcast")}
 
 	output, err := runAuthzHandler(
@@ -857,7 +858,7 @@ func TestAuthzGrantPropagatesBroadcastFailureAfterExactMessageConstruction(t *te
 			command: chain.GetTxAuthzGrantAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "generic"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagMsgType, "/cosmos.gov.v1.MsgVote")
+				setAuthzFlag(t, cmd, flagdefs.FlagMsgType, "/cosmos.gov.v1.MsgVote")
 			},
 			wantType: &authz.GenericAuthorization{},
 		},
@@ -866,10 +867,10 @@ func TestAuthzGrantPropagatesBroadcastFailureAfterExactMessageConstruction(t *te
 			command: chain.GetTxAuthzGrantContractAuthorizationCmd,
 			args:    []string{fixture.grantee.String(), "execution", fixture.recipientA.String()},
 			configure: func(t *testing.T, cmd *cobra.Command) {
-				setAuthzFlag(t, cmd, cflags.FlagExpiration, fmt.Sprint(authzFutureExpiration))
-				setAuthzFlag(t, cmd, cflags.FlagMaxCalls, "1")
-				setAuthzFlag(t, cmd, cflags.FlagNoTokenTransfer, "true")
-				setAuthzFlag(t, cmd, cflags.FlagAllowAllMsgs, "true")
+				setAuthzFlag(t, cmd, flagdefs.FlagExpiration, fmt.Sprint(authzFutureExpiration))
+				setAuthzFlag(t, cmd, flagdefs.FlagMaxCalls, "1")
+				setAuthzFlag(t, cmd, flagdefs.FlagNoTokenTransfer, "true")
+				setAuthzFlag(t, cmd, flagdefs.FlagAllowAllMsgs, "true")
 			},
 			wantType: &wasmtypes.ContractExecutionAuthorization{},
 		},

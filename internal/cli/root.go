@@ -25,7 +25,6 @@ import (
 	"pkg.akt.dev/akt/internal/bootstrap"
 	"pkg.akt.dev/akt/internal/capability"
 	chaincli "pkg.akt.dev/akt/internal/cli/chain"
-	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 
 	cliconsole "pkg.akt.dev/akt/internal/cli/console"
 	clicontext "pkg.akt.dev/akt/internal/cli/context"
@@ -168,18 +167,18 @@ the deployment is created.`,
 			_ = v.BindPFlag(flagdefs.FlagInteractive, cmd.Flags().Lookup(flagdefs.FlagInteractive))
 			_ = v.BindPFlag(flagdefs.FlagVerbose, cmd.Flags().Lookup(flagdefs.FlagVerbose))
 			_ = v.BindPFlag(flagdefs.FlagQuiet, cmd.Flags().Lookup(flagdefs.FlagQuiet))
-			if fromFlag := cmd.Flags().Lookup(cflags.FlagFrom); fromFlag != nil {
-				_ = v.BindPFlag(cflags.FlagFrom, fromFlag)
+			if fromFlag := cmd.Flags().Lookup(flagdefs.FlagFrom); fromFlag != nil {
+				_ = v.BindPFlag(flagdefs.FlagFrom, fromFlag)
 			}
 
 			// Keyring overrides. The env names are bound explicitly rather
 			// than left to AutomaticEnv, which would look for
 			// AKT_KEYRING-BACKEND and never find the documented
 			// AKT_KEYRING_BACKEND (SPEC §1.9).
-			_ = v.BindPFlag(cflags.FlagKeyringBackend, cmd.Flags().Lookup(cflags.FlagKeyringBackend))
-			_ = v.BindPFlag(cflags.FlagKeyringDir, cmd.Flags().Lookup(cflags.FlagKeyringDir))
-			_ = v.BindEnv(cflags.FlagKeyringBackend, "AKT_KEYRING_BACKEND")
-			_ = v.BindEnv(cflags.FlagKeyringDir, "AKT_KEYRING_DIR")
+			_ = v.BindPFlag(flagdefs.FlagKeyringBackend, cmd.Flags().Lookup(flagdefs.FlagKeyringBackend))
+			_ = v.BindPFlag(flagdefs.FlagKeyringDir, cmd.Flags().Lookup(flagdefs.FlagKeyringDir))
+			_ = v.BindEnv(flagdefs.FlagKeyringBackend, "AKT_KEYRING_BACKEND")
+			_ = v.BindEnv(flagdefs.FlagKeyringDir, "AKT_KEYRING_DIR")
 
 			// Verbosity validation: -q and -v are mutually exclusive.
 			if v.GetBool(flagdefs.FlagQuiet) && v.GetInt(flagdefs.FlagVerbose) > 0 {
@@ -232,7 +231,7 @@ the deployment is created.`,
 			// Initialize the keyring manager with all keyring configs, with
 			// the per-invocation --keyring-backend/--keyring-dir overrides
 			// applied so every keyring this run opens agrees (SPEC §3.1).
-			keyringBackend := v.GetString(cflags.FlagKeyringBackend)
+			keyringBackend := v.GetString(flagdefs.FlagKeyringBackend)
 			if err := aktkeyring.ValidateBackend(keyringBackend); err != nil {
 				return err
 			}
@@ -240,7 +239,7 @@ the deployment is created.`,
 			cfg := mgr.Config()
 			krMgr = aktkeyring.NewManager(
 				cfgRoot,
-				aktkeyring.ApplyOverrides(cfg.Keyrings, keyringBackend, v.GetString(cflags.FlagKeyringDir)),
+				aktkeyring.ApplyOverrides(cfg.Keyrings, keyringBackend, v.GetString(flagdefs.FlagKeyringDir)),
 				encCfg.Codec,
 			)
 
@@ -254,7 +253,7 @@ the deployment is created.`,
 				krMgr,
 				encCfg,
 				v.GetString(flagdefs.FlagContext),
-				v.GetString(cflags.FlagFrom),
+				v.GetString(flagdefs.FlagFrom),
 				localIdentityMode(cmd),
 			)
 			if err != nil {
@@ -284,7 +283,7 @@ the deployment is created.`,
 					return err
 				}
 			}
-			if resolved && cmd.Flags().Lookup(cflags.FlagOffline) != nil {
+			if resolved && cmd.Flags().Lookup(flagdefs.FlagOffline) != nil {
 				if err := chaincli.ValidateTxInvocation(cmd); err != nil {
 					return err
 				}
@@ -391,11 +390,11 @@ the deployment is created.`,
 	// whose configured backend is unavailable it is the only way in. Empty
 	// defaults so that leaving them unset never shadows the context's stored
 	// keyring (SPEC §3.1).
-	root.PersistentFlags().String(cflags.FlagKeyringBackend, "",
+	root.PersistentFlags().String(flagdefs.FlagKeyringBackend, "",
 		"Keyring backend for this invocation: "+strings.Join(aktkeyring.Backends(), "|")+" (default: the context's keyring backend)")
-	root.PersistentFlags().String(cflags.FlagKeyringDir, "",
+	root.PersistentFlags().String(flagdefs.FlagKeyringDir, "",
 		"Keyring directory for this invocation (default: the context's keyring directory)")
-	root.PersistentFlags().VarP(output.NewFormatFlag("pretty"), "output", "o", "Output format: pretty, json, yaml")
+	root.PersistentFlags().VarP(output.NewFormatFlag("pretty"), flagdefs.FlagOutput, "o", "Output format: pretty, json, yaml")
 	// Local, not persistent: launching the TUI is only meaningful at the root.
 	// As a persistent flag it was advertised on all ~400 subcommands and
 	// silently discarded by every one of them -- `akt -i` refused with an
@@ -405,7 +404,7 @@ the deployment is created.`,
 	root.PersistentFlags().BoolP(flagdefs.FlagQuiet, "q", false, "Suppress informational output; keep results and errors")
 
 	// Register shell completion for the global --context flag.
-	_ = root.RegisterFlagCompletionFunc("context", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	_ = root.RegisterFlagCompletionFunc(flagdefs.FlagContext, func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
 		m := mgrFn()
 		if m == nil {
 			return nil, cobra.ShellCompDirectiveNoFileComp
@@ -498,7 +497,7 @@ the deployment is created.`,
 // a lower-precedence value on the other.
 func applyTransactionDefaults(cmd *cobra.Command, rc *aktctx.Context) {
 	flags := cmd.Flags()
-	if flags.Lookup(cflags.FlagGas) == nil {
+	if flags.Lookup(flagdefs.FlagGas) == nil {
 		return
 	}
 
@@ -516,18 +515,18 @@ func applyTransactionDefaults(cmd *cobra.Command, rc *aktctx.Context) {
 		}
 	}
 
-	setDefault(cflags.FlagGas, "AKT_GAS", rc.Gas)
-	setDefault(cflags.FlagGasAdjustment, "AKT_GAS_ADJUSTMENT", rc.GasAdjustment)
-	if dryRun, _ := flags.GetBool(cflags.FlagDryRun); dryRun {
+	setDefault(flagdefs.FlagGas, "AKT_GAS", rc.Gas)
+	setDefault(flagdefs.FlagGasAdjustment, "AKT_GAS_ADJUSTMENT", rc.GasAdjustment)
+	if dryRun, _ := flags.GetBool(flagdefs.FlagDryRun); dryRun {
 		// The SDK distinguishes gas auto (simulate then execute) from
 		// --dry-run (simulate only). Leaving both enabled makes its simulation
 		// builder demand a signing key even when the user supplied an address.
 		// The gas value is immaterial to dry-run and is replaced by the estimate.
-		_ = flags.Lookup(cflags.FlagGas).Value.Set("0")
+		_ = flags.Lookup(flagdefs.FlagGas).Value.Set("0")
 	}
 
-	feesFlag := flags.Lookup(cflags.FlagFees)
-	pricesFlag := flags.Lookup(cflags.FlagGasPrices)
+	feesFlag := flags.Lookup(flagdefs.FlagFees)
+	pricesFlag := flags.Lookup(flagdefs.FlagGasPrices)
 	if feesFlag == nil || pricesFlag == nil || feesFlag.Changed || pricesFlag.Changed {
 		return
 	}
@@ -679,7 +678,7 @@ func localIdentityMode(cmd *cobra.Command) aktclient.LocalIdentityMode {
 	case path == "akt provider status":
 		return aktclient.LocalIdentityNone
 	case strings.HasPrefix(path, "akt provider"):
-		if boolFlag(cmd, cflags.FlagDryRun) {
+		if boolFlag(cmd, flagdefs.FlagDryRun) {
 			return aktclient.LocalIdentityOnDemand
 		}
 		return aktclient.LocalIdentityRequired
@@ -694,13 +693,13 @@ func localIdentityMode(cmd *cobra.Command) aktclient.LocalIdentityMode {
 	// Unsigned construction and simulation accept a bech32 signer without a
 	// local key. A signer name resolves through the deferred keyring later.
 	case strings.HasPrefix(path, "akt tx"):
-		if boolFlag(cmd, cflags.FlagGenerateOnly) || boolFlag(cmd, cflags.FlagDryRun) {
+		if boolFlag(cmd, flagdefs.FlagGenerateOnly) || boolFlag(cmd, flagdefs.FlagDryRun) {
 			return aktclient.LocalIdentityOnDemand
 		}
 		return aktclient.LocalIdentityRequired
 	// Workflow dry-runs validate and print a plan without selecting a transport
 	// client or local signer.
-	case boolFlag(cmd, cflags.FlagDryRun):
+	case boolFlag(cmd, flagdefs.FlagDryRun):
 		return aktclient.LocalIdentityNone
 	}
 

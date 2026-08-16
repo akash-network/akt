@@ -872,8 +872,16 @@
 - **CLI flag names were scattered across command implementations as string
   literals and package-local constants**: every statically declared flag name
   now has one canonical definition in `internal/flags`. Registrations, reads,
-  change checks, Viper bindings, and chain flag aliases use that registry while
-  preserving the existing flag names, defaults, shorthands, and help text.
+  change checks, and Viper bindings import that registry directly; the chain
+  flag package retains builders, parsers, defaults, and allowed values without
+  re-exporting names. Existing flag names, defaults, shorthands, and help text
+  are preserved. The new release-linked package is classified in the coverage
+  manifest so coverage validation and report generation include it. Focused
+  command tests cover the canonical names at registration, read, completion,
+  Viper-binding, and transaction/query execution boundaries, including the
+  testing and coverage surfaces merged ahead of this branch. Legacy proposal
+  parsing now returns a fresh flag-name slice instead of exposing mutable
+  package state.
 
 - **Exports showed every `record_version` as zero without explaining the other
   version fields**: bbolt now assigns revision 1 to a new deployment, lease, or

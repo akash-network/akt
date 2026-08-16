@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
@@ -310,11 +312,11 @@ func GetTxDeploymentUpdateCmd() *cobra.Command {
 // body with the original registration:
 // cflags.AddDeploymentIDFlags(cmd.Flags())
 func addDeploymentOwnerTxFlags(cmd *cobra.Command) {
-	cmd.Flags().String(cflags.FlagOwner, "", "Deployment Owner")
+	cmd.Flags().String(flagdefs.FlagOwner, "", "Deployment Owner")
 	// FEEDBACK(2026-07): --dseq disabled for the positional-only UX trial
 	// (use the positional form instead). Restore by uncommenting if users
 	// ask for the flag form back.
-	// cmd.Flags().Uint64(cflags.FlagDSeq, 0, "Deployment Sequence")
+	// cmd.Flags().Uint64(flagdefs.FlagDSeq, 0, "Deployment Sequence")
 }
 
 func GetTxDeploymentGroupCmds() *cobra.Command {
@@ -464,15 +466,15 @@ akt tx deployment group start 12345 1 --owner=[Account Address]`,
 // this helper's body with the original registration:
 // cflags.AddGroupIDFlags(cmd.Flags())
 func addGroupOwnerTxFlags(cmd *cobra.Command) {
-	cmd.Flags().String(cflags.FlagOwner, "", "Deployment Owner")
+	cmd.Flags().String(flagdefs.FlagOwner, "", "Deployment Owner")
 	// FEEDBACK(2026-07): --dseq disabled for the positional-only UX trial
 	// (use the positional form instead). Restore by uncommenting if users
 	// ask for the flag form back.
-	// cmd.Flags().Uint64(cflags.FlagDSeq, 0, "Deployment Sequence")
+	// cmd.Flags().Uint64(flagdefs.FlagDSeq, 0, "Deployment Sequence")
 	// FEEDBACK(2026-07): --gseq disabled for the positional-only UX trial
 	// (use the positional form instead). Restore by uncommenting if users
 	// ask for the flag form back.
-	// cmd.Flags().Uint32(cflags.FlagGSeq, 1, "Group Sequence")
+	// cmd.Flags().Uint32(flagdefs.FlagGSeq, 1, "Group Sequence")
 }
 
 // groupIDFromFlagsAndArgs resolves a GroupID from the optional positional

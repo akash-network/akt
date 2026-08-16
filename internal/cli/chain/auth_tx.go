@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 	"google.golang.org/protobuf/types/known/anypb"
 
@@ -50,13 +52,13 @@ account key. It implies --signature-only.
 		Args:   cobra.MinimumNArgs(1),
 	}
 
-	cmd.Flags().String(cflags.FlagMultisig, "", "Address or key name of the multisig account on behalf of which the transaction shall be signed")
-	cmd.Flags().String(cflags.FlagOutputDocument, "", "The document will be written to the given file instead of STDOUT")
-	cmd.Flags().Bool(cflags.FlagSigOnly, false, "Print only the generated signature, then exit")
-	cmd.Flags().Bool(cflags.FlagAppend, false, "Combine all message and generate single signed transaction for broadcast.")
+	cmd.Flags().String(flagdefs.FlagMultisig, "", "Address or key name of the multisig account on behalf of which the transaction shall be signed")
+	cmd.Flags().String(flagdefs.FlagOutputDocument, "", "The document will be written to the given file instead of STDOUT")
+	cmd.Flags().Bool(flagdefs.FlagSigOnly, false, "Print only the generated signature, then exit")
+	cmd.Flags().Bool(flagdefs.FlagAppendMode, false, "Combine all message and generate single signed transaction for broadcast.")
 
 	cflags.AddTxFlagsToCmd(cmd)
-	_ = cmd.MarkFlagRequired(cflags.FlagFrom)
+	_ = cmd.MarkFlagRequired(flagdefs.FlagFrom)
 
 	return cmd
 }
@@ -72,9 +74,9 @@ func makeSignBatchCmd() func(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		txCfg := cctx.TxConfig
-		printSignatureOnly, _ := cmd.Flags().GetBool(cflags.FlagSigOnly)
+		printSignatureOnly, _ := cmd.Flags().GetBool(flagdefs.FlagSigOnly)
 
-		ms, err := cmd.Flags().GetString(cflags.FlagMultisig)
+		ms, err := cmd.Flags().GetString(flagdefs.FlagMultisig)
 		if err != nil {
 			return err
 		}
@@ -95,7 +97,7 @@ func makeSignBatchCmd() func(cmd *cobra.Command, args []string) error {
 
 		if !cctx.Offline {
 			if ms == "" {
-				from, err := cmd.Flags().GetString(cflags.FlagFrom)
+				from, err := cmd.Flags().GetString(flagdefs.FlagFrom)
 				if err != nil {
 					return err
 				}
@@ -116,7 +118,7 @@ func makeSignBatchCmd() func(cmd *cobra.Command, args []string) error {
 			}
 		}
 
-		appendMessagesToSingleTx, _ := cmd.Flags().GetBool(cflags.FlagAppend)
+		appendMessagesToSingleTx, _ := cmd.Flags().GetBool(flagdefs.FlagAppendMode)
 		// Combines all tx msgs and create single signed transaction
 		if appendMessagesToSingleTx {
 			txBuilder := cctx.TxConfig.NewTxBuilder()
@@ -148,7 +150,7 @@ func makeSignBatchCmd() func(cmd *cobra.Command, args []string) error {
 
 			// sign the txs
 			if ms == "" {
-				from, _ := cmd.Flags().GetString(cflags.FlagFrom)
+				from, _ := cmd.Flags().GetString(flagdefs.FlagFrom)
 				if err := sign(cctx, txBuilder, txFactory, from); err != nil {
 					return err
 				}
@@ -179,7 +181,7 @@ func makeSignBatchCmd() func(cmd *cobra.Command, args []string) error {
 
 				// sign the txs
 				if ms == "" {
-					from, _ := cmd.Flags().GetString(cflags.FlagFrom)
+					from, _ := cmd.Flags().GetString(flagdefs.FlagFrom)
 					if err := sign(cctx, txBuilder, txFactory, from); err != nil {
 						return err
 					}
@@ -292,7 +294,7 @@ func isMultisigSigner(cctx client.Context, multisigLegacyPub *kmultisig.LegacyAm
 }
 
 func setOutputFile(cmd *cobra.Command) (func(), error) {
-	outputDoc, _ := cmd.Flags().GetString(cflags.FlagOutputDocument)
+	outputDoc, _ := cmd.Flags().GetString(flagdefs.FlagOutputDocument)
 	if outputDoc == "" {
 		return func() {}, nil
 	}
@@ -331,13 +333,13 @@ be generated via the 'multisign' command.
 		Args:   cobra.ExactArgs(1),
 	}
 
-	cmd.Flags().String(cflags.FlagMultisig, "", "Address or key name of the multisig account on behalf of which the transaction shall be signed")
-	cmd.Flags().Bool(cflags.FlagOverwrite, false, "Overwrite existing signatures with a new one. If disabled, new signature will be appended")
-	cmd.Flags().Bool(cflags.FlagSigOnly, false, "Print only the signatures")
-	cmd.Flags().String(cflags.FlagOutputDocument, "", "The document will be written to the given file instead of STDOUT")
+	cmd.Flags().String(flagdefs.FlagMultisig, "", "Address or key name of the multisig account on behalf of which the transaction shall be signed")
+	cmd.Flags().Bool(flagdefs.FlagOverwrite, false, "Overwrite existing signatures with a new one. If disabled, new signature will be appended")
+	cmd.Flags().Bool(flagdefs.FlagSigOnly, false, "Print only the signatures")
+	cmd.Flags().String(flagdefs.FlagOutputDocument, "", "The document will be written to the given file instead of STDOUT")
 	cflags.AddTxFlagsToCmd(cmd)
 
-	_ = cmd.MarkFlagRequired(cflags.FlagFrom)
+	_ = cmd.MarkFlagRequired(flagdefs.FlagFrom)
 
 	return cmd
 }
@@ -345,9 +347,9 @@ be generated via the 'multisign' command.
 func preSignCmd(cmd *cobra.Command, _ []string) {
 	// Conditionally mark the account and sequence numbers required as no RPC
 	// query will be done.
-	if offline, _ := cmd.Flags().GetBool(cflags.FlagOffline); offline {
-		_ = cmd.MarkFlagRequired(cflags.FlagAccountNumber)
-		_ = cmd.MarkFlagRequired(cflags.FlagSequence)
+	if offline, _ := cmd.Flags().GetBool(flagdefs.FlagOffline); offline {
+		_ = cmd.MarkFlagRequired(flagdefs.FlagAccountNumber)
+		_ = cmd.MarkFlagRequired(flagdefs.FlagSequence)
 	}
 }
 
@@ -375,17 +377,17 @@ func signTx(cmd *cobra.Command, cctx client.Context, txF tx.Factory, newTx sdk.T
 		return err
 	}
 
-	printSignatureOnly, err := cmd.Flags().GetBool(cflags.FlagSigOnly)
+	printSignatureOnly, err := cmd.Flags().GetBool(flagdefs.FlagSigOnly)
 	if err != nil {
 		return err
 	}
 
-	multisig, err := cmd.Flags().GetString(cflags.FlagMultisig)
+	multisig, err := cmd.Flags().GetString(flagdefs.FlagMultisig)
 	if err != nil {
 		return err
 	}
 
-	from, err := cmd.Flags().GetString(cflags.FlagFrom)
+	from, err := cmd.Flags().GetString(flagdefs.FlagFrom)
 	if err != nil {
 		return err
 	}
@@ -395,7 +397,7 @@ func signTx(cmd *cobra.Command, cctx client.Context, txF tx.Factory, newTx sdk.T
 		return fmt.Errorf("error getting account from keybase: %w", err)
 	}
 
-	overwrite, err := f.GetBool(cflags.FlagOverwrite)
+	overwrite, err := f.GetBool(flagdefs.FlagOverwrite)
 	if err != nil {
 		return err
 	}

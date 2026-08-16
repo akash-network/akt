@@ -1,6 +1,8 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"context"
 	"io"
@@ -61,8 +63,8 @@ func runSemanticQuery(
 	cmd.SetContext(ctx)
 	cmd.SetOut(output)
 	cmd.SetErr(output)
-	if flag := cmd.Flags().Lookup("output"); flag != nil {
-		if err := cmd.Flags().Set("output", "json"); err != nil {
+	if flag := cmd.Flags().Lookup(flagdefs.FlagOutput); flag != nil {
+		if err := cmd.Flags().Set(flagdefs.FlagOutput, "json"); err != nil {
 			t.Fatalf("set query output: %v", err)
 		}
 	}

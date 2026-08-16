@@ -1,6 +1,8 @@
 package sdl
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"errors"
 	"io"
 	"testing"
@@ -53,7 +55,7 @@ func TestPlainSDLCommandsPropagateDestinationFailures(t *testing.T) {
 			for _, test := range tests {
 				t.Run(test.name, func(t *testing.T) {
 					cmd := Commands()
-					cmd.PersistentFlags().VarP(output.NewFormatFlag("pretty"), "output", "o", "test output")
+					cmd.PersistentFlags().VarP(output.NewFormatFlag("pretty"), flagdefs.FlagOutput, "o", "test output")
 					cmd.SilenceErrors = true
 					cmd.SilenceUsage = true
 					cmd.SetOut(io.Discard)

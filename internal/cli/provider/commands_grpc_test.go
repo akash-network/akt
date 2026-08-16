@@ -1,6 +1,8 @@
 package provider
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -77,7 +79,7 @@ func newAttestationCommandContext(t *testing.T) context.Context {
 
 func executeAttestationCommand(ctx context.Context) error {
 	root := Commands()
-	root.PersistentFlags().StringP("output", "o", "pretty", "output format")
+	root.PersistentFlags().StringP(flagdefs.FlagOutput, "o", "pretty", "output format")
 	root.SetOut(&bytes.Buffer{})
 	root.SetErr(&bytes.Buffer{})
 	root.SetArgs([]string{
@@ -143,7 +145,7 @@ func TestLeaseAttestationVerifiesEchoedNonce(t *testing.T) {
 
 	var out bytes.Buffer
 	root := Commands()
-	root.PersistentFlags().StringP("output", "o", "pretty", "output format")
+	root.PersistentFlags().StringP(flagdefs.FlagOutput, "o", "pretty", "output format")
 	root.SetOut(&out)
 	root.SetErr(&bytes.Buffer{})
 	root.SetArgs([]string{
@@ -175,7 +177,7 @@ func TestLeaseAttestationVerifiesEchoedNonce(t *testing.T) {
 	// The default output is a human summary, not the raw base64 quote.
 	var prettyOut bytes.Buffer
 	prettyRoot := Commands()
-	prettyRoot.PersistentFlags().StringP("output", "o", "pretty", "output format")
+	prettyRoot.PersistentFlags().StringP(flagdefs.FlagOutput, "o", "pretty", "output format")
 	prettyRoot.SetOut(&prettyOut)
 	prettyRoot.SetErr(&bytes.Buffer{})
 	prettyRoot.SetArgs([]string{

@@ -1,6 +1,8 @@
 package network
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"strings"
 	"testing"
@@ -14,7 +16,7 @@ func runList(t *testing.T, m *aktctx.Manager, args ...string) string {
 	t.Setenv("NO_COLOR", "")
 
 	cmd := listCmd(func() *aktctx.Manager { return m })
-	cmd.Flags().String("output", "pretty", "Output format")
+	cmd.Flags().String(flagdefs.FlagOutput, "pretty", "Output format")
 
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
@@ -103,5 +105,40 @@ func TestShowUsesPlainCommandWriterOutsideTTY(t *testing.T) {
 	}
 	if strings.Contains(stdout.String(), "\x1b[") {
 		t.Fatalf("network show emitted ANSI outside a TTY: %q", stdout.String())
+	}
+}
+
+func TestEditAppliesEveryCanonicalNetworkFlag(t *testing.T) {
+	m, err := aktctx.NewManager(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := m.CreateNetworkFromTemplate("mainnet", "mainnet"); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := editCmd(func() *aktctx.Manager { return m })
+	cmd.SetArgs([]string{
+		"mainnet",
+		"--chain-id", "custom-1",
+		"--rpc", "https://rpc.example.test:443",
+		"--api", "https://api.example.test:443",
+		"--grpc", "grpc.example.test:443",
+		"--gas-prices", "0.04uakt",
+		"--gas-adjustment", "1.4",
+	})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+
+	got := m.GetNetwork("mainnet")
+	if got == nil {
+		t.Fatal("edited network is missing")
+	}
+	if got.ChainID != "custom-1" || strings.Join(got.Endpoints.RPC, ",") != "https://rpc.example.test:443" || strings.Join(got.Endpoints.API, ",") != "https://api.example.test:443" || strings.Join(got.Endpoints.GRPC, ",") != "grpc.example.test:443" {
+		t.Fatalf("edited network = %+v", got)
+	}
+	if got.GasPrices != "0.04uakt" || got.GasAdjustment != "1.4" {
+		t.Fatalf("edited gas defaults = %+v", got)
 	}
 }

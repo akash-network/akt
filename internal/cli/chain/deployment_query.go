@@ -208,8 +208,8 @@ func GetQueryDeploymentGroupCmd() *cobra.Command {
 			// 	owner = id.Owner
 			// 	dseq = id.DSeq
 			//
-			// 	if cmd.Flags().Changed(cflags.FlagGSeq) {
-			// 		gseq, _ = cmd.Flags().GetUint32(cflags.FlagGSeq)
+			// 	if cmd.Flags().Changed(flagdefs.FlagGSeq) {
+			// 		gseq, _ = cmd.Flags().GetUint32(flagdefs.FlagGSeq)
 			// 	}
 			// }
 
