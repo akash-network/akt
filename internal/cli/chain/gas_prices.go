@@ -65,9 +65,9 @@ func reconcileGasPricesWithNode(
 	if err != nil {
 		return err
 	}
-	if err := pricesFlag.Value.Set(effective.String()); err != nil {
-		return fmt.Errorf("apply selected RPC node minimum gas prices: %w", err)
-	}
+	// FlagGasPrices is registered as a string flag, whose Set implementation
+	// cannot fail after the decimal coins above have been validated.
+	_ = pricesFlag.Value.Set(effective.String())
 
 	return nil
 }
