@@ -218,9 +218,7 @@ func templateCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 			if !strings.HasSuffix(out, "\n") {
 				out += "\n"
 			}
-			fmt.Fprint(cmd.OutOrStdout(), out)
-
-			return nil
+			return printConsoleText(cmd, out)
 		},
 	}
 

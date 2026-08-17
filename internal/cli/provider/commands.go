@@ -176,7 +176,7 @@ func leaseAttestationCmd() *cobra.Command {
 				return err
 			}
 
-			cl, err := grpcGatewayClient(cmd, providerURL)
+			cl, err := grpcGatewayClient(cmd, providerURL, lid.Provider)
 			if err != nil {
 				return err
 			}
@@ -438,6 +438,7 @@ func sendManifestCmd() *cobra.Command {
 			}
 
 			var failures []error
+			out := output.NewCheckedWriter(cmd.OutOrStdout())
 			for _, provider := range providers {
 				err := submitManifest(cmd, provider, scope.DSeq, mani)
 				recordProviderAction(ctx, "send-manifest", provider, scope.DSeq, err)
@@ -446,7 +447,10 @@ func sendManifestCmd() *cobra.Command {
 					continue
 				}
 
-				fmt.Fprintf(cmd.OutOrStdout(), "Manifest submitted successfully to %s.\n", provider)
+				if _, err := fmt.Fprintf(out, "Manifest submitted successfully to %s.\n", provider); err != nil {
+					failures = append(failures, fmt.Errorf("write manifest result: %w", out.Complete(err)))
+					break
+				}
 			}
 
 			return errors.Join(failures...)
@@ -581,8 +585,9 @@ func migrateHostnamesCmd() *cobra.Command {
 				return aktprovider.GatewayError("migrate hostnames", err)
 			}
 
-			fmt.Fprintln(cmd.OutOrStdout(), "Hostnames migrated successfully.")
-			return nil
+			out := output.NewCheckedWriter(cmd.OutOrStdout())
+			_, err = fmt.Fprintln(out, "Hostnames migrated successfully.")
+			return out.Complete(err)
 		},
 	}
 
@@ -630,8 +635,9 @@ func migrateEndpointsCmd() *cobra.Command {
 				return aktprovider.GatewayError("migrate endpoints", err)
 			}
 
-			fmt.Fprintln(cmd.OutOrStdout(), "Endpoints migrated successfully.")
-			return nil
+			out := output.NewCheckedWriter(cmd.OutOrStdout())
+			_, err = fmt.Fprintln(out, "Endpoints migrated successfully.")
+			return out.Complete(err)
 		},
 	}
 
@@ -769,10 +775,18 @@ var grpcGatewayClient = grpcGatewayClientFromCmd
 
 // grpcGatewayClientFromCmd creates a provider gateway gRPC client from the
 // command context, resolving auth exactly as the REST transport does.
-func grpcGatewayClientFromCmd(cmd *cobra.Command, providerURL string) (*aktprovider.GRPCClient, error) {
+func grpcGatewayClientFromCmd(
+	cmd *cobra.Command,
+	providerURL string,
+	provider string,
+) (*aktprovider.GRPCClient, error) {
 	cctx, accountAddr, authType, err := resolveGatewayAuth(cmd)
 	if err != nil {
 		return nil, err
+	}
+	expectedProvider, err := sdk.AccAddressFromBech32(provider)
+	if err != nil {
+		return nil, fmt.Errorf("invalid resolved provider address %q: %w", provider, err)
 	}
 
 	// The provider's gRPC gateway serves a self-signed certificate; verify it
@@ -784,7 +798,9 @@ func grpcGatewayClientFromCmd(cmd *cobra.Command, providerURL string) (*aktprovi
 	}
 	certQuerier := aktprovider.NewOnChainCertQuerier(queryCtx)
 
-	return aktprovider.NewGRPCGatewayClient(cmd.Context(), cctx, accountAddr, providerURL, authType, cctx.Keyring, certQuerier)
+	return aktprovider.NewGRPCGatewayClient(
+		cmd.Context(), cctx, accountAddr, expectedProvider, providerURL, authType, cctx.Keyring, certQuerier,
+	)
 }
 
 func gatewayAuthenticationFromCmd(cmd *cobra.Command) (sdkclient.Context, sdk.AccAddress, string, error) {

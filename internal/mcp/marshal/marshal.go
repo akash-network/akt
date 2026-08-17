@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
 )
@@ -53,6 +54,9 @@ func RequireString(req mcp.CallToolRequest, key string) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("parameter %s must be a string", key)
 	}
+	if strings.TrimSpace(s) == "" {
+		return "", fmt.Errorf("parameter %s must not be empty", key)
+	}
 	return s, nil
 }
 
@@ -82,6 +86,7 @@ func OptionalFloat(req mcp.CallToolRequest, key string) (float64, bool) {
 func PositiveInteger() mcp.PropertyOption {
 	return func(schema map[string]any) {
 		schema["minimum"] = float64(1)
+		schema["maximum"] = maxSafeJSONInteger
 		schema["multipleOf"] = float64(1)
 	}
 }
@@ -91,9 +96,12 @@ func PositiveInteger() mcp.PropertyOption {
 func NonNegativeInteger() mcp.PropertyOption {
 	return func(schema map[string]any) {
 		schema["minimum"] = float64(0)
+		schema["maximum"] = maxSafeJSONInteger
 		schema["multipleOf"] = float64(1)
 	}
 }
+
+const maxSafeJSONInteger = float64(1<<53 - 1)
 
 // RequireUint64 extracts a required uint64 parameter (passed as float64 in JSON).
 func RequireUint64(req mcp.CallToolRequest, key string) (uint64, error) {
@@ -166,6 +174,9 @@ func nonNegativeUint(key string, value float64, bits int) (uint64, error) {
 	}
 	if value != math.Trunc(value) {
 		return 0, fmt.Errorf("parameter %s must be a whole number", key)
+	}
+	if value > maxSafeJSONInteger {
+		return 0, fmt.Errorf("parameter %s must be less than or equal to %.0f", key, maxSafeJSONInteger)
 	}
 	if value >= math.Exp2(float64(bits)) {
 		return 0, fmt.Errorf("parameter %s is out of range for uint%d", key, bits)

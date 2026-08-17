@@ -10,6 +10,8 @@ import (
 	"charm.land/bubbles/v2/key"
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"cosmossdk.io/math"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"pkg.akt.dev/akt/internal/store"
 	"pkg.akt.dev/akt/internal/tui/components"
@@ -304,7 +306,7 @@ func (v *DeploymentDetailView) renderLeaseTab(w int) string {
 		sections = append(sections, components.SectionWithKV("Active Lease", w, []components.KVPair{
 			{Label: "provider", Value: l.ID.Provider},
 			{Label: "state", Value: components.StateTag(l.State)},
-			{Label: "price", Value: valOrDash(l.Price)},
+			{Label: "price", Value: valOrDash(formatStoredCoins(l.Price))},
 			{Label: "opened", Value: fmtTimestamp(l.CreatedAt)},
 			{Label: "gseq", Value: strconv.FormatUint(uint64(l.ID.GSeq), 10)},
 			{Label: "oseq", Value: strconv.FormatUint(uint64(l.ID.OSeq), 10)},
@@ -319,7 +321,7 @@ func (v *DeploymentDetailView) renderLeaseTab(w int) string {
 		var bidLines []string
 		for _, bid := range v.bids {
 			provider := bid.ID.Provider
-			price := valOrDash(bid.Price)
+			price := valOrDash(formatStoredCoins(bid.Price))
 			state := components.StateTag(bid.State)
 			bidLines = append(bidLines,
 				fmt.Sprintf("  %s  %s  %s", theme.Secondary.Render(provider), price, state))
@@ -336,9 +338,9 @@ func (v *DeploymentDetailView) renderEscrowTab(w int) string {
 	var sections []string
 
 	sections = append(sections, components.SectionWithKV("Escrow", w, []components.KVPair{
-		{Label: "deposit", Value: valOrDash(d.Deposit)},
-		{Label: "balance", Value: valOrDash(d.EscrowBalance)},
-		{Label: "transferred", Value: valOrDash(d.Transferred)},
+		{Label: "deposit", Value: valOrDash(formatStoredCoins(d.Deposit))},
+		{Label: "balance", Value: valOrDash(formatStoredCoins(d.EscrowBalance))},
+		{Label: "transferred", Value: valOrDash(formatStoredCoins(d.Transferred))},
 	}))
 
 	// Progress bar for remaining balance if data is available
@@ -444,7 +446,7 @@ func (v *DeploymentDetailView) uptimeStr() string {
 // costStr returns the price from the first lease, or "—".
 func (v *DeploymentDetailView) costStr() string {
 	if len(v.leases) > 0 && v.leases[0].Price != "" {
-		return v.leases[0].Price
+		return formatStoredCoins(v.leases[0].Price)
 	}
 	return "—"
 }
@@ -452,20 +454,31 @@ func (v *DeploymentDetailView) costStr() string {
 // escrowPercent computes the fraction of deposit remaining as escrow balance.
 // Returns -1 if values cannot be parsed.
 func escrowPercent(deposit, balance string) float64 {
-	d, err := strconv.ParseFloat(deposit, 64)
-	if err != nil || d <= 0 {
+	d, depositDenom, err := parseStoredAmount(deposit)
+	if err != nil || !d.IsPositive() {
 		return -1
 	}
-	b, err := strconv.ParseFloat(balance, 64)
+	b, balanceDenom, err := parseStoredAmount(balance)
 	if err != nil {
 		return -1
 	}
-	pct := b / d
-	if pct < 0 {
+	if depositDenom != balanceDenom {
+		return -1
+	}
+	pct := b.Quo(d)
+	if pct.IsNegative() {
 		return 0
 	}
-	if pct > 1 {
+	if pct.GT(math.LegacyOneDec()) {
 		return 1
 	}
-	return pct
+	return pct.MustFloat64()
+}
+
+func parseStoredAmount(raw string) (math.LegacyDec, string, error) {
+	if coin, err := sdk.ParseDecCoin(raw); err == nil {
+		return coin.Amount, coin.Denom, nil
+	}
+	amount, err := math.LegacyNewDecFromStr(raw)
+	return amount, "", err
 }

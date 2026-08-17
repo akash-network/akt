@@ -72,3 +72,30 @@ func TestProviderAuthTypeForMCPUsesSelectedContext(t *testing.T) {
 		t.Fatalf("MCP provider auth = %q, want mtls", got)
 	}
 }
+
+func TestProviderAuthTypeForMCPWithoutContextDefaultsToJWT(t *testing.T) {
+	mgr, err := aktctx.NewManager(t.TempDir())
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	cmd := &cobra.Command{Use: "mcp"}
+	cmd.Flags().String("context", "", "")
+
+	got, err := providerAuthTypeFor(cmd, func() *aktctx.Manager { return mgr })
+	if err != nil {
+		t.Fatalf("providerAuthTypeFor without context: %v", err)
+	}
+	if got != aktctx.ProviderAuthJWT {
+		t.Fatalf("MCP provider auth = %q, want jwt", got)
+	}
+	if selected := selectedMCPContext(cmd, func() *aktctx.Manager { return nil }); selected != "" {
+		t.Fatalf("nil manager selected context = %q, want none", selected)
+	}
+
+	if err := cmd.Flags().Set("context", "missing"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := providerAuthTypeFor(cmd, func() *aktctx.Manager { return mgr }); err == nil {
+		t.Fatal("providerAuthTypeFor accepted an explicitly missing context")
+	}
+}

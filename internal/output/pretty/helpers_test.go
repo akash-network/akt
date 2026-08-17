@@ -162,15 +162,6 @@ func TestFormatCPU(t *testing.T) {
 	}
 }
 
-func TestWriteTable(t *testing.T) {
-	var buf strings.Builder
-	WriteTable(&buf, []string{"NAME", "VALUE"}, [][]string{
-		{"foo", "bar"},
-		{"hello", "world"},
-	})
-	golden.RequireEqual(t, buf.String())
-}
-
 // plainLines strips ANSI styling and splits rendered output into lines,
 // dropping the trailing empty line left by the final newline.
 func plainLines(s string) []string {
@@ -217,7 +208,6 @@ func TestWriteTableNoRowsNeverPrintsBareHeader(t *testing.T) {
 	cols := []ColDef{{Header: "ID"}, {Header: "PRICE", Align: AlignRight}}
 
 	tests := map[string]func(w *strings.Builder){
-		"WriteTable":            func(w *strings.Builder) { WriteTable(w, []string{"ID", "PRICE"}, nil) },
 		"WriteTableCols":        func(w *strings.Builder) { WriteTableCols(w, cols, nil) },
 		"WriteTableOrEmpty":     func(w *strings.Builder) { WriteTableOrEmpty(w, []string{"ID", "PRICE"}, nil, "(no bids)") },
 		"WriteTableColsOrEmpty": func(w *strings.Builder) { WriteTableColsOrEmpty(w, cols, nil, "(no bids)") },

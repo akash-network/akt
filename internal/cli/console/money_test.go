@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -139,6 +140,10 @@ func TestWalletSettingsWireShape(t *testing.T) {
 
 		if r.URL.Path != "/v1/wallet-settings" {
 			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+		if r.Method == http.MethodPut && strings.Contains(gotBody, `"autoReloadEnabled":false`) {
+			writeJSON(t, w, `{"data":{"autoReloadEnabled":false}}`)
+			return
 		}
 		writeJSON(t, w, `{"data":{"autoReloadEnabled":true}}`)
 	}))
@@ -387,7 +392,11 @@ func TestCreateCachesManifestForLeaseCreate(t *testing.T) {
 			"data": map[string]any{
 				"dseq":     "9911",
 				"manifest": manifest,
-				"signTx":   map[string]any{"transactionHash": "ABC123"},
+				"signTx": map[string]any{
+					"code":            0,
+					"transactionHash": "ABC123",
+					"rawLog":          "",
+				},
 			},
 		})
 		writeJSON(t, w, string(body))
@@ -454,7 +463,7 @@ func TestLeaseCreateUsesCachedManifest(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		b, _ := io.ReadAll(r.Body)
 		gotBody = string(b)
-		writeJSON(t, w, `{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"9911"}},"leases":[]}}`)
+		writeJSON(t, w, `{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"9911"}},"leases":[{"id":{"owner":"akash1x","dseq":"9911","gseq":1,"oseq":1,"provider":"akash1provider"},"state":"active"}]}}`)
 	}))
 	defer srv.Close()
 
@@ -621,6 +630,32 @@ func TestAPIKeyDeleteIsIdempotent(t *testing.T) {
 	}
 	if !strings.Contains(out, "key-1 deleted") {
 		t.Errorf("unexpected output %q", out)
+	}
+}
+
+func TestAPIKeyDeleteStructuredAcknowledgement(t *testing.T) {
+	m := newAuthedManager(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/api-keys/key-1" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	for _, format := range []string{"json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			out, err := execConsole(t, m, srv.URL, "--output", format, "apikey", "delete", "key-1")
+			if err != nil {
+				t.Fatalf("delete absent API key: %v", err)
+			}
+			got := decodeStructuredOutput(t, format, out)
+			want := map[string]any{"id": "key-1", "deleted": true}
+			if !reflect.DeepEqual(got, want) {
+				t.Fatalf("structured delete output = %#v, want %#v", got, want)
+			}
+		})
 	}
 }
 

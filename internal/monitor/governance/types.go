@@ -2,7 +2,6 @@ package governance
 
 import (
 	"encoding/json"
-	"strings"
 	"time"
 )
 
@@ -81,36 +80,4 @@ func GetModuleDisplayName(module string) string {
 		return name
 	}
 	return module
-}
-
-// FormatJSON formats raw JSON for display
-func FormatJSON(raw json.RawMessage) (string, error) {
-	if len(raw) == 0 {
-		return "{}", nil
-	}
-
-	var data interface{}
-	if err := json.Unmarshal(raw, &data); err != nil {
-		return "", err
-	}
-
-	formatted, err := json.MarshalIndent(data, "", "  ")
-	if err != nil {
-		return "", err
-	}
-
-	return string(formatted), nil
-}
-
-// CountJSONLines returns the number of lines in formatted JSON
-func CountJSONLines(raw json.RawMessage) int {
-	if len(raw) == 0 {
-		return 1
-	}
-	formatted, err := FormatJSON(raw)
-	if err != nil {
-		return 1
-	}
-	lines := strings.Split(formatted, "\n")
-	return len(lines)
 }

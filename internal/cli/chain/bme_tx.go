@@ -80,6 +80,9 @@ price at settlement. Follow the pending entry with "akt q bme ledger".`,
 				CoinsToBurn: coinsToBurn,
 				DenomToMint: denomToMint,
 			}
+			if err := msg.ValidateBasic(); err != nil {
+				return err
+			}
 
 			resp, err := cl.Tx().BroadcastMsgs(ctx, []sdk.Msg{msg})
 			if err != nil {
@@ -137,6 +140,9 @@ settlement. Follow the pending entry with "akt q bme ledger".`,
 				To:          fromAddr,
 				CoinsToBurn: coinsToBurn,
 			}
+			if err := msg.ValidateBasic(); err != nil {
+				return err
+			}
 
 			resp, err := cl.Tx().BroadcastMsgs(ctx, []sdk.Msg{msg})
 			if err != nil {
@@ -193,6 +199,9 @@ settlement. Follow the pending entry with "akt q bme ledger".`,
 				Owner:       fromAddr,
 				To:          fromAddr,
 				CoinsToBurn: coinsToBurn,
+			}
+			if err := msg.ValidateBasic(); err != nil {
+				return err
 			}
 
 			resp, err := cl.Tx().BroadcastMsgs(ctx, []sdk.Msg{msg})

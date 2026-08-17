@@ -3,7 +3,10 @@ package workflow
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,7 +24,28 @@ import (
 	"pkg.akt.dev/akt/internal/store/bbolt"
 	wf "pkg.akt.dev/akt/internal/workflow"
 	"pkg.akt.dev/akt/internal/workflow/builtin"
+	"pkg.akt.dev/go/sdl"
 )
+
+type workflowFailingWriter struct {
+	err    error
+	short  bool
+	writes int
+}
+
+func (w *workflowFailingWriter) Write(data []byte) (int, error) {
+	w.writes++
+
+	if w.short {
+		if len(data) == 0 {
+			return 0, nil
+		}
+
+		return len(data) - 1, nil
+	}
+
+	return 0, w.err
+}
 
 // commandNames extracts the sorted names of a set of cobra commands.
 func commandNames(cmds []*cobra.Command) []string {
@@ -496,7 +520,7 @@ func TestExecuteConsoleDeployEndToEnd(t *testing.T) {
 			if err := json.NewDecoder(r.Body).Decode(&leaseBody); err != nil {
 				t.Errorf("decode lease body: %v", err)
 			}
-			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"owner":"o","dseq":"4242"},"state":"active"}}}`))
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"owner":"o","dseq":"4242"},"state":"active"},"leases":[{"id":{"owner":"o","dseq":"4242","gseq":1,"oseq":1,"provider":"akash1cheap"},"state":"active"}]}}`))
 		default:
 			t.Errorf("unexpected console request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -605,6 +629,270 @@ func TestExecuteConsoleDeployEndToEnd(t *testing.T) {
 		if b.State != want {
 			t.Errorf("bid from %s = %q, want %q", b.ID.Provider, b.State, want)
 		}
+	}
+}
+
+func TestWorkflowCommandFailsWhenFinalReportWriteFails(t *testing.T) {
+	tests := []struct {
+		name           string
+		outputArgs     []string
+		responseStatus int
+		shortWrite     bool
+		wantReport     string
+		wantRunFailure bool
+		wantRequests   int
+	}{
+		{
+			name:         "pretty writer error",
+			wantReport:   "write workflow plan report",
+			wantRequests: -1,
+		},
+		{
+			name:         "pretty short write",
+			shortWrite:   true,
+			wantReport:   "write workflow plan report",
+			wantRequests: -1,
+		},
+		{
+			name:       "JSONL writer error",
+			outputArgs: []string{"--output", "jsonl"},
+			wantReport: "write workflow JSONL report",
+		},
+		{
+			name:       "JSONL short write",
+			outputArgs: []string{"--output", "jsonl"},
+			shortWrite: true,
+			wantReport: "write workflow JSONL report",
+		},
+		{
+			name:           "engine and JSONL writer errors",
+			outputArgs:     []string{"--output", "jsonl"},
+			responseStatus: http.StatusInternalServerError,
+			wantReport:     "write workflow JSONL report",
+			wantRunFailure: true,
+			wantRequests:   3,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv(aktctx.EnvConsoleAPIKey, "secret-key")
+			writeFinalReportTestWorkflow(t, home)
+
+			requests := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				if r.Method != http.MethodDelete || r.URL.Path != "/v1/deployments/123" {
+					t.Errorf("unexpected Console request: %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusNotFound)
+					return
+				}
+				status := tc.responseStatus
+				if status == 0 {
+					_, _ = w.Write([]byte(`{"data":{"success":true}}`))
+					return
+				}
+				w.WriteHeader(status)
+			}))
+			t.Cleanup(srv.Close)
+
+			m := newTestManager(t, home, "console", aktctx.AuthMethodConsoleAPI)
+			if err := m.UpdateContext("console", func(c *aktctx.Context) error {
+				c.ConsoleAPIURL = srv.URL
+				return nil
+			}); err != nil {
+				t.Fatalf("UpdateContext: %v", err)
+			}
+
+			cmd := findCommand(CommandsWithManager(
+				func() string { return home },
+				func() string { return "console" },
+				func() *aktctx.Manager { return m },
+			), "close")
+			if cmd == nil {
+				t.Fatal("CommandsWithManager() did not surface close")
+			}
+
+			writeErr := errors.New("stdout unavailable")
+			writer := &workflowFailingWriter{err: writeErr, short: tc.shortWrite}
+			var stderr bytes.Buffer
+			cmd.SetOut(writer)
+			cmd.SetErr(&stderr)
+			cmd.SetArgs(append([]string{"123"}, tc.outputArgs...))
+
+			err := cmd.Execute()
+			wantErr := writeErr
+			if tc.shortWrite {
+				wantErr = io.ErrShortWrite
+			}
+			if !errors.Is(err, wantErr) {
+				t.Fatalf("execute error = %v, want final stdout failure", err)
+			}
+			if !strings.Contains(err.Error(), tc.wantReport) {
+				t.Fatalf("execute error = %v, want final report context %q", err, tc.wantReport)
+			}
+			if tc.wantRunFailure && !strings.Contains(err.Error(), `workflow "close" failed`) {
+				t.Fatalf("execute error = %v, want engine failure preserved with writer failure", err)
+			}
+			wantRequests := tc.wantRequests
+			switch wantRequests {
+			case -1:
+				wantRequests = 0
+			case 0:
+				wantRequests = 1
+			}
+			if requests != wantRequests {
+				t.Fatalf("Console close requests = %d, want %d engine attempts before rendering", requests, wantRequests)
+			}
+			if writer.writes == 0 {
+				t.Fatal("stdout writer was never called")
+			}
+		})
+	}
+}
+
+func TestWorkflowCommandStopsBeforeMutationWhenPlanWriteFails(t *testing.T) {
+	tests := []struct {
+		name       string
+		args       []string
+		shortWrite bool
+		wantReport string
+	}{
+		{name: "pretty plan writer error", args: []string{"123"}, wantReport: "write workflow plan report"},
+		{name: "pretty plan short write", args: []string{"123"}, shortWrite: true, wantReport: "write workflow plan report"},
+		{name: "pretty dry-run writer error", args: []string{"123", "--dry-run"}, wantReport: "write workflow plan report"},
+		{name: "pretty dry-run short write", args: []string{"123", "--dry-run"}, shortWrite: true, wantReport: "write workflow plan report"},
+		{name: "JSONL dry-run short write", args: []string{"123", "--dry-run", "--output", "jsonl"}, shortWrite: true, wantReport: "render workflow dry-run JSONL"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			home := t.TempDir()
+			t.Setenv(aktctx.EnvConsoleAPIKey, "secret-key")
+			writeFinalReportTestWorkflow(t, home)
+
+			requests := 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				requests++
+				w.WriteHeader(http.StatusNoContent)
+			}))
+			t.Cleanup(srv.Close)
+
+			m := newTestManager(t, home, "console", aktctx.AuthMethodConsoleAPI)
+			if err := m.UpdateContext("console", func(c *aktctx.Context) error {
+				c.ConsoleAPIURL = srv.URL
+				return nil
+			}); err != nil {
+				t.Fatalf("UpdateContext: %v", err)
+			}
+
+			cmd := findCommand(CommandsWithManager(
+				func() string { return home },
+				func() string { return "console" },
+				func() *aktctx.Manager { return m },
+			), "close")
+			if cmd == nil {
+				t.Fatal("CommandsWithManager() did not surface close")
+			}
+
+			writeErr := errors.New("stdout unavailable")
+			writer := &workflowFailingWriter{err: writeErr, short: tc.shortWrite}
+			cmd.SetOut(writer)
+			cmd.SetErr(io.Discard)
+			cmd.SetArgs(tc.args)
+
+			err := cmd.Execute()
+			wantErr := writeErr
+			if tc.shortWrite {
+				wantErr = io.ErrShortWrite
+			}
+			if !errors.Is(err, wantErr) || !strings.Contains(err.Error(), tc.wantReport) {
+				t.Fatalf("execute error = %v, want %q wrapping %v", err, tc.wantReport, wantErr)
+			}
+			if requests != 0 {
+				t.Fatalf("Console requests = %d, want 0 after pre-execution output failure", requests)
+			}
+		})
+	}
+}
+
+func TestWorkflowCommandReturnsRunFailureAfterWritingFinalReport(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv(aktctx.EnvConsoleAPIKey, "secret-key")
+	writeFinalReportTestWorkflow(t, home)
+
+	requests := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/deployments/123" {
+			t.Errorf("unexpected Console request: %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		http.Error(w, "console unavailable", http.StatusInternalServerError)
+	}))
+	t.Cleanup(srv.Close)
+
+	m := newTestManager(t, home, "console", aktctx.AuthMethodConsoleAPI)
+	if err := m.UpdateContext("console", func(c *aktctx.Context) error {
+		c.ConsoleAPIURL = srv.URL
+		return nil
+	}); err != nil {
+		t.Fatalf("UpdateContext: %v", err)
+	}
+
+	cmd := findCommand(CommandsWithManager(
+		func() string { return home },
+		func() string { return "console" },
+		func() *aktctx.Manager { return m },
+	), "close")
+	if cmd == nil {
+		t.Fatal("CommandsWithManager() did not surface close")
+	}
+
+	out, err := executeCommand(t, cmd, "123")
+	if err == nil || !strings.Contains(err.Error(), `workflow "close" failed`) {
+		t.Fatalf("execute error = %v, want workflow failure", err)
+	}
+	if requests != 3 {
+		t.Fatalf("Console close requests = %d, want 3 engine attempts", requests)
+	}
+	for _, want := range []string{"Results:", "close-deployment", "failed", "HTTP 500"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("final report does not contain %q:\n%s", want, out)
+		}
+	}
+}
+
+func writeFinalReportTestWorkflow(t *testing.T, home string) {
+	t.Helper()
+
+	dir := filepath.Join(home, "workflows")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("create workflow directory: %v", err)
+	}
+
+	definition := `name: close
+description: Close without an output step so the test isolates the final report
+version: 1
+
+params:
+  dseq:
+    type: int
+    required: true
+    description: Deployment sequence to close
+
+steps:
+  - name: close-deployment
+    type: tx
+    msg: deployment.MsgCloseDeployment
+    params:
+      dseq: "{{ .Params.dseq }}"
+    on-error: abort
+`
+	if err := os.WriteFile(filepath.Join(dir, "close.yaml"), []byte(definition), 0o600); err != nil {
+		t.Fatalf("write workflow definition: %v", err)
 	}
 }
 
@@ -750,6 +1038,8 @@ func TestBuiltinUpdateSendsManifestBeforeReportingSuccess(t *testing.T) {
 func TestExecuteConsoleUpdateUsesConsoleManifestHandling(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv(aktctx.EnvConsoleAPIKey, "secret-key")
+	sdlPath := writeValidWorkflowSDL(t)
+	expectedHash := workflowSDLVersionHash(t, sdlPath)
 
 	requests := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -759,7 +1049,7 @@ func TestExecuteConsoleUpdateUsesConsoleManifestHandling(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"owner":"o","dseq":"4242"},"state":"active"},"leases":[]}}`))
+		_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"owner":"o","dseq":"4242"},"state":"active","hash":"` + expectedHash + `"},"leases":[]}}`))
 	}))
 	t.Cleanup(srv.Close)
 
@@ -780,7 +1070,7 @@ func TestExecuteConsoleUpdateUsesConsoleManifestHandling(t *testing.T) {
 		t.Fatal("CommandsWithManager() did not surface update")
 	}
 
-	out, err := executeCommand(t, cmd, writeValidWorkflowSDL(t), "4242")
+	out, err := executeCommand(t, cmd, sdlPath, "4242")
 	if err != nil {
 		t.Fatalf("update execute: %v\noutput:\n%s", err, out)
 	}
@@ -795,6 +1085,25 @@ func TestExecuteConsoleUpdateUsesConsoleManifestHandling(t *testing.T) {
 			t.Errorf("output does not contain %q:\n%s", want, out)
 		}
 	}
+}
+
+func workflowSDLVersionHash(t *testing.T, path string) string {
+	t.Helper()
+
+	rawSDL, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read workflow SDL: %v", err)
+	}
+	doc, err := sdl.Read(rawSDL)
+	if err != nil {
+		t.Fatalf("parse workflow SDL: %v", err)
+	}
+	version, err := doc.Version()
+	if err != nil {
+		t.Fatalf("derive workflow SDL version: %v", err)
+	}
+
+	return base64.StdEncoding.EncodeToString(version)
 }
 
 func writeValidWorkflowSDL(t *testing.T) string {

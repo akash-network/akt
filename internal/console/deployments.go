@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
+	"time"
 
+	sdkmath "cosmossdk.io/math"
 	"pkg.akt.dev/go/sdl"
 )
 
@@ -45,7 +48,10 @@ func (c *Client) CreateDeployment(ctx context.Context, sdl string, depositUSD fl
 
 	var out CreateDeploymentResult
 	err = c.doData(ctx, http.MethodPost, "/v1/deployments", body, &out)
-	if err == nil && validDeploymentDSeq(out.DSeq.String()) {
+	if err == nil {
+		err = validateCreateDeploymentResult(&out)
+	}
+	if err == nil {
 		if out.Manifest == "" {
 			out.Manifest = manifest
 		}
@@ -53,9 +59,6 @@ func (c *Client) CreateDeployment(ctx context.Context, sdl string, depositUSD fl
 		return &out, nil
 	}
 
-	if err == nil {
-		err = fmt.Errorf("console: POST /v1/deployments returned an invalid dseq %q", out.DSeq.String())
-	}
 	if definitiveCreateFailure(err) {
 		c.recordOutcome("create-deployment", "", "failed", err, map[string]string{"versionHash": versionHash})
 		return nil, err
@@ -69,6 +72,31 @@ func (c *Client) CreateDeployment(ctx context.Context, sdl string, depositUSD fl
 	unknown := fmt.Errorf("deployment creation outcome unknown after one submission (%w); the request was not replayed: inspect `akt console deployment list` for SDL version %s", err, versionHash)
 	c.recordOutcome("create-deployment", "", "pending", unknown, map[string]string{"versionHash": versionHash})
 	return nil, unknown
+}
+
+func validateCreateDeploymentResult(result *CreateDeploymentResult) error {
+	if !validDeploymentDSeq(result.DSeq.String()) {
+		return fmt.Errorf("console: POST /v1/deployments returned an invalid dseq %q", result.DSeq.String())
+	}
+	if result.SignTx == nil {
+		return errors.New("console: POST /v1/deployments omitted the managed-wallet transaction receipt")
+	}
+	if !result.SignTx.codePresent {
+		return errors.New("console: POST /v1/deployments transaction receipt omitted its code")
+	}
+	if result.SignTx.Code != 0 {
+		return fmt.Errorf(
+			"console: POST /v1/deployments transaction %s failed with code %d: %s",
+			result.SignTx.TransactionHash,
+			result.SignTx.Code,
+			result.SignTx.RawLog,
+		)
+	}
+	if strings.TrimSpace(result.SignTx.TransactionHash) == "" {
+		return errors.New("console: POST /v1/deployments transaction receipt omitted its hash")
+	}
+
+	return nil
 }
 
 func deploymentArtifacts(rawSDL string) (string, string, error) {
@@ -147,14 +175,25 @@ func (c *Client) reconcileCreatedDeployment(
 	return nil, false
 }
 
-func (c *Client) listAllDeployments(ctx context.Context) ([]DeploymentListItem, error) {
-	const pageSize = 1000
+const (
+	deploymentCollectionPageSize   = 1000
+	maxDeploymentCollectionPages   = 100
+	maxDeploymentCollectionRecords = 10_000
+)
 
+func (c *Client) listAllDeployments(ctx context.Context) ([]DeploymentListItem, error) {
 	var all []DeploymentListItem
-	for skip := 0; ; {
-		page, err := c.ListDeployments(ctx, skip, pageSize)
+	for pageCount, skip := 0, 0; ; pageCount++ {
+		if pageCount >= maxDeploymentCollectionPages {
+			return nil, deploymentPaginationLimitError()
+		}
+
+		page, err := c.ListDeployments(ctx, skip, deploymentCollectionPageSize)
 		if err != nil {
 			return nil, err
+		}
+		if len(page.Deployments) > maxDeploymentCollectionRecords-len(all) {
+			return nil, deploymentPaginationLimitError()
 		}
 		all = append(all, page.Deployments...)
 		if !page.Pagination.HasMore {
@@ -171,6 +210,14 @@ func (c *Client) listAllDeployments(ctx context.Context) ([]DeploymentListItem, 
 		}
 		skip = next
 	}
+}
+
+func deploymentPaginationLimitError() error {
+	return fmt.Errorf(
+		"console: deployment pagination exceeded safety limit (%d pages or %d records)",
+		maxDeploymentCollectionPages,
+		maxDeploymentCollectionRecords,
+	)
 }
 
 // ListDeployments lists deployments with pagination. Out-of-range values are
@@ -262,6 +309,13 @@ func (c *Client) GetDeployment(ctx context.Context, dseq string) (*DeploymentDet
 // Wire: PUT /v1/deployments/{dseq}, body {"data":{"sdl":...}}, data-enveloped
 // response.
 func (c *Client) UpdateDeployment(ctx context.Context, dseq, sdl string) (*DeploymentDetail, error) {
+	expectedHash, _, err := deploymentArtifacts(sdl)
+	if err != nil {
+		wrapped := fmt.Errorf("prepare deployment SDL: %w", err)
+		c.record("update-deployment", dseq, wrapped)
+		return nil, wrapped
+	}
+
 	body := envelope(map[string]any{"sdl": sdl})
 
 	var lastErr error
@@ -269,14 +323,17 @@ func (c *Client) UpdateDeployment(ctx context.Context, dseq, sdl string) (*Deplo
 		var out DeploymentDetail
 		lastErr = c.doData(ctx, http.MethodPut, "/v1/deployments/"+url.PathEscape(dseq), body, &out)
 		if lastErr == nil {
-			c.record("update-deployment", dseq, nil)
-			return &out, nil
+			lastErr = validateDeploymentUpdateResult(&out, dseq, expectedHash)
+			if lastErr == nil {
+				c.record("update-deployment", dseq, nil)
+				return &out, nil
+			}
 		}
 
 		// A gateway or API handler can return an error after the idempotent
 		// update reached chain state. The deployment hash is authoritative
 		// proof, so do not replay a write whose desired version is present.
-		if detail, ok := c.reconcileDeploymentUpdate(ctx, dseq, sdl); ok {
+		if detail, ok := c.reconcileDeploymentUpdate(ctx, dseq, expectedHash); ok {
 			c.record("update-deployment", dseq, nil)
 			return detail, nil
 		}
@@ -294,24 +351,24 @@ func (c *Client) UpdateDeployment(ctx context.Context, dseq, sdl string) (*Deplo
 	return nil, lastErr
 }
 
-func (c *Client) reconcileDeploymentUpdate(ctx context.Context, dseq, rawSDL string) (*DeploymentDetail, bool) {
-	doc, err := sdl.Read([]byte(rawSDL))
-	if err != nil {
-		return nil, false
+func validateDeploymentUpdateResult(result *DeploymentDetail, dseq, expectedHash string) error {
+	if result.Deployment.ID.DSeq.String() != dseq {
+		return fmt.Errorf("console: deployment update response returned dseq %q, want %q", result.Deployment.ID.DSeq.String(), dseq)
+	}
+	if result.Deployment.Hash != expectedHash {
+		return fmt.Errorf("console: deployment update response returned SDL hash %q, want %q", result.Deployment.Hash, expectedHash)
 	}
 
-	version, err := doc.Version()
-	if err != nil {
-		return nil, false
-	}
+	return nil
+}
 
+func (c *Client) reconcileDeploymentUpdate(ctx context.Context, dseq, expectedHash string) (*DeploymentDetail, bool) {
 	detail, err := c.GetDeployment(ctx, dseq)
 	if err != nil {
 		return nil, false
 	}
 
-	expected := base64.StdEncoding.EncodeToString(version)
-	return detail, detail.Deployment.Hash == expected
+	return detail, detail.Deployment.ID.DSeq.String() == dseq && detail.Deployment.Hash == expectedHash
 }
 
 func isTransientManifestVersionError(err error) bool {
@@ -328,7 +385,13 @@ func isTransientManifestVersionError(err error) bool {
 //
 // Wire: DELETE /v1/deployments/{dseq}.
 func (c *Client) CloseDeployment(ctx context.Context, dseq string) error {
-	err := c.doJSON(ctx, http.MethodDelete, "/v1/deployments/"+url.PathEscape(dseq), nil, nil)
+	var out struct {
+		Success *bool `json:"success"`
+	}
+	err := c.doData(ctx, http.MethodDelete, "/v1/deployments/"+url.PathEscape(dseq), nil, &out)
+	if err == nil && (out.Success == nil || !*out.Success) {
+		err = errors.New("console: close deployment response did not acknowledge success: true")
+	}
 
 	switch {
 	case err == nil:
@@ -363,25 +426,252 @@ func isAlreadyClosed(err error) bool {
 		return false
 	}
 
-	// "closed" also covers "already closed".
 	body := strings.ToLower(httpErr.Body)
 
-	return strings.Contains(body, "closed") || strings.Contains(body, "not found")
+	return strings.Contains(body, "already closed") ||
+		strings.Contains(body, "deployment closed") ||
+		strings.Contains(body, "not found")
 }
 
 // Deposit adds funds to a deployment's escrow. Amount is in USD.
 //
 // Wire: POST /v1/deposit-deployment, body {"data":{"dseq":..., "deposit":...}}.
 func (c *Client) Deposit(ctx context.Context, dseq string, amountUSD float64) error {
+	expectedMicros, err := consoleDepositMicros(amountUSD)
+	if err != nil {
+		wrapped := fmt.Errorf("prepare deployment deposit: %w", err)
+		c.record("deposit", dseq, wrapped)
+		return wrapped
+	}
+
+	before, err := c.GetDeployment(ctx, dseq)
+	if err != nil {
+		wrapped := fmt.Errorf("snapshot deployment escrow before deposit: %w", err)
+		c.record("deposit", dseq, wrapped)
+		return wrapped
+	}
+	if before.Deployment.ID.DSeq.String() != dseq {
+		wrapped := fmt.Errorf("console: deployment pre-state returned dseq %q, want %q", before.Deployment.ID.DSeq.String(), dseq)
+		c.record("deposit", dseq, wrapped)
+		return wrapped
+	}
+	beforeTotals, err := deploymentEscrowTotals(before)
+	if err != nil {
+		wrapped := fmt.Errorf("snapshot deployment escrow before deposit: %w", err)
+		c.record("deposit", dseq, wrapped)
+		return wrapped
+	}
+
 	body := envelope(map[string]any{
 		"dseq":    dseq,
 		"deposit": amountUSD,
 	})
 
-	err := c.doJSON(ctx, http.MethodPost, "/v1/deposit-deployment", body, nil)
-	c.record("deposit", dseq, err)
+	var out DeploymentDetail
+	postErr := c.doData(ctx, http.MethodPost, "/v1/deposit-deployment", body, &out)
+	if postErr == nil && out.Deployment.ID.DSeq.String() != dseq {
+		postErr = fmt.Errorf("console: deposit response returned dseq %q, want %q", out.Deployment.ID.DSeq.String(), dseq)
+	}
+	if postErr == nil {
+		afterTotals, escrowErr := deploymentEscrowTotals(&out)
+		switch {
+		case escrowErr != nil:
+			postErr = fmt.Errorf("console: validate deposit response escrow: %w", escrowErr)
+		case depositTotalDeltaMatches(beforeTotals, afterTotals, expectedMicros):
+			c.record("deposit", dseq, nil)
+			return nil
+		default:
+			postErr = fmt.Errorf("console: deposit response escrow did not increase by exactly %s uact", expectedMicros)
+		}
+	}
+	if definitiveCreateFailure(postErr) {
+		c.record("deposit", dseq, postErr)
+		return postErr
+	}
 
-	return err
+	if reconciled, reconcileErr := c.reconcileDeposit(ctx, dseq, beforeTotals, expectedMicros); reconciled {
+		c.record("deposit", dseq, nil)
+		return nil
+	} else if reconcileErr != nil {
+		postErr = errors.Join(postErr, reconcileErr)
+	}
+	unknown := fmt.Errorf("deposit outcome unknown after one submission (%w); the request was not replayed: inspect deployment %s escrow state", postErr, dseq)
+	c.recordOutcome("deposit", dseq, "pending", unknown, map[string]any{"amountUSD": amountUSD})
+	return unknown
+}
+
+func consoleDepositMicros(amountUSD float64) (*big.Int, error) {
+	amount, ok := new(big.Rat).SetString(strconv.FormatFloat(amountUSD, 'f', -1, 64))
+	if !ok || amount.Sign() <= 0 {
+		return nil, fmt.Errorf("deposit must be a positive finite USD amount, got %v", amountUSD)
+	}
+
+	amount.Mul(amount, big.NewRat(1_000_000, 1))
+	if !amount.IsInt() {
+		return nil, fmt.Errorf("deposit %v USD has precision below one micro-ACT", amountUSD)
+	}
+
+	return new(big.Int).Set(amount.Num()), nil
+}
+
+func deploymentEscrowTotals(detail *DeploymentDetail) (map[string]*big.Rat, error) {
+	if detail == nil || len(detail.EscrowAccount) == 0 || string(detail.EscrowAccount) == "null" {
+		return nil, errors.New("deployment omitted its escrow account")
+	}
+
+	var escrow struct {
+		State struct {
+			Funds       json.RawMessage `json:"funds"`
+			Transferred json.RawMessage `json:"transferred"`
+		} `json:"state"`
+	}
+	if err := json.Unmarshal(detail.EscrowAccount, &escrow); err != nil {
+		return nil, fmt.Errorf("decode deployment escrow: %w", err)
+	}
+
+	type coin struct {
+		Denom  string     `json:"denom"`
+		Amount FlexString `json:"amount"`
+	}
+
+	totals := make(map[string]*big.Rat)
+	addCoins := func(field string, raw json.RawMessage, allowNegative bool) error {
+		encoded := strings.TrimSpace(string(raw))
+		if encoded == "" || encoded == "null" {
+			return fmt.Errorf("deployment escrow omitted its %s", field)
+		}
+
+		var coins []coin
+		if strings.HasPrefix(encoded, "[") {
+			if err := json.Unmarshal(raw, &coins); err != nil {
+				return fmt.Errorf("decode deployment escrow %s: %w", field, err)
+			}
+		} else {
+			var single coin
+			if err := json.Unmarshal(raw, &single); err != nil {
+				return fmt.Errorf("decode deployment escrow %s: %w", field, err)
+			}
+			coins = []coin{single}
+		}
+
+		for _, coin := range coins {
+			denom := strings.ToLower(strings.TrimSpace(coin.Denom))
+			if denom == "" {
+				return fmt.Errorf("deployment escrow %s entry omitted its denomination", field)
+			}
+			amount, err := parseDeploymentEscrowAmount(coin.Amount.String())
+			if err != nil {
+				return fmt.Errorf("deployment escrow %s amount %q for %s is not a valid fixed-point decimal: %w", field, coin.Amount, denom, err)
+			}
+			if !allowNegative && amount.Sign() < 0 {
+				return fmt.Errorf("deployment escrow %s amount %q for %s must be non-negative", field, coin.Amount, denom)
+			}
+			if current := totals[denom]; current != nil {
+				amount.Add(amount, current)
+			}
+			totals[denom] = amount
+		}
+
+		return nil
+	}
+
+	if err := addCoins("funds", escrow.State.Funds, true); err != nil {
+		return nil, err
+	}
+	if err := addCoins("transferred", escrow.State.Transferred, false); err != nil {
+		return nil, err
+	}
+
+	return totals, nil
+}
+
+func parseDeploymentEscrowAmount(raw string) (*big.Rat, error) {
+	amount, err := sdkmath.LegacyNewDecFromStr(raw)
+	if err != nil {
+		return nil, err
+	}
+
+	return new(big.Rat).SetFrac(
+		amount.BigInt(),
+		new(big.Int).Exp(big.NewInt(10), big.NewInt(sdkmath.LegacyPrecision), nil),
+	), nil
+}
+
+const (
+	depositReconciliationWindow       = 30 * time.Second
+	depositReconciliationPollInterval = 2 * time.Second
+)
+
+func (c *Client) reconcileDeposit(
+	ctx context.Context,
+	dseq string,
+	beforeTotals map[string]*big.Rat,
+	expectedMicros *big.Int,
+) (bool, error) {
+	reconciliationCtx, cancel := context.WithTimeout(ctx, depositReconciliationWindow)
+	defer cancel()
+
+	return c.reconcileDepositUntil(
+		reconciliationCtx,
+		dseq,
+		beforeTotals,
+		expectedMicros,
+		depositReconciliationPollInterval,
+	)
+}
+
+func (c *Client) reconcileDepositUntil(
+	ctx context.Context,
+	dseq string,
+	beforeTotals map[string]*big.Rat,
+	expectedMicros *big.Int,
+	pollInterval time.Duration,
+) (bool, error) {
+	var lastErr error
+	for {
+		detail, err := c.GetDeployment(ctx, dseq)
+		if err != nil {
+			lastErr = err
+		} else if detail.Deployment.ID.DSeq.String() != dseq {
+			lastErr = fmt.Errorf("console: deployment post-state returned dseq %q, want %q", detail.Deployment.ID.DSeq.String(), dseq)
+		} else if afterTotals, escrowErr := deploymentEscrowTotals(detail); escrowErr != nil {
+			lastErr = escrowErr
+		} else if depositTotalDeltaMatches(beforeTotals, afterTotals, expectedMicros) {
+			return true, nil
+		} else {
+			lastErr = fmt.Errorf("deployment escrow did not increase by exactly %s uact", expectedMicros)
+		}
+
+		if err := waitForDepositObservation(ctx, pollInterval); err != nil {
+			return false, errors.Join(lastErr, err)
+		}
+	}
+}
+
+func waitForDepositObservation(ctx context.Context, interval time.Duration) error {
+	timer := time.NewTimer(interval)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
+}
+
+func depositTotalDeltaMatches(before, after map[string]*big.Rat, expected *big.Int) bool {
+	afterAmount := after["uact"]
+	if afterAmount == nil {
+		return false
+	}
+	beforeAmount := before["uact"]
+	if beforeAmount == nil {
+		beforeAmount = new(big.Rat)
+	}
+
+	delta := new(big.Rat).Sub(new(big.Rat).Set(afterAmount), beforeAmount)
+	return delta.Cmp(new(big.Rat).SetInt(expected)) == 0
 }
 
 // FetchBids fetches bids for a deployment's open orders.
@@ -424,6 +714,9 @@ func (c *Client) CreateLease(ctx context.Context, manifest string, leases []Leas
 
 	var out DeploymentDetail
 	err := c.doData(ctx, http.MethodPost, "/v1/leases", body, &out)
+	if err == nil && !requestedLeasesActive(out.Leases, leases) {
+		err = errors.New("console: create lease response omitted a requested active lease")
+	}
 	if err != nil {
 		// Never replay this POST: the live API can return an error after the
 		// lease transaction succeeded. Read back the exact lease identities
@@ -433,8 +726,14 @@ func (c *Client) CreateLease(ctx context.Context, manifest string, leases []Leas
 			return detail, nil
 		}
 
-		c.record("create-lease", leaseDSeq, err)
-		return nil, err
+		if definitiveCreateFailure(err) {
+			c.record("create-lease", leaseDSeq, err)
+			return nil, err
+		}
+
+		unknown := fmt.Errorf("lease creation outcome unknown after one submission (%w); the request was not replayed: inspect deployment %s for the requested lease", err, leaseDSeq)
+		c.recordOutcome("create-lease", leaseDSeq, "pending", unknown, nil)
+		return nil, unknown
 	}
 
 	c.record("create-lease", leaseDSeq, nil)
@@ -511,7 +810,12 @@ func (c *Client) GetDeploymentSettings(ctx context.Context, dseq string) (*Deplo
 // {"data":{"autoTopUpEnabled":...}}; on 404, POST /v2/deployment-settings,
 // body {"data":{"dseq":..., "autoTopUpEnabled":...}}.
 func (c *Client) SetDeploymentAutoTopUp(ctx context.Context, dseq string, enabled bool) (*DeploymentSettings, error) {
-	var out DeploymentSettings
+	var out struct {
+		DSeq                 *FlexString `json:"dseq"`
+		AutoTopUpEnabled     *bool       `json:"autoTopUpEnabled"`
+		EstimatedTopUpAmount float64     `json:"estimatedTopUpAmount"`
+		TopUpFrequencyMs     int64       `json:"topUpFrequencyMs"`
+	}
 
 	err := c.doData(ctx, http.MethodPatch, "/v2/deployment-settings/"+url.PathEscape(dseq),
 		envelope(map[string]any{"autoTopUpEnabled": enabled}), &out)
@@ -519,11 +823,19 @@ func (c *Client) SetDeploymentAutoTopUp(ctx context.Context, dseq string, enable
 		err = c.doData(ctx, http.MethodPost, "/v2/deployment-settings",
 			envelope(map[string]any{"dseq": dseq, "autoTopUpEnabled": enabled}), &out)
 	}
+	if err == nil && (out.DSeq == nil || out.DSeq.String() != dseq || out.AutoTopUpEnabled == nil || *out.AutoTopUpEnabled != enabled) {
+		err = errors.New("console: deployment settings response did not echo the requested dseq and auto-top-up value")
+	}
 
 	c.record("update-deployment-settings", dseq, err)
 	if err != nil {
 		return nil, err
 	}
 
-	return &out, nil
+	return &DeploymentSettings{
+		DSeq:                 *out.DSeq,
+		AutoTopUpEnabled:     *out.AutoTopUpEnabled,
+		EstimatedTopUpAmount: out.EstimatedTopUpAmount,
+		TopUpFrequencyMs:     out.TopUpFrequencyMs,
+	}, nil
 }

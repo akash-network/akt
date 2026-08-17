@@ -2,7 +2,9 @@ package console
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -15,8 +17,12 @@ import (
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
+	"k8s.io/client-go/tools/remotecommand"
+	mtypes "pkg.akt.dev/go/node/market/v1"
 	rest "pkg.akt.dev/go/provider/client"
 
+	"pkg.akt.dev/akt/internal/actionlog"
+	"pkg.akt.dev/akt/internal/cliutil"
 	aktctx "pkg.akt.dev/akt/internal/context"
 	"pkg.akt.dev/akt/internal/output"
 	aktprovider "pkg.akt.dev/akt/internal/provider"
@@ -78,6 +84,85 @@ const activeLeaseJSON = `[
   {"id":{"owner":"akash1owner","dseq":"777","gseq":1,"oseq":1,"provider":"` + testProviderAddr + `"},"state":"closed"},
   {"id":{"owner":"akash1owner","dseq":"777","gseq":2,"oseq":1,"provider":"` + testProviderAddr + `"},"state":"active"}
 ]`
+
+type consoleLeaseShellCapture struct {
+	statusCalls int
+	shellCalls  int
+	id          mtypes.LeaseID
+	service     string
+	podIndex    uint
+	command     []string
+	stdin       io.Reader
+	stdout      io.Writer
+	stderr      io.Writer
+	tty         bool
+	resize      <-chan remotecommand.TerminalSize
+	shellErr    error
+}
+
+func (capture *consoleLeaseShellCapture) LeaseStatus(
+	context.Context,
+	mtypes.LeaseID,
+) (rest.LeaseStatus, error) {
+	capture.statusCalls++
+	return rest.LeaseStatus{}, nil
+}
+
+func (capture *consoleLeaseShellCapture) LeaseShell(
+	_ context.Context,
+	id mtypes.LeaseID,
+	service string,
+	podIndex uint,
+	command []string,
+	stdin io.Reader,
+	stdout io.Writer,
+	stderr io.Writer,
+	tty bool,
+	resize <-chan remotecommand.TerminalSize,
+) error {
+	capture.shellCalls++
+	capture.id = id
+	capture.service = service
+	capture.podIndex = podIndex
+	capture.command = append([]string(nil), command...)
+	capture.stdin = stdin
+	capture.stdout = stdout
+	capture.stderr = stderr
+	capture.tty = tty
+	capture.resize = resize
+
+	return capture.shellErr
+}
+
+func TestRunConsoleLeaseShellForwardsProviderBoundary(t *testing.T) {
+	shellErr := errors.New("remote process failed")
+	capture := &consoleLeaseShellCapture{shellErr: shellErr}
+	id := mtypes.LeaseID{
+		Owner:    "akash1owner",
+		DSeq:     777,
+		GSeq:     2,
+		OSeq:     1,
+		Provider: testProviderAddr,
+	}
+	command := []string{"sh", "-c", "printf ready"}
+	stdin := strings.NewReader("input")
+	var stdout, stderr bytes.Buffer
+
+	err := runConsoleLeaseShell(
+		context.Background(), capture, id, "web", command, stdin, &stdout, &stderr, true,
+	)
+	if !errors.Is(err, shellErr) || !strings.Contains(err.Error(), "open lease shell") {
+		t.Fatalf("shell error = %v, want wrapped remote failure", err)
+	}
+	if capture.statusCalls != 1 || capture.shellCalls != 1 {
+		t.Fatalf("status/shell calls = %d/%d, want one preflight and one remote call", capture.statusCalls, capture.shellCalls)
+	}
+	if capture.id != id || capture.service != "web" || capture.podIndex != 0 ||
+		!reflect.DeepEqual(capture.command, command) || capture.stdin != stdin ||
+		capture.stdout != &stdout || capture.stderr != &stderr || !capture.tty || capture.resize != nil {
+		t.Fatalf("forwarded shell call = %+v, want unchanged console shell arguments", capture)
+	}
+}
 
 func TestStatusEndToEndViaGateway(t *testing.T) {
 	m := newTestManager(t)
@@ -405,6 +490,7 @@ func TestPrintStreamRecordFormats(t *testing.T) {
 	records := []providerLogMsg{
 		{Name: "web-abc-123", Message: "first line"},
 		{Name: "worker-def-456", Message: "second line"},
+		{Name: "web-blank-789", Message: ""},
 	}
 
 	t.Run("pretty", func(t *testing.T) {
@@ -414,7 +500,7 @@ func TestPrintStreamRecordFormats(t *testing.T) {
 				t.Fatalf("print stream record: %v", err)
 			}
 		}
-		if got, want := buf.String(), "[web-abc-123] first line\n[worker-def-456] second line\n"; got != want {
+		if got, want := buf.String(), "[web-abc-123] first line\n[worker-def-456] second line\n[web-blank-789] \n"; got != want {
 			t.Errorf("pretty stream = %q, want %q", got, want)
 		}
 	})
@@ -561,6 +647,164 @@ func TestShellStdinOverrideDefaultsToAutomaticSelection(t *testing.T) {
 	}
 }
 
+func TestShellRecordsProviderActionOutcomeExactlyOnce(t *testing.T) {
+	tests := []struct {
+		name      string
+		runErr    error
+		wantState string
+	}{
+		{name: "success", wantState: "success"},
+		{name: "failure", runErr: errors.New("remote command failed"), wantState: "failed"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			m := newTestManager(t)
+			if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
+				t.Fatalf("SetConsoleAPIKey: %v", err)
+			}
+
+			var jwt jwtCapture
+			consoleSrv := newGatewayConsoleServer(t, "https://gateway.example.test", activeLeaseJSON, &jwt)
+			defer consoleSrv.Close()
+
+			logPath := filepath.Join(t.TempDir(), "actions.log")
+			logger, err := actionlog.Open(logPath)
+			if err != nil {
+				t.Fatalf("open action log: %v", err)
+			}
+			t.Cleanup(func() { _ = logger.Close() })
+
+			runnerCalls := 0
+			runner := func(
+				_ context.Context,
+				_ aktprovider.LeaseShellClient,
+				id mtypes.LeaseID,
+				service string,
+				command []string,
+				_ io.Reader,
+				_ io.Writer,
+				_ io.Writer,
+				_ bool,
+			) error {
+				runnerCalls++
+				if id.Provider != testProviderAddr || id.DSeq != 777 {
+					t.Errorf("shell lease = %+v, want provider %s dseq 777", id, testProviderAddr)
+				}
+				if service != "web" || strings.Join(command, " ") != "echo ok" {
+					t.Errorf("shell service/command = %q/%v, want web/[echo ok]", service, command)
+				}
+				return test.runErr
+			}
+
+			cmd := shellCmdWithRunner(func() *aktctx.Manager { return m }, runner)
+			cmd.Flags().VarP(output.NewFormatFlag("pretty"), "output", "o", "Output format: pretty, json, yaml")
+			cmd.Flags().String("context", "", "Active context name")
+			cmd.Flags().String("console-api-url", consoleSrv.URL, "Console API base URL")
+			cmd.Flags().String("console-api-key", "", "Console API key")
+			cmd.SetContext(cliutil.WithActionLog(context.Background(), logger))
+			cmd.SetArgs([]string{"777", "web", "--", "echo", "ok"})
+			var outputBuffer bytes.Buffer
+			cmd.SetOut(&outputBuffer)
+			cmd.SetErr(&outputBuffer)
+
+			err = cmd.Execute()
+			if !errors.Is(err, test.runErr) {
+				t.Fatalf("shell error = %v, want %v", err, test.runErr)
+			}
+			if runnerCalls != 1 {
+				t.Fatalf("shell runner calls = %d, want 1", runnerCalls)
+			}
+
+			entries := readRawActionLogJSONL(t, logPath)
+			if len(entries) != 1 {
+				t.Fatalf("raw action log entries = %d, want exactly 1: %s", len(entries), mustReadFile(t, logPath))
+			}
+			entry := entries[0]
+			if entry["type"] != "provider" || entry["action"] != "lease-shell" || entry["provider"] != testProviderAddr || entry["dseq"] != float64(777) || entry["status"] != test.wantState {
+				t.Errorf("raw shell action entry = %#v", entry)
+			}
+			if test.runErr == nil {
+				if _, exists := entry["error"]; exists {
+					t.Errorf("successful shell entry has error: %#v", entry)
+				}
+			} else if entry["error"] != test.runErr.Error() {
+				t.Errorf("failed shell error = %#v, want %q", entry["error"], test.runErr)
+			}
+		})
+	}
+}
+
+func TestReadOnlyGatewayCommandsDoNotWriteActionLog(t *testing.T) {
+	m := newTestManager(t)
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
+		t.Fatalf("SetConsoleAPIKey: %v", err)
+	}
+
+	gateway := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/lease/777/2/1/status" {
+			t.Errorf("unexpected gateway path %q", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		writeJSON(t, w, `{"services":{"web":{"name":"web","available":1,"total":1}},"forwarded_ports":{},"ips":null}`)
+	}))
+	defer gateway.Close()
+
+	var jwt jwtCapture
+	consoleSrv := newGatewayConsoleServer(t, gateway.URL, activeLeaseJSON, &jwt)
+	defer consoleSrv.Close()
+
+	logPath := filepath.Join(t.TempDir(), "actions.log")
+	logger, err := actionlog.Open(logPath)
+	if err != nil {
+		t.Fatalf("open action log: %v", err)
+	}
+	t.Cleanup(func() { _ = logger.Close() })
+	ctx := cliutil.WithActionLog(context.Background(), logger)
+
+	if _, err := execConsoleContext(ctx, t, m, consoleSrv.URL, "status", "777"); err != nil {
+		t.Fatalf("status: %v", err)
+	}
+	for _, command := range []string{"logs", "events"} {
+		if _, err := execConsoleContext(ctx, t, m, consoleSrv.URL, command, "777"); err == nil || !strings.Contains(err.Error(), "invalid uri scheme") {
+			t.Errorf("%s error = %v, want post-preflight stream scheme error", command, err)
+		}
+	}
+
+	if raw := mustReadFile(t, logPath); len(bytes.TrimSpace(raw)) != 0 {
+		t.Fatalf("read-only gateway commands wrote action log JSONL: %s", raw)
+	}
+}
+
+func readRawActionLogJSONL(t *testing.T, path string) []map[string]any {
+	t.Helper()
+	raw := bytes.TrimSpace(mustReadFile(t, path))
+	if len(raw) == 0 {
+		return nil
+	}
+
+	lines := bytes.Split(raw, []byte{'\n'})
+	entries := make([]map[string]any, 0, len(lines))
+	for i, line := range lines {
+		var entry map[string]any
+		if err := json.Unmarshal(line, &entry); err != nil {
+			t.Fatalf("decode raw action log line %d %q: %v", i, line, err)
+		}
+		entries = append(entries, entry)
+	}
+	return entries
+}
+
+func mustReadFile(t *testing.T, path string) []byte {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	return raw
+}
+
 func TestMatchesService(t *testing.T) {
 	tests := []struct {
 		name    string
@@ -574,6 +818,7 @@ func TestMatchesService(t *testing.T) {
 		// through the replicaset/pod suffix Kubernetes appends.
 		{"pod of the service", "web-5cfc6c7b4b-4cl7z", "web", true},
 		{"pod named exactly", "web", "web", true},
+		{"empty runtime suffix", "web-", "web", false},
 		// The bug this guards: asking for one service used to return them all.
 		{"pod of another service", "cache-666dd889cf-zpbn5", "web", false},
 		// A prefix that is not a name boundary must not match, or `web` would

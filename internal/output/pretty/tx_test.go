@@ -3,6 +3,8 @@ package pretty
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"sync"
 	"testing"
 
@@ -10,14 +12,17 @@ import (
 
 	"github.com/charmbracelet/x/exp/golden"
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
+	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
+	"github.com/cosmos/cosmos-sdk/x/authz"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
+	protov2 "google.golang.org/protobuf/proto"
 
 	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 
@@ -69,6 +74,385 @@ func TestPrintTxResultsWritesOneJSONArray(t *testing.T) {
 		t.Fatalf("transaction count = %d, want 2", len(decoded))
 	}
 }
+
+func TestTransactionOutputModesPropagateCommandWriterFailures(t *testing.T) {
+	protoCodec := codec.NewProtoCodec(codectypes.NewInterfaceRegistry())
+	legacyAmino := codec.NewLegacyAmino()
+	wantErr := errors.New("command stdout failed")
+
+	operations := []struct {
+		name   string
+		format string
+		run    func(*cobra.Command, sdkclient.Context) error
+	}{
+		{
+			name:   "generate-only JSON",
+			format: cflags.OutputJSON,
+			run: func(cmd *cobra.Command, cctx sdkclient.Context) error {
+				return PrintTxResult(cmd, cctx, []byte(`{"body":{"memo":"generated"}}`))
+			},
+		},
+		{
+			name:   "generate-only YAML",
+			format: cflags.OutputYAML,
+			run: func(cmd *cobra.Command, cctx sdkclient.Context) error {
+				return PrintTxResult(cmd, cctx, []byte(`{"body":{"memo":"generated"}}`))
+			},
+		},
+		{
+			name:   "simulation pretty",
+			format: cflags.OutputPretty,
+			run: func(cmd *cobra.Command, cctx sdkclient.Context) error {
+				return PrintTxResult(cmd, cctx, &txtypes.SimulateResponse{GasInfo: &sdk.GasInfo{GasUsed: 42}})
+			},
+		},
+		{
+			name:   "simulation JSON",
+			format: cflags.OutputJSON,
+			run: func(cmd *cobra.Command, cctx sdkclient.Context) error {
+				return PrintTxResult(cmd, cctx, &txtypes.SimulateResponse{GasInfo: &sdk.GasInfo{GasUsed: 42}})
+			},
+		},
+		{
+			name:   "simulation YAML",
+			format: cflags.OutputYAML,
+			run: func(cmd *cobra.Command, cctx sdkclient.Context) error {
+				return PrintTxResult(cmd, cctx, &txtypes.SimulateResponse{GasInfo: &sdk.GasInfo{GasUsed: 42}})
+			},
+		},
+		{
+			name:   "structured JSON",
+			format: cflags.OutputJSON,
+			run: func(cmd *cobra.Command, cctx sdkclient.Context) error {
+				return PrintTxResult(cmd, cctx, &sdk.TxResponse{TxHash: testTxHash})
+			},
+		},
+		{
+			name:   "structured YAML",
+			format: cflags.OutputYAML,
+			run: func(cmd *cobra.Command, cctx sdkclient.Context) error {
+				return PrintTxResult(cmd, cctx, &sdk.TxResponse{TxHash: testTxHash})
+			},
+		},
+		{
+			name:   "multi-result pretty",
+			format: cflags.OutputPretty,
+			run: func(cmd *cobra.Command, cctx sdkclient.Context) error {
+				return PrintTxResults(cmd, cctx, []interface{}{
+					&sdk.TxResponse{TxHash: "FIRST"},
+					&sdk.TxResponse{TxHash: "SECOND"},
+				})
+			},
+		},
+		{
+			name:   "multi-result JSON",
+			format: cflags.OutputJSON,
+			run: func(cmd *cobra.Command, cctx sdkclient.Context) error {
+				return PrintTxResults(cmd, cctx, []interface{}{
+					[]byte(`{"body":{"memo":"first"}}`),
+					[]byte(`{"body":{"memo":"second"}}`),
+				})
+			},
+		},
+		{
+			name:   "multi-result YAML",
+			format: cflags.OutputYAML,
+			run: func(cmd *cobra.Command, cctx sdkclient.Context) error {
+				return PrintTxResults(cmd, cctx, []interface{}{
+					[]byte(`{"body":{"memo":"first"}}`),
+					[]byte(`{"body":{"memo":"second"}}`),
+				})
+			},
+		},
+		{
+			name:   "proto fallback pretty",
+			format: cflags.OutputPretty,
+			run: func(cmd *cobra.Command, cctx sdkclient.Context) error {
+				return PrintTxResult(cmd, cctx, &banktypes.QueryParamsResponse{})
+			},
+		},
+		{
+			name:   "proto fallback JSON",
+			format: cflags.OutputJSON,
+			run: func(cmd *cobra.Command, cctx sdkclient.Context) error {
+				return PrintTxResult(cmd, cctx, &banktypes.QueryParamsResponse{})
+			},
+		},
+		{
+			name:   "proto fallback YAML",
+			format: cflags.OutputYAML,
+			run: func(cmd *cobra.Command, cctx sdkclient.Context) error {
+				return PrintTxResult(cmd, cctx, &banktypes.QueryParamsResponse{})
+			},
+		},
+		{
+			name:   "legacy fallback pretty",
+			format: cflags.OutputPretty,
+			run: func(cmd *cobra.Command, cctx sdkclient.Context) error {
+				return PrintTxResult(cmd, cctx, map[string]string{"status": "ready"})
+			},
+		},
+		{
+			name:   "legacy fallback JSON",
+			format: cflags.OutputJSON,
+			run: func(cmd *cobra.Command, cctx sdkclient.Context) error {
+				return PrintTxResult(cmd, cctx, map[string]string{"status": "ready"})
+			},
+		},
+		{
+			name:   "legacy fallback YAML",
+			format: cflags.OutputYAML,
+			run: func(cmd *cobra.Command, cctx sdkclient.Context) error {
+				return PrintTxResult(cmd, cctx, map[string]string{"status": "ready"})
+			},
+		},
+	}
+	failures := []struct {
+		name string
+		w    io.Writer
+		want error
+	}{
+		{name: "hard error", w: prettyBoundaryWriter{err: wantErr}, want: wantErr},
+		{name: "short write", w: prettyBoundaryWriter{short: true}, want: io.ErrShortWrite},
+	}
+
+	for _, operation := range operations {
+		t.Run(operation.name, func(t *testing.T) {
+			for _, failure := range failures {
+				t.Run(failure.name, func(t *testing.T) {
+					cmd := &cobra.Command{}
+					cmd.Flags().String(cflags.FlagOutput, operation.format, "")
+					cmd.SetOut(failure.w)
+
+					var wrongDestination bytes.Buffer
+					cctx := sdkclient.Context{
+						Codec:       protoCodec,
+						LegacyAmino: legacyAmino,
+					}.WithOutput(&wrongDestination)
+					err := operation.run(cmd, cctx)
+					require.ErrorIs(t, err, failure.want)
+					require.Empty(t, wrongDestination.String(), "client context output must be replaced by command output")
+				})
+			}
+		})
+	}
+}
+
+func TestPrintTxResultPrettyPropagatesWriterFailures(t *testing.T) {
+	ensureFormattersRegistered()
+
+	wantErr := errors.New("stdout failed")
+
+	t.Run("summary destination error", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		cmd.Flags().String(cflags.FlagOutput, cflags.OutputPretty, "")
+		cmd.SetOut(txResultErrorWriter{err: wantErr})
+
+		err := PrintTxResult(cmd, sdkclient.Context{}, &sdk.TxResponse{TxHash: testTxHash})
+		require.ErrorIs(t, err, wantErr)
+	})
+
+	t.Run("summary short write", func(t *testing.T) {
+		cmd := &cobra.Command{}
+		cmd.Flags().String(cflags.FlagOutput, cflags.OutputPretty, "")
+		cmd.SetOut(txResultShortWriter{})
+
+		err := PrintTxResult(cmd, sdkclient.Context{}, &sdk.TxResponse{TxHash: testTxHash})
+		require.ErrorIs(t, err, io.ErrShortWrite)
+	})
+
+	t.Run("message header destination error", func(t *testing.T) {
+		cctx, response := txResponseWithMessages(t, &banktypes.MsgSend{})
+		writer := &txResultMatchingErrorWriter{match: "Send", err: wantErr}
+		cmd := &cobra.Command{}
+		cmd.Flags().String(cflags.FlagOutput, cflags.OutputPretty, "")
+		cmd.SetOut(writer)
+
+		err := PrintTxResult(cmd, cctx, response)
+		require.ErrorIs(t, err, wantErr)
+	})
+
+	t.Run("fallback destination error", func(t *testing.T) {
+		msg := &banktypes.MsgUpdateParams{Authority: "fallback-writer-probe"}
+		cctx, response := txResponseWithMessages(t, msg)
+		writer := &txResultMatchingErrorWriter{match: "fallback-writer-probe", err: wantErr}
+		cmd := &cobra.Command{}
+		cmd.Flags().String(cflags.FlagOutput, cflags.OutputPretty, "")
+		cmd.SetOut(writer)
+
+		err := PrintTxResult(cmd, cctx, response)
+		require.ErrorIs(t, err, wantErr)
+	})
+}
+
+func TestPrintTxResultPrettyPropagatesLateWriterFailures(t *testing.T) {
+	ensureFormattersRegistered()
+	wantErr := errors.New("command stdout failed")
+
+	operations := []struct {
+		name  string
+		match string
+		msgs  []sdk.Msg
+	}{
+		{name: "registered message", match: "Send", msgs: []sdk.Msg{&banktypes.MsgSend{}}},
+		{
+			name:  "fallback message",
+			match: "fallback-authority",
+			msgs:  []sdk.Msg{&banktypes.MsgUpdateParams{Authority: "fallback-authority"}},
+		},
+		{
+			name:  "second message",
+			match: "second-fallback-authority",
+			msgs: []sdk.Msg{
+				&banktypes.MsgSend{},
+				&banktypes.MsgUpdateParams{Authority: "second-fallback-authority"},
+			},
+		},
+	}
+
+	for _, operation := range operations {
+		t.Run(operation.name, func(t *testing.T) {
+			for _, failure := range []struct {
+				name  string
+				err   error
+				short bool
+				want  error
+			}{
+				{name: "hard error", err: wantErr, want: wantErr},
+				{name: "short write", short: true, want: io.ErrShortWrite},
+			} {
+				t.Run(failure.name, func(t *testing.T) {
+					cctx, response := txResponseWithMessages(t, operation.msgs...)
+					cmd := &cobra.Command{}
+					cmd.Flags().String(cflags.FlagOutput, cflags.OutputPretty, "")
+					cmd.SetOut(&txResultMatchingErrorWriter{
+						match: operation.match,
+						err:   failure.err,
+						short: failure.short,
+					})
+
+					require.ErrorIs(t, PrintTxResult(cmd, cctx, response), failure.want)
+				})
+			}
+		})
+	}
+}
+
+func TestPrintTxResultPrettyPropagatesNestedFormatterError(t *testing.T) {
+	ensureFormattersRegistered()
+
+	innerMsg := &banktypes.MsgSend{}
+	previous, ok := LookupTx(innerMsg)
+	require.True(t, ok)
+
+	wantErr := errors.New("nested formatter failed")
+	RegisterTx(innerMsg, TxPrettyFormatterFunc{
+		TitleStr: "Send",
+		FormatFn: func(io.Writer, *cobra.Command, sdkclient.Context, sdk.Msg, *sdk.TxResponse, int) error {
+			return wantErr
+		},
+	})
+	t.Cleanup(func() { RegisterTx(innerMsg, previous) })
+
+	inner, err := codectypes.NewAnyWithValue(innerMsg)
+	require.NoError(t, err)
+	cctx, response := txResponseWithMessages(t, &authz.MsgExec{Msgs: []*codectypes.Any{inner}})
+
+	cmd := &cobra.Command{}
+	cmd.Flags().String(cflags.FlagOutput, cflags.OutputPretty, "")
+	cmd.SetOut(io.Discard)
+
+	require.ErrorIs(t, PrintTxResult(cmd, cctx, response), wantErr)
+
+	// The multi-message loop must stop and return the formatter failure too;
+	// otherwise later message output could make a partially rendered receipt
+	// look successful.
+	cctx, response = txResponseWithMessages(t, innerMsg, &banktypes.MsgUpdateParams{})
+	require.ErrorIs(t, PrintTxResult(cmd, cctx, response), wantErr)
+}
+
+func TestPrintTxResultPrettyRendersRegisteredAndFallbackMessages(t *testing.T) {
+	ensureFormattersRegistered()
+
+	cctx, response := txResponseWithMessages(t,
+		&banktypes.MsgSend{},
+		&banktypes.MsgUpdateParams{Authority: "fallback-authority"},
+	)
+	response.Code = 5
+	response.RawLog = "transaction failed"
+
+	var output bytes.Buffer
+	cmd := &cobra.Command{}
+	cmd.Flags().String(cflags.FlagOutput, cflags.OutputPretty, "")
+	cmd.SetOut(&output)
+
+	require.NoError(t, PrintTxResult(cmd, cctx, response))
+	require.Contains(t, output.String(), "Message 1: Send")
+	require.Contains(t, output.String(), "(failed)")
+	require.Contains(t, output.String(), "Message 2")
+	require.Contains(t, output.String(), "fallback-authority")
+}
+
+type txResultErrorWriter struct {
+	err error
+}
+
+func (w txResultErrorWriter) Write([]byte) (int, error) {
+	return 0, w.err
+}
+
+type txResultShortWriter struct{}
+
+func (txResultShortWriter) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+
+	return len(p) - 1, nil
+}
+
+type txResultMatchingErrorWriter struct {
+	match string
+	err   error
+	short bool
+}
+
+func (w *txResultMatchingErrorWriter) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte(w.match)) {
+		if w.err != nil {
+			return 0, w.err
+		}
+		if w.short && len(p) > 0 {
+			return len(p) - 1, nil
+		}
+	}
+
+	return len(p), nil
+}
+
+func txResponseWithMessages(t *testing.T, msgs ...sdk.Msg) (sdkclient.Context, *sdk.TxResponse) {
+	t.Helper()
+
+	txBody, err := codectypes.NewAnyWithValue(&txResultTestTx{msgs: msgs})
+	require.NoError(t, err)
+
+	cctx := sdkclient.Context{Codec: codec.NewProtoCodec(codectypes.NewInterfaceRegistry())}
+	return cctx, &sdk.TxResponse{TxHash: testTxHash, Height: 1, Tx: txBody}
+}
+
+type txResultTestTx struct {
+	msgs []sdk.Msg
+}
+
+func (*txResultTestTx) Reset() {}
+
+func (*txResultTestTx) String() string { return "test transaction" }
+
+func (*txResultTestTx) ProtoMessage() {}
+
+func (tx *txResultTestTx) GetMsgs() []sdk.Msg { return tx.msgs }
+
+func (*txResultTestTx) GetMsgsV2() ([]protov2.Message, error) { return nil, nil }
 
 const testTxHash = "9F3C0A2E7B1D4F6089AC5321EE7740B8D2C619F5A48037BC12ED5A9F60B3417D"
 

@@ -2,6 +2,7 @@ package ui
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"sort"
@@ -57,6 +58,8 @@ const (
 	OracleSyncInterval             = 30 * time.Second
 	MaxConcurrentChecks            = 10
 	MaxBlockHistory                = 50
+	consensusReconnectBaseDelay    = 250 * time.Millisecond
+	consensusReconnectMaxDelay     = 8 * time.Second
 )
 
 // BlockValidatorVote stores a single validator's vote state for a block.
@@ -133,9 +136,21 @@ func (si StatusInfo) TabHelpText() string {
 // Model represents the application state
 type Model struct {
 	// Core dependencies
-	client     *rpc.Client
-	rpcClient  *rpc.RPCProviderClient
-	httpClient *http.Client
+	client         *rpc.Client
+	rpcClient      *rpc.RPCProviderClient
+	httpClient     *http.Client
+	runtimeContext context.Context
+	runtimeTasks   *RuntimeTaskGroup
+	// Auxiliary query seams keep cancellation and error handling independently
+	// testable at the model boundary.
+	validatorMonikersQuery func(context.Context) (map[string]string, error)
+	oracleStateQuery       func(context.Context) (*rpc.OracleState, error)
+	bmeStateQuery          func(context.Context) (*rpc.BMEState, error)
+	governanceParamsQuery  func(context.Context) (*governance.AllParams, error)
+	activeLeaseQuery       func(context.Context, string) (map[string]bool, error)
+	// Provider query seams keep the command lifecycle independently testable.
+	providerStatusGRPC func(context.Context, string, bool) ([]rpc.ProviderNodeWithGPU, error)
+	providerStatusREST func(context.Context, *http.Client, string) (*rpc.ProviderStatusResponse, error)
 	// insecureSkipVerify applies uniformly to provider REST and gRPC probes.
 	insecureSkipVerify bool
 	cache              cache.ProviderStore
@@ -148,6 +163,8 @@ type Model struct {
 	blockHistory []BlockRecord                // completed blocks, newest first
 	snapshotCh   <-chan rpc.ConsensusSnapshot // WebSocket consensus stream
 	wsConnected  bool                         // true if WebSocket is active
+	// consensusRetryAttempt drives capped exponential reconnect delay.
+	consensusRetryAttempt int
 
 	// Per-validator block signing history. Maps validator index to a
 	// slice of booleans (newest first). true = signed (precommited),
@@ -240,6 +257,7 @@ type (
 		snapshot rpc.ConsensusSnapshot
 		ok       bool // false when the channel was closed (reconnect needed)
 	}
+	consensusReconnectMsg struct{}
 
 	stateMsg struct {
 		state *consensus.State
@@ -254,6 +272,7 @@ type (
 	// providerCheckedMsg is sent when a single provider has been checked
 	providerCheckedMsg struct {
 		owner     string
+		err       error
 		isOnline  bool
 		version   string
 		cpuAvail  uint64
@@ -308,9 +327,10 @@ type (
 	// initialSigningMsg is sent after fetching the latest commit to seed
 	// signing history so the oldest block in the bar shows accurate data.
 	initialSigningMsg struct {
-		height  int64
-		signers map[string]bool // uppercase hex addresses of validators that signed
-		err     error
+		height     int64
+		signers    map[string]bool // uppercase hex addresses of validators that signed
+		validators []consensus.Validator
+		err        error
 	}
 
 	// proposerMsg carries the current proposer info fetched via HTTP.
@@ -326,6 +346,8 @@ type (
 type ModelConfig struct {
 	Client             *rpc.Client
 	RPCClient          *rpc.RPCProviderClient
+	RuntimeContext     context.Context
+	RuntimeTasks       *RuntimeTaskGroup
 	Cache              cache.ProviderStore
 	MonikerCache       *cache.MonikerCache
 	InsecureSkipVerify bool
@@ -337,6 +359,10 @@ type ModelConfig struct {
 // NewModel creates a new UI model
 func NewModel(cfg ModelConfig) Model {
 	monikers := cfg.MonikerCache.Get()
+	runtimeContext := cfg.RuntimeContext
+	if runtimeContext == nil {
+		runtimeContext = context.Background()
+	}
 
 	var initialHub HubTab
 	switch cfg.InitialDashboard {
@@ -352,6 +378,8 @@ func NewModel(cfg ModelConfig) Model {
 		client:             cfg.Client,
 		rpcClient:          cfg.RPCClient,
 		httpClient:         rpc.NewProviderHTTPClient(cfg.InsecureSkipVerify),
+		runtimeContext:     runtimeContext,
+		runtimeTasks:       cfg.RuntimeTasks,
 		insecureSkipVerify: cfg.InsecureSkipVerify,
 		cache:              cfg.Cache,
 		monikerCache:       cfg.MonikerCache,
@@ -441,29 +469,39 @@ func NewModel(cfg ModelConfig) Model {
 	return m
 }
 
+func (m Model) runRuntimeTask(task func() tea.Msg) tea.Msg {
+	return m.runtimeTasks.run(task)
+}
+
 // fetchProposer queries /consensus_state to get the current block proposer.
 func (m Model) fetchProposer() tea.Msg {
-	ctx := context.Background()
-	state, err := m.client.GetConsensusStateWithValidators(ctx)
-	if err != nil {
-		return proposerMsg{err: err}
-	}
-	return proposerMsg{
-		height:        state.Height,
-		proposerIndex: state.ProposerIndex,
-		proposerAddr:  state.ProposerAddress,
-	}
+	return m.runRuntimeTask(func() tea.Msg {
+		state, err := m.client.GetConsensusStateWithValidators(m.runtimeContext)
+		if err != nil {
+			return proposerMsg{err: err}
+		}
+		return proposerMsg{
+			height:        state.Height,
+			proposerIndex: state.ProposerIndex,
+			proposerAddr:  state.ProposerAddress,
+		}
+	})
 }
 
 // fetchInitialSigning queries the latest commit to seed signing history
 // so the oldest block in the bar shows accurate data.
 func (m Model) fetchInitialSigning() tea.Msg {
-	ctx := context.Background()
-	height, signers, err := m.client.GetLatestCommit(ctx)
-	if err != nil {
-		return initialSigningMsg{err: err}
-	}
-	return initialSigningMsg{height: height, signers: signers}
+	return m.runRuntimeTask(func() tea.Msg {
+		height, signers, err := m.client.GetLatestCommit(m.runtimeContext)
+		if err != nil {
+			return initialSigningMsg{err: err}
+		}
+		validators, err := m.client.GetValidatorsAtHeight(m.runtimeContext, height)
+		if err != nil {
+			return initialSigningMsg{err: err}
+		}
+		return initialSigningMsg{height: height, signers: signers, validators: validators}
+	})
 }
 
 // Init initializes the model
@@ -497,12 +535,14 @@ func (m Model) Init() tea.Cmd {
 // consensus state.  Returns wsConnectedMsg on success or stateMsg with
 // error on failure.
 func (m Model) connectWebSocket() tea.Msg {
-	ctx := context.Background()
-	ch, err := m.client.SubscribeConsensusState(ctx)
-	if err != nil {
-		return stateMsg{err: err}
-	}
-	return wsConnectedMsg{ch: ch}
+	return m.runRuntimeTask(func() tea.Msg {
+		subscription, err := m.client.SubscribeConsensusState(m.runtimeContext)
+		if err != nil {
+			return stateMsg{err: err}
+		}
+		m.runtimeTasks.adopt(subscription.Done())
+		return wsConnectedMsg{ch: subscription.Snapshots}
+	})
 }
 
 type wsConnectedMsg struct {
@@ -518,24 +558,42 @@ func (m Model) loadFromCache() tea.Msg {
 }
 
 func (m Model) syncChain() tea.Msg {
-	ctx := context.Background()
+	return m.runRuntimeTask(func() tea.Msg {
+		ctx := m.runtimeContext
+		if err := ctx.Err(); err != nil {
+			return chainSyncMsg{err: err}
+		}
 
-	onChainProviders, err := m.fetchProviders(ctx)
-	if err != nil {
-		return chainSyncMsg{err: err}
+		onChainProviders, err := m.fetchProviders(ctx)
+		if err != nil {
+			return chainSyncMsg{err: err}
+		}
+
+		activeLeaseProviders, err := m.queryActiveLeaseProviders(ctx, m.client.RESTEndpoint())
+		if err != nil {
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return chainSyncMsg{err: ctxErr}
+			}
+			activeLeaseProviders = make(map[string]bool)
+		}
+		if err := ctx.Err(); err != nil {
+			return chainSyncMsg{err: err}
+		}
+
+		newProviders := m.cache.SyncWithChain(onChainProviders)
+
+		return chainSyncMsg{
+			newProviders:         newProviders,
+			activeLeaseProviders: activeLeaseProviders,
+		}
+	})
+}
+
+func (m Model) queryActiveLeaseProviders(ctx context.Context, restEndpoint string) (map[string]bool, error) {
+	if m.activeLeaseQuery != nil {
+		return m.activeLeaseQuery(ctx, restEndpoint)
 	}
-
-	activeLeaseProviders, err := m.rpcClient.GetActiveLeaseProviders(ctx, m.client.RESTEndpoint())
-	if err != nil {
-		activeLeaseProviders = make(map[string]bool)
-	}
-
-	newProviders := m.cache.SyncWithChain(onChainProviders)
-
-	return chainSyncMsg{
-		newProviders:         newProviders,
-		activeLeaseProviders: activeLeaseProviders,
-	}
+	return m.rpcClient.GetActiveLeaseProviders(ctx, restEndpoint)
 }
 
 func (m Model) fetchProviders(ctx context.Context) ([]rpc.OnChainProvider, error) {
@@ -544,57 +602,76 @@ func (m Model) fetchProviders(ctx context.Context) ([]rpc.OnChainProvider, error
 		if err == nil {
 			return providers, nil
 		}
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 	}
 	return m.rpcClient.GetProvidersOnChain(ctx)
 }
 
 func (m Model) checkProvider(owner string) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
+		return m.runRuntimeTask(func() tea.Msg {
+			ctx := m.runtimeContext
+			if err := ctx.Err(); err != nil {
+				return providerCheckedMsg{owner: owner, err: err}
+			}
 
-		p, exists := m.cache.GetProvider(owner)
-		if !exists {
-			return providerCheckedMsg{owner: owner, isOnline: false}
-		}
-
-		// Try gRPC first for full GPU info, fall back to REST
-		nodes, err := rpc.QueryProviderStatusGRPC(ctx, p.HostURI, m.insecureSkipVerify)
-		if err != nil {
-			// Fall back to REST (no GPU model info)
-			status, restErr := rpc.QueryProviderStatus(ctx, m.httpClient, p.HostURI)
-			if restErr != nil {
+			p, exists := m.cache.GetProvider(owner)
+			if !exists {
 				return providerCheckedMsg{owner: owner, isOnline: false}
 			}
-			cpuAvail, cpuTotal, memAvail, memTotal, gpuAvail, gpuTotal := aggregateResourcesREST(status)
-			version := m.queryProviderVersion(ctx, p.HostURI)
-			return providerCheckedMsg{
-				owner:    owner,
-				isOnline: true,
-				version:  version,
-				cpuAvail: cpuAvail,
-				cpuTotal: cpuTotal,
-				memAvail: memAvail,
-				memTotal: memTotal,
-				gpuAvail: gpuAvail,
-				gpuTotal: gpuTotal,
+
+			// Try gRPC first for full GPU info, fall back to REST.
+			nodes, err := m.queryProviderStatusGRPC(ctx, p.HostURI)
+			if err != nil {
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return providerCheckedMsg{owner: owner, err: ctxErr}
+				}
+				status, restErr := m.queryProviderStatusREST(ctx, p.HostURI)
+				if restErr != nil {
+					if ctxErr := ctx.Err(); ctxErr != nil {
+						return providerCheckedMsg{owner: owner, err: ctxErr}
+					}
+					return providerCheckedMsg{owner: owner, isOnline: false}
+				}
+				cpuAvail, cpuTotal, memAvail, memTotal, gpuAvail, gpuTotal := aggregateResourcesREST(status)
+				version := m.queryProviderVersion(ctx, p.HostURI)
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return providerCheckedMsg{owner: owner, err: ctxErr}
+				}
+				return providerCheckedMsg{
+					owner:    owner,
+					isOnline: true,
+					version:  version,
+					cpuAvail: cpuAvail,
+					cpuTotal: cpuTotal,
+					memAvail: memAvail,
+					memTotal: memTotal,
+					gpuAvail: gpuAvail,
+					gpuTotal: gpuTotal,
+				}
 			}
-		}
 
-		cpuAvail, cpuTotal, memAvail, memTotal, gpuAvail, gpuTotal, gpuModels := aggregateResourcesGRPC(nodes)
-		version := m.queryProviderVersion(ctx, p.HostURI)
+			cpuAvail, cpuTotal, memAvail, memTotal, gpuAvail, gpuTotal, gpuModels := aggregateResourcesGRPC(nodes)
+			version := m.queryProviderVersion(ctx, p.HostURI)
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return providerCheckedMsg{owner: owner, err: ctxErr}
+			}
 
-		return providerCheckedMsg{
-			owner:     owner,
-			isOnline:  true,
-			version:   version,
-			cpuAvail:  cpuAvail,
-			cpuTotal:  cpuTotal,
-			memAvail:  memAvail,
-			memTotal:  memTotal,
-			gpuAvail:  gpuAvail,
-			gpuTotal:  gpuTotal,
-			gpuModels: gpuModels,
-		}
+			return providerCheckedMsg{
+				owner:     owner,
+				isOnline:  true,
+				version:   version,
+				cpuAvail:  cpuAvail,
+				cpuTotal:  cpuTotal,
+				memAvail:  memAvail,
+				memTotal:  memTotal,
+				gpuAvail:  gpuAvail,
+				gpuTotal:  gpuTotal,
+				gpuModels: gpuModels,
+			}
+		})
 	}
 }
 
@@ -640,6 +717,20 @@ func formatGPUModelShort(gpu rpc.GPUInfo) string {
 	return gpu.Name
 }
 
+func (m Model) queryProviderStatusGRPC(ctx context.Context, hostURI string) ([]rpc.ProviderNodeWithGPU, error) {
+	if m.providerStatusGRPC != nil {
+		return m.providerStatusGRPC(ctx, hostURI, m.insecureSkipVerify)
+	}
+	return rpc.QueryProviderStatusGRPC(ctx, hostURI, m.insecureSkipVerify)
+}
+
+func (m Model) queryProviderStatusREST(ctx context.Context, hostURI string) (*rpc.ProviderStatusResponse, error) {
+	if m.providerStatusREST != nil {
+		return m.providerStatusREST(ctx, m.httpClient, hostURI)
+	}
+	return rpc.QueryProviderStatus(ctx, m.httpClient, hostURI)
+}
+
 func (m Model) queryProviderVersion(ctx context.Context, hostURI string) string {
 	versionResp, err := rpc.QueryProviderVersion(ctx, m.httpClient, hostURI)
 	if err != nil {
@@ -655,6 +746,10 @@ func (m *Model) saveCache() {
 }
 
 func (m *Model) dispatchProviderChecks() []tea.Cmd {
+	if m.runtimeContext != nil && m.runtimeContext.Err() != nil {
+		return nil
+	}
+
 	available := MaxConcurrentChecks - len(m.loader.InFlight)
 	if available <= 0 {
 		return nil
@@ -679,22 +774,33 @@ func (m *Model) dispatchProviderChecks() []tea.Cmd {
 
 // fetchMonikers fetches validator monikers only if cache is empty
 func (m Model) fetchMonikers() tea.Msg {
-	if m.monikerCache != nil && m.monikerCache.HasMonikers() {
-		return monikersMsg{monikers: m.monikers}
-	}
+	return m.runRuntimeTask(func() tea.Msg {
+		if m.monikerCache != nil && m.monikerCache.HasMonikers() {
+			return monikersMsg{monikers: m.monikers}
+		}
 
-	ctx := context.Background()
-	monikers, err := m.client.GetValidatorMonikers(ctx)
-	if err != nil {
-		return monikersMsg{err: err}
-	}
+		monikers, err := m.queryValidatorMonikers(m.runtimeContext)
+		if err != nil {
+			return monikersMsg{err: err}
+		}
+		if err := m.runtimeContext.Err(); err != nil {
+			return monikersMsg{err: err}
+		}
 
-	if m.monikerCache != nil {
-		m.monikerCache.Set(monikers)
-		_ = m.monikerCache.Save()
-	}
+		if m.monikerCache != nil {
+			m.monikerCache.Set(monikers)
+			_ = m.monikerCache.Save()
+		}
 
-	return monikersMsg{monikers: monikers}
+		return monikersMsg{monikers: monikers}
+	})
+}
+
+func (m Model) queryValidatorMonikers(ctx context.Context) (map[string]string, error) {
+	if m.validatorMonikersQuery != nil {
+		return m.validatorMonikersQuery(ctx)
+	}
+	return m.client.GetValidatorMonikers(ctx)
 }
 
 func (m Model) renderTick() tea.Cmd {
@@ -740,12 +846,23 @@ func (m Model) oracleSyncTick() tea.Cmd {
 }
 
 func (m Model) fetchOracleState() tea.Msg {
-	ctx := context.Background()
-	state, err := m.client.GetOracleState(ctx)
-	if err != nil {
-		return oracleStateMsg{err: err}
+	return m.runRuntimeTask(func() tea.Msg {
+		state, err := m.queryOracleState(m.runtimeContext)
+		if err != nil {
+			return oracleStateMsg{err: err}
+		}
+		if err := m.runtimeContext.Err(); err != nil {
+			return oracleStateMsg{err: err}
+		}
+		return oracleStateMsg{state: state}
+	})
+}
+
+func (m Model) queryOracleState(ctx context.Context) (*rpc.OracleState, error) {
+	if m.oracleStateQuery != nil {
+		return m.oracleStateQuery(ctx)
 	}
-	return oracleStateMsg{state: state}
+	return m.client.GetOracleState(ctx)
 }
 
 func (m Model) bmeSyncTick() tea.Cmd {
@@ -755,27 +872,50 @@ func (m Model) bmeSyncTick() tea.Cmd {
 }
 
 func (m Model) fetchBMEState() tea.Msg {
-	ctx := context.Background()
-	state, err := m.client.GetBMEState(ctx)
-	if err != nil {
-		return bmeStateMsg{err: err}
+	return m.runRuntimeTask(func() tea.Msg {
+		state, err := m.queryBMEState(m.runtimeContext)
+		if err != nil {
+			return bmeStateMsg{err: err}
+		}
+		if err := m.runtimeContext.Err(); err != nil {
+			return bmeStateMsg{err: err}
+		}
+		return bmeStateMsg{state: state}
+	})
+}
+
+func (m Model) queryBMEState(ctx context.Context) (*rpc.BMEState, error) {
+	if m.bmeStateQuery != nil {
+		return m.bmeStateQuery(ctx)
 	}
-	return bmeStateMsg{state: state}
+	return m.client.GetBMEState(ctx)
 }
 
 func (m Model) fetchGovernanceParams() tea.Msg {
-	ctx := context.Background()
-	params, err := m.client.GetAllGovernanceParams(ctx)
-	if err != nil {
-		return governanceParamsMsg{err: err}
+	return m.runRuntimeTask(func() tea.Msg {
+		params, err := m.queryGovernanceParams(m.runtimeContext)
+		if err != nil {
+			return governanceParamsMsg{err: err}
+		}
+		if err := m.runtimeContext.Err(); err != nil {
+			return governanceParamsMsg{err: err}
+		}
+		return governanceParamsMsg{params: params}
+	})
+}
+
+func (m Model) queryGovernanceParams(ctx context.Context) (*governance.AllParams, error) {
+	if m.governanceParamsQuery != nil {
+		return m.governanceParamsQuery(ctx)
 	}
-	return governanceParamsMsg{params: params}
+	return m.client.GetAllGovernanceParams(ctx)
 }
 
 func (m Model) fetchGovernanceProposals() tea.Msg {
-	ctx := context.Background()
-	proposals, err := m.client.GetGovernanceProposals(ctx)
-	return governanceProposalsMsg{proposals: proposals, err: err}
+	return m.runRuntimeTask(func() tea.Msg {
+		proposals, err := m.client.GetGovernanceProposals(m.runtimeContext)
+		return governanceProposalsMsg{proposals: proposals, err: err}
+	})
 }
 
 // rebuildProviderList rebuilds the provider list from cache
@@ -1123,13 +1263,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case wsConnectedMsg:
 		m.snapshotCh = msg.ch
 		m.wsConnected = true
+		m.consensusRetryAttempt = 0
+		if m.state != nil {
+			m.state.Error = nil
+		}
 		return m, m.waitForSnapshot()
 	case consensusSnapshotMsg:
 		if !msg.ok {
 			// Channel closed — WebSocket connection lost.
 			m.wsConnected = false
 			m.snapshotCh = nil
-			return m, m.connectWebSocket
+			return m, m.scheduleConsensusReconnect()
 		}
 		// Buffer the state — it will be applied on the next renderTick.
 		// If the new snapshot is for a higher height than the pending one,
@@ -1141,19 +1285,39 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.pendingState = msg.snapshot.State
 		}
 		return m, m.waitForSnapshot()
+	case consensusReconnectMsg:
+		if m.runtimeContext != nil && m.runtimeContext.Err() != nil {
+			return m, nil
+		}
+		return m, m.connectWebSocket
 
 	case providerCheckTickMsg:
+		if m.runtimeContext != nil && m.runtimeContext.Err() != nil {
+			return m, nil
+		}
 		cmds := m.dispatchProviderChecks()
 		cmds = append(cmds, m.providerCheckTick())
 		return m, tea.Batch(cmds...)
 	case chainSyncTickMsg:
+		if m.runtimeContext != nil && m.runtimeContext.Err() != nil {
+			return m, nil
+		}
 		return m, tea.Batch(m.syncChain, m.chainSyncTick())
 	case cacheSaveTickMsg:
+		if m.runtimeContext != nil && m.runtimeContext.Err() != nil {
+			return m, nil
+		}
 		m.saveCache()
 		return m, m.cacheSaveTick()
 	case governanceProposalsTickMsg:
+		if m.runtimeContext != nil && m.runtimeContext.Err() != nil {
+			return m, nil
+		}
 		return m, tea.Batch(m.fetchGovernanceProposals, m.governanceProposalSyncTick())
 	case governanceParamsTickMsg:
+		if m.runtimeContext != nil && m.runtimeContext.Err() != nil {
+			return m, nil
+		}
 		return m, tea.Batch(m.fetchGovernanceParams, m.governanceSyncTick())
 	case stateMsg:
 		return m.handleStateMsg(msg)
@@ -1165,7 +1329,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case initialSigningMsg:
 		if msg.err == nil && len(msg.signers) > 0 {
-			m.seedSigningHistory(msg.signers)
+			m.seedSigningHistory(msg.signers, msg.validators)
 		}
 		return m, nil
 	case proposerMsg:
@@ -1204,8 +1368,50 @@ func (m Model) waitForSnapshot() tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		snap, ok := <-ch
-		return consensusSnapshotMsg{snapshot: snap, ok: ok}
+		return m.runRuntimeTask(func() tea.Msg {
+			select {
+			case snap, ok := <-ch:
+				return consensusSnapshotMsg{snapshot: snap, ok: ok}
+			case <-m.runtimeContext.Done():
+				return consensusSnapshotMsg{ok: false}
+			}
+		})
+	}
+}
+
+func (m *Model) scheduleConsensusReconnect() tea.Cmd {
+	if m.runtimeContext != nil && m.runtimeContext.Err() != nil {
+		return nil
+	}
+
+	delay := consensusReconnectBaseDelay
+	for range m.consensusRetryAttempt {
+		if delay >= consensusReconnectMaxDelay/2 {
+			delay = consensusReconnectMaxDelay
+			break
+		}
+		delay *= 2
+	}
+	if m.consensusRetryAttempt < 64 {
+		m.consensusRetryAttempt++
+	}
+
+	ctx := m.runtimeContext
+	return func() tea.Msg {
+		return m.runRuntimeTask(func() tea.Msg {
+			timer := time.NewTimer(delay)
+			defer timer.Stop()
+			if ctx == nil {
+				<-timer.C
+				return consensusReconnectMsg{}
+			}
+			select {
+			case <-timer.C:
+				return consensusReconnectMsg{}
+			case <-ctx.Done():
+				return nil
+			}
+		})
 	}
 }
 
@@ -1217,12 +1423,16 @@ func (m Model) waitForBusEvent() tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		select {
-		case ev, ok := <-sub.Events():
-			return busEventMsg{event: ev, ok: ok}
-		case <-sub.Done():
-			return busEventMsg{ok: false}
-		}
+		return m.runRuntimeTask(func() tea.Msg {
+			select {
+			case ev, ok := <-sub.Events():
+				return busEventMsg{event: ev, ok: ok}
+			case <-sub.Done():
+				return busEventMsg{ok: false}
+			case <-m.runtimeContext.Done():
+				return busEventMsg{ok: false}
+			}
+		})
 	}
 }
 
@@ -1623,12 +1833,16 @@ func (m *Model) enterProviderDetail() (tea.Model, tea.Cmd) {
 
 func (m *Model) fetchProviderDetail(hostURI string, requestID uint64) tea.Cmd {
 	return func() tea.Msg {
-		ctx := context.Background()
-		nodes, err := rpc.QueryProviderStatusGRPC(ctx, hostURI, m.insecureSkipVerify)
-		if err != nil {
-			return providerDetailMsg{hostURI: hostURI, requestID: requestID, err: err}
-		}
-		return providerDetailMsg{hostURI: hostURI, requestID: requestID, nodes: nodes}
+		return m.runRuntimeTask(func() tea.Msg {
+			nodes, err := m.queryProviderStatusGRPC(m.runtimeContext, hostURI)
+			if err != nil {
+				return providerDetailMsg{hostURI: hostURI, requestID: requestID, err: err}
+			}
+			if err := m.runtimeContext.Err(); err != nil {
+				return providerDetailMsg{hostURI: hostURI, requestID: requestID, err: err}
+			}
+			return providerDetailMsg{hostURI: hostURI, requestID: requestID, nodes: nodes}
+		})
 	}
 }
 
@@ -1737,14 +1951,12 @@ func (m *Model) handleBMEStateMsg(msg bmeStateMsg) (tea.Model, tea.Cmd) {
 // seedSigningHistory uses the latest commit signatures to populate the first
 // entry in each validator's signing history. Matches by address because
 // commit signatures are ordered by Tendermint address, not voting power.
-func (m *Model) seedSigningHistory(signers map[string]bool) {
+func (m *Model) seedSigningHistory(signers map[string]bool, validators []consensus.Validator) {
 	// Only seed if we have no history yet.
 	if len(m.valSignHistory) > 0 {
 		return
 	}
-
-	validators, err := m.client.GetValidators()
-	if err != nil || len(validators) == 0 {
+	if len(validators) == 0 {
 		return
 	}
 
@@ -1780,7 +1992,10 @@ func (m *Model) handleStateMsg(msg stateMsg) (tea.Model, tea.Cmd) {
 			m.state = &consensus.State{}
 		}
 		m.state.Error = msg.err
-		return m, nil
+		if errors.Is(msg.err, context.Canceled) {
+			return m, nil
+		}
+		return m, m.scheduleConsensusReconnect()
 	}
 
 	newState := msg.state
@@ -1902,6 +2117,12 @@ func (m *Model) handleChainSyncMsg(msg chainSyncMsg) (tea.Model, tea.Cmd) {
 func (m *Model) handleProviderCheckedMsg(msg providerCheckedMsg) (tea.Model, tea.Cmd) {
 	delete(m.loader.InFlight, msg.owner)
 	m.removeFromQueue(msg.owner)
+	if msg.err != nil || (m.runtimeContext != nil && m.runtimeContext.Err() != nil) {
+		if len(m.loader.Queue) == 0 && len(m.loader.InFlight) == 0 {
+			m.loader.Loading = false
+		}
+		return m, nil
+	}
 	m.loader.Checked++
 
 	if msg.isOnline {
@@ -1979,7 +2200,9 @@ func (m *Model) resizeComponents() {
 // View renders the UI
 func (m Model) View() tea.View {
 	if m.quitting {
-		return tea.NewView("Goodbye!\n")
+		view := tea.NewView("Goodbye!\n")
+		view.AltScreen = !m.embedded
+		return view
 	}
 
 	// Component heights are set in resizeComponents() called from Update().
@@ -2034,5 +2257,7 @@ func (m Model) View() tea.View {
 		},
 	}
 
-	return tea.NewView(RenderView(ctx))
+	view := tea.NewView(RenderView(ctx))
+	view.AltScreen = !m.embedded
+	return view
 }

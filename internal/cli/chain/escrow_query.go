@@ -340,8 +340,10 @@ akt query escrow blocks-remaining akash1owner.../12345`,
 
 				if funds.Denom == sdkutil.DenomUact {
 					balanceRemaining.Amount.AddMut(funds.Amount)
-				} else if (bmeStatus.Status >= bme.MintStatusHaltCR) && aktPrice.PriceHealth.IsHealthy {
-					// account for any AKT only if BME CB is active
+				} else if funds.Denom == sdkutil.DenomUakt &&
+					(bmeStatus.Status >= bme.MintStatusHaltCR) &&
+					aktPrice.PriceHealth.IsHealthy {
+					// Account for uAKT only if the BME circuit breaker is active.
 					swappedRate := funds.Amount.Mul(aktPrice.AggregatedPrice.TWAP)
 					balanceRemaining.Amount.AddMut(swappedRate)
 				}

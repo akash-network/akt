@@ -62,6 +62,9 @@ $ akt query slashing signing-info '{"@type":"/cosmos.crypto.ed25519.PubKey","key
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("slashing signing info", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), &res.ValSigningInfo)
 		},
@@ -97,6 +100,9 @@ $ akt query slashing signing-infos
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("slashing signing infos", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), res)
 		},
@@ -126,6 +132,9 @@ $ akt query slashing params
 			params := &types.QueryParamsRequest{}
 			res, err := cl.Query().Slashing().Params(cmd.Context(), params)
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("slashing params", res); err != nil {
 				return err
 			}
 

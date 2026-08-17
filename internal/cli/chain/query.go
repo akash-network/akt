@@ -76,6 +76,7 @@ func QueryCmd() *cobra.Command {
 		GetQueryGovCmd(),
 		GetQuerySlashingCmd(),
 		GetQueryStakingCmd(),
+		GetQueryUpgradeCmd(),
 		GetQueryAuditCmd(),
 		GetQueryCertCmd(),
 		GetQueryDeploymentCmds(),

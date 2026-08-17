@@ -153,7 +153,8 @@ func MatchesService(name, service string) bool {
 		return true
 	}
 
-	return name == service || strings.HasPrefix(name, service+"-")
+	podPrefix := service + "-"
+	return name == service || (strings.HasPrefix(name, podPrefix) && len(name) > len(podPrefix))
 }
 
 // HoldEOF returns a reader that withholds a local EOF until ctx is done. The

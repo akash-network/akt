@@ -197,12 +197,24 @@ func whoamiCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 // promptForKey reads a Console API key from stdin: with echo off when stdin is
 // a terminal, as a plain line otherwise.
 func promptForKey(cmd *cobra.Command) (string, error) {
-	fd := int(os.Stdin.Fd())
-	if term.IsTerminal(fd) {
-		fmt.Fprint(cmd.ErrOrStderr(), "Console API key: ")
+	return promptForKeyWithTerminal(cmd, int(os.Stdin.Fd()), term.IsTerminal, term.ReadPassword)
+}
 
-		data, err := term.ReadPassword(fd)
-		fmt.Fprintln(cmd.ErrOrStderr())
+func promptForKeyWithTerminal(
+	cmd *cobra.Command,
+	fd int,
+	isTerminal func(int) bool,
+	readPassword func(int) ([]byte, error),
+) (string, error) {
+	if isTerminal(fd) {
+		if _, err := fmt.Fprint(cmd.ErrOrStderr(), "Console API key: "); err != nil {
+			return "", fmt.Errorf("write API key prompt: %w", err)
+		}
+
+		data, err := readPassword(fd)
+		if _, writeErr := fmt.Fprintln(cmd.ErrOrStderr()); writeErr != nil {
+			return "", fmt.Errorf("write API key prompt terminator: %w", writeErr)
+		}
 		if err != nil {
 			return "", fmt.Errorf("read API key: %w", err)
 		}
@@ -297,11 +309,16 @@ func printRawJSON(cmd *cobra.Command, raw json.RawMessage) error {
 // while giving JSON and YAML callers a stable object to parse.
 func printConsoleResult(cmd *cobra.Command, pretty string, structured any) error {
 	if output.FormatFromCmd(cmd) == output.FormatTable {
-		_, err := fmt.Fprintln(cmd.OutOrStdout(), pretty)
-		return err
+		return printConsoleText(cmd, pretty+"\n")
 	}
 
 	return printJSON(cmd, structured)
+}
+
+func printConsoleText(cmd *cobra.Command, text string) error {
+	checked := output.NewCheckedWriter(cmd.OutOrStdout())
+	_, err := fmt.Fprint(checked, text)
+	return checked.Complete(err)
 }
 
 // formatUSD keeps normal currency values at cents while retaining meaningful

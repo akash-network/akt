@@ -10,9 +10,11 @@ import (
 
 	aclient "pkg.akt.dev/go/node/client"
 
+	"pkg.akt.dev/akt/internal/cliutil"
 	"pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
 	aktmcp "pkg.akt.dev/akt/internal/mcp"
+	clioutput "pkg.akt.dev/akt/internal/output"
 )
 
 func mcpCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
@@ -51,12 +53,14 @@ Write tools, unlocked only by --enable-writes:
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cctx := sdkclient.GetClientContextFromCmd(cmd)
+			enableWrites, _ := cmd.Flags().GetBool("enable-writes")
+			if enableWrites && selectedMCPContext(cmd, mgrFn) == "" {
+				return fmt.Errorf("MCP writes require an active context so every mutation has a per-context action log; create or select a context, or omit --enable-writes")
+			}
 			providerAuthType, err := providerAuthTypeFor(cmd, mgrFn)
 			if err != nil {
 				return err
 			}
-
-			enableWrites, _ := cmd.Flags().GetBool("enable-writes")
 
 			// The tx client validates the sign mode, which normally arrives
 			// from the --sign-mode flag that AddTxFlagsToCmd installs on tx
@@ -98,12 +102,16 @@ Write tools, unlocked only by --enable-writes:
 				mode = "read-write"
 			}
 
-			// A startup banner, so --quiet silences it. Written directly
-			// rather than through cliutil.Status: stdout is the JSON-RPC pipe
+			// A startup banner, so --quiet silences it. Written to the Cobra
+			// diagnostic stream rather than through cliutil.Status: stdout is the JSON-RPC pipe
 			// here and never a TTY, and the banner is the one line that says
 			// which rail the server came up on.
-			if quiet, _ := cmd.Flags().GetBool("quiet"); !quiet {
-				_, _ = fmt.Fprintf(os.Stderr, "akt mcp: starting stdio server (node=%s, chain=%s, mode=%s)\n", cctx.NodeURI, cctx.ChainID, mode)
+			if !cliutil.IsQuiet(cmd) {
+				checked := clioutput.NewCheckedWriter(cmd.ErrOrStderr())
+				_, writeErr := fmt.Fprintf(checked, "akt mcp: starting stdio server (node=%s, chain=%s, mode=%s)\n", cctx.NodeURI, cctx.ChainID, mode)
+				if err := checked.Complete(writeErr); err != nil {
+					return err
+				}
 			}
 
 			return srv.ServeStdio(ctx)
@@ -124,11 +132,11 @@ func providerAuthTypeFor(cmd *cobra.Command, mgrFn func() *aktctx.Manager) (stri
 	if m == nil {
 		return aktctx.ProviderAuthJWT, nil
 	}
-	override := ""
-	if flag := cmd.Flags().Lookup("context"); flag != nil {
-		override = flag.Value.String()
+	selected := selectedMCPContext(cmd, mgrFn)
+	if selected == "" {
+		return aktctx.ResolveProviderAuthType("")
 	}
-	rc, err := m.Resolve(m.ActiveContext(override))
+	rc, err := m.Resolve(selected)
 	if err != nil {
 		return "", fmt.Errorf("resolve MCP provider authentication: %w", err)
 	}
@@ -136,6 +144,18 @@ func providerAuthTypeFor(cmd *cobra.Command, mgrFn func() *aktctx.Manager) (stri
 		return "", fmt.Errorf("resolve MCP provider authentication: empty context")
 	}
 	return aktctx.ResolveProviderAuthType(rc.AuthType)
+}
+
+func selectedMCPContext(cmd *cobra.Command, mgrFn func() *aktctx.Manager) string {
+	m := mgrFn()
+	if m == nil {
+		return ""
+	}
+	override := ""
+	if flag := cmd.Flags().Lookup("context"); flag != nil {
+		override = flag.Value.String()
+	}
+	return m.ActiveContext(override)
 }
 
 // consoleClientFor resolves a Console API client for the MCP server, or nil
@@ -172,5 +192,5 @@ func consoleClientFor(cmd *cobra.Command, mgrFn func() *aktctx.Manager) *console
 		return nil
 	}
 
-	return console.New(baseURL, key)
+	return console.New(baseURL, key).WithActionLog(cliutil.ActionLogFromContext(cmd.Context()))
 }

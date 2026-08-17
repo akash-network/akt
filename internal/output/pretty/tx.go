@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 
+	abci "github.com/cometbft/cometbft/abci/types"
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
@@ -38,12 +39,14 @@ const (
 //     layout, "json"/"yaml" emit the structured document of SPEC §10.11.6.
 func PrintTxResult(cmd *cobra.Command, cctx sdkclient.Context, resp interface{}) error {
 	output, _ := cmd.Flags().GetString(cflags.FlagOutput)
+	checked := clioutput.NewCheckedWriter(cmd.OutOrStdout())
+	cctx = cctx.WithOutput(checked)
 	if payload, ok := resp.([]byte); ok {
-		return printEncodedTransaction(cmd, output, payload)
+		return checked.Complete(printEncodedTransaction(checked, output, payload))
 	}
 
 	if sim, ok := resp.(*txtypes.SimulateResponse); ok {
-		return printSimulationResult(cmd, output, sim)
+		return checked.Complete(printSimulationResult(checked, cmd, output, sim))
 	}
 
 	txResp, isTxResponse := resp.(*sdk.TxResponse)
@@ -55,46 +58,46 @@ func PrintTxResult(cmd *cobra.Command, cctx sdkclient.Context, resp interface{})
 	switch output {
 	case cflags.OutputJSON:
 		if isTxResponse {
-			return printTxResultStructured(cmd, cctx, output, txResp)
+			return checked.Complete(printTxResultStructured(checked, cctx, output, txResp))
 		}
 
 		if pm, ok := resp.(proto.Message); ok {
-			return cctx.WithOutputFormat("json").PrintProto(pm)
+			return checked.Complete(cctx.WithOutputFormat("json").PrintProto(pm))
 		}
 
 		//nolint:staticcheck // SA1019: PrintObjectLegacy is the only client-context
 		// printer that accepts a non-proto (amino) value, which is exactly what
 		// this fallback branch has. See PrintQueryResultAny in printer.go.
-		return cctx.PrintObjectLegacy(resp)
+		return checked.Complete(cctx.PrintObjectLegacy(resp))
 	case cflags.OutputYAML:
 		if isTxResponse {
-			return printTxResultStructured(cmd, cctx, output, txResp)
+			return checked.Complete(printTxResultStructured(checked, cctx, output, txResp))
 		}
 
 		if pm, ok := resp.(proto.Message); ok {
-			return cctx.WithOutputFormat("text").PrintProto(pm)
+			return checked.Complete(cctx.WithOutputFormat("text").PrintProto(pm))
 		}
 
 		//nolint:staticcheck // SA1019: PrintObjectLegacy is the only client-context
 		// printer that accepts a non-proto (amino) value, which is exactly what
 		// this fallback branch has. See PrintQueryResultAny in printer.go.
-		return cctx.PrintObjectLegacy(resp)
+		return checked.Complete(cctx.PrintObjectLegacy(resp))
 	}
 
 	// Pretty mode — render the two-section layout.
 	if !isTxResponse {
 		// Not a TxResponse — fall back to JSON.
 		if pm, ok := resp.(proto.Message); ok {
-			return cctx.WithOutputFormat("json").PrintProto(pm)
+			return checked.Complete(cctx.WithOutputFormat("json").PrintProto(pm))
 		}
 
 		//nolint:staticcheck // SA1019: PrintObjectLegacy is the only client-context
 		// printer that accepts a non-proto (amino) value, which is exactly what
 		// this fallback branch has. See PrintQueryResultAny in printer.go.
-		return cctx.PrintObjectLegacy(resp)
+		return checked.Complete(cctx.PrintObjectLegacy(resp))
 	}
 
-	w := clioutput.TerminalAwareWriter(cmd.OutOrStdout())
+	w := clioutput.TerminalAwareWriter(checked)
 
 	// Section 1: Common transaction summary.
 	renderTxSummaryWithCodec(w, cctx, txResp)
@@ -102,24 +105,28 @@ func PrintTxResult(cmd *cobra.Command, cctx sdkclient.Context, resp interface{})
 	// Section 2: Message-specific detail.
 	msgs := decodeTxMsgs(cctx, txResp)
 	if len(msgs) == 0 {
-		return nil
+		return checked.Err()
 	}
 
 	Newline(w)
 
+	var renderErr error
 	if len(msgs) == 1 {
-		renderSingleMessage(w, cmd, cctx, msgs[0], txResp, 0)
+		renderErr = renderSingleMessage(w, cmd, cctx, msgs[0], txResp, 0)
 	} else {
 		for i, msg := range msgs {
 			if i > 0 {
 				Newline(w)
 			}
 
-			renderMultiMessage(w, cmd, cctx, msg, txResp, i, len(msgs))
+			if err := renderMultiMessage(w, cmd, cctx, msg, txResp, i, len(msgs)); err != nil {
+				renderErr = err
+				break
+			}
 		}
 	}
 
-	return nil
+	return checked.Complete(renderErr)
 }
 
 // PrintTxResults preserves one structured document when a command intentionally
@@ -303,23 +310,23 @@ func nonEmptyJSON(raw json.RawMessage) json.RawMessage {
 	return trimmed
 }
 
-func printTxResultStructured(cmd *cobra.Command, cctx sdkclient.Context, format string, resp *sdk.TxResponse) error {
+func printTxResultStructured(w io.Writer, cctx sdkclient.Context, format string, resp *sdk.TxResponse) error {
 	outputFormat := clioutput.FormatJSON
 	if format == cflags.OutputYAML {
 		outputFormat = clioutput.FormatYAML
 	}
 
-	return clioutput.FprintJSONSemantics(cmd.OutOrStdout(), outputFormat, NewTxResultDocument(cctx, resp))
+	return clioutput.FprintJSONSemantics(w, outputFormat, NewTxResultDocument(cctx, resp))
 }
 
-func printEncodedTransaction(cmd *cobra.Command, format string, payload []byte) error {
+func printEncodedTransaction(w io.Writer, format string, payload []byte) error {
 	payload = bytes.TrimSpace(payload)
 	if !json.Valid(payload) {
 		return fmt.Errorf("generated transaction is not valid JSON")
 	}
 
 	if format != cflags.OutputYAML {
-		_, err := fmt.Fprintln(cmd.OutOrStdout(), string(payload))
+		_, err := fmt.Fprintln(w, string(payload))
 		return err
 	}
 
@@ -330,7 +337,7 @@ func printEncodedTransaction(cmd *cobra.Command, format string, payload []byte) 
 		return err
 	}
 
-	return clioutput.FprintJSONSemantics(cmd.OutOrStdout(), clioutput.FormatYAML, value)
+	return clioutput.FprintJSONSemantics(w, clioutput.FormatYAML, value)
 }
 
 // Placeholders for fields whose value the response simply does not carry. A
@@ -422,23 +429,23 @@ func FormatGas(gas int64) string {
 }
 
 // renderSingleMessage renders Section 2 for a single-message transaction.
-func renderSingleMessage(w io.Writer, cmd *cobra.Command, cctx sdkclient.Context, msg sdk.Msg, resp *sdk.TxResponse, idx int) {
+func renderSingleMessage(w io.Writer, cmd *cobra.Command, cctx sdkclient.Context, msg sdk.Msg, resp *sdk.TxResponse, idx int) error {
 	f, ok := LookupTx(msg)
 	if ok {
 		fmt.Fprintln(w, Section(f.Title()))
-		_ = f.FormatTx(w, cmd, cctx, msg, resp, idx)
-
-		return
+		return f.FormatTx(w, cmd, cctx, msg, resp, idx)
 	}
 
 	// No formatter registered — fall back to highlighted JSON.
 	fmt.Fprintln(w, Section("Message"))
 	renderMsgJSON(w, cctx, msg)
+	return nil
 }
 
 // renderMultiMessage renders a numbered message section for multi-msg transactions.
-func renderMultiMessage(w io.Writer, cmd *cobra.Command, cctx sdkclient.Context, msg sdk.Msg, resp *sdk.TxResponse, idx int, total int) {
+func renderMultiMessage(w io.Writer, cmd *cobra.Command, cctx sdkclient.Context, msg sdk.Msg, resp *sdk.TxResponse, idx int, total int) error {
 	num := idx + 1
+	resp = responseForMultiMessage(resp)
 
 	f, ok := LookupTx(msg)
 	if ok {
@@ -448,14 +455,30 @@ func renderMultiMessage(w io.Writer, cmd *cobra.Command, cctx sdkclient.Context,
 		}
 
 		fmt.Fprintln(w, Section(title))
-		_ = f.FormatTx(w, cmd, cctx, msg, resp, idx)
-
-		return
+		return f.FormatTx(w, cmd, cctx, msg, resp, idx)
 	}
 
 	title := fmt.Sprintf("Message %d", num)
 	fmt.Fprintln(w, Section(title))
 	renderMsgJSON(w, cctx, msg)
+	return nil
+}
+
+func responseForMultiMessage(resp *sdk.TxResponse) *sdk.TxResponse {
+	if resp == nil || len(resp.Events) == 0 {
+		return resp
+	}
+	filtered := *resp
+	filtered.Events = make([]abci.Event, 0, len(resp.Events))
+	for _, event := range resp.Events {
+		for _, attribute := range event.Attributes {
+			if attribute.Key == "msg_index" && normalizeTxEventValue(attribute.Value) != "" {
+				filtered.Events = append(filtered.Events, event)
+				break
+			}
+		}
+	}
+	return &filtered
 }
 
 // renderMsgJSON renders a message as highlighted JSON (fallback for unregistered types).

@@ -4,7 +4,9 @@ import (
 	"fmt"
 
 	tea "charm.land/bubbletea/v2"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 
+	"pkg.akt.dev/akt/internal/output/pretty"
 	"pkg.akt.dev/akt/internal/tui/components"
 )
 
@@ -58,4 +60,18 @@ func CommaGroup(n int64) string {
 // CmdFunc is a convenience for creating a tea.Cmd that returns a message.
 func CmdFunc(msg tea.Msg) tea.Cmd {
 	return func() tea.Msg { return msg }
+}
+
+// formatStoredCoins converts the Cosmos coin strings persisted in store
+// records into the canonical human-readable representation. Invalid legacy
+// values are returned unchanged so the UI never hides stored data.
+func formatStoredCoins(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	coins, err := sdk.ParseDecCoins(raw)
+	if err != nil {
+		return raw
+	}
+	return pretty.FormatDecCoins(coins)
 }

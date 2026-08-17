@@ -478,9 +478,7 @@ func bidCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 					return fmt.Errorf("deployment %s: %w", args[0], err)
 				}
 
-				fmt.Fprintln(cmd.OutOrStdout(), "No bids yet (providers may still be bidding). Re-run in a few seconds.")
-
-				return nil
+				return printConsoleText(cmd, "No bids yet (providers may still be bidding). Re-run in a few seconds.\n")
 			}
 
 			return printJSON(cmd, bids)

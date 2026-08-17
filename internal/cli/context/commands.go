@@ -222,8 +222,13 @@ func listCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			current := m.CurrentContext()
 
 			if len(ctxs) == 0 {
-				fmt.Println("No contexts configured. Create one with: akt context create <name> --network <network>")
-				return nil
+				if output.FormatFromCmd(cmd) != output.FormatTable {
+					return output.Fprint(cmd.OutOrStdout(), output.FormatFromCmd(cmd), []struct{}{})
+				}
+
+				checked := output.NewCheckedWriter(cmd.OutOrStdout())
+				_, err := fmt.Fprintln(checked, "No contexts configured. Create one with: akt context create <name> --network <network>")
+				return checked.Complete(err)
 			}
 
 			type contextRow struct {
@@ -584,7 +589,9 @@ func stdinIsTerminal(cmd *cobra.Command) bool {
 
 func promptNetworkEditMode(cmd *cobra.Command, network, contextName string) (bool, error) {
 	forkName := network + "-" + contextName
-	fmt.Fprintf(cmd.ErrOrStderr(), "Network %q is shared.\n  1. Edit parent — change applies to every context using %q\n  2. Fork — create %q for context %q only\nSelect [1-2]: ", network, network, forkName, contextName)
+	if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Network %q is shared.\n  1. Edit parent — change applies to every context using %q\n  2. Fork — create %q for context %q only\nSelect [1-2]: ", network, network, forkName, contextName); err != nil {
+		return false, err
+	}
 
 	line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
 	if err != nil && strings.TrimSpace(line) == "" {
@@ -616,14 +623,20 @@ func deleteCmd(mgr func() *aktctx.Manager) *cobra.Command {
 
 			yes, _ := cmd.Flags().GetBool("yes")
 			if !yes {
-				fmt.Printf("Delete context %q? This removes the state store and action log. [y/N]: ", name)
+				checked := output.NewCheckedWriter(cmd.ErrOrStderr())
+				if _, err := fmt.Fprintf(checked, "Delete context %q? This removes the state store and action log. [y/N]: ", name); err != nil {
+					return checked.Complete(err)
+				}
 
-				var answer string
-				_, _ = fmt.Scanln(&answer)
+				line, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+				if err != nil && strings.TrimSpace(line) == "" {
+					return fmt.Errorf("read delete confirmation: %w", err)
+				}
+				answer := strings.TrimSpace(line)
 
 				if !strings.EqualFold(answer, "y") && !strings.EqualFold(answer, "yes") {
-					fmt.Println("Cancelled.")
-					return nil
+					_, err := fmt.Fprintln(checked, "Cancelled.")
+					return checked.Complete(err)
 				}
 			}
 
@@ -765,12 +778,11 @@ func logCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			// empty one.
 			if len(entries) == 0 {
 				if output.FormatFromCmd(cmd) != output.FormatTable {
-					return output.Print(output.FormatFromCmd(cmd), []struct{}{})
+					return output.Fprint(cmd.OutOrStdout(), output.FormatFromCmd(cmd), []struct{}{})
 				}
 
-				fmt.Println("No action log entries.")
-
-				return nil
+				_, err := fmt.Fprintln(cmd.OutOrStdout(), "No action log entries.")
+				return err
 			}
 
 			columns := []output.Column{

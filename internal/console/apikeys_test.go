@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -68,6 +69,30 @@ func TestCreateAPIKeyWithExpiry(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestCreateAPIKeyRejectsIncompleteOneTimeSecret(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"missing id", `{"data":{"name":"ci-key","apiKey":"secret"}}`},
+		{"wrong name", `{"data":{"id":"key-9","name":"other","apiKey":"secret"}}`},
+		{"blank secret", `{"data":{"id":"key-9","name":"ci-key","apiKey":"   "}}`},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(tt.body))
+			}))
+			defer srv.Close()
+
+			_, err := console.New(srv.URL, "test-key").CreateAPIKey(context.Background(), "ci-key", "")
+			require.Error(t, err)
+			assert.True(t, strings.Contains(err.Error(), "outcome unknown"), err.Error())
+		})
+	}
+}
+
 func TestDeleteAPIKey(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodDelete, r.Method)
@@ -112,4 +137,15 @@ func TestCreateJWTToken(t *testing.T) {
 	token, err := c.CreateJWTToken(context.Background(), 900, []string{"send-manifest", "logs"})
 	require.NoError(t, err)
 	assert.Equal(t, "eyJhbGciOi...", token)
+}
+
+func TestCreateJWTTokenRejectsBlankToken(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"data":{"token":"   "}}`))
+	}))
+	defer srv.Close()
+
+	token, err := console.New(srv.URL, "test-key").CreateJWTToken(context.Background(), 300, []string{"logs"})
+	require.ErrorContains(t, err, "blank token")
+	assert.Empty(t, token)
 }

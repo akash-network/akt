@@ -24,6 +24,7 @@ func ToolListDeployments() mcp.Tool {
 			mcp.Description("Filter by owner bech32 address. If omitted, uses the configured key's address."),
 		),
 		mcp.WithString("state",
+			mcp.Enum("active", "closed"),
 			mcp.Description("Filter by deployment state: 'active', 'closed'. If omitted, returns all states."),
 		),
 	)

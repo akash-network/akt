@@ -72,6 +72,9 @@ $ akt query auth params
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("auth params", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), &res.Params)
 		},
@@ -112,6 +115,12 @@ func GetQueryAuthAccountCmd() *cobra.Command {
 				}
 				return err
 			}
+			if err := requireQueryResponse("auth account", res); err != nil {
+				return err
+			}
+			if err := requireQueryField("auth account", "account", res.Account); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), res)
 		},
@@ -146,6 +155,9 @@ func GetQueryAuthAccountAddressByIDCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("auth address-by-acc-num", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), res)
 		},
@@ -176,6 +188,9 @@ func GetQueryAuthAccountsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("auth accounts", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), res)
 		},
@@ -200,6 +215,9 @@ func GetQueryAuthModuleAccountsCmd() *cobra.Command {
 
 			res, err := cl.Query().Auth().ModuleAccounts(ctx, &types.QueryModuleAccountsRequest{})
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("auth module-accounts", res); err != nil {
 				return err
 			}
 
@@ -231,6 +249,12 @@ func GetQueryAuthModuleAccountByNameCmd() *cobra.Command {
 
 			res, err := cl.Query().Auth().ModuleAccountByName(ctx, &types.QueryModuleAccountByNameRequest{Name: moduleName})
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("auth module-account", res); err != nil {
+				return err
+			}
+			if err := requireQueryField("auth module-account", "account", res.Account); err != nil {
 				return err
 			}
 

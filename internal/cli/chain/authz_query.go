@@ -85,6 +85,9 @@ $ %[1]s query %[2]s grants akash1skjw.. akash1skjwj.. %[3]s
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("authz grants", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), res)
 		},
@@ -134,6 +137,9 @@ $ %s q %s grants-by-granter akash1skj..
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("authz granter grants", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), res)
 		},
@@ -181,6 +187,9 @@ $ %s q %s grants-by-grantee akash1skj..
 				},
 			)
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("authz grantee grants", res); err != nil {
 				return err
 			}
 

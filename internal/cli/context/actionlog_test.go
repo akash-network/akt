@@ -206,7 +206,7 @@ func TestLogDistinguishesWorkflowSteps(t *testing.T) {
 	}
 	_ = l.Close()
 
-	out := captureStdout(t, func() { runCmd(t, logCmd(mgrFn), "--type", "workflow") })
+	out := runOutput(t, logCmd(mgrFn), "--type", "workflow")
 
 	if !strings.Contains(out, "SUMMARY") {
 		t.Errorf("log header = %q, want a SUMMARY column", out)
@@ -237,9 +237,7 @@ func TestLogDistinguishesWorkflowSteps(t *testing.T) {
 		t.Errorf("log output does not identify the runs:\n%s", out)
 	}
 
-	filtered := captureStdout(t, func() {
-		runCmd(t, logCmd(mgrFn), "--workflow-id", "0011223344556677")
-	})
+	filtered := runOutput(t, logCmd(mgrFn), "--workflow-id", "0011223344556677")
 	if !strings.Contains(filtered, "run 0011223344556677") {
 		t.Errorf("--workflow-id dropped its own run:\n%s", filtered)
 	}
@@ -285,7 +283,7 @@ func TestLogSummarizesEntryDetails(t *testing.T) {
 	}
 	_ = l.Close()
 
-	out := captureStdout(t, func() { runCmd(t, logCmd(mgrFn)) })
+	out := runOutput(t, logCmd(mgrFn))
 
 	if !strings.Contains(out, "deployment.MsgCreateDeployment (dseq: 12345)") {
 		t.Errorf("tx summary missing the deployment:\n%s", out)

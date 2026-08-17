@@ -2,12 +2,12 @@ package console_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"pkg.akt.dev/akt/internal/console"
 )
@@ -21,19 +21,29 @@ func TestNewDefaultsToProductionBaseURL(t *testing.T) {
 		t.Fatalf("DefaultBaseURL = %q; the credential destination changed", console.DefaultBaseURL)
 	}
 
-	// A client built with "" must not attempt a relative request: point at a
-	// context that is already cancelled so no traffic leaves the machine, and
-	// assert the error names the default host.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
+	originalTransport := http.DefaultTransport
+	t.Cleanup(func() { http.DefaultTransport = originalTransport })
+	requested := make(chan *http.Request, 1)
+	http.DefaultTransport = consoleRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		requested <- request.Clone(request.Context())
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     make(http.Header),
+			Body:       http.NoBody,
+		}, nil
+	})
 
-	_, err := console.New("", "k").GetUser(ctx)
-	if err == nil {
-		t.Fatal("expected the cancelled context to fail the request")
+	_, _ = console.New("", "k").GetUser(context.Background())
+	request := <-requested
+	if request.URL.Scheme != "https" || request.URL.Host != "console-api.akash.network" || request.URL.Path != "/v1/user/me" {
+		t.Errorf("an empty baseURL resolved to %s, want %s/v1/user/me", request.URL, console.DefaultBaseURL)
 	}
-	if !strings.Contains(err.Error(), "console-api.akash.network") {
-		t.Errorf("an empty baseURL must resolve to the default host, got %q", err)
-	}
+}
+
+type consoleRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (fn consoleRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return fn(request)
 }
 
 // TestBalancesUSDHelpersScaleEveryField pins the µACT -> USD conversion for
@@ -119,27 +129,32 @@ func TestScreenBidsValidatesLocally(t *testing.T) {
 // re-sending for the full backoff schedule.
 func TestRetryAbortsOnContextCancellation(t *testing.T) {
 	var calls atomic.Int32
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		calls.Add(1)
 		w.WriteHeader(http.StatusTooManyRequests)
+		cancel()
 	}))
 	defer srv.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-
-	// Cancel while the client is sitting in its first backoff (100ms).
-	go func() {
-		time.Sleep(20 * time.Millisecond)
-		cancel()
-	}()
-
 	_, err := console.New(srv.URL, "k").GetDeployment(ctx, "1")
-	if err == nil {
-		t.Fatal("a cancelled context must surface an error")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("cancelled request error = %v, want context.Canceled", err)
 	}
-	if got := calls.Load(); got > 1 {
-		t.Errorf("cancellation should stop further attempts, got %d calls", got)
+	if got := calls.Load(); got != 1 {
+		t.Errorf("cancellation should stop after the observed request, got %d calls", got)
+	}
+}
+
+func TestCanceledRequestReturnsContextCause(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := console.New("http://127.0.0.1:1", "k").GetDeployment(ctx, "1")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled request error = %v, want context.Canceled", err)
 	}
 }
 
@@ -181,24 +196,30 @@ func TestUndecodableSuccessBodyIsReported(t *testing.T) {
 	}
 }
 
-// TestTransportFailureIsNotRetried covers the request-error branch: a dial
-// failure returns immediately rather than burning the retry budget, and the
+// TestTransportFailureIsNotRetried covers the request-error branch: a dropped
+// connection returns immediately rather than burning the retry budget, and the
 // message names the method and path so the failing call is identifiable.
 func TestTransportFailureIsNotRetried(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	url := srv.URL
-	srv.Close() // nothing is listening now
+	var calls atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		calls.Add(1)
+		conn, _, err := w.(http.Hijacker).Hijack()
+		if err != nil {
+			t.Errorf("hijack connection: %v", err)
+			return
+		}
+		_ = conn.Close()
+	}))
+	defer srv.Close()
 
-	start := time.Now()
-	_, err := console.New(url, "k").GetDeployment(context.Background(), "1")
+	_, err := console.New(srv.URL, "k").GetDeployment(context.Background(), "1")
 	if err == nil {
-		t.Fatal("a dial failure must surface")
+		t.Fatal("a transport failure must surface")
 	}
 	if !strings.Contains(err.Error(), "/v1/deployments/1") {
 		t.Errorf("error should name the failing path, got %q", err)
 	}
-	// Three attempts with backoff would take at least 300ms.
-	if elapsed := time.Since(start); elapsed > 250*time.Millisecond {
-		t.Errorf("a dial failure must not be retried, took %s", elapsed)
+	if got := calls.Load(); got != 1 {
+		t.Errorf("a transport failure must not be retried, got %d requests", got)
 	}
 }

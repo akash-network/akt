@@ -181,6 +181,30 @@ type SignTx struct {
 	Code            int    `json:"code"`
 	TransactionHash string `json:"transactionHash"`
 	RawLog          string `json:"rawLog"`
+	codePresent     bool
+}
+
+// UnmarshalJSON preserves whether code was present on the wire. A missing
+// receipt code must not be confused with the zero success code.
+func (s *SignTx) UnmarshalJSON(data []byte) error {
+	var wire struct {
+		Code            *int   `json:"code"`
+		TransactionHash string `json:"transactionHash"`
+		RawLog          string `json:"rawLog"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+
+	s.Code = 0
+	s.codePresent = wire.Code != nil
+	if wire.Code != nil {
+		s.Code = *wire.Code
+	}
+	s.TransactionHash = wire.TransactionHash
+	s.RawLog = wire.RawLog
+
+	return nil
 }
 
 // CreateDeploymentResult is the payload of POST /v1/deployments.

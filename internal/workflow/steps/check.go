@@ -43,11 +43,16 @@ func (e *CheckExecutor) Execute(ctx context.Context, step workflow.StepDef, stat
 		status = "skipped"
 	}
 
-	return &workflow.StepResult{
+	result := &workflow.StepResult{
 		Name:     step.Name,
 		Type:     step.Type,
 		Status:   status,
 		Error:    fmt.Sprintf("condition not met: %s", step.Condition),
 		Duration: time.Since(start),
-	}, fmt.Errorf("check failed: condition %q not met", step.Condition)
+	}
+	if status == "skipped" {
+		return result, nil
+	}
+
+	return result, fmt.Errorf("check failed: condition %q not met", step.Condition)
 }

@@ -30,8 +30,7 @@ const currentSchemaVersion uint64 = 1
 
 // BoltStore implements store.Store backed by a bbolt database.
 type BoltStore struct {
-	db   *bolt.DB
-	path string
+	db *bolt.DB
 }
 
 // Compile-time check that BoltStore implements store.Store.
@@ -75,7 +74,7 @@ func Open(path string) (*BoltStore, error) {
 		return nil, err
 	}
 
-	return &BoltStore{db: db, path: path}, nil
+	return &BoltStore{db: db}, nil
 }
 
 // Close closes the underlying bbolt database.
@@ -88,21 +87,36 @@ func (s *BoltStore) Close() error {
 // PutDeployment stores a deployment record.
 func (s *BoltStore) PutDeployment(_ context.Context, d *store.DeploymentRecord) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketDeployments)
-		key := store.DeploymentKey(d.Owner, d.DSeq)
-		version, err := nextRecordVersion(b.Get([]byte(key)), d.RecordVersion)
-		if err != nil {
-			return fmt.Errorf("version deployment: %w", err)
-		}
-
-		record := *d
-		record.RecordVersion = version
-		data, err := json.Marshal(&record)
-		if err != nil {
-			return fmt.Errorf("marshal deployment: %w", err)
-		}
-		return b.Put([]byte(key), data)
+		return putDeploymentTx(tx, d)
 	})
+}
+
+func putDeploymentTx(tx *bolt.Tx, d *store.DeploymentRecord) error {
+	return putDeploymentTxWithMarshal(tx, d, json.Marshal)
+}
+
+type jsonMarshalFunc func(any) ([]byte, error)
+
+func putDeploymentTxWithMarshal(tx *bolt.Tx, d *store.DeploymentRecord, marshal jsonMarshalFunc) error {
+	if d == nil {
+		return fmt.Errorf("deployment record is nil")
+	}
+
+	b := tx.Bucket(bucketDeployments)
+	key := store.DeploymentKey(d.Owner, d.DSeq)
+	version, err := nextRecordVersion(b.Get([]byte(key)), d.RecordVersion)
+	if err != nil {
+		return fmt.Errorf("version deployment: %w", err)
+	}
+
+	record := *d
+	record.RecordVersion = version
+	data, err := marshal(&record)
+	if err != nil {
+		return fmt.Errorf("marshal deployment: %w", err)
+	}
+
+	return b.Put([]byte(key), data)
 }
 
 // GetDeployment retrieves a deployment by owner and dseq.
@@ -175,16 +189,12 @@ func (s *BoltStore) MarkDeploymentClosed(_ context.Context, owner string, dseq u
 		}
 		record.State = "closed"
 		record.UpdatedAt = closedAt
-		data, err := json.Marshal(&record)
-		if err != nil {
-			return fmt.Errorf("marshal deployment: %w", err)
-		}
-		if err := deployments.Put(key, data); err != nil {
+		if err := putDeploymentTx(tx, &record); err != nil {
 			return fmt.Errorf("store deployment: %w", err)
 		}
 
 		leases := tx.Bucket(bucketLeases)
-		updates := make(map[string][]byte)
+		updates := make([]store.LeaseRecord, 0)
 		if err := leases.ForEach(func(k, v []byte) error {
 			var lease store.LeaseRecord
 			if err := json.Unmarshal(v, &lease); err != nil {
@@ -197,18 +207,14 @@ func (s *BoltStore) MarkDeploymentClosed(_ context.Context, owner string, dseq u
 				lease.ClosedAt = closedAt
 			}
 			lease.State = "closed"
-			encoded, err := json.Marshal(&lease)
-			if err != nil {
-				return fmt.Errorf("marshal lease %s: %w", k, err)
-			}
-			updates[string(k)] = encoded
+			updates = append(updates, lease)
 			return nil
 		}); err != nil {
 			return err
 		}
-		for leaseKey, encoded := range updates {
-			if err := leases.Put([]byte(leaseKey), encoded); err != nil {
-				return fmt.Errorf("store lease %s: %w", leaseKey, err)
+		for i := range updates {
+			if err := putLeaseTx(tx, &updates[i]); err != nil {
+				return fmt.Errorf("store lease %s: %w", store.LeaseKey(updates[i].ID), err)
 			}
 		}
 
@@ -221,21 +227,34 @@ func (s *BoltStore) MarkDeploymentClosed(_ context.Context, owner string, dseq u
 // PutLease stores a lease record.
 func (s *BoltStore) PutLease(_ context.Context, l *store.LeaseRecord) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketLeases)
-		key := store.LeaseKey(l.ID)
-		version, err := nextRecordVersion(b.Get([]byte(key)), l.RecordVersion)
-		if err != nil {
-			return fmt.Errorf("version lease: %w", err)
-		}
-
-		record := *l
-		record.RecordVersion = version
-		data, err := json.Marshal(&record)
-		if err != nil {
-			return fmt.Errorf("marshal lease: %w", err)
-		}
-		return b.Put([]byte(key), data)
+		return putLeaseTx(tx, l)
 	})
+}
+
+func putLeaseTx(tx *bolt.Tx, l *store.LeaseRecord) error {
+	return putLeaseTxWithMarshal(tx, l, json.Marshal)
+}
+
+func putLeaseTxWithMarshal(tx *bolt.Tx, l *store.LeaseRecord, marshal jsonMarshalFunc) error {
+	if l == nil {
+		return fmt.Errorf("lease record is nil")
+	}
+
+	b := tx.Bucket(bucketLeases)
+	key := store.LeaseKey(l.ID)
+	version, err := nextRecordVersion(b.Get([]byte(key)), l.RecordVersion)
+	if err != nil {
+		return fmt.Errorf("version lease: %w", err)
+	}
+
+	record := *l
+	record.RecordVersion = version
+	data, err := marshal(&record)
+	if err != nil {
+		return fmt.Errorf("marshal lease: %w", err)
+	}
+
+	return b.Put([]byte(key), data)
 }
 
 // GetLease retrieves a lease by its ID.
@@ -292,21 +311,34 @@ func (s *BoltStore) DeleteLease(_ context.Context, id store.LeaseID) error {
 // PutBid stores a bid record.
 func (s *BoltStore) PutBid(_ context.Context, b *store.BidRecord) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		bucket := tx.Bucket(bucketBids)
-		key := store.BidKey(b.ID)
-		version, err := nextRecordVersion(bucket.Get([]byte(key)), b.RecordVersion)
-		if err != nil {
-			return fmt.Errorf("version bid: %w", err)
-		}
-
-		record := *b
-		record.RecordVersion = version
-		data, err := json.Marshal(&record)
-		if err != nil {
-			return fmt.Errorf("marshal bid: %w", err)
-		}
-		return bucket.Put([]byte(key), data)
+		return putBidTx(tx, b)
 	})
+}
+
+func putBidTx(tx *bolt.Tx, b *store.BidRecord) error {
+	return putBidTxWithMarshal(tx, b, json.Marshal)
+}
+
+func putBidTxWithMarshal(tx *bolt.Tx, b *store.BidRecord, marshal jsonMarshalFunc) error {
+	if b == nil {
+		return fmt.Errorf("bid record is nil")
+	}
+
+	bucket := tx.Bucket(bucketBids)
+	key := store.BidKey(b.ID)
+	version, err := nextRecordVersion(bucket.Get([]byte(key)), b.RecordVersion)
+	if err != nil {
+		return fmt.Errorf("version bid: %w", err)
+	}
+
+	record := *b
+	record.RecordVersion = version
+	data, err := marshal(&record)
+	if err != nil {
+		return fmt.Errorf("marshal bid: %w", err)
+	}
+
+	return bucket.Put([]byte(key), data)
 }
 
 type recordVersionEnvelope struct {
@@ -400,13 +432,26 @@ func (s *BoltStore) GetSyncState(_ context.Context) (*store.SyncState, error) {
 // PutSyncState stores the sync state.
 func (s *BoltStore) PutSyncState(_ context.Context, st *store.SyncState) error {
 	return s.db.Update(func(tx *bolt.Tx) error {
-		b := tx.Bucket(bucketSync)
-		data, err := json.Marshal(st)
-		if err != nil {
-			return fmt.Errorf("marshal sync state: %w", err)
-		}
-		return b.Put(keySyncState, data)
+		return putSyncStateTx(tx, st)
 	})
+}
+
+func putSyncStateTx(tx *bolt.Tx, st *store.SyncState) error {
+	return putSyncStateTxWithMarshal(tx, st, json.Marshal)
+}
+
+func putSyncStateTxWithMarshal(tx *bolt.Tx, st *store.SyncState, marshal jsonMarshalFunc) error {
+	if st == nil {
+		return fmt.Errorf("sync state is nil")
+	}
+
+	b := tx.Bucket(bucketSync)
+	data, err := marshal(st)
+	if err != nil {
+		return fmt.Errorf("marshal sync state: %w", err)
+	}
+
+	return b.Put(keySyncState, data)
 }
 
 // --- Schema management ---
@@ -441,6 +486,12 @@ func (s *BoltStore) Export(ctx context.Context, w io.Writer, format store.Export
 // Import deserializes store contents from the given reader.
 func (s *BoltStore) Import(ctx context.Context, r io.Reader, format store.ExportFormat, merge bool) error {
 	return s.importData(ctx, r, format, merge)
+}
+
+// ValidateImport exercises the same decode, validation, version, and write
+// path as Import, then rolls the bbolt transaction back.
+func (s *BoltStore) ValidateImport(ctx context.Context, r io.Reader, format store.ExportFormat, merge bool) error {
+	return s.validateImportData(ctx, r, format, merge)
 }
 
 // --- Stats ---
@@ -586,10 +637,4 @@ func matchBid(b *store.BidRecord, f store.BidFilter) bool {
 		return false
 	}
 	return true
-}
-
-// Path returns the filesystem path of the underlying database file.
-// Exported for use by os.Stat in callers that need file-level info.
-func (s *BoltStore) Path() string {
-	return s.path
 }

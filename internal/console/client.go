@@ -19,6 +19,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"pkg.akt.dev/akt/internal/actionlog"
@@ -32,6 +33,12 @@ const DefaultBaseURL = "https://console-api.akash.network"
 // so the CLI, the workflow transport, and the client itself cannot drift
 // apart on the limit they enforce.
 const MinDepositUSD = 0.5
+
+// maxResponseBodyBytes bounds every Console response before it can be decoded,
+// returned in an error, or copied into an action log. Successful list responses
+// are currently far smaller; the ceiling leaves room for growth without
+// allowing a peer to exhaust client memory.
+const maxResponseBodyBytes int64 = 16 << 20
 
 // Sentinel errors returned by the client. Match with errors.Is.
 var (
@@ -85,6 +92,12 @@ func New(baseURL, apiKey string) *Client {
 		apiKey:  apiKey,
 		httpClient: &http.Client{
 			Timeout: 30 * time.Second,
+			CheckRedirect: func(*http.Request, []*http.Request) error {
+				// Return the response to doJSON without following it. Returning a
+				// normal error here makes net/http embed the untrusted Location URL
+				// in a *url.Error, which is unsafe diagnostic material.
+				return http.ErrUseLastResponse
+			},
 		},
 	}
 }
@@ -125,7 +138,7 @@ func (c *Client) recordOutcome(action, dseq, status string, opErr error, params 
 		if entry.Status == "success" {
 			entry.Status = "failed"
 		}
-		entry.Error = opErr.Error()
+		entry.Error = redactResponseSecret(opErr.Error(), c.apiKey)
 	}
 	if params != nil {
 		if raw, err := json.Marshal(params); err == nil {
@@ -161,7 +174,7 @@ func (c *Client) doData(ctx context.Context, method, path string, reqBody, resul
 	// response that omits the envelope (an API change, a proxy's error
 	// page, a wrong-shaped success) leaves result zero-valued and reads
 	// as success — e.g. a deployment with an empty dseq.
-	if len(env.Data) == 0 {
+	if len(env.Data) == 0 || bytes.Equal(bytes.TrimSpace(env.Data), []byte("null")) {
 		return fmt.Errorf("console: %s %s returned no data envelope", method, path)
 	}
 
@@ -230,10 +243,13 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, resul
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
-			return fmt.Errorf("console: %s %s: %w", method, path, err)
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				return fmt.Errorf("console: %s %s: %w", method, path, ctxErr)
+			}
+			return fmt.Errorf("console: %s %s: %s", method, path, redactResponseSecret(err.Error(), c.apiKey))
 		}
 
-		respBody, err := io.ReadAll(resp.Body)
+		respBody, err := readResponseBody(resp.Body, maxResponseBodyBytes)
 		resp.Body.Close()
 		if err != nil {
 			return fmt.Errorf("console: read response: %w", err)
@@ -241,7 +257,10 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, resul
 
 		switch {
 		case resp.StatusCode >= 200 && resp.StatusCode < 300:
-			if result != nil && len(respBody) > 0 {
+			if result != nil && len(bytes.TrimSpace(respBody)) == 0 {
+				return fmt.Errorf("console: %s %s returned an empty response body", method, path)
+			}
+			if result != nil {
 				if err := json.Unmarshal(respBody, result); err != nil {
 					return fmt.Errorf("console: decode response: %w", err)
 				}
@@ -263,8 +282,14 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, resul
 		case resp.StatusCode >= 500:
 			lastErr = fmt.Errorf("console: server error (HTTP %d)", resp.StatusCode)
 
+		case resp.StatusCode >= 300 && resp.StatusCode < 400:
+			return fmt.Errorf("console: HTTP redirects are not allowed (HTTP %d)", resp.StatusCode)
+
 		default:
-			return &HTTPError{StatusCode: resp.StatusCode, Body: string(respBody)}
+			return &HTTPError{
+				StatusCode: resp.StatusCode,
+				Body:       redactResponseSecret(string(respBody), c.apiKey),
+			}
 		}
 
 		// Never replay a request that could have been processed server-side:
@@ -283,6 +308,28 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, resul
 	}
 
 	return lastErr
+}
+
+func readResponseBody(reader io.Reader, limit int64) ([]byte, error) {
+	if limit < 0 {
+		return nil, fmt.Errorf("invalid response limit %d", limit)
+	}
+
+	body, err := io.ReadAll(io.LimitReader(reader, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(body)) > limit {
+		return nil, fmt.Errorf("response exceeds %d-byte limit", limit)
+	}
+	return body, nil
+}
+
+func redactResponseSecret(body, secret string) string {
+	if secret == "" {
+		return body
+	}
+	return strings.ReplaceAll(body, secret, "[REDACTED]")
 }
 
 // waitForRetry applies the client's bounded exponential backoff while still

@@ -115,12 +115,12 @@ func (s *stubLightClient) PrintJSON(interface{}) error      { return nil }
 func execQueryCmd(t *testing.T, cmd *cobra.Command, q cv1beta3.QueryClient, args ...string) (string, error) {
 	t.Helper()
 
-	var queryOut bytes.Buffer
+	var sdkOut bytes.Buffer
 	cl := &stubLightClient{
 		q: q,
 		cctx: sdkclient.Context{
 			Codec:  codec.NewProtoCodec(codectypes.NewInterfaceRegistry()),
-			Output: &queryOut,
+			Output: &sdkOut,
 		},
 	}
 
@@ -137,7 +137,7 @@ func execQueryCmd(t *testing.T, cmd *cobra.Command, q cv1beta3.QueryClient, args
 
 	err := cmd.Execute()
 
-	return queryOut.String(), err
+	return cobraOut.String(), err
 }
 
 // TestQueryDeploymentPositionalStateMismatchFails pins regression AKT-650#1:

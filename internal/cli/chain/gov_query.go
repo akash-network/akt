@@ -200,6 +200,11 @@ $ %s query gov vote 1 akash1skjwj5whet0lpe65qaq4rpq03hjxlwd9nf39lk
 				return fmt.Errorf("proposal-id %s not a valid int, please input a valid proposal-id", args[0])
 			}
 
+			voterAddr, err := sdk.AccAddressFromBech32(args[1])
+			if err != nil {
+				return err
+			}
+
 			cl := MustLightClientFromContext(ctx)
 
 			// check to see if the proposal is in the store
@@ -208,12 +213,7 @@ $ %s query gov vote 1 akash1skjwj5whet0lpe65qaq4rpq03hjxlwd9nf39lk
 				&v1.QueryProposalRequest{ProposalId: proposalID},
 			)
 			if err != nil {
-				return fmt.Errorf("failed to fetch proposal-id %d: %s", proposalID, err)
-			}
-
-			voterAddr, err := sdk.AccAddressFromBech32(args[1])
-			if err != nil {
-				return err
+				return fmt.Errorf("failed to fetch proposal-id %d: %w", proposalID, err)
 			}
 
 			res, err := cl.Query().Gov().Vote(
@@ -275,13 +275,18 @@ $ %[1]s query gov votes 1 --page=2 --limit=100
 				return fmt.Errorf("proposal-id %s not a valid int, please input a valid proposal-id", args[0])
 			}
 
+			pageReq, err := ReadPageRequest(cmd.Flags())
+			if err != nil {
+				return err
+			}
+
 			// check to see if the proposal is in the store
 			proposalRes, err := cl.Query().Gov().Proposal(
 				ctx,
 				&v1.QueryProposalRequest{ProposalId: proposalID},
 			)
 			if err != nil {
-				return fmt.Errorf("failed to fetch proposal-id %d: %s", proposalID, err)
+				return fmt.Errorf("failed to fetch proposal-id %d: %w", proposalID, err)
 			}
 
 			propStatus := proposalRes.GetProposal().Status
@@ -301,11 +306,6 @@ $ %[1]s query gov votes 1 --page=2 --limit=100
 				cctx.LegacyAmino.MustUnmarshalJSON(resByTxQuery, &votes)
 				return pretty.PrintQueryResultAny(cmd, cctx, votes)
 
-			}
-
-			pageReq, err := ReadPageRequest(cmd.Flags())
-			if err != nil {
-				return err
 			}
 
 			res, err := cl.Query().Gov().Votes(
@@ -353,13 +353,17 @@ $ %s query gov deposit 1 akash1skjwj5whet0lpe65qaq4rpq03hjxlwd9nf39lk
 				return fmt.Errorf("proposal-id %s not a valid uint, please input a valid proposal-id", args[0])
 			}
 
+			if _, err := sdk.AccAddressFromBech32(args[1]); err != nil {
+				return err
+			}
+
 			// check to see if the proposal is in the store
 			_, err = cl.Query().Gov().Proposal(
 				ctx,
 				&v1.QueryProposalRequest{ProposalId: proposalID},
 			)
 			if err != nil {
-				return fmt.Errorf("failed to fetch proposal-id %d: %s", proposalID, err)
+				return fmt.Errorf("failed to fetch proposal-id %d: %w", proposalID, err)
 			}
 
 			res, err := cl.Query().Gov().Deposit(
@@ -406,18 +410,18 @@ $ %s query gov deposits 1
 				return fmt.Errorf("proposal-id %s not a valid uint, please input a valid proposal-id", args[0])
 			}
 
+			pageReq, err := ReadPageRequest(cmd.Flags())
+			if err != nil {
+				return err
+			}
+
 			// check to see if the proposal is in the store
 			_, err = cl.Query().Gov().Proposal(
 				ctx,
 				&v1.QueryProposalRequest{ProposalId: proposalID},
 			)
 			if err != nil {
-				return fmt.Errorf("failed to fetch proposal-id %d: %s", proposalID, err)
-			}
-
-			pageReq, err := ReadPageRequest(cmd.Flags())
-			if err != nil {
-				return err
+				return fmt.Errorf("failed to fetch proposal-id %d: %w", proposalID, err)
 			}
 
 			res, err := cl.Query().Gov().Deposits(
@@ -471,7 +475,7 @@ $ %s query gov tally 1
 				&v1.QueryProposalRequest{ProposalId: proposalID},
 			)
 			if err != nil {
-				return fmt.Errorf("failed to fetch proposal-id %d: %s", proposalID, err)
+				return fmt.Errorf("failed to fetch proposal-id %d: %w", proposalID, err)
 			}
 
 			// Query store
@@ -556,6 +560,12 @@ $ %s query gov param deposit
 		),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			switch args[0] {
+			case "voting", "tallying", "deposit":
+			default:
+				return fmt.Errorf("argument must be one of (voting|tallying|deposit), was %s", args[0])
+			}
+
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)
 
@@ -577,8 +587,6 @@ $ %s query gov param deposit
 				out = res.GetTallyParams()
 			case "deposit":
 				out = res.GetDepositParams()
-			default:
-				return fmt.Errorf("argument must be one of (voting|tallying|deposit), was %s", args[0])
 			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), out)

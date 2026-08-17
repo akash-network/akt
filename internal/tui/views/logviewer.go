@@ -106,6 +106,9 @@ func (v *LogViewer) AppendLine(line LogLine) {
 
 // AppendLines adds multiple log lines at once.
 func (v *LogViewer) AppendLines(lines []LogLine) {
+	for _, line := range lines {
+		v.trackService(line.Scope)
+	}
 	v.lines = append(v.lines, lines...)
 	if len(v.lines) > maxLogLines {
 		v.lines = v.lines[len(v.lines)-maxLogLines:]

@@ -1,6 +1,7 @@
 package sdl
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -63,10 +64,11 @@ func scaffoldsCmd() *cobra.Command {
 					rows = append(rows, row{sc.Name, sc.Description, sc.Params})
 				}
 
-				return output.Print(f, rows)
+				return output.Fprint(cmd.OutOrStdout(), f, rows)
 			}
 
-			w := tabwriter.NewWriter(cmd.OutOrStdout(), 2, 0, 2, ' ', 0)
+			checked := output.NewCheckedWriter(cmd.OutOrStdout())
+			w := tabwriter.NewWriter(checked, 2, 0, 2, ' ', 0)
 
 			fmt.Fprintln(w, "NAME\tDESCRIPTION\tFLAGS")
 			for _, s := range Scaffolds() {
@@ -74,12 +76,12 @@ func scaffoldsCmd() *cobra.Command {
 			}
 
 			if err := w.Flush(); err != nil {
-				return err
+				return checked.Complete(err)
 			}
 
-			fmt.Fprintln(cmd.OutOrStdout(), "\nGenerate one with: akt sdl init <scaffold> [flags] > deploy.yaml")
+			_, err := fmt.Fprintln(checked, "\nGenerate one with: akt sdl init <scaffold> [flags] > deploy.yaml")
 
-			return nil
+			return checked.Complete(err)
 		},
 	}
 }
@@ -138,9 +140,9 @@ self-checked against "akt sdl validate" before it is printed.`,
 				return err
 			}
 
-			_, err = cmd.OutOrStdout().Write(out)
-
-			return err
+			checked := output.NewCheckedWriter(cmd.OutOrStdout())
+			_, writeErr := checked.Write(out)
+			return checked.Complete(writeErr)
 		},
 	}
 
@@ -294,20 +296,20 @@ Exit codes:
 			}
 
 			if res.Valid {
-				out := cmd.OutOrStdout()
-				fmt.Fprintf(out, "valid: %d service(s), %d group(s), %d warning(s)\n",
+				out := output.NewCheckedWriter(cmd.OutOrStdout())
+				_, writeErr := fmt.Fprintf(out, "valid: %d service(s), %d group(s), %d warning(s)\n",
 					res.Services, res.Groups, len(res.Warnings))
 				printIssues(out, "warning", res.Warnings)
 
-				return nil
+				return out.Complete(writeErr)
 			}
 
-			errOut := cmd.ErrOrStderr()
-			fmt.Fprintf(errOut, "invalid: %d error(s), %d warning(s)\n", len(res.Errors), len(res.Warnings))
+			errOut := output.NewCheckedWriter(cmd.ErrOrStderr())
+			_, writeErr := fmt.Fprintf(errOut, "invalid: %d error(s), %d warning(s)\n", len(res.Errors), len(res.Warnings))
 			printIssues(errOut, "error", res.Errors)
 			printIssues(errOut, "warning", res.Warnings)
 
-			return validationFailedError(name, res)
+			return errOut.Complete(errors.Join(validationFailedError(name, res), writeErr))
 		},
 	}
 }

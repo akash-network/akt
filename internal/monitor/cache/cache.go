@@ -2,7 +2,7 @@ package cache
 
 import (
 	"encoding/json"
-	"fmt"
+	"errors"
 	"sort"
 	"strings"
 	"time"
@@ -76,19 +76,28 @@ type ProviderCache struct {
 // Open opens or creates the provider cache in the given bbolt database.
 // It ensures the required buckets exist.
 func Open(db *bolt.DB) (*ProviderCache, error) {
-	err := db.Update(func(tx *bolt.Tx) error {
-		if _, err := tx.CreateBucketIfNotExists(bucketProviders); err != nil {
-			return fmt.Errorf("create providers bucket: %w", err)
-		}
-		if _, err := tx.CreateBucketIfNotExists(bucketMeta); err != nil {
-			return fmt.Errorf("create meta bucket: %w", err)
-		}
-		return nil
-	})
+	err := db.Update(ensureProviderBuckets)
 	if err != nil {
 		return nil, err
 	}
 	return &ProviderCache{db: db}, nil
+}
+
+func ensureProviderBuckets(tx *bolt.Tx) error {
+	_, providersErr := tx.CreateBucketIfNotExists(bucketProviders)
+	_, metaErr := tx.CreateBucketIfNotExists(bucketMeta)
+	return errors.Join(providersErr, metaErr)
+}
+
+// OpenStores atomically initializes every bucket used by the standalone
+// monitor and returns cache handles backed by the supplied database.
+func OpenStores(db *bolt.DB) (*ProviderCache, *MonikerCache, error) {
+	if err := db.Update(func(tx *bolt.Tx) error {
+		return errors.Join(ensureProviderBuckets(tx), ensureMonikerBucket(tx))
+	}); err != nil {
+		return nil, nil, err
+	}
+	return &ProviderCache{db: db}, &MonikerCache{db: db}, nil
 }
 
 // HasProviders returns true if the cache has any providers.

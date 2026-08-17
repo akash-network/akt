@@ -11,19 +11,22 @@ import (
 // one compact object per line, YAML is one document per record, and the
 // caller supplies the human-readable pretty line.
 func PrintStreamRecord(cmd *cobra.Command, structured any, pretty string) error {
+	checked := NewCheckedWriter(cmd.OutOrStdout())
+
 	switch FormatFromCmd(cmd) {
 	case FormatJSON:
-		if err := json.NewEncoder(cmd.OutOrStdout()).Encode(structured); err != nil {
-			return fmt.Errorf("marshal stream output: %w", err)
+		err := json.NewEncoder(checked).Encode(structured)
+		if err != nil {
+			err = fmt.Errorf("marshal stream output: %w", err)
 		}
-		return nil
+		return checked.Complete(err)
 	case FormatYAML:
-		if err := FprintJSONSemantics(cmd.OutOrStdout(), FormatYAML, structured); err != nil {
+		if err := FprintJSONSemantics(checked, FormatYAML, structured); err != nil {
 			return fmt.Errorf("marshal stream output: %w", err)
 		}
-		return nil
+		return checked.Complete(nil)
 	default:
-		_, err := fmt.Fprintln(cmd.OutOrStdout(), pretty)
-		return err
+		_, err := fmt.Fprintln(checked, pretty)
+		return checked.Complete(err)
 	}
 }

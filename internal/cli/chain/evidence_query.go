@@ -42,6 +42,12 @@ $ %s query %s --page=2 --limit=50
 				if err != nil {
 					return err
 				}
+				if err := requireQueryResponse("evidence", res); err != nil {
+					return err
+				}
+				if err := requireQueryField("evidence", "evidence", res.Evidence); err != nil {
+					return err
+				}
 
 				return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), res.Evidence)
 			}
@@ -57,6 +63,9 @@ $ %s query %s --page=2 --limit=50
 
 			res, err := cl.Query().Evidence().AllEvidence(ctx, params)
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("all evidence", res); err != nil {
 				return err
 			}
 

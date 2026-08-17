@@ -140,7 +140,7 @@ func TestTemplates(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/v1/templates-list":
-			_, _ = w.Write([]byte(`{"data":{"categories":[{"title":"AI","templates":[{"id":"tpl-1"}]}]}}`))
+			_, _ = w.Write([]byte(`{"data":[{"title":"AI","templates":[{"id":"tpl-1"}]}]}`))
 		case "/v1/templates/tpl-1":
 			_, _ = w.Write([]byte(`{"data":{"id":"tpl-1","name":"Jupyter","summary":"notebooks","deploy":"---\nversion: \"2.0\"","readme":"# Jupyter"}}`))
 		default:
@@ -153,7 +153,7 @@ func TestTemplates(t *testing.T) {
 
 	raw, err := c.ListTemplates(context.Background())
 	require.NoError(t, err)
-	assert.Contains(t, string(raw), "categories", "envelope unwrapped, raw categories returned")
+	assert.JSONEq(t, `[{"title":"AI","templates":[{"id":"tpl-1"}]}]`, string(raw), "data envelope unwrapped to category array")
 
 	tpl, err := c.GetTemplate(context.Background(), "tpl-1")
 	require.NoError(t, err)

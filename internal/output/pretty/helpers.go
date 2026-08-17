@@ -3,14 +3,12 @@ package pretty
 import (
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 	"strings"
 	"time"
 
 	"charm.land/lipgloss/v2"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/spf13/cobra"
 
 	"cosmossdk.io/math"
 
@@ -454,16 +452,7 @@ func colDefs(headers []string) []ColDef {
 	return cols
 }
 
-// WriteTable writes a table with headers and rows to w using simple string headers.
-// All columns are left-aligned. For right-aligned columns use WriteTableCols.
-//
-// With no rows it writes DefaultEmptyMessage rather than a bare header; prefer
-// WriteTableOrEmpty, which names what is missing.
-func WriteTable(w io.Writer, headers []string, rows [][]string) {
-	WriteTableCols(w, colDefs(headers), rows)
-}
-
-// WriteTableOrEmpty writes a table like WriteTable, or emptyMsg (dimmed) when
+// WriteTableOrEmpty writes a table with string headers, or emptyMsg (dimmed) when
 // there are no rows. emptyMsg names what was searched for — "(no deployments)",
 // "(no bids)" — because a table header with nothing under it reads as a
 // rendering failure rather than as an empty result (SPEC §10.3).
@@ -554,27 +543,6 @@ func WriteTableCols(w io.Writer, cols []ColDef, rows [][]string) {
 // Newline writes an empty line to w.
 func Newline(w io.Writer) {
 	fmt.Fprintln(w)
-}
-
-// IsOutputJSON returns true if --output is set to "json".
-func IsOutputJSON(cmd *cobra.Command) bool {
-	val, _ := cmd.Flags().GetString("output")
-	return val == "json"
-}
-
-// IsOutputYAML returns true if --output is set to "yaml" or "text".
-// Note: Cosmos SDK uses "text" to mean YAML output.
-func IsOutputYAML(cmd *cobra.Command) bool {
-	val, _ := cmd.Flags().GetString("output")
-	return val == "yaml" || val == "text"
-}
-
-// WriteTo is a convenience for writing to stdout when w is nil.
-func WriteTo(w io.Writer) io.Writer {
-	if w == nil {
-		return os.Stdout
-	}
-	return w
 }
 
 // FormatDuration formats a time.Duration as a human-readable string.

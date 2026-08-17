@@ -3,9 +3,12 @@ package context
 import (
 	"log/slog"
 	"sync"
+	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
+
+const configWriteSettleDelay = 25 * time.Millisecond
 
 // Watcher monitors config.yaml for changes and reloads the Manager.
 // Subscribers are notified via callback after each successful reload.
@@ -85,6 +88,12 @@ func (w *Watcher) loop() {
 			if event.Op&(fsnotify.Write|fsnotify.Create) == 0 {
 				continue
 			}
+
+			// A Create event can arrive after the writer opened config.yaml but
+			// before its payload is complete. Let the accompanying write burst
+			// settle before parsing so subscribers never observe that transient
+			// empty or partial file.
+			time.Sleep(configWriteSettleDelay)
 
 			if err := w.mgr.Reload(); err != nil {
 				slog.Warn("config reload failed", "error", err)

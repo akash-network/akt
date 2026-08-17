@@ -10,6 +10,7 @@ import (
 	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	stakingtypes "github.com/cosmos/cosmos-sdk/x/staking/types"
 
+	"pkg.akt.dev/akt/internal/output/pretty"
 	"pkg.akt.dev/akt/internal/store"
 	"pkg.akt.dev/akt/internal/tui/messages"
 	aclient "pkg.akt.dev/go/node/client"
@@ -108,8 +109,7 @@ func (l *Loader) LoadBalance(account string) tea.Cmd {
 		}
 		for _, coin := range resp.Balances {
 			if coin.Denom == "uakt" {
-				amt := coin.Amount.ToLegacyDec().QuoInt64(1_000_000)
-				return messages.BalanceLoadedMsg{Amount: fmt.Sprintf("%.2f AKT", amt.MustFloat64())}
+				return messages.BalanceLoadedMsg{Amount: pretty.FormatCoin(coin)}
 			}
 		}
 		return messages.BalanceLoadedMsg{Amount: "0 AKT"}

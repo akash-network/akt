@@ -132,6 +132,13 @@ func TestUnavailableBackendErrorNamesBothRemedies(t *testing.T) {
 	}
 }
 
+func TestUnavailableBackendErrorWithoutPlatformCandidates(t *testing.T) {
+	err := (&aktkeyring.UnavailableBackendError{Keyring: "default", Backend: sdkkeyring.BackendOS}).Error()
+	if !strings.Contains(err, "looked for none on this platform") {
+		t.Errorf("error = %q, want explicit absence of platform stores", err)
+	}
+}
+
 func TestValidateBackendRejectsUnknownValues(t *testing.T) {
 	if err := aktkeyring.ValidateBackend(""); err != nil {
 		t.Errorf("an unset backend must be accepted as inherit: %v", err)
@@ -173,5 +180,15 @@ func TestApplyOverridesLeavesUnsetValuesAlone(t *testing.T) {
 	// context manager still owns.
 	if configured[0].Backend != sdkkeyring.BackendOS {
 		t.Error("ApplyOverrides mutated its input")
+	}
+
+	directoryOverride := aktkeyring.ApplyOverrides(configured, "", "/session")
+	for _, kr := range directoryOverride {
+		if kr.Dir != "/session" {
+			t.Errorf("keyring %q dir = %q, want /session", kr.Name, kr.Dir)
+		}
+	}
+	if configured[1].Dir != "" {
+		t.Error("directory override mutated its input")
 	}
 }

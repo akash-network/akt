@@ -55,6 +55,9 @@ func GetQueryDistributionParamsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("distribution params", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), &res.Params)
 		},
@@ -95,6 +98,9 @@ $ %s query distribution validator-distribution-info %s1lwjmdnks33xwnmfayc64ycprw
 				ValidatorAddress: validatorAddr.String(),
 			})
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("validator distribution info", res); err != nil {
 				return err
 			}
 
@@ -142,6 +148,9 @@ $ %s query distribution validator-outstanding-rewards %s1lwjmdnks33xwnmfayc64ycp
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("validator outstanding rewards", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), &res.Rewards)
 		},
@@ -184,6 +193,9 @@ $ %s query distribution commission %s1gghjut3ccd8ay0zduzj64hwre2fxs9ldmqhffj
 				&types.QueryValidatorCommissionRequest{ValidatorAddress: validatorAddr.String()},
 			)
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("validator commission", res); err != nil {
 				return err
 			}
 
@@ -250,6 +262,9 @@ $ %s query distribution slashes %s1gghjut3ccd8ay0zduzj64hwre2fxs9ldmqhffj 0 100
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("validator slashes", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), res)
 		},
@@ -304,6 +319,9 @@ $ %s query distribution rewards %s1gghjut3ccd8ay0zduzj64hwre2fxs9ld75ru9p %s1ggh
 				if err != nil {
 					return err
 				}
+				if err := requireQueryResponse("delegation rewards", res); err != nil {
+					return err
+				}
 
 				return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), res)
 			}
@@ -313,6 +331,9 @@ $ %s query distribution rewards %s1gghjut3ccd8ay0zduzj64hwre2fxs9ld75ru9p %s1ggh
 				&types.QueryDelegationTotalRewardsRequest{DelegatorAddress: delegatorAddr.String()},
 			)
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("delegation total rewards", res); err != nil {
 				return err
 			}
 
@@ -347,6 +368,9 @@ $ %s query distribution community-pool
 
 			res, err := cl.Query().Distribution().CommunityPool(cmd.Context(), &types.QueryCommunityPoolRequest{})
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("community pool", res); err != nil {
 				return err
 			}
 

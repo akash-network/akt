@@ -4,16 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	tmrpc "github.com/cometbft/cometbft/rpc/core/types"
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"google.golang.org/grpc"
 
+	aktprovider "pkg.akt.dev/akt/internal/provider"
 	"pkg.akt.dev/akt/internal/workflow"
 	aclient "pkg.akt.dev/go/node/client"
 	cv1beta3 "pkg.akt.dev/go/node/client/v1beta3"
+	dv1 "pkg.akt.dev/go/node/deployment/v1"
+	dv1beta "pkg.akt.dev/go/node/deployment/v1beta4"
 	depositv1 "pkg.akt.dev/go/node/types/deposit/v1"
 )
 
@@ -64,17 +70,74 @@ func (f *fakeTxClient) BroadcastTx(_ context.Context, _ sdk.Tx, _ ...cv1beta3.Br
 type fakeChainSDKClient struct {
 	aclient.Client
 
-	tx   cv1beta3.TxClient
-	cctx sdkclient.Context
+	tx    cv1beta3.TxClient
+	query cv1beta3.QueryClient
+	node  cv1beta3.NodeClient
+	cctx  sdkclient.Context
 }
 
 func (f *fakeChainSDKClient) Tx() cv1beta3.TxClient            { return f.tx }
+func (f *fakeChainSDKClient) Query() cv1beta3.QueryClient      { return f.query }
+func (f *fakeChainSDKClient) Node() cv1beta3.NodeClient        { return f.node }
 func (f *fakeChainSDKClient) ClientContext() sdkclient.Context { return f.cctx }
+
+type fakeWorkflowNodeClient struct {
+	cv1beta3.NodeClient
+	info *tmrpc.SyncInfo
+	err  error
+}
+
+func (f *fakeWorkflowNodeClient) SyncInfo(context.Context) (*tmrpc.SyncInfo, error) {
+	return f.info, f.err
+}
+
+type fakeWorkflowQueryClient struct {
+	cv1beta3.QueryClient
+	deployment dv1beta.QueryClient
+}
+
+func (f *fakeWorkflowQueryClient) Deployment() dv1beta.QueryClient { return f.deployment }
+
+type fakeWorkflowDeploymentQuery struct {
+	paramsResponse     *dv1beta.QueryParamsResponse
+	paramsErr          error
+	deploymentResponse *dv1beta.QueryDeploymentResponse
+	deploymentErr      error
+	lastDeploymentID   dv1.DeploymentID
+}
+
+func (*fakeWorkflowDeploymentQuery) Deployments(context.Context, *dv1beta.QueryDeploymentsRequest, ...grpc.CallOption) (*dv1beta.QueryDeploymentsResponse, error) {
+	return nil, errors.New("unexpected deployments query")
+}
+
+func (f *fakeWorkflowDeploymentQuery) Deployment(_ context.Context, request *dv1beta.QueryDeploymentRequest, _ ...grpc.CallOption) (*dv1beta.QueryDeploymentResponse, error) {
+	f.lastDeploymentID = request.ID
+	return f.deploymentResponse, f.deploymentErr
+}
+
+func (*fakeWorkflowDeploymentQuery) Group(context.Context, *dv1beta.QueryGroupRequest, ...grpc.CallOption) (*dv1beta.QueryGroupResponse, error) {
+	return nil, errors.New("unexpected group query")
+}
+
+func (f *fakeWorkflowDeploymentQuery) Params(context.Context, *dv1beta.QueryParamsRequest, ...grpc.CallOption) (*dv1beta.QueryParamsResponse, error) {
+	return f.paramsResponse, f.paramsErr
+}
 
 func newFakeChainClient(tx cv1beta3.TxClient, owner sdk.AccAddress) *chainClient {
 	return &chainClient{cl: &fakeChainSDKClient{
 		tx:   tx,
 		cctx: sdkclient.Context{FromAddress: owner},
+	}}
+}
+
+func newFakeWorkflowBoundaryClient(
+	node cv1beta3.NodeClient,
+	deployment dv1beta.QueryClient,
+) *chainClient {
+	return &chainClient{cl: &fakeChainSDKClient{
+		node:  node,
+		query: &fakeWorkflowQueryClient{deployment: deployment},
+		cctx:  testClientContext(),
 	}}
 }
 
@@ -410,5 +473,226 @@ func TestQueryBadNumericParam(t *testing.T) {
 
 	if _, err := c.Query(context.Background(), queryMarketBids, map[string]string{"dseq": "abc"}); err == nil {
 		t.Fatal("expected error for non-numeric dseq filter")
+	}
+}
+
+func TestDeriveDSeqUsesExplicitValueWithoutReadingNode(t *testing.T) {
+	node := &fakeWorkflowNodeClient{err: errors.New("node must not be called")}
+	c := newFakeWorkflowBoundaryClient(node, nil)
+
+	got, err := c.deriveDSeq(context.Background(), map[string]string{"dseq": "18446744073709551615"})
+	if err != nil {
+		t.Fatalf("deriveDSeq explicit: %v", err)
+	}
+	if got != ^uint64(0) {
+		t.Fatalf("deriveDSeq explicit = %d, want max uint64", got)
+	}
+
+	if _, err := c.deriveDSeq(context.Background(), map[string]string{"dseq": "12x"}); err == nil || !strings.Contains(err.Error(), `parse param "dseq"`) {
+		t.Fatalf("deriveDSeq malformed error = %v", err)
+	}
+}
+
+func TestDeriveDSeqUsesOnlyAReadyNodeHeight(t *testing.T) {
+	tests := []struct {
+		name    string
+		node    *fakeWorkflowNodeClient
+		want    uint64
+		wantErr string
+	}{
+		{
+			name: "latest height",
+			node: &fakeWorkflowNodeClient{info: &tmrpc.SyncInfo{LatestBlockHeight: 5_335_559}},
+			want: 5_335_559,
+		},
+		{
+			name:    "transport error",
+			node:    &fakeWorkflowNodeClient{err: context.DeadlineExceeded},
+			wantErr: context.DeadlineExceeded.Error(),
+		},
+		{
+			name:    "catching up",
+			node:    &fakeWorkflowNodeClient{info: &tmrpc.SyncInfo{LatestBlockHeight: 7, CatchingUp: true}},
+			wantErr: "node is catching up",
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			c := newFakeWorkflowBoundaryClient(test.node, nil)
+			got, err := c.deriveDSeq(context.Background(), nil)
+			if test.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), test.wantErr) {
+					t.Fatalf("deriveDSeq error = %v, want containing %q", err, test.wantErr)
+				}
+				return
+			}
+			if err != nil || got != test.want {
+				t.Fatalf("deriveDSeq = %d, %v; want %d, nil", got, err, test.want)
+			}
+		})
+	}
+}
+
+func TestResolveDepositDistinguishesExplicitAndChainDefault(t *testing.T) {
+	t.Run("explicit coin does not query params", func(t *testing.T) {
+		deployment := &fakeWorkflowDeploymentQuery{paramsErr: errors.New("params must not be called")}
+		c := newFakeWorkflowBoundaryClient(nil, deployment)
+
+		deposit, err := c.resolveDeposit(context.Background(), "7500000uakt")
+		if err != nil {
+			t.Fatalf("resolve explicit deposit: %v", err)
+		}
+		if got := deposit.Amount.String(); got != "7500000uakt" {
+			t.Fatalf("explicit deposit = %s, want 7500000uakt", got)
+		}
+	})
+
+	t.Run("auto selects uact regardless of response ordering", func(t *testing.T) {
+		deployment := &fakeWorkflowDeploymentQuery{paramsResponse: &dv1beta.QueryParamsResponse{
+			Params: dv1beta.Params{MinDeposits: sdk.NewCoins(
+				sdk.NewInt64Coin("uakt", 5_000_000),
+				sdk.NewInt64Coin("uact", 7_500_000),
+			)},
+		}}
+		c := newFakeWorkflowBoundaryClient(nil, deployment)
+
+		deposit, err := c.resolveDeposit(context.Background(), depositAuto)
+		if err != nil {
+			t.Fatalf("resolve auto deposit: %v", err)
+		}
+		if got := deposit.Amount.String(); got != "7500000uact" {
+			t.Fatalf("auto deposit = %s, want 7500000uact", got)
+		}
+	})
+
+	t.Run("query failure is preserved", func(t *testing.T) {
+		deployment := &fakeWorkflowDeploymentQuery{paramsErr: context.Canceled}
+		c := newFakeWorkflowBoundaryClient(nil, deployment)
+
+		_, err := c.resolveDeposit(context.Background(), "")
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("resolve auto error = %v, want context cancellation", err)
+		}
+	})
+
+	t.Run("missing uact minimum fails closed", func(t *testing.T) {
+		deployment := &fakeWorkflowDeploymentQuery{paramsResponse: &dv1beta.QueryParamsResponse{
+			Params: dv1beta.Params{MinDeposits: sdk.NewCoins(sdk.NewInt64Coin("uakt", 5_000_000))},
+		}}
+		c := newFakeWorkflowBoundaryClient(nil, deployment)
+
+		_, err := c.resolveDeposit(context.Background(), depositAuto)
+		if err == nil || !strings.Contains(err.Error(), "default deposit") {
+			t.Fatalf("resolve auto error = %v, want missing default deposit", err)
+		}
+	})
+}
+
+func TestVerifyGroupsUnchangedUsesExactDeploymentIdentityAndSpecs(t *testing.T) {
+	id := dv1.DeploymentID{Owner: testOwner().String(), DSeq: 42}
+	group := dv1beta.GroupSpec{Name: "westcoast"}
+	query := &fakeWorkflowDeploymentQuery{deploymentResponse: &dv1beta.QueryDeploymentResponse{
+		Groups: dv1beta.Groups{{ID: dv1.GroupID{Owner: id.Owner, DSeq: id.DSeq, GSeq: 1}, GroupSpec: group}},
+	}}
+	c := newFakeWorkflowBoundaryClient(nil, query)
+
+	if err := c.verifyGroupsUnchanged(context.Background(), id, dv1beta.GroupSpecs{group}); err != nil {
+		t.Fatalf("verify identical groups: %v", err)
+	}
+	if query.lastDeploymentID != id {
+		t.Fatalf("queried deployment ID = %+v, want %+v", query.lastDeploymentID, id)
+	}
+
+	if err := c.verifyGroupsUnchanged(context.Background(), id, nil); !errors.Is(err, errDeploymentUpdateGroupsChanged) {
+		t.Fatalf("group count mismatch error = %v", err)
+	}
+
+	changed := group
+	changed.Name = "eastcoast"
+	if err := c.verifyGroupsUnchanged(context.Background(), id, dv1beta.GroupSpecs{changed}); !errors.Is(err, errDeploymentUpdateGroupsChanged) {
+		t.Fatalf("group content mismatch error = %v", err)
+	}
+}
+
+func TestVerifyGroupsUnchangedPreservesQueryFailure(t *testing.T) {
+	query := &fakeWorkflowDeploymentQuery{deploymentErr: context.DeadlineExceeded}
+	c := newFakeWorkflowBoundaryClient(nil, query)
+
+	err := c.verifyGroupsUnchanged(context.Background(), dv1.DeploymentID{Owner: testOwner().String(), DSeq: 1}, nil)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("verify groups error = %v, want deadline exceeded", err)
+	}
+}
+
+func TestMarshalJSONFallbackProducesOneDocument(t *testing.T) {
+	c := newFakeWorkflowBoundaryClient(nil, nil)
+	message := &dv1beta.QueryParamsResponse{
+		Params: dv1beta.Params{MinDeposits: sdk.NewCoins(sdk.NewInt64Coin("uact", 5_000_000))},
+	}
+
+	raw, err := c.marshalJSON(message)
+	if err != nil {
+		t.Fatalf("marshalJSON fallback: %v", err)
+	}
+	var document map[string]any
+	if err := json.Unmarshal(raw, &document); err != nil {
+		t.Fatalf("decode marshalJSON output: %v", err)
+	}
+	if _, ok := document["params"]; !ok {
+		t.Fatalf("marshalJSON output omitted params: %s", raw)
+	}
+}
+
+func TestOptionalUint32ParamHonorsAbsentMaximumAndOverflow(t *testing.T) {
+	got, err := optionalUint32Param(nil, "gseq")
+	if err != nil || got != 0 {
+		t.Fatalf("absent optional uint32 = %d, %v; want 0, nil", got, err)
+	}
+
+	got, err = optionalUint32Param(map[string]string{"gseq": "4294967295"}, "gseq")
+	if err != nil || got != ^uint32(0) {
+		t.Fatalf("maximum optional uint32 = %d, %v; want max uint32, nil", got, err)
+	}
+
+	if _, err := optionalUint32Param(map[string]string{"gseq": "4294967296"}, "gseq"); err == nil || !strings.Contains(err.Error(), `parse param "gseq"`) {
+		t.Fatalf("overflow optional uint32 error = %v", err)
+	}
+}
+
+func TestAttachProviderMetadataPreservesQueryDocument(t *testing.T) {
+	raw := json.RawMessage(`{"bids":[{"bid":{"id":{"provider":"akash1provider"}}}],"pagination":{"total":"1"}}`)
+	if unchanged, err := attachProviderMetadata(raw, nil); err != nil || !bytes.Equal(unchanged, raw) {
+		t.Fatalf("empty metadata changed response to %s, %v", unchanged, err)
+	}
+
+	metadata := map[string]aktprovider.Metadata{
+		"akash1provider": {
+			Attributes: map[string]string{"region": "us-west", "gpu": "a100"},
+			Audited:    true,
+		},
+	}
+	attached, err := attachProviderMetadata(raw, metadata)
+	if err != nil {
+		t.Fatalf("attach provider metadata: %v", err)
+	}
+	var document struct {
+		Bids             []json.RawMessage               `json:"bids"`
+		Pagination       map[string]string               `json:"pagination"`
+		ProviderMetadata map[string]aktprovider.Metadata `json:"provider_metadata"`
+	}
+	if err := json.Unmarshal(attached, &document); err != nil {
+		t.Fatalf("decode attached document: %v", err)
+	}
+	if len(document.Bids) != 1 || document.Pagination["total"] != "1" {
+		t.Fatalf("original query fields changed: %s", attached)
+	}
+	gotMetadata, ok := document.ProviderMetadata["akash1provider"]
+	if !ok || !gotMetadata.Audited || gotMetadata.Attributes["region"] != "us-west" || gotMetadata.Attributes["gpu"] != "a100" {
+		t.Fatalf("provider metadata = %#v", document.ProviderMetadata)
+	}
+
+	if _, err := attachProviderMetadata(json.RawMessage(`{"bids":`), metadata); err == nil {
+		t.Fatal("malformed query JSON accepted while attaching metadata")
 	}
 }

@@ -5,6 +5,7 @@ package workflow
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -208,15 +209,18 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 					return emitDryRunJSONL(out, rtDef)
 				}
 
-				printPlan(out, rtDef, params)
-				fmt.Fprintln(out, "\nDry run — no transactions broadcast.")
-				return nil
+				if err := printPlan(out, rtDef, params); err != nil {
+					return err
+				}
+				return writeWorkflowReport(out, "\nDry run — no transactions broadcast.\n", "dry-run")
 			}
 
 			// During execution, keep stdout pure in JSONL mode; other modes
 			// retain the human plan before step results.
 			if !jsonl {
-				printPlan(out, rtDef, params)
+				if err := printPlan(out, rtDef, params); err != nil {
+					return err
+				}
 			}
 
 			return executeWorkflow(cmd, rtDef, params, mgrFn, ctxNameFn, jsonl, discoverErr)
@@ -333,7 +337,10 @@ func executeWorkflow(
 		// Provider gateway steps are not supported with console-api auth:
 		// the Console API submits the manifest internally during lease
 		// creation (SPEC §7.4), so drop them instead of failing the run.
-		rtDef = filterProviderSteps(rtDef, cmd.ErrOrStderr())
+		rtDef, err = filterProviderSteps(rtDef, cmd.ErrOrStderr())
+		if err != nil {
+			return fmt.Errorf("report skipped Console workflow step: %w", err)
+		}
 	} else {
 		cl, cerr := chaincli.ClientFromContext(cmd.Context())
 		if cerr != nil {
@@ -382,17 +389,23 @@ func executeWorkflow(
 	// the run itself is the only thing that can populate the store.
 	recordWorkflowOutcome(cmd, rc, state)
 
+	var renderErr error
 	if jsonl {
-		emitJSONL(out, state, recovery)
+		renderErr = emitJSONL(out, state, recovery)
 	} else {
-		printResults(out, state, runErr, recovery)
+		renderErr = printResults(out, state, runErr, recovery)
 	}
 
 	if runErr != nil {
-		return workflowFailureError(rtDef.Name, runErr, recovery)
+		runErr = workflowFailureError(rtDef.Name, runErr, recovery)
+		if renderErr != nil {
+			return errors.Join(runErr, renderErr)
+		}
+
+		return runErr
 	}
 
-	return nil
+	return renderErr
 }
 
 func newBidWaitProgressReporter(report func(string)) steps.WaitProgressReporter {
@@ -452,13 +465,16 @@ func resolveContext(mgrFn func() *aktctx.Manager, ctxNameFn func() string) *aktc
 // filterProviderSteps returns a copy of def without provider-type steps,
 // noting each skipped step on w. Used for console-api auth, where manifest
 // submission is handled by the Console API (SPEC §7.4).
-func filterProviderSteps(def *wf.WorkflowDef, w io.Writer) *wf.WorkflowDef {
+func filterProviderSteps(def *wf.WorkflowDef, w io.Writer) (*wf.WorkflowDef, error) {
 	kept := make([]wf.StepDef, 0, len(def.Steps))
 	removed := false
+	diagnostics := output.NewCheckedWriter(w)
 
 	for _, s := range def.Steps {
 		if s.Type == wf.StepProvider {
-			fmt.Fprintf(w, "note: skipping step %q (manifest submission handled by Console)\n", s.Name)
+			if _, err := fmt.Fprintf(diagnostics, "note: skipping step %q (manifest submission handled by Console)\n", s.Name); err != nil {
+				return nil, diagnostics.Complete(err)
+			}
 			removed = true
 			continue
 		}
@@ -466,49 +482,55 @@ func filterProviderSteps(def *wf.WorkflowDef, w io.Writer) *wf.WorkflowDef {
 	}
 
 	if !removed {
-		return def
+		return def, nil
 	}
 
 	filtered := *def
 	filtered.Steps = kept
 
-	return &filtered
+	return &filtered, nil
 }
 
 // printPlan renders the workflow execution plan (name, params, steps).
-func printPlan(out io.Writer, rtDef *wf.WorkflowDef, params map[string]any) {
-	fmt.Fprintf(out, "Workflow: %s (v%d)\n", rtDef.Name, rtDef.Version)
-	fmt.Fprintf(out, "  %s\n\n", rtDef.Description)
+func printPlan(out io.Writer, rtDef *wf.WorkflowDef, params map[string]any) error {
+	var rendered strings.Builder
 
-	fmt.Fprintln(out, "Parameters:")
+	fmt.Fprintf(&rendered, "Workflow: %s (v%d)\n", rtDef.Name, rtDef.Version)
+	fmt.Fprintf(&rendered, "  %s\n\n", rtDef.Description)
+
+	fmt.Fprintln(&rendered, "Parameters:")
 	for k, v := range params {
-		fmt.Fprintf(out, "  %-16s %v\n", k+":", v)
+		fmt.Fprintf(&rendered, "  %-16s %v\n", k+":", v)
 	}
-	fmt.Fprintln(out)
+	fmt.Fprintln(&rendered)
 
-	fmt.Fprintf(out, "Steps (%d):\n", len(rtDef.Steps))
+	fmt.Fprintf(&rendered, "Steps (%d):\n", len(rtDef.Steps))
 	for i, step := range rtDef.Steps {
-		fmt.Fprintf(out, "  %d. [%s] %s", i+1, step.Type, step.Name)
+		fmt.Fprintf(&rendered, "  %d. [%s] %s", i+1, step.Type, step.Name)
 		if step.Msg != "" {
-			fmt.Fprintf(out, " -> %s", step.Msg)
+			fmt.Fprintf(&rendered, " -> %s", step.Msg)
 		}
 		if step.Action != "" {
-			fmt.Fprintf(out, " -> %s", step.Action)
+			fmt.Fprintf(&rendered, " -> %s", step.Action)
 		}
 		if step.OnError != "" {
-			fmt.Fprintf(out, " (on-error: %s)", step.OnError)
+			fmt.Fprintf(&rendered, " (on-error: %s)", step.OnError)
 		}
 		if step.Retry != nil {
-			fmt.Fprintf(out, " (retry: %dx, %s delay)", step.Retry.Max, step.Retry.Delay)
+			fmt.Fprintf(&rendered, " (retry: %dx, %s delay)", step.Retry.Max, step.Retry.Delay)
 		}
-		fmt.Fprintln(out)
+		fmt.Fprintln(&rendered)
 	}
+
+	return writeWorkflowReport(out, rendered.String(), "plan")
 }
 
 // printResults renders per-step outcomes and the overall workflow status in
 // simple aligned text.
-func printResults(out io.Writer, state *wf.RunState, runErr error, recovery *workflowRecovery) {
-	fmt.Fprintln(out, "\nResults:")
+func printResults(out io.Writer, state *wf.RunState, runErr error, recovery *workflowRecovery) error {
+	var rendered strings.Builder
+
+	fmt.Fprintln(&rendered, "\nResults:")
 
 	for _, name := range state.StepOrder {
 		sr := state.Steps[name]
@@ -516,30 +538,32 @@ func printResults(out io.Writer, state *wf.RunState, runErr error, recovery *wor
 			continue
 		}
 
-		fmt.Fprintf(out, "  %-20s %-9s", sr.Name, sr.Status)
+		fmt.Fprintf(&rendered, "  %-20s %-9s", sr.Name, sr.Status)
 		if sr.TxHash != "" {
-			fmt.Fprintf(out, "  tx: %s", sr.TxHash)
+			fmt.Fprintf(&rendered, "  tx: %s", sr.TxHash)
 		}
 		if sr.Error != "" {
-			fmt.Fprintf(out, "  error: %s", sr.Error)
+			fmt.Fprintf(&rendered, "  error: %s", sr.Error)
 		}
-		fmt.Fprintln(out)
+		fmt.Fprintln(&rendered)
 	}
 
 	if runErr == nil {
-		fmt.Fprintf(out, "\nWorkflow %q completed successfully.\n", state.Workflow)
+		fmt.Fprintf(&rendered, "\nWorkflow %q completed successfully.\n", state.Workflow)
 	} else if recovery != nil {
-		fmt.Fprintln(out, "\nPartial deployment state:")
-		fmt.Fprintf(out, "  DSEQ: %d\n", recovery.DSeq)
+		fmt.Fprintln(&rendered, "\nPartial deployment state:")
+		fmt.Fprintf(&rendered, "  DSEQ: %d\n", recovery.DSeq)
 		if recovery.Provider != "" {
-			fmt.Fprintf(out, "  Provider: %s\n", recovery.Provider)
+			fmt.Fprintf(&rendered, "  Provider: %s\n", recovery.Provider)
 		}
-		fmt.Fprintln(out, "  WARNING: This deployment remains open; escrow may continue to be consumed.")
+		fmt.Fprintln(&rendered, "  WARNING: This deployment remains open; escrow may continue to be consumed.")
 		if recovery.Recovery != "" {
-			fmt.Fprintf(out, "  Recovery: %s\n", recovery.Recovery)
+			fmt.Fprintf(&rendered, "  Recovery: %s\n", recovery.Recovery)
 		}
-		fmt.Fprintf(out, "  Explicit cleanup: %s\n", recovery.Cleanup)
+		fmt.Fprintf(&rendered, "  Explicit cleanup: %s\n", recovery.Cleanup)
 	}
+
+	return writeWorkflowReport(out, rendered.String(), "pretty")
 }
 
 type workflowRecovery struct {
@@ -661,8 +685,8 @@ type jsonlLine struct {
 }
 
 // emitJSONL writes one JSONL line per completed step (SPEC §2.3.8).
-func emitJSONL(out io.Writer, state *wf.RunState, recovery *workflowRecovery) {
-	enc := json.NewEncoder(out)
+func emitJSONL(out io.Writer, state *wf.RunState, recovery *workflowRecovery) error {
+	enc := json.NewEncoder(completeWriter{writer: out})
 
 	for _, name := range state.StepOrder {
 		sr := state.Steps[name]
@@ -706,15 +730,41 @@ func emitJSONL(out io.Writer, state *wf.RunState, recovery *workflowRecovery) {
 			line.Txs = append(line.Txs, tx)
 		}
 
-		_ = enc.Encode(line)
+		if err := enc.Encode(line); err != nil {
+			return fmt.Errorf("write workflow JSONL report: %w", err)
+		}
 	}
+
+	return nil
+}
+
+func writeWorkflowReport(out io.Writer, report, format string) error {
+	_, err := io.WriteString(completeWriter{writer: out}, report)
+	if err != nil {
+		return fmt.Errorf("write workflow %s report: %w", format, err)
+	}
+
+	return nil
+}
+
+type completeWriter struct {
+	writer io.Writer
+}
+
+func (w completeWriter) Write(data []byte) (int, error) {
+	written, err := w.writer.Write(data)
+	if err == nil && written != len(data) {
+		err = io.ErrShortWrite
+	}
+
+	return written, err
 }
 
 // emitDryRunJSONL renders the validated plan without executing or discovering
 // clients. Every line shares one run ID so consumers can treat it like an
 // execution stream, while "planned" distinguishes it from completed work.
 func emitDryRunJSONL(out io.Writer, def *wf.WorkflowDef) error {
-	enc := json.NewEncoder(out)
+	enc := json.NewEncoder(completeWriter{writer: out})
 	runID := wf.GenerateWorkflowID()
 
 	for _, step := range def.Steps {

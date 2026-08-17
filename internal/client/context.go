@@ -43,7 +43,8 @@ func BuildClientContext(
 	enc sdkutil.EncodingConfig,
 	fromOverride string,
 ) sdkclient.Context {
-	return buildClientContext(rc, kr, enc, fromOverride, true)
+	cctx, _ := buildClientContext(rc, kr, enc, fromOverride, true)
+	return cctx
 }
 
 func buildClientContext(
@@ -52,7 +53,7 @@ func buildClientContext(
 	enc sdkutil.EncodingConfig,
 	fromOverride string,
 	resolveNamedAccount bool,
-) sdkclient.Context {
+) (sdkclient.Context, error) {
 	cctx := sdkclient.Context{}.
 		WithCodec(enc.Codec).
 		WithInterfaceRegistry(enc.InterfaceRegistry).
@@ -74,9 +75,10 @@ func buildClientContext(
 	// never unlock the keyring; owner-defaulting query handlers resolve it only
 	// when they actually need its address.
 	//
-	// A name that is not resolved is left as the bare From value rather
-	// than failing: the context is built for every command, including the
-	// keys and context commands someone would use to fix it.
+	// A name that is not resolved is left as the bare From value. Best-effort
+	// callers can still build a context for the keys and context commands
+	// someone would use to fix it, while eager initialization returns the
+	// resolution error to commands that require an identity.
 	//
 	// kr is nil for commands that declare no local identity (SPEC §1.7). A
 	// named account then stays unresolved -- resolving it would open the
@@ -86,16 +88,18 @@ func buildClientContext(
 	if from == "" {
 		from = rc.DefaultAccount
 	}
+	var resolveErr error
 	if from != "" {
 		cctx = cctx.WithFrom(from)
 
 		if addr, err := sdk.AccAddressFromBech32(from); err == nil {
 			cctx = cctx.WithFromAddress(addr)
-		} else if resolveNamedAccount && kr != nil {
-			if rec, err := kr.Key(from); err == nil {
-				if addr, err := rec.GetAddress(); err == nil {
-					cctx = cctx.WithFromName(from).WithFromAddress(addr)
-				}
+		} else if resolveNamedAccount {
+			addr, err := resolveKeyringAddress(kr, from)
+			if err != nil {
+				resolveErr = err
+			} else {
+				cctx = cctx.WithFromName(from).WithFromAddress(addr)
 			}
 		}
 	}
@@ -113,7 +117,7 @@ func buildClientContext(
 	// Set output format.
 	cctx = cctx.WithOutputFormat("json")
 
-	return cctx
+	return cctx, resolveErr
 }
 
 // ResolveAccountAddress resolves the account carried by cctx. Address-valued
@@ -133,13 +137,26 @@ func ResolveAccountAddress(cctx sdkclient.Context) (sdk.AccAddress, error) {
 		return addr, nil
 	}
 
-	if cctx.Keyring == nil {
+	return resolveKeyringAddress(cctx.Keyring, from)
+}
+
+func resolveKeyringAddress(kr sdkkeyring.Keyring, from string) (sdk.AccAddress, error) {
+	if kr == nil {
 		return nil, fmt.Errorf("resolve account %q: keyring is unavailable", from)
 	}
 
-	record, err := cctx.Keyring.Key(from)
+	record, err := kr.Key(from)
 	if err != nil {
 		return nil, fmt.Errorf("resolve account %q: %w", from, err)
+	}
+	if record == nil {
+		return nil, fmt.Errorf("resolve account %q: keyring returned no record", from)
+	}
+	// Cosmos SDK Record.GetAddress dereferences PubKey before it can return a
+	// decode error. Treat persisted keyring data as boundary input so a corrupt
+	// record becomes a useful error instead of a process panic.
+	if record.PubKey == nil {
+		return nil, fmt.Errorf("resolve account %q address: keyring record has no public key", from)
 	}
 
 	addr, err := record.GetAddress()
@@ -172,7 +189,10 @@ func initClientContext(
 	fromOverride string,
 	resolveNamedAccount bool,
 ) error {
-	cctx := buildClientContext(rc, kr, enc, fromOverride, resolveNamedAccount)
+	cctx, err := buildClientContext(rc, kr, enc, fromOverride, resolveNamedAccount)
+	if err != nil {
+		return err
+	}
 
 	// Store address codecs in the context for chain-sdk commands.
 	ctx := cmd.Context()

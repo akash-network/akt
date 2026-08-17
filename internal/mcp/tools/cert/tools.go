@@ -22,6 +22,7 @@ func ToolListCertificates() mcp.Tool {
 			mcp.Description("Filter by certificate owner bech32 address. If omitted, uses the configured key's address."),
 		),
 		mcp.WithString("state",
+			mcp.Enum("valid", "revoked"),
 			mcp.Description("Filter by certificate state: 'valid', 'revoked'."),
 		),
 	)

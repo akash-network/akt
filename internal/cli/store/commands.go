@@ -3,8 +3,11 @@
 package store
 
 import (
+	"bufio"
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -47,7 +50,7 @@ func storePath(homeFn func() string, ctxNameFn func() string) string {
 	return aktctx.StoreDBPath(homeFn(), ctxNameFn())
 }
 
-func openStore(ctx context.Context, homeFn func() string, ctxNameFn func() string) (sstore.Store, error) {
+func openStore(ctx context.Context, homeFn func() string, ctxNameFn func() string) (*bbolt.BoltStore, error) {
 	return bbolt.OpenContext(ctx, homeFn(), ctxNameFn())
 }
 
@@ -97,7 +100,8 @@ func statusCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 				}{ctxName, p, dbSize, s.SchemaVersion(), stats, describeReconciliation(ss)})
 			}
 
-			out := output.TerminalAwareWriter(cmd.OutOrStdout())
+			checked := output.NewCheckedWriter(cmd.OutOrStdout())
+			out := output.TerminalAwareWriter(checked)
 
 			fmt.Fprintln(out, pretty.Section("Store"))
 			pretty.KV(out, "Context", ctxName)
@@ -135,7 +139,7 @@ func statusCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 			}
 			pretty.KV(out, "Run", "akt store sync")
 
-			return nil
+			return checked.Err()
 		},
 	}
 }
@@ -189,8 +193,6 @@ func describeReconciliation(ss *sstore.SyncState) reconciliationStatus {
 }
 
 func exportCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
-	var file string
-
 	cmd := &cobra.Command{
 		Use:   "export",
 		Args:  cobra.NoArgs,
@@ -215,24 +217,59 @@ func exportCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 				format = sstore.FormatJSON
 			}
 
-			var w *os.File
+			file, _ := cmd.Flags().GetString("file")
 			if file != "" {
-				w, err = os.Create(file)
-				if err != nil {
-					return fmt.Errorf("create file: %w", err)
-				}
-				defer func() { _ = w.Close() }()
-			} else {
-				w = os.Stdout
+				return exportFileAtomically(cmd.Context(), s, file, format, ctxNameFn())
 			}
 
-			return s.Export(cmd.Context(), w, format, ctxNameFn())
+			return s.Export(cmd.Context(), cmd.OutOrStdout(), format, ctxNameFn())
 		},
 	}
 
-	cmd.Flags().StringVar(&file, "file", "", "Output file (default: stdout)")
+	cmd.Flags().String("file", "", "Output file (default: stdout)")
 
 	return cmd
+}
+
+func exportFileAtomically(ctx context.Context, s *bbolt.BoltStore, destination string, format sstore.ExportFormat, contextName string) error {
+	temp, err := os.CreateTemp(filepath.Dir(destination), "."+filepath.Base(destination)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temporary export: %w", err)
+	}
+	tempPath := temp.Name()
+	defer func() {
+		_ = temp.Close()
+		_ = os.Remove(tempPath)
+	}()
+
+	if err := writeStoreExport(ctx, s, temp, format, contextName); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, destination); err != nil {
+		return fmt.Errorf("replace export file: %w", err)
+	}
+
+	return nil
+}
+
+type syncedWriteCloser interface {
+	io.Writer
+	Sync() error
+	Close() error
+}
+
+func writeStoreExport(ctx context.Context, s *bbolt.BoltStore, destination syncedWriteCloser, format sstore.ExportFormat, contextName string) error {
+	if err := s.Export(ctx, destination, format, contextName); err != nil {
+		return err
+	}
+	if err := destination.Sync(); err != nil {
+		return fmt.Errorf("flush temporary export: %w", err)
+	}
+	if err := destination.Close(); err != nil {
+		return fmt.Errorf("close temporary export: %w", err)
+	}
+
+	return nil
 }
 
 func importCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
@@ -255,17 +292,51 @@ func importCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
   # Dry run — show what would be imported
   akt store import backup.yaml --dry-run`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if !merge && !replace {
+				return errors.New("replacing store contents requires the explicit --replace flag")
+			}
+			mergeMode := !replace
+
 			f, err := os.Open(args[0])
 			if err != nil {
 				return fmt.Errorf("open import file: %w", err)
 			}
 			defer func() { _ = f.Close() }()
 
+			format := sstore.FormatYAML
+			if filepath.Ext(args[0]) == ".json" {
+				format = sstore.FormatJSON
+			}
+
 			if dryRun {
+				if err := bbolt.ValidateImportSnapshot(cmd.Context(), storePath(homeFn, ctxNameFn), f, format, mergeMode); err != nil {
+					return fmt.Errorf("validate import: %w", err)
+				}
 				if !cliutil.IsQuiet(cmd) {
-					fmt.Fprintln(cmd.ErrOrStderr(), "Dry run — no changes will be made.")
+					notice := output.NewCheckedWriter(cmd.ErrOrStderr())
+					if _, err := fmt.Fprintln(notice, "Dry run — input is valid; no changes were made."); err != nil {
+						return notice.Complete(err)
+					}
 				}
 				return nil
+			}
+			if replace {
+				yes, _ := cmd.Flags().GetBool("yes")
+				if !yes {
+					confirmed, err := confirmStoreReplacement(cmd, ctxNameFn())
+					if err != nil {
+						return err
+					}
+					if !confirmed {
+						if !cliutil.IsQuiet(cmd) {
+							notice := output.NewCheckedWriter(cmd.ErrOrStderr())
+							if _, err := fmt.Fprintln(notice, "Import cancelled."); err != nil {
+								return notice.Complete(err)
+							}
+						}
+						return nil
+					}
+				}
 			}
 
 			s, err := openStore(cmd.Context(), homeFn, ctxNameFn)
@@ -274,18 +345,15 @@ func importCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 			}
 			defer func() { _ = s.Close() }()
 
-			mergeMode := merge && !replace
-			format := sstore.FormatYAML
-			if filepath.Ext(args[0]) == ".json" {
-				format = sstore.FormatJSON
-			}
-
 			if err := s.Import(cmd.Context(), f, format, mergeMode); err != nil {
 				return fmt.Errorf("import: %w", err)
 			}
 
 			if !cliutil.IsQuiet(cmd) {
-				fmt.Fprintln(cmd.ErrOrStderr(), "Import complete.")
+				notice := output.NewCheckedWriter(cmd.ErrOrStderr())
+				if _, err := fmt.Fprintln(notice, "Import complete."); err != nil {
+					return notice.Complete(err)
+				}
 			}
 			return nil
 		},
@@ -294,6 +362,25 @@ func importCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 	cmd.Flags().BoolVar(&merge, "merge", true, "Merge with existing records (default)")
 	cmd.Flags().BoolVar(&replace, "replace", false, "Replace entire store contents")
 	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be imported")
+	cmd.Flags().BoolP("yes", "y", false, "Skip replacement confirmation")
 
 	return cmd
+}
+
+func confirmStoreReplacement(cmd *cobra.Command, contextName string) (bool, error) {
+	diagnostics := output.NewCheckedWriter(cmd.ErrOrStderr())
+	if _, err := fmt.Fprintf(
+		diagnostics,
+		"Replace every record in store context %q? This cannot be undone. [y/N]: ",
+		contextName,
+	); err != nil {
+		return false, fmt.Errorf("write replacement confirmation: %w", diagnostics.Complete(err))
+	}
+
+	answer, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+	if err != nil && (!errors.Is(err, io.EOF) || len(answer) == 0) {
+		return false, fmt.Errorf("read replacement confirmation: %w", err)
+	}
+	answer = strings.TrimSpace(answer)
+	return strings.EqualFold(answer, "y") || strings.EqualFold(answer, "yes"), nil
 }

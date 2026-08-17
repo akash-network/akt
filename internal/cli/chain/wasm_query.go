@@ -18,6 +18,8 @@ import (
 	"github.com/CosmWasm/wasmd/x/wasm/types"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"pkg.akt.dev/akt/internal/cliutil"
+	clioutput "pkg.akt.dev/akt/internal/output"
 	"pkg.akt.dev/akt/internal/output/pretty"
 )
 
@@ -112,6 +114,9 @@ func GetQueryWasmListCodeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("wasm list-code", res); err != nil {
+				return err
+			}
 			return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)
 		},
 		SilenceUsage: true,
@@ -159,6 +164,9 @@ func GetQueryWasmListContractByCodeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("wasm list-contract-by-code", res); err != nil {
+				return err
+			}
 			return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)
 		},
 		SilenceUsage: true,
@@ -197,11 +205,20 @@ func GetQueryWasmCodeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("wasm code", res); err != nil {
+				return err
+			}
 			if len(res.Data) == 0 {
 				return errors.New("contract not found")
 			}
 
-			fmt.Printf("Downloading wasm code to %s\n", args[1])
+			if !cliutil.IsQuiet(cmd) {
+				checked := clioutput.NewCheckedWriter(cmd.ErrOrStderr())
+				_, writeErr := fmt.Fprintf(checked, "Downloading wasm code to %s\n", args[1])
+				if err := checked.Complete(writeErr); err != nil {
+					return err
+				}
+			}
 
 			return os.WriteFile(args[1], res.Data, 0o600)
 		},
@@ -237,6 +254,9 @@ func GetQueryWasmCodeInfoCmd() *cobra.Command {
 				},
 			)
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("wasm code-info", res); err != nil {
 				return err
 			}
 
@@ -275,6 +295,9 @@ func GetQueryWasmContractInfoCmd() *cobra.Command {
 				},
 			)
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("wasm contract", res); err != nil {
 				return err
 			}
 			return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)
@@ -338,6 +361,9 @@ func GetQueryWasmContractStateAllCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("wasm contract-state all", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)
 		},
@@ -379,6 +405,9 @@ func GetQueryWasmContractStateRawCmd() *cobra.Command {
 				},
 			)
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("wasm contract-state raw", res); err != nil {
 				return err
 			}
 			return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)
@@ -430,6 +459,9 @@ func GetQueryWasmContractStateSmartCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("wasm contract-state smart", res); err != nil {
+				return err
+			}
 			return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)
 		},
 		SilenceUsage: true,
@@ -475,6 +507,9 @@ func GetQueryWasmContractHistoryCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			if err := requireQueryResponse("wasm contract-history", res); err != nil {
+				return err
+			}
 
 			return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)
 		},
@@ -511,6 +546,9 @@ func GetQueryWasmListPinnedCodeCmd() *cobra.Command {
 				},
 			)
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("wasm pinned", res); err != nil {
 				return err
 			}
 			return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)
@@ -554,6 +592,9 @@ func GetQueryWasmListContractsByCreatorCmd() *cobra.Command {
 				},
 			)
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("wasm list-contracts-by-creator", res); err != nil {
 				return err
 			}
 			return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)
@@ -624,6 +665,9 @@ func GetQueryWasmParamsCmd() *cobra.Command {
 			params := &types.QueryParamsRequest{}
 			res, err := cl.Query().Wasm().Params(ctx, params)
 			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("wasm params", res); err != nil {
 				return err
 			}
 

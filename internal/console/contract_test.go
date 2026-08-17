@@ -19,6 +19,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -110,11 +111,11 @@ var cannedResponses = map[string]cannedResponse{
 	"GET /v1/usage/history": {http.StatusOK, `[{"date":"2026-01-01","activeDeployments":1,"dailyUsdcSpent":0.5,"totalUsdcSpent":10.5}]`},
 
 	"GET /v1/deployments":           {http.StatusOK, `{"data":{"deployments":[],"pagination":{"total":0,"skip":0,"limit":20,"hasMore":false}}}`},
-	"POST /v1/deployments":          {http.StatusOK, `{"data":{"dseq":"1","manifest":"m"}}`},
-	"GET /v1/deployments/{dseq}":    {http.StatusOK, `{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"1"},"state":"active"},"leases":[]}}`},
-	"PUT /v1/deployments/{dseq}":    {http.StatusOK, `{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"1"},"state":"active"},"leases":[]}}`},
-	"DELETE /v1/deployments/{dseq}": {http.StatusOK, `{"data":{}}`},
-	"POST /v1/deposit-deployment":   {http.StatusOK, `{"data":{}}`},
+	"POST /v1/deployments":          {http.StatusCreated, `{"data":{"dseq":"1","manifest":"m","signTx":{"code":0,"transactionHash":"tx-create-1","rawLog":""}}}`},
+	"GET /v1/deployments/{dseq}":    {http.StatusOK, `{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"1"},"state":"active","hash":"GbTNTFMvuz+cIuPv3tz+tH/A594cOMwNC5CIyNCdkMk="},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"1000000"}],"transferred":[]}}}}`},
+	"PUT /v1/deployments/{dseq}":    {http.StatusOK, `{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"1"},"state":"active","hash":"GbTNTFMvuz+cIuPv3tz+tH/A594cOMwNC5CIyNCdkMk="},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"1000000"}],"transferred":[]}}}}`},
+	"DELETE /v1/deployments/{dseq}": {http.StatusOK, `{"data":{"success":true}}`},
+	"POST /v1/deposit-deployment":   {http.StatusOK, `{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"1"},"state":"active","hash":"GbTNTFMvuz+cIuPv3tz+tH/A594cOMwNC5CIyNCdkMk="},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"6000000"}],"transferred":[]}}}}`},
 
 	"GET /v1/bids":    {http.StatusOK, `{"data":[{"bid":{"id":{"owner":"akash1x","dseq":"1","gseq":1,"oseq":1,"provider":"akash1p"},"state":"open","price":{"denom":"uakt","amount":"100"}}}]}`},
 	"POST /v1/leases": {http.StatusOK, `{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"1"},"state":"active"},"leases":[{"id":{"owner":"akash1x","dseq":"1","gseq":1,"oseq":1,"provider":"akash1p"},"state":"active"}]}}`},
@@ -139,7 +140,7 @@ var cannedResponses = map[string]cannedResponse{
 	"GET /v1/auditors":            {http.StatusOK, `[{"id":"a1","name":"auditor","address":"akash1aud"}]`},
 	"GET /v1/gpu-prices":          {http.StatusOK, `{"availability":{"total":10,"available":4},"models":[{"vendor":"nvidia","model":"h100","ram":"80Gi","price":{"min":1,"max":3,"avg":2}}]}`},
 
-	"GET /v1/templates-list": {http.StatusOK, `{"data":{"categories":[]}}`},
+	"GET /v1/templates-list": {http.StatusOK, `{"data":[]}`},
 	"GET /v1/templates/{id}": {http.StatusOK, `{"data":{"id":"tpl-1","name":"template"}}`},
 }
 
@@ -147,6 +148,7 @@ var cannedResponses = map[string]cannedResponse{
 // request against the OpenAPI router and then serves the canned response for
 // the matched route.
 func newContractServer(router routers.Router, rec *contractRecorder) *httptest.Server {
+	var depositApplied atomic.Bool
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		route, pathParams, err := router.FindRoute(r)
 		if err != nil {
@@ -194,6 +196,12 @@ func newContractServer(router routers.Router, rec *contractRecorder) *httptest.S
 		if !ok {
 			rec.add(key + ": no canned response registered; add one to cannedResponses")
 			resp = cannedResponse{status: http.StatusOK, body: `{}`}
+		}
+		if key == "POST /v1/deposit-deployment" {
+			depositApplied.Store(true)
+		}
+		if key == "GET /v1/deployments/{dseq}" && depositApplied.Load() {
+			resp.body = `{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"1"},"state":"active","hash":"GbTNTFMvuz+cIuPv3tz+tH/A594cOMwNC5CIyNCdkMk="},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"6000000"}],"transferred":[]}}}}`
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -334,12 +342,12 @@ func TestClientRequestsMatchOpenAPIContract(t *testing.T) {
 			return err
 		}},
 		{"CreateAPIKey/no-expiry", func(ctx context.Context) error {
-			_, err := c.CreateAPIKey(ctx, "n", "")
+			_, err := c.CreateAPIKey(ctx, "ci", "")
 			return err
 		}},
 		// The schema declares expiresAt as format=date-time (RFC 3339).
 		{"CreateAPIKey/expiry", func(ctx context.Context) error {
-			_, err := c.CreateAPIKey(ctx, "n", "2027-01-01T00:00:00Z")
+			_, err := c.CreateAPIKey(ctx, "ci", "2027-01-01T00:00:00Z")
 			return err
 		}},
 		// The spec requires a UUID key id (format=uuid path parameter).

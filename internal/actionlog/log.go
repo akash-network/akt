@@ -12,8 +12,9 @@ import (
 )
 
 const (
-	maxLogSize      = 10 * 1024 * 1024 // 10 MB
-	maxRotatedFiles = 5
+	maxLogSize       = 10 * 1024 * 1024 // 10 MB
+	maxLogRecordSize = maxLogSize
+	maxRotatedFiles  = 5
 )
 
 // ActionType classifies an action log entry.
@@ -102,6 +103,13 @@ func (l *Logger) Log(entry Entry) error {
 	}
 
 	data = append(data, '\n')
+	if len(data) > maxLogRecordSize {
+		return fmt.Errorf(
+			"action log entry is %d bytes; maximum serialized record size is %d bytes",
+			len(data),
+			maxLogRecordSize,
+		)
+	}
 
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -121,8 +129,11 @@ func (l *Logger) Log(entry Entry) error {
 func (l *Logger) Read(filter Filter) ([]Entry, error) {
 	l.mu.Lock()
 	// Flush before reading.
-	_ = l.file.Sync()
+	err := l.file.Sync()
 	l.mu.Unlock()
+	if err != nil {
+		return nil, fmt.Errorf("flush action log before read: %w", err)
+	}
 
 	// Collect from rotated files (oldest first) then current file.
 	var allEntries []Entry
@@ -131,7 +142,11 @@ func (l *Logger) Read(filter Filter) ([]Entry, error) {
 		rotated := fmt.Sprintf("%s.%d", l.path, i)
 		entries, err := readLogFile(rotated, filter)
 		if err != nil {
-			continue // rotated file may not exist
+			if os.IsNotExist(err) {
+				continue
+			}
+
+			return nil, fmt.Errorf("read rotated action log %s: %w", rotated, err)
 		}
 
 		allEntries = append(allEntries, entries...)
@@ -243,32 +258,22 @@ func readLogFile(path string, filter Filter) ([]Entry, error) {
 	defer func() { _ = f.Close() }()
 
 	var entries []Entry
-
 	scanner := bufio.NewScanner(f)
-	// A single entry may carry large params (SDL contents, raw messages);
-	// allow lines up to the rotation threshold so Read never chokes on an
-	// entry that Log accepted.
-	scanner.Buffer(make([]byte, 0, 64*1024), maxLogSize)
-
+	// The writer counts the trailing newline in maxLogRecordSize, while Scanner
+	// returns the token without it. This buffer therefore accepts every record
+	// Log accepts and rejects a larger or unterminated externally supplied row.
+	scanner.Buffer(make([]byte, 64*1024), maxLogRecordSize)
 	for scanner.Scan() {
-		line := scanner.Bytes()
-		if len(line) == 0 {
-			continue
-		}
-
 		var e Entry
-		if err := json.Unmarshal(line, &e); err != nil {
-			continue // skip malformed lines
+		if err := json.Unmarshal(scanner.Bytes(), &e); err == nil && matchesFilter(e, filter) {
+			entries = append(entries, e)
 		}
-
-		if !matchesFilter(e, filter) {
-			continue
-		}
-
-		entries = append(entries, e)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("read action log record: %w", err)
 	}
 
-	return entries, scanner.Err()
+	return entries, nil
 }
 
 func matchesFilter(e Entry, f Filter) bool {

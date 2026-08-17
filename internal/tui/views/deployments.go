@@ -232,13 +232,13 @@ func deploymentCells(r *store.DeploymentRecord) []string {
 	// ESCROW: escrow balance or "—"
 	escrow := "—"
 	if r.EscrowBalance != "" {
-		escrow = r.EscrowBalance
+		escrow = formatStoredCoins(r.EscrowBalance)
 	}
 
 	// COST: deposit or "—"
 	cost := "—"
 	if r.Deposit != "" {
-		cost = r.Deposit
+		cost = formatStoredCoins(r.Deposit)
 	}
 
 	return []string{dseq, image, state, cpu, memory, gpu, provider, age, escrow, cost}

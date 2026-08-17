@@ -79,19 +79,19 @@ func RenderSimulation(w io.Writer, result SimulationResult) {
 // output format. Without this the response falls through to the raw proto
 // printer, which dumps gas_info verbatim — including the placeholder
 // gas_wanted — and never shows the gas estimate the dry run was run for.
-func printSimulationResult(cmd *cobra.Command, format string, sim *txtypes.SimulateResponse) error {
+func printSimulationResult(w io.Writer, cmd *cobra.Command, format string, sim *txtypes.SimulateResponse) error {
 	result := NewSimulationResult(cmd, sim)
 
 	switch format {
 	case cflags.OutputJSON:
-		return clioutput.FprintJSONSemantics(cmd.OutOrStdout(), clioutput.FormatJSON, result)
+		return clioutput.FprintJSONSemantics(w, clioutput.FormatJSON, result)
 	case cflags.OutputYAML:
-		return clioutput.FprintJSONSemantics(cmd.OutOrStdout(), clioutput.FormatYAML, result)
+		return clioutput.FprintJSONSemantics(w, clioutput.FormatYAML, result)
 	}
 
-	RenderSimulation(clioutput.TerminalAwareWriter(cmd.OutOrStdout()), result)
-
-	return nil
+	checked := clioutput.NewCheckedWriter(w)
+	RenderSimulation(clioutput.TerminalAwareWriter(checked), result)
+	return checked.Err()
 }
 
 // gasAdjustmentFromFlags reads --gas-adjustment, falling back to the default

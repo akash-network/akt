@@ -1,0 +1,3 @@
+# Keep the repository's implementation and its test/coverage controls under
+# the same Akash core-team review boundary. This also owns CODEOWNERS itself.
+* @akash-network/core

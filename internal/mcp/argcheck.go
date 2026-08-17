@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"math"
 	"slices"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/mark3labs/mcp-go/mcp"
@@ -29,20 +31,37 @@ func (s *Server) validateArguments(next mcpserver.ToolHandlerFunc) mcpserver.Too
 			return next(ctx, req)
 		}
 
-		if err := checkArgs(schema, req.GetArguments()); err != nil {
+		arguments := req.GetArguments()
+		if err := checkArgs(schema, arguments); err != nil {
 			return marshal.ErrResult(err.Error()), nil
 		}
+		req.Params.Arguments = normalizedOptionalStrings(schema, arguments)
 
 		return next(ctx, req)
 	}
 }
 
 func checkArgs(schema mcp.ToolInputSchema, args map[string]any) error {
+	for _, name := range schema.Required {
+		if _, ok := args[name]; !ok {
+			return fmt.Errorf("missing required parameter: %s", name)
+		}
+	}
+
+	unknown := make([]string, 0)
+	for name := range args {
+		if _, ok := schema.Properties[name]; !ok {
+			unknown = append(unknown, name)
+		}
+	}
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		return fmt.Errorf("unknown parameter: %s", unknown[0])
+	}
+
 	for name, raw := range args {
 		prop, ok := schema.Properties[name]
 		if !ok {
-			// Unknown arguments stay ignored: a client that sends an extra
-			// field should not have the call fail.
 			continue
 		}
 
@@ -54,6 +73,14 @@ func checkArgs(schema mcp.ToolInputSchema, args map[string]any) error {
 		if want, _ := spec["type"].(string); want != "" && !jsonTypeMatches(want, raw) {
 			return fmt.Errorf("parameter %s must be a %s", name, want)
 		}
+		if want, _ := spec["type"].(string); want == "string" {
+			if value, ok := raw.(string); ok && strings.TrimSpace(value) == "" {
+				if !requiresNonBlankString(schema, name, spec) {
+					continue
+				}
+				return fmt.Errorf("parameter %s must not be empty", name)
+			}
+		}
 		if err := checkNumber(name, spec, raw); err != nil {
 			return err
 		}
@@ -64,6 +91,24 @@ func checkArgs(schema mcp.ToolInputSchema, args map[string]any) error {
 	}
 
 	return nil
+}
+
+func normalizedOptionalStrings(schema mcp.ToolInputSchema, args map[string]any) map[string]any {
+	normalized := make(map[string]any, len(args))
+	for name, value := range args {
+		if text, ok := value.(string); ok && strings.TrimSpace(text) == "" && !slices.Contains(schema.Required, name) {
+			continue
+		}
+		normalized[name] = value
+	}
+	return normalized
+}
+
+func requiresNonBlankString(schema mcp.ToolInputSchema, name string, spec map[string]any) bool {
+	if minimum, ok := spec["minLength"].(float64); ok && minimum > 0 {
+		return true
+	}
+	return slices.Contains(schema.Required, name)
 }
 
 func checkNumber(name string, spec map[string]any, raw any) error {
@@ -87,7 +132,7 @@ func checkNumber(name string, spec map[string]any, raw any) error {
 		return fmt.Errorf("parameter %s must be greater than or equal to %g", name, minimum)
 	}
 	if maximum, ok := spec["maximum"].(float64); ok && value > maximum {
-		return fmt.Errorf("parameter %s must be less than or equal to %g", name, maximum)
+		return fmt.Errorf("parameter %s must be less than or equal to %s", name, strconv.FormatFloat(maximum, 'f', -1, 64))
 	}
 	if multiple, ok := spec["multipleOf"].(float64); ok && multiple > 0 {
 		if multiple == 1 {

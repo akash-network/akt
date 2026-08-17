@@ -6,12 +6,12 @@
 # Docker is therefore required for every release-* target below.
 
 # goreleaser-cross publishes one image per Go patch release, but not for every
-# patch -- there is no v1.26.1 image even though go.mod pins go 1.26.1 -- so the
-# tag is pinned here instead of being derived from GOTOOLCHAIN_SEMVER. Bump it
-# together with the go directive in go.mod, after checking the tag exists:
-#   docker manifest inspect ghcr.io/goreleaser/goreleaser-cross:vX.Y.Z
+# patch -- there is no v1.26.1 image even though go.mod pins go 1.26.1. Keep the
+# readable tag and immutable index digest together, and update both only after
+# inspecting the published multi-platform manifest.
 GORELEASER_CROSS_VERSION ?= v1.26.2
-GORELEASER_IMAGE         := ghcr.io/goreleaser/goreleaser-cross:$(GORELEASER_CROSS_VERSION)
+GORELEASER_CROSS_DIGEST  ?= sha256:fadba0d4577866eb2588d46ea6b604c73ef45ee55f044acbc17cc49aa435fd04
+GORELEASER_IMAGE         := ghcr.io/goreleaser/goreleaser-cross:$(GORELEASER_CROSS_VERSION)@$(GORELEASER_CROSS_DIGEST)
 
 # The cross image is published for linux/amd64 only; be explicit so arm64 hosts
 # emulate instead of failing to find a manifest.
@@ -34,10 +34,12 @@ GORELEASER_WORKDIR       := /go/src/$(GORELEASER_MOD_MOUNT)
 # not a node -- but this is the path to use when one is added.
 RELEASE_DOCKER_IMAGE     ?= ghcr.io/akash-network/akt
 
-GORELEASER_GOWORK        := $(GOWORK)
+GORELEASER_GOWORK        := off
 
-ifneq ($(GOWORK), off)
+ifneq ($(strip $(GOWORK)),)
+ifneq ($(strip $(GOWORK)),off)
 	GORELEASER_GOWORK    := $(GORELEASER_WORKDIR)/go.work
+endif
 endif
 
 GORELEASER_ARGS :=
@@ -89,21 +91,56 @@ GORELEASER := docker run $(GORELEASER_DOCKER_ARGS) $(GORELEASER_IMAGE)
 .PHONY: release-libs
 release-libs:
 
+# The container can see only the repository mount. Default an unset GOWORK to
+# off, and reject every non-off value except this repository's own go.work.
+# In particular, `auto` and a parent workspace must not become a nonexistent
+# $(GORELEASER_WORKDIR)/go.work inside the container.
+.PHONY: release-workspace-check
+release-workspace-check:
+	@set -eu; \
+	host_gowork="$${GOWORK:-off}"; \
+	if [ -z "$$host_gowork" ] || [ "$$host_gowork" = off ]; then \
+		exit 0; \
+	fi; \
+	case "$$host_gowork" in \
+		/*) ;; \
+		*) host_gowork="$$PWD/$$host_gowork" ;; \
+	esac; \
+	host_dir=$$(cd "$$(dirname "$$host_gowork")" 2>/dev/null && pwd -P) || { \
+		echo "GOWORK must name the repository-root go.work or be off" >&2; \
+		exit 1; \
+	}; \
+	host_gowork="$$host_dir/$$(basename "$$host_gowork")"; \
+	repo_root=$$(cd "$(AKT_ROOT)" && pwd -P); \
+	expected="$$repo_root/go.work"; \
+	if [ "$$host_gowork" != "$$expected" ] || [ ! -f "$$expected" ]; then \
+		echo "GOWORK must name the existing repository-root go.work or be off" >&2; \
+		echo "got: $$host_gowork" >&2; \
+		exit 1; \
+	fi
+
 # Validate .goreleaser.yaml. Cheap, needs no build.
 #
 # `goreleaser check` exits non-zero on a deprecated property even when the
 # config is otherwise valid, and akt uses one deliberately: `brews`, to publish
 # a Homebrew formula rather than a cask (see .goreleaser.yaml for why). Failing
 # the gate on that would mean either dropping the gate or shipping a cask, so
-# the deprecation-only outcome is tolerated -- and only that one. Any other
-# error still fails, and the warning is printed so the eventual removal of
-# `brews` is not a surprise.
+# the deprecation-only outcome is tolerated -- and only that one. GoReleaser's
+# exit status 2 and its two exact error diagnostics distinguish that result
+# from a config that is both invalid and deprecated. Any other status or extra
+# error diagnostic fails.
 .PHONY: release-check
-release-check: $(GORELEASER_DOCKER_CONFIG)/config.json
+release-check: release-workspace-check $(GORELEASER_DOCKER_CONFIG)/config.json
 	@out=$$($(GORELEASER) check $(GORELEASER_ARGS) 2>&1); status=$$?; \
-	echo "$$out"; \
+	printf '%s\n' "$$out"; \
 	if [ $$status -eq 0 ]; then exit 0; fi; \
-	if echo "$$out" | grep -q 'configuration is valid, but uses deprecated properties'; then \
+	deprecated_count=$$(printf '%s\n' "$$out" | grep -F -c \
+		'error=configuration is valid, but uses deprecated properties' || true); \
+	summary_count=$$(printf '%s\n' "$$out" | grep -F -c \
+		'error=1 out of 1 configuration file(s) have issues' || true); \
+	error_count=$$(printf '%s\n' "$$out" | grep -F -c 'error=' || true); \
+	if [ $$status -eq 2 ] && [ "$$deprecated_count" -eq 1 ] && \
+		[ "$$summary_count" -eq 1 ] && [ "$$error_count" -eq 2 ]; then \
 		echo "release-check: passing on deprecation warnings only"; \
 		exit 0; \
 	fi; \
@@ -112,13 +149,13 @@ release-check: $(GORELEASER_DOCKER_CONFIG)/config.json
 # Full cross-compile with a synthetic version, no tag and no publishing.
 # Artifacts land in .cache/goreleaser.
 .PHONY: release-snapshot
-release-snapshot: release-libs $(GORELEASER_DOCKER_CONFIG)/config.json
+release-snapshot: release-libs release-workspace-check $(GORELEASER_DOCKER_CONFIG)/config.json
 	$(GORELEASER) release --clean --snapshot --skip=publish,validate $(GORELEASER_ARGS)
 
 # Same as `release` but stops short of uploading. Needs a tag reachable from
 # HEAD; `--skip=validate` allows running it from a dirty tree.
 .PHONY: release-dry-run
-release-dry-run: release-libs $(GORELEASER_DOCKER_CONFIG)/config.json
+release-dry-run: release-libs release-workspace-check $(GORELEASER_DOCKER_CONFIG)/config.json
 	$(GORELEASER) release --clean --skip=publish,validate $(GORELEASER_ARGS)
 
 # The real thing: builds the matrix and uploads to the GitHub release for the
@@ -129,18 +166,36 @@ release-dry-run: release-libs $(GORELEASER_DOCKER_CONFIG)/config.json
 # GORELEASER_ACCESS_TOKEN writes the Homebrew formula to
 # akash-network/homebrew-tap, which GITHUB_TOKEN cannot reach. Needs
 # contents:write. Only stable releases touch the tap (skip_upload: auto), so a
-# prerelease succeeds without it. Defaulted to empty because `{{ .Env.X }}`
-# fails to render when X is unset at all, which would kill the release before
-# it built anything.
-.PHONY: release
-release: release-libs $(GORELEASER_DOCKER_CONFIG)/config.json
+# prerelease succeeds without it. Stable releases reject a missing token before
+# GoReleaser starts, so GitHub assets cannot be published before the Homebrew
+# update discovers that it has no credential.
+.PHONY: release-publish-preflight
+release-publish-preflight: release-workspace-check
 	@if [ -z "$${GITHUB_TOKEN}" ]; then \
 		echo "GITHUB_TOKEN is required to publish a release"; \
 		exit 1; \
 	fi
-	@if [ -z "$${GORELEASER_ACCESS_TOKEN}" ]; then \
-		echo "warning: GORELEASER_ACCESS_TOKEN unset -- a stable release will fail at the Homebrew formula step"; \
+	@set -eu; \
+	exact_tags=$$(git tag --points-at HEAD | LC_ALL=C sort); \
+	tag_count=$$(printf '%s\n' "$$exact_tags" | sed '/^$$/d' | wc -l | tr -d ' '); \
+	if [ "$$tag_count" -ne 1 ]; then \
+		echo "release commit must have exactly one tag; found $$tag_count" >&2; \
+		printf '%s\n' "$$exact_tags" >&2; \
+		exit 1; \
+	fi; \
+	tag="$$exact_tags"; \
+	if [ "$$($(SEMVER) validate "$$tag")" != valid ] || [ "$${tag#v}" = "$$tag" ]; then \
+		echo "release tag is not a lowercase-v semantic version: $$tag" >&2; \
+		exit 1; \
+	fi; \
+	prerelease=$$($(SEMVER) get prerel "$$tag"); \
+	if [ -z "$$prerelease" ] && [ -z "$${GORELEASER_ACCESS_TOKEN:-}" ]; then \
+		echo "GORELEASER_ACCESS_TOKEN is required before publishing stable release $$tag" >&2; \
+		exit 1; \
 	fi
+
+.PHONY: release
+release: release-libs release-publish-preflight $(GORELEASER_DOCKER_CONFIG)/config.json
 	GORELEASER_ACCESS_TOKEN="$${GORELEASER_ACCESS_TOKEN:-}" \
 	docker run $(GORELEASER_DOCKER_ARGS) -e GITHUB_TOKEN -e GORELEASER_ACCESS_TOKEN $(GORELEASER_IMAGE) release --clean $(GORELEASER_ARGS)
 

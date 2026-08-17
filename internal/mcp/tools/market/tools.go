@@ -26,6 +26,7 @@ func ToolListOrders() mcp.Tool {
 			mcp.Description("Filter by owner bech32 address."),
 		),
 		mcp.WithString("state",
+			mcp.Enum("open", "active", "closed"),
 			mcp.Description("Filter by order state: 'open', 'active', 'closed'."),
 		),
 	)
@@ -133,6 +134,7 @@ func ToolListBids() mcp.Tool {
 			marshal.PositiveInteger(),
 		),
 		mcp.WithString("state",
+			mcp.Enum("open", "active", "lost", "closed"),
 			mcp.Description("Filter by bid state: 'open', 'active', 'lost', 'closed'."),
 		),
 	)
@@ -257,6 +259,7 @@ func ToolListLeases() mcp.Tool {
 			marshal.PositiveInteger(),
 		),
 		mcp.WithString("state",
+			mcp.Enum("active", "closed", "insufficient_funds"),
 			mcp.Description("Filter by lease state: 'active', 'closed', 'insufficient_funds'."),
 		),
 		mcp.WithString("provider",

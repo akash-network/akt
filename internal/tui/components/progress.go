@@ -5,6 +5,7 @@ import (
 
 	"charm.land/bubbles/v2/progress"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"pkg.akt.dev/akt/internal/ui/theme"
 )
@@ -59,19 +60,14 @@ func ProgressBarWithLabel(percent float64, width int, label string) string {
 	p.SetWidth(width)
 	bar := p.ViewAs(percent)
 
-	// Overlay centered label on top of the bar
-	if len(label) > 0 && len(label) < width {
-		labelStart := (width - len(label)) / 2
-		// Build the overlaid version character by character
-		barRunes := []rune(bar)
-		labelRunes := []rune(label)
-		for i, r := range labelRunes {
-			pos := labelStart + i
-			if pos < len(barRunes) {
-				barRunes[pos] = r
-			}
-		}
-		return string(barRunes)
+	// Overlay the label using display columns, not raw runes: bar contains ANSI
+	// styling sequences, so indexing its bytes or runes corrupts the terminal
+	// escape codes.
+	labelWidth := lipgloss.Width(label)
+	if labelWidth > 0 && labelWidth < width {
+		labelStart := (width - labelWidth) / 2
+		return ansi.Cut(bar, 0, labelStart) + label +
+			ansi.Cut(bar, labelStart+labelWidth, width)
 	}
 	return bar
 }

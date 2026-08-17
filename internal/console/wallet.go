@@ -75,11 +75,16 @@ func (c *Client) GetWalletSettings(ctx context.Context) (*WalletSettings, error)
 func (c *Client) UpdateWalletSettings(ctx context.Context, autoReloadEnabled bool) (*WalletSettings, error) {
 	body := envelope(map[string]any{"autoReloadEnabled": autoReloadEnabled})
 
-	var out WalletSettings
+	var out struct {
+		AutoReloadEnabled *bool `json:"autoReloadEnabled"`
+	}
 
 	err := c.doData(ctx, http.MethodPut, "/v1/wallet-settings", body, &out)
 	if errors.Is(err, ErrNotFound) {
 		err = c.doData(ctx, http.MethodPost, "/v1/wallet-settings", body, &out)
+	}
+	if err == nil && (out.AutoReloadEnabled == nil || *out.AutoReloadEnabled != autoReloadEnabled) {
+		err = errors.New("console: wallet settings response did not echo the requested auto-reload value")
 	}
 
 	c.record("update-wallet-settings", "", err)
@@ -88,7 +93,7 @@ func (c *Client) UpdateWalletSettings(ctx context.Context, autoReloadEnabled boo
 		return nil, err
 	}
 
-	return &out, nil
+	return &WalletSettings{AutoReloadEnabled: *out.AutoReloadEnabled}, nil
 }
 
 // GetWeeklyCost fetches the trailing weekly spend in USD.

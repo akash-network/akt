@@ -37,6 +37,7 @@ import (
 	aktctx "pkg.akt.dev/akt/internal/context"
 	"pkg.akt.dev/akt/internal/glyphs"
 	aktkeyring "pkg.akt.dev/akt/internal/keyring"
+	monitorruntime "pkg.akt.dev/akt/internal/monitor/runtime"
 	akttui "pkg.akt.dev/akt/internal/tui"
 
 	"pkg.akt.dev/akt/internal/output"
@@ -318,10 +319,11 @@ the deployment is created.`,
 			if selected := activeContextName(mgr, v.GetString("context")); selected != "" {
 				logPath := aktctx.ActionLogPath(cfgRoot, selected)
 				logger, logErr := actionlog.Open(logPath)
-				if logErr == nil {
-					ctx := cliutil.WithActionLog(cmd.Context(), logger)
-					cmd.SetContext(ctx)
+				if logErr != nil {
+					return fmt.Errorf("open action log for context %q: %w", selected, logErr)
 				}
+				ctx := cliutil.WithActionLog(cmd.Context(), logger)
+				cmd.SetContext(ctx)
 			}
 
 			return nil
@@ -607,6 +609,11 @@ func requiresConfig(cmd *cobra.Command) bool {
 		return false
 	// A monitor invocation with its own RPC is a complete standalone setup.
 	case strings.HasPrefix(path, "akt monitor"):
+		return false
+	// MCP owns a stdio protocol and must never launch an interactive wizard.
+	// It either resolves an existing chain/context rail, starts read-only from
+	// a process-level Console key, or returns its own no-tools diagnostic.
+	case strings.HasPrefix(path, "akt mcp"):
 		return false
 	// SDL authoring is entirely local (see requiresContext), so demanding
 	// a network fetch before linting a local file would be backwards.
@@ -1022,16 +1029,18 @@ func monitorRunE(
 			if err := clearMonitorCache(runtime.cacheDir); err != nil {
 				return err
 			}
-			_, _ = fmt.Fprintln(cmd.ErrOrStderr(), "Cache cleared")
+			checked := output.NewCheckedWriter(cmd.ErrOrStderr())
+			_, writeErr := fmt.Fprintln(checked, "Cache cleared")
+			if err := checked.Complete(writeErr); err != nil {
+				return err
+			}
 		}
 
-		return akttui.RunMonitor(akttui.Config{
-			Viper:            v,
+		return monitorruntime.Run(monitorruntime.Config{
 			RPCEndpoint:      rpcEndpoint,
 			RESTEndpoint:     restEndpoint,
 			CacheDir:         runtime.cacheDir,
 			Insecure:         insecure,
-			Standalone:       true,
 			InitialDashboard: dashboard,
 		})
 	}
@@ -1249,7 +1258,7 @@ in your shell. Follow the instructions for your shell below.`,
 		Short: "Generate bash completion script",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return cmd.Root().GenBashCompletionV2(os.Stdout, true)
+			return cmd.Root().GenBashCompletionV2(cmd.OutOrStdout(), true)
 		},
 	})
 
@@ -1258,7 +1267,7 @@ in your shell. Follow the instructions for your shell below.`,
 		Short: "Generate zsh completion script",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return cmd.Root().GenZshCompletion(os.Stdout)
+			return cmd.Root().GenZshCompletion(cmd.OutOrStdout())
 		},
 	})
 
@@ -1267,7 +1276,7 @@ in your shell. Follow the instructions for your shell below.`,
 		Short: "Generate fish completion script",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return cmd.Root().GenFishCompletion(os.Stdout, true)
+			return cmd.Root().GenFishCompletion(cmd.OutOrStdout(), true)
 		},
 	})
 
@@ -1276,7 +1285,7 @@ in your shell. Follow the instructions for your shell below.`,
 		Short: "Generate PowerShell completion script",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return cmd.Root().GenPowerShellCompletion(os.Stdout)
+			return cmd.Root().GenPowerShellCompletion(cmd.OutOrStdout())
 		},
 	})
 
@@ -1294,7 +1303,7 @@ func versionCmd(bi BuildInfo) *cobra.Command {
   # Full build info (Go version, platform, build tags)
   akt version --long`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			out := cmd.OutOrStdout()
+			out := output.NewCheckedWriter(cmd.OutOrStdout())
 			long, _ := cmd.Flags().GetBool("long")
 
 			if f := output.FormatFromCmd(cmd); f != output.FormatTable {
@@ -1320,7 +1329,7 @@ func versionCmd(bi BuildInfo) *cobra.Command {
 					}
 				}
 
-				return output.Print(f, payload)
+				return out.Complete(output.Fprint(out, f, payload))
 			}
 
 			if long {
@@ -1342,15 +1351,15 @@ func versionCmd(bi BuildInfo) *cobra.Command {
 
 				for _, i := range info {
 					if _, err := fmt.Fprintf(out, "%-11s %s\n", i.k+":", i.v); err != nil {
-						return err
+						return out.Complete(err)
 					}
 				}
 
-				return nil
+				return out.Complete(nil)
 			}
 
 			_, err := fmt.Fprintf(out, "akt %s (commit: %s, built: %s)\n", bi.Version, bi.Commit, bi.Date)
-			return err
+			return out.Complete(err)
 		},
 	}
 

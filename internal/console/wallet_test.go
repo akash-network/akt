@@ -206,3 +206,17 @@ func TestUpdateWalletSettingsUsesPutWhenPresent(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []string{http.MethodPut}, methods, "an existing record needs only the PUT")
 }
+
+func TestUpdateWalletSettingsRejectsMissingOrMismatchedAcknowledgement(t *testing.T) {
+	for _, body := range []string{`{"data":{}}`, `{"data":{"autoReloadEnabled":false}}`} {
+		t.Run(body, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				_, _ = w.Write([]byte(body))
+			}))
+			defer srv.Close()
+
+			_, err := console.New(srv.URL, "key").UpdateWalletSettings(context.Background(), true)
+			require.ErrorContains(t, err, "did not echo")
+		})
+	}
+}

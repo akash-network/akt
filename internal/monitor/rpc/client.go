@@ -41,12 +41,12 @@ const (
 
 // Client is an RPC client for fetching consensus state
 type Client struct {
-	rpcEndpoint    string
-	restEndpoint   string
-	httpClient     *http.Client
-	validators     []consensus.Validator // cached validators
-	validatorsErr  error
-	validatorsOnce sync.Once
+	rpcEndpoint      string
+	restEndpoint     string
+	httpClient       *http.Client
+	validatorsMu     sync.Mutex
+	validators       []consensus.Validator // last successfully fetched validators
+	validatorsLoaded bool
 
 	// oracleVersion caches which oracle REST API version is available.
 	// "" = not yet probed, "v1" or "v2" = detected, "none" = neither works.
@@ -103,24 +103,91 @@ func (c *Client) GetConsensusState(ctx context.Context) (*consensus.ConsensusRes
 	return &result, nil
 }
 
-// GetValidators fetches all validators from the RPC endpoint with pagination
-// Results are cached for subsequent calls (thread-safe)
-func (c *Client) GetValidators() ([]consensus.Validator, error) {
-	c.validatorsOnce.Do(func() {
-		c.validators, c.validatorsErr = c.fetchValidators()
-	})
-	return c.validators, c.validatorsErr
+// GetValidators fetches all validators from the RPC endpoint with pagination.
+// Successful results are cached for subsequent calls. Failed responses are not
+// cached, so a transient outage can recover on the next call.
+func (c *Client) GetValidators(ctx context.Context) ([]consensus.Validator, error) {
+	c.validatorsMu.Lock()
+	defer c.validatorsMu.Unlock()
+
+	if c.validatorsLoaded {
+		return c.validators, nil
+	}
+
+	validators, err := c.fetchValidators(ctx)
+	if err != nil {
+		return nil, err
+	}
+	c.validators = validators
+	c.validatorsLoaded = true
+
+	return c.validators, nil
 }
 
-// fetchValidators does the actual fetch (uses background context since it's called from sync.Once)
-func (c *Client) fetchValidators() ([]consensus.Validator, error) {
-	ctx := context.Background()
+// refreshValidators replaces the cached validator set only after a complete,
+// successful fetch. Callers that require height-current validators use this
+// instead of accepting the last successful set.
+func (c *Client) refreshValidators(ctx context.Context) ([]consensus.Validator, error) {
+	c.validatorsMu.Lock()
+	defer c.validatorsMu.Unlock()
+
+	validators, err := c.fetchValidators(ctx)
+	if err != nil {
+		return nil, err
+	}
+	c.validators = validators
+	c.validatorsLoaded = true
+
+	return c.validators, nil
+}
+
+// refreshValidatorsAtHeight replaces the cached validator set only with the
+// set CometBFT identifies for the requested consensus height. Vote indexes are
+// meaningful only within that set, so accepting a latest-height response here
+// could attribute a vote to the wrong validator while the RPC endpoint is a
+// block ahead of or behind the WebSocket event stream.
+func (c *Client) refreshValidatorsAtHeight(ctx context.Context, height int64) ([]consensus.Validator, error) {
+	if height <= 0 {
+		return nil, fmt.Errorf("validator height must be positive, got %d", height)
+	}
+
+	c.validatorsMu.Lock()
+	defer c.validatorsMu.Unlock()
+
+	validators, err := c.fetchValidatorsAtHeight(ctx, height)
+	if err != nil {
+		return nil, err
+	}
+	c.validators = validators
+	c.validatorsLoaded = true
+
+	return c.validators, nil
+}
+
+func (c *Client) fetchValidators(ctx context.Context) ([]consensus.Validator, error) {
+	return c.fetchValidatorsForHeight(ctx, 0)
+}
+
+func (c *Client) fetchValidatorsAtHeight(ctx context.Context, height int64) ([]consensus.Validator, error) {
+	return c.fetchValidatorsForHeight(ctx, height)
+}
+
+// GetValidatorsAtHeight fetches, but does not cache, the validator set for an
+// exact height. Historical consumers must not replace the live consensus set.
+func (c *Client) GetValidatorsAtHeight(ctx context.Context, height int64) ([]consensus.Validator, error) {
+	if height <= 0 {
+		return nil, fmt.Errorf("validator height must be positive, got %d", height)
+	}
+	return c.fetchValidatorsAtHeight(ctx, height)
+}
+
+func (c *Client) fetchValidatorsForHeight(ctx context.Context, height int64) ([]consensus.Validator, error) {
 	var allValidators []consensus.Validator
 	page := 1
 	perPage := 100
 
 	for {
-		validators, total, err := c.fetchValidatorsPage(ctx, page, perPage)
+		validators, total, err := c.fetchValidatorsPageAtHeight(ctx, page, perPage, height)
 		if err != nil {
 			return nil, err
 		}
@@ -138,7 +205,21 @@ func (c *Client) fetchValidators() ([]consensus.Validator, error) {
 }
 
 func (c *Client) fetchValidatorsPage(ctx context.Context, page, perPage int) ([]consensus.Validator, int, error) {
-	reqURL := fmt.Sprintf("%s/validators?per_page=%d&page=%d", c.rpcEndpoint, perPage, page)
+	return c.fetchValidatorsPageAtHeight(ctx, page, perPage, 0)
+}
+
+func (c *Client) fetchValidatorsPageAtHeight(
+	ctx context.Context,
+	page, perPage int,
+	height int64,
+) ([]consensus.Validator, int, error) {
+	query := url.Values{}
+	query.Set("page", strconv.Itoa(page))
+	query.Set("per_page", strconv.Itoa(perPage))
+	if height > 0 {
+		query.Set("height", strconv.FormatInt(height, 10))
+	}
+	reqURL := strings.TrimRight(c.rpcEndpoint, "/") + "/validators?" + query.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
@@ -163,6 +244,16 @@ func (c *Client) fetchValidatorsPage(ctx context.Context, page, perPage int) ([]
 	var result consensus.ValidatorsResponse
 	if err := json.Unmarshal(body, &result); err != nil {
 		return nil, 0, fmt.Errorf("failed to parse validators: %w", err)
+	}
+	if height > 0 {
+		responseHeight, err := strconv.ParseInt(result.Result.BlockHeight, 10, 64)
+		if err != nil || responseHeight != height {
+			return nil, 0, fmt.Errorf(
+				"validator response height %q does not match requested height %d",
+				result.Result.BlockHeight,
+				height,
+			)
+		}
 	}
 
 	total := 0
@@ -271,7 +362,7 @@ func (c *Client) fetchCommit(ctx context.Context, height string) (int64, map[str
 // GetConsensusStateWithValidators fetches consensus state and parses it with cached validators
 func (c *Client) GetConsensusStateWithValidators(ctx context.Context) (*consensus.State, error) {
 	// Ensure validators are loaded
-	validators, err := c.GetValidators()
+	validators, err := c.GetValidators(ctx)
 	if err != nil {
 		return nil, err
 	}

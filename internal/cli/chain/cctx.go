@@ -5,6 +5,7 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
+	"io"
 	"strconv"
 	"strings"
 
@@ -19,6 +20,8 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"pkg.akt.dev/akt/internal/cliutil"
+	clioutput "pkg.akt.dev/akt/internal/output"
 	arpcclient "pkg.akt.dev/go/node/client"
 )
 
@@ -82,7 +85,11 @@ func GetClientQueryContext(cmd *cobra.Command) (sdkclient.Context, error) {
 // - client.Context field pre-populated & flag set: uses set flag value
 func GetClientTxContext(cmd *cobra.Command) (sdkclient.Context, error) {
 	ctx := GetClientContextFromCmd(cmd)
-	return ReadTxCommandFlags(ctx, cmd.Flags())
+	diagnostics := cmd.ErrOrStderr()
+	if cliutil.IsQuiet(cmd) {
+		diagnostics = io.Discard
+	}
+	return ReadTxCommandFlags(ctx, cmd.Flags(), diagnostics)
 }
 
 // resolveDefaultAccountAddress resolves the configured query account only at
@@ -309,7 +316,7 @@ func ReadPersistentCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) 
 // - client.Context field not pre-populated & flag set: uses set flag value
 // - client.Context field pre-populated & flag not set: uses pre-populated value
 // - client.Context field pre-populated & flag set: uses set flag value
-func ReadTxCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) (sdkclient.Context, error) {
+func ReadTxCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet, diagnostics io.Writer) (sdkclient.Context, error) {
 	if err := validateTxInvocation(cctx, flagSet); err != nil {
 		return cctx, err
 	}
@@ -392,7 +399,11 @@ func ReadTxCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) (sdkclie
 		// SIGN_MODE_AMINO_JSON, because ledger doesn't support proto yet.
 		// ref: https://github.com/cosmos/cosmos-sdk/issues/8109
 		if keyType == keyring.TypeLedger && cctx.SignModeStr != cflags.SignModeLegacyAminoJSON && !cctx.LedgerHasProtobuf {
-			fmt.Println("Default sign-mode 'direct' not supported by Ledger, using sign-mode 'amino-json'.")
+			checked := clioutput.NewCheckedWriter(diagnostics)
+			_, writeErr := fmt.Fprintln(checked, "Default sign-mode 'direct' not supported by Ledger, using sign-mode 'amino-json'.")
+			if err := checked.Complete(writeErr); err != nil {
+				return cctx, err
+			}
 			cctx = cctx.WithSignModeStr(cflags.SignModeLegacyAminoJSON)
 		}
 	}

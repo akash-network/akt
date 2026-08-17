@@ -3,12 +3,14 @@ package keys
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
@@ -18,6 +20,27 @@ import (
 )
 
 const keysTestAddress = "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx"
+
+type ledgerPrefixKeyring struct {
+	sdkkeyring.Keyring
+	prefix string
+	stop   error
+}
+
+func (keyring *ledgerPrefixKeyring) Key(string) (*sdkkeyring.Record, error) {
+	return nil, errors.New("key not found")
+}
+
+func (keyring *ledgerPrefixKeyring) SaveLedgerKey(
+	_ string,
+	_ sdkkeyring.SignatureAlgo,
+	prefix string,
+	_, _, _ uint32,
+) (*sdkkeyring.Record, error) {
+	keyring.prefix = prefix
+
+	return nil, keyring.stop
+}
 
 func testKeyring(t *testing.T) sdkkeyring.Keyring {
 	t.Helper()
@@ -84,6 +107,40 @@ func runKeysCommandWith(t *testing.T, kr sdkkeyring.Keyring, recorder Recorder, 
 	return out.String(), err
 }
 
+func runKeysCommandWithInput(t *testing.T, kr sdkkeyring.Keyring, input string, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+
+	cmd := Commands(func() (sdkkeyring.Keyring, error) { return kr, nil }, nil)
+	cmd.PersistentFlags().VarP(output.NewFormatFlag("pretty"), "output", "o", "Output format: pretty, json, yaml")
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	var out, errOut bytes.Buffer
+	cmd.SetIn(strings.NewReader(input))
+	cmd.SetOut(&out)
+	cmd.SetErr(&errOut)
+	cmd.SetArgs(args)
+
+	err = cmd.Execute()
+	return out.String(), errOut.String(), err
+}
+
+func TestKeysAddLedgerUsesConfiguredAccountPrefix(t *testing.T) {
+	configuredPrefix := sdk.GetConfig().GetBech32AccountAddrPrefix()
+	if configuredPrefix == "cosmos" {
+		t.Fatal("test configuration must distinguish the Akash account prefix from the SDK default")
+	}
+
+	stop := errors.New("ledger boundary reached")
+	keyring := &ledgerPrefixKeyring{stop: stop}
+	_, err := runKeysCommand(t, keyring, "add", "ledger", "--ledger")
+	if !errors.Is(err, stop) {
+		t.Fatalf("ledger add error = %v, want boundary error", err)
+	}
+	if keyring.prefix != configuredPrefix {
+		t.Errorf("SaveLedgerKey prefix = %q, want configured account prefix %q", keyring.prefix, configuredPrefix)
+	}
+}
+
 func TestKeysAddRecoveryHonorsStructuredOutput(t *testing.T) {
 	source := filepath.Join(t.TempDir(), "mnemonic.txt")
 	if err := os.WriteFile(source, []byte("abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about\n"), 0o600); err != nil {
@@ -117,6 +174,45 @@ func TestKeysAddRecoveryHonorsStructuredOutput(t *testing.T) {
 				t.Errorf("recovered key repeated its mnemonic: %#v", got)
 			}
 		})
+	}
+}
+
+func TestEmptyKeyListUsesStructuredCommandWriter(t *testing.T) {
+	for _, format := range []string{"json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			out, err := runKeysCommand(t, aktkeyring.NewInMemory(aktcodec.MakeEncodingConfig().Codec),
+				"list", "--output", format)
+			if err != nil {
+				t.Fatalf("list empty keys: %v", err)
+			}
+			if !strings.HasSuffix(strings.TrimSpace(out), "[]") {
+				t.Fatalf("empty %s key list = %q, want an empty sequence", format, out)
+			}
+		})
+	}
+}
+
+func TestKeyRecoveryReadsConfiguredInput(t *testing.T) {
+	const mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+	kr := aktkeyring.NewInMemory(aktcodec.MakeEncodingConfig().Codec)
+
+	stdout, stderr, err := runKeysCommandWithInput(t, kr, mnemonic+"\n",
+		"add", "recovered", "--recover", "--output", "json")
+	if err != nil {
+		t.Fatalf("recover from command stdin: %v", err)
+	}
+	if !strings.Contains(stderr, "Enter your mnemonic") {
+		t.Fatalf("recovery prompt = %q", stderr)
+	}
+	var result map[string]any
+	if err := json.Unmarshal([]byte(stdout), &result); err != nil {
+		t.Fatalf("decode recovery output %q: %v", stdout, err)
+	}
+	if result["name"] != "recovered" || !strings.HasPrefix(result["address"].(string), "akash1") {
+		t.Fatalf("recovery result = %#v", result)
+	}
+	if _, exists := result["mnemonic"]; exists {
+		t.Fatal("recovery output repeated the supplied mnemonic")
 	}
 }
 

@@ -34,11 +34,11 @@ func (m *MonitorAdapter) View() tea.View {
 
 func (m *MonitorAdapter) SetSize(w, h int) {
 	m.w, m.h = w, h
-	// The monitor model expects a WindowSizeMsg for resizing.
-	// Subtract 3 for the TUI status bar that the monitor doesn't know about.
+	// The shell has already removed its chrome from h. Forward that exact
+	// content height so the monitor does not reserve the status bar twice.
 	m.Inner, _ = m.Inner.Update(tea.WindowSizeMsg{
 		Width:  w,
-		Height: h - 3,
+		Height: h,
 	})
 }
 

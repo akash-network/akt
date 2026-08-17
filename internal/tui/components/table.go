@@ -379,9 +379,14 @@ func (t ResourceTable) computeColumnWidths(totalWidth int) []int {
 			remaining = autoCount * 4
 		}
 		autoWidth := remaining / autoCount
+		extra := remaining % autoCount
 		for i, col := range t.config.Columns {
 			if col.Width == 0 {
 				widths[i] = autoWidth
+				if extra > 0 {
+					widths[i]++
+					extra--
+				}
 			}
 		}
 	}

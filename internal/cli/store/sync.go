@@ -179,7 +179,8 @@ func renderSyncResult(cmd *cobra.Command, owners []string, stats syncpkg.Reconci
 		return nil
 	}
 
-	out := output.TerminalAwareWriter(cmd.OutOrStdout())
+	checked := output.NewCheckedWriter(cmd.OutOrStdout())
+	out := output.TerminalAwareWriter(checked)
 
 	fmt.Fprintln(out, pretty.Section("Store Sync"))
 	pretty.KV(out, "Accounts", fmt.Sprintf("%d", len(owners)))
@@ -193,7 +194,7 @@ func renderSyncResult(cmd *cobra.Command, owners []string, stats syncpkg.Reconci
 	pretty.KV(out, "Bids", fmt.Sprintf("%d", stats.Bids))
 	pretty.KV(out, "Height", pretty.FormatNumber(stats.Height))
 
-	return nil
+	return checked.Err()
 }
 
 // resolveTrackedAccounts turns the context's tracked-accounts setting into the

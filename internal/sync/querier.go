@@ -62,6 +62,7 @@ func (q *chainQuerier) Deployments(ctx context.Context, owner string) ([]*store.
 
 	var out []*store.DeploymentRecord
 	var nextKey []byte
+	seenPageKeys := make(map[string]struct{})
 
 	for {
 		res, err := q.cl.Query().Deployment().Deployments(ctx, &dv1beta.QueryDeploymentsRequest{
@@ -74,7 +75,10 @@ func (q *chainQuerier) Deployments(ctx context.Context, owner string) ([]*store.
 
 		out = append(out, deploymentRecords(res, now)...)
 
-		nextKey = nextPageKey(res.GetPagination())
+		nextKey, err = unseenNextPageKey(res.GetPagination(), seenPageKeys)
+		if err != nil {
+			return nil, fmt.Errorf("query deployments for %s: %w", owner, err)
+		}
 		if len(nextKey) == 0 {
 			return out, nil
 		}
@@ -85,6 +89,7 @@ func (q *chainQuerier) Deployments(ctx context.Context, owner string) ([]*store.
 func (q *chainQuerier) Leases(ctx context.Context, owner string, dseq uint64) ([]*store.LeaseRecord, error) {
 	var out []*store.LeaseRecord
 	var nextKey []byte
+	seenPageKeys := make(map[string]struct{})
 
 	for {
 		res, err := q.cl.Query().Market().Leases(ctx, &mv1beta.QueryLeasesRequest{
@@ -97,7 +102,10 @@ func (q *chainQuerier) Leases(ctx context.Context, owner string, dseq uint64) ([
 
 		out = append(out, leaseRecords(res)...)
 
-		nextKey = nextPageKey(res.GetPagination())
+		nextKey, err = unseenNextPageKey(res.GetPagination(), seenPageKeys)
+		if err != nil {
+			return nil, fmt.Errorf("query leases for %s/%d: %w", owner, dseq, err)
+		}
 		if len(nextKey) == 0 {
 			return out, nil
 		}
@@ -108,6 +116,7 @@ func (q *chainQuerier) Leases(ctx context.Context, owner string, dseq uint64) ([
 func (q *chainQuerier) Bids(ctx context.Context, owner string, dseq uint64) ([]*store.BidRecord, error) {
 	var out []*store.BidRecord
 	var nextKey []byte
+	seenPageKeys := make(map[string]struct{})
 
 	for {
 		res, err := q.cl.Query().Market().Bids(ctx, &mv1beta.QueryBidsRequest{
@@ -120,7 +129,10 @@ func (q *chainQuerier) Bids(ctx context.Context, owner string, dseq uint64) ([]*
 
 		out = append(out, bidRecords(res)...)
 
-		nextKey = nextPageKey(res.GetPagination())
+		nextKey, err = unseenNextPageKey(res.GetPagination(), seenPageKeys)
+		if err != nil {
+			return nil, fmt.Errorf("query bids for %s/%d: %w", owner, dseq, err)
+		}
 		if len(nextKey) == 0 {
 			break
 		}
@@ -143,6 +155,25 @@ func nextPageKey(p *query.PageResponse) []byte {
 	}
 
 	return p.NextKey
+}
+
+// unseenNextPageKey prevents a malformed or inconsistent node response from
+// trapping reconciliation in an unbounded pagination loop. A repeated key
+// cannot advance the query, so returning an error is safer than presenting a
+// partial local-store snapshot as current.
+func unseenNextPageKey(p *query.PageResponse, seen map[string]struct{}) ([]byte, error) {
+	nextKey := nextPageKey(p)
+	if len(nextKey) == 0 {
+		return nil, nil
+	}
+
+	key := string(nextKey)
+	if _, ok := seen[key]; ok {
+		return nil, fmt.Errorf("repeated pagination key %x", nextKey)
+	}
+	seen[key] = struct{}{}
+
+	return nextKey, nil
 }
 
 // deploymentRecords converts a deployments query response into store records.

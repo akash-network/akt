@@ -18,21 +18,23 @@ import (
 //   - "yaml": raw Cosmos SDK YAML output via clientCtx.PrintProto().
 func PrintQueryResult(cmd *cobra.Command, cctx sdkclient.Context, msg proto.Message) error {
 	output, _ := cmd.Flags().GetString(cflags.FlagOutput)
+	checked := clioutput.NewCheckedWriter(cmd.OutOrStdout())
+	cctx = cctx.WithOutput(checked)
 
 	switch output {
 	case cflags.OutputJSON:
-		return cctx.WithOutputFormat("json").PrintProto(msg)
+		return checked.Complete(cctx.WithOutputFormat("json").PrintProto(msg))
 	case cflags.OutputYAML:
-		return cctx.WithOutputFormat("text").PrintProto(msg)
+		return checked.Complete(cctx.WithOutputFormat("text").PrintProto(msg))
 	default:
 		// "pretty" or unset — use registered formatter if available.
 		f, ok := Lookup(msg)
 		if !ok {
 			// No formatter registered — fall back to JSON.
-			return cctx.WithOutputFormat("json").PrintProto(msg)
+			return checked.Complete(cctx.WithOutputFormat("json").PrintProto(msg))
 		}
 
-		return f.Format(clioutput.TerminalAwareWriter(cmd.OutOrStdout()), cmd, cctx, msg)
+		return checked.Complete(f.Format(clioutput.TerminalAwareWriter(checked), cmd, cctx, msg))
 	}
 }
 
@@ -46,10 +48,9 @@ func PrintQueryResultAny(cmd *cobra.Command, cctx sdkclient.Context, msg interfa
 	}
 
 	// Not a proto.Message — use legacy print (e.g., for amino-encoded types).
+	checked := clioutput.NewCheckedWriter(cmd.OutOrStdout())
 	//nolint:staticcheck // SA1019: PrintObjectLegacy is the only client-context
-	// printer that handles non-proto (amino) values. The proto-only
-	// replacements cannot encode this branch's input, so swapping it would
-	// change the rendered encoding for amino types -- a spec decision, not a
-	// lint fix. Revisit when chain-sdk stops returning interface{}.
-	return cctx.PrintObjectLegacy(msg)
+	// printer that handles non-proto (amino) values. The proto-only replacements
+	// cannot encode this input; revisit when chain-sdk stops returning interface{}.
+	return checked.Complete(cctx.WithOutput(checked).PrintObjectLegacy(msg))
 }
