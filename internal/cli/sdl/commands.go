@@ -9,6 +9,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -153,29 +155,29 @@ self-checked against "akt sdl validate" before it is printed.`,
 	// apart from the unset default), so out-of-range input — including an
 	// explicit 0 — is a usage error, never an internal one.
 	fl := cmd.Flags()
-	fl.String("name", "", "Service name (default per scaffold)")
-	fl.String("image", "", "Container image pinned by tag or sha256 digest, e.g. nginx:1.27")
-	fl.Int("port", 0, "Container port to expose, 1-65535 (default per scaffold)")
-	fl.Int("as", 0, "External port, 1-65535 (default per scaffold)")
-	fl.String("cpu", "", "CPU units, e.g. 0.5 or 500m")
-	fl.String("memory", "", "Memory size, e.g. 512Mi, 2Gi")
-	fl.String("storage", "", "Storage size, e.g. 1Gi")
-	fl.Int("count", 0, "Replica count, minimum 1 (default per scaffold)")
-	fl.Int("price", 0, "Max price per block in uact, minimum 1 (default per scaffold)")
-	fl.StringArray("env", nil, "Environment variable KEY=value (repeatable)")
-	fl.Int("gpu", 0, "GPU units, minimum 1 (gpu scaffold)")
-	fl.String("gpu-model", "", "NVIDIA GPU model, e.g. a100 (gpu scaffold)")
+	fl.String(flagdefs.FlagName, "", "Service name (default per scaffold)")
+	fl.String(flagdefs.FlagImage, "", "Container image pinned by tag or sha256 digest, e.g. nginx:1.27")
+	fl.Int(flagdefs.FlagPort, 0, "Container port to expose, 1-65535 (default per scaffold)")
+	fl.Int(flagdefs.FlagAs, 0, "External port, 1-65535 (default per scaffold)")
+	fl.String(flagdefs.FlagCPU, "", "CPU units, e.g. 0.5 or 500m")
+	fl.String(flagdefs.FlagMemory, "", "Memory size, e.g. 512Mi, 2Gi")
+	fl.String(flagdefs.FlagStorage, "", "Storage size, e.g. 1Gi")
+	fl.Int(flagdefs.FlagCount, 0, "Replica count, minimum 1 (default per scaffold)")
+	fl.Int(flagdefs.FlagPrice, 0, "Max price per block in uact, minimum 1 (default per scaffold)")
+	fl.StringArray(flagdefs.FlagEnv, nil, "Environment variable KEY=value (repeatable)")
+	fl.Int(flagdefs.FlagGPU, 0, "GPU units, minimum 1 (gpu scaffold)")
+	fl.String(flagdefs.FlagGPUModel, "", "NVIDIA GPU model, e.g. a100 (gpu scaffold)")
 
 	return cmd
 }
 
 func rejectExplicitOutput(cmd *cobra.Command) error {
-	flag := cmd.Flags().Lookup("output")
+	flag := cmd.Flags().Lookup(flagdefs.FlagOutput)
 	if flag == nil || !flag.Changed {
 		return nil
 	}
 
-	format, _ := cmd.Flags().GetString("output")
+	format, _ := cmd.Flags().GetString(flagdefs.FlagOutput)
 
 	return &cliutil.CLIError{
 		Code:       cliutil.ExitUsage,
@@ -384,12 +386,12 @@ func optionsFromFlags(cmd *cobra.Command) (Options, error) {
 	fl := cmd.Flags()
 
 	o := Options{}
-	o.Name, _ = fl.GetString("name")
-	o.Image, _ = fl.GetString("image")
-	o.CPU, _ = fl.GetString("cpu")
-	o.Memory, _ = fl.GetString("memory")
-	o.Storage, _ = fl.GetString("storage")
-	o.GPUModel, _ = fl.GetString("gpu-model")
+	o.Name, _ = fl.GetString(flagdefs.FlagName)
+	o.Image, _ = fl.GetString(flagdefs.FlagImage)
+	o.CPU, _ = fl.GetString(flagdefs.FlagCPU)
+	o.Memory, _ = fl.GetString(flagdefs.FlagMemory)
+	o.Storage, _ = fl.GetString(flagdefs.FlagStorage)
+	o.GPUModel, _ = fl.GetString(flagdefs.FlagGPUModel)
 
 	var err error
 	if o.Port, err = intFlag(fl, "port", 1, maxPort); err != nil {
@@ -408,7 +410,7 @@ func optionsFromFlags(cmd *cobra.Command) (Options, error) {
 		return o, err
 	}
 
-	env, _ := fl.GetStringArray("env")
+	env, _ := fl.GetStringArray(flagdefs.FlagEnv)
 	for _, e := range env {
 		if !strings.Contains(e, "=") {
 			return o, cliutil.ErrUsage(fmt.Sprintf("--env expects KEY=value, got %q", e), nil)

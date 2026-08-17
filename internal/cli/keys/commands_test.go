@@ -1,6 +1,8 @@
 package keys
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -10,6 +12,7 @@ import (
 	"testing"
 
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
+	kmultisig "github.com/cosmos/cosmos-sdk/crypto/keys/multisig"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -94,7 +97,7 @@ func runKeysCommandWith(t *testing.T, kr sdkkeyring.Keyring, recorder Recorder, 
 	t.Helper()
 
 	cmd := Commands(func() (sdkkeyring.Keyring, error) { return kr, nil }, recorder)
-	cmd.PersistentFlags().VarP(output.NewFormatFlag("pretty"), "output", "o", "Output format: pretty, json, yaml")
+	cmd.PersistentFlags().VarP(output.NewFormatFlag("pretty"), flagdefs.FlagOutput, "o", "Output format: pretty, json, yaml")
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
 	var out bytes.Buffer
@@ -111,7 +114,7 @@ func runKeysCommandWithInput(t *testing.T, kr sdkkeyring.Keyring, input string, 
 	t.Helper()
 
 	cmd := Commands(func() (sdkkeyring.Keyring, error) { return kr, nil }, nil)
-	cmd.PersistentFlags().VarP(output.NewFormatFlag("pretty"), "output", "o", "Output format: pretty, json, yaml")
+	cmd.PersistentFlags().VarP(output.NewFormatFlag("pretty"), flagdefs.FlagOutput, "o", "Output format: pretty, json, yaml")
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
 	var out, errOut bytes.Buffer
@@ -138,6 +141,41 @@ func TestKeysAddLedgerUsesConfiguredAccountPrefix(t *testing.T) {
 	}
 	if keyring.prefix != configuredPrefix {
 		t.Errorf("SaveLedgerKey prefix = %q, want configured account prefix %q", keyring.prefix, configuredPrefix)
+	}
+}
+
+func TestKeysAddReadsCanonicalMultisigThreshold(t *testing.T) {
+	kr := testKeyring(t)
+	if _, _, err := kr.NewMnemonic(
+		"bob",
+		sdkkeyring.English,
+		"m/44'/118'/0'/0/1",
+		"",
+		aktkeyring.DefaultAlgo(),
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := runKeysCommand(
+		t,
+		kr,
+		"add", "team",
+		"--"+flagdefs.FlagMultisig, "alice,bob",
+		"--"+flagdefs.FlagMultisigThreshold, "2",
+	); err != nil {
+		t.Fatal(err)
+	}
+	record, err := kr.Key("team")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pubkey, err := record.GetPubKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	multisig, ok := pubkey.(*kmultisig.LegacyAminoPubKey)
+	if !ok || multisig.Threshold != 2 {
+		t.Fatalf("team pubkey = %#v", pubkey)
 	}
 }
 

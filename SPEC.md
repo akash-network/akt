@@ -3006,6 +3006,16 @@ transport.
 
 ## 3. Flag Specification
 
+Every statically declared flag name is defined once as a constant in
+`internal/flags`. Cobra registration and reads, including `Lookup`, `Changed`,
+and Viper `BindPFlag` calls, import those constants directly instead of
+repeating the wire name as a string literal or accessing it through a re-export.
+`internal/cli/chain/flags` retains chain flag builders, parsers, defaults, and
+allowed values, but does not re-export flag names. Workflow parameter flags
+generated from workflow definitions are data-driven and do not require static
+constants. Commented-out `FEEDBACK(2026-07)` registrations retain their
+registration shape so they can be restored after the positional-only trial.
+
 ### 3.1 Global Persistent Flags
 
 Applied to every command via the root command's `PersistentFlags()`.

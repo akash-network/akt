@@ -1,6 +1,8 @@
 package console
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"context"
 	"encoding/json"
@@ -64,8 +66,8 @@ func execConsoleContext(ctx context.Context, t *testing.T, m *aktctx.Manager, sr
 	t.Setenv(aktctx.EnvConsoleAPIKey, "")
 
 	cmd := Commands(func() *aktctx.Manager { return m })
-	cmd.PersistentFlags().VarP(output.NewFormatFlag("pretty"), "output", "o", "Output format: pretty, json, yaml")
-	cmd.PersistentFlags().String("context", "", "Active context name")
+	cmd.PersistentFlags().VarP(output.NewFormatFlag("pretty"), flagdefs.FlagOutput, "o", "Output format: pretty, json, yaml")
+	cmd.PersistentFlags().String(flagdefs.FlagContext, "", "Active context name")
 	cmd.SetContext(ctx)
 
 	var buf bytes.Buffer
@@ -286,8 +288,8 @@ func executeConsoleWithOutput(
 
 	t.Setenv(aktctx.EnvConsoleAPIKey, "")
 	cmd := Commands(func() *aktctx.Manager { return m })
-	cmd.PersistentFlags().VarP(output.NewFormatFlag("pretty"), "output", "o", "Output format: pretty, json, yaml")
-	cmd.PersistentFlags().String("context", "", "Active context name")
+	cmd.PersistentFlags().VarP(output.NewFormatFlag("pretty"), flagdefs.FlagOutput, "o", "Output format: pretty, json, yaml")
+	cmd.PersistentFlags().String(flagdefs.FlagContext, "", "Active context name")
 	cmd.SetOut(out)
 	cmd.SetErr(io.Discard)
 	if srvURL != "" {

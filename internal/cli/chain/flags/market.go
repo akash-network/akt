@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -18,7 +20,7 @@ import (
 // AddOrderIDFlags add flags for order
 func AddOrderIDFlags(flags *pflag.FlagSet, opts ...DeploymentIDOption) {
 	AddGroupIDFlags(flags, opts...)
-	flags.Uint32(FlagOSeq, 1, "Order Sequence")
+	flags.Uint32(flagdefs.FlagOSeq, 1, "Order Sequence")
 }
 
 // MarkReqOrderIDFlags marks flags required for order
@@ -28,12 +30,12 @@ func MarkReqOrderIDFlags(cmd *cobra.Command, opts ...DeploymentIDOption) {
 
 // AddProviderFlag add provider flag to command flags set
 func AddProviderFlag(flags *pflag.FlagSet) {
-	flags.String(FlagProvider, "", "Provider")
+	flags.String(flagdefs.FlagProvider, "", "Provider")
 }
 
 // MarkReqProviderFlag marks provider flag as required
 func MarkReqProviderFlag(cmd *cobra.Command) {
-	_ = cmd.MarkFlagRequired(FlagProvider)
+	_ = cmd.MarkFlagRequired(flagdefs.FlagProvider)
 }
 
 // OrderIDFromFlags returns OrderID with given flags and error if occurred
@@ -42,7 +44,7 @@ func OrderIDFromFlags(flags *pflag.FlagSet, opts ...MarketOption) (mv1.OrderID, 
 	if err != nil {
 		return mv1.OrderID{}, err
 	}
-	val, err := flags.GetUint32(FlagOSeq)
+	val, err := flags.GetUint32(flagdefs.FlagOSeq)
 	if err != nil {
 		return mv1.OrderID{}, err
 	}
@@ -82,7 +84,7 @@ func BidIDFromFlags(flags *pflag.FlagSet, opts ...MarketOption) (mv1.BidID, erro
 	}
 
 	if opt.Provider.Empty() {
-		provider, err := flags.GetString(FlagProvider)
+		provider, err := flags.GetString(flagdefs.FlagProvider)
 		if err != nil {
 			return mv1.BidID{}, err
 		}
@@ -563,12 +565,12 @@ func stateKeywords(values map[string]int32) string {
 
 // AddBidClosedReasonFlag add the reason flag when the provider initiates lease close
 func AddBidClosedReasonFlag(flags *pflag.FlagSet) {
-	flags.Int32(FlagClosedReason, int32(mv1.LeaseClosedReasonUnspecified), "Numeric reason for closing the bid (10000=unstable, 10001=decommission, 10002=unspecified, 10003=manifest_timeout)")
+	flags.Int32(flagdefs.FlagClosedReason, int32(mv1.LeaseClosedReasonUnspecified), "Numeric reason for closing the bid (10000=unstable, 10001=decommission, 10002=unspecified, 10003=manifest_timeout)")
 }
 
 // BidClosedReasonFromFlags returns LeaseClosedReason from flags or returns the default value if not set
 func BidClosedReasonFromFlags(flags *pflag.FlagSet) (mv1.LeaseClosedReason, error) {
-	val, err := flags.GetInt32(FlagClosedReason)
+	val, err := flags.GetInt32(flagdefs.FlagClosedReason)
 	if err != nil {
 		return mv1.LeaseClosedReasonInvalid, err
 	}

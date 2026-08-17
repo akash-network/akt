@@ -1,6 +1,8 @@
 package workflow
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -139,7 +141,7 @@ steps:
 	if cmd.Short != "A user-defined workflow" {
 		t.Fatalf("foo command Short = %q, want %q", cmd.Short, "A user-defined workflow")
 	}
-	if cmd.Flags().Lookup("label") == nil {
+	if cmd.Flags().Lookup(flagdefs.FlagLabel) == nil {
 		t.Fatalf("foo command missing --label flag generated from params")
 	}
 }
@@ -194,7 +196,7 @@ func TestCommandFromDefClose(t *testing.T) {
 	if cmd.Use != "close [dseq]" {
 		t.Fatalf("close Use = %q, want %q", cmd.Use, "close [dseq]")
 	}
-	dseq := cmd.Flags().Lookup("dseq")
+	dseq := cmd.Flags().Lookup(flagdefs.FlagDSeq)
 	if dseq == nil {
 		t.Fatal("close command missing --dseq flag")
 		return
@@ -202,10 +204,10 @@ func TestCommandFromDefClose(t *testing.T) {
 	if dseq.Value.Type() != "int" {
 		t.Fatalf("--dseq flag type = %q, want %q", dseq.Value.Type(), "int")
 	}
-	if cmd.Flags().Lookup("yes") == nil {
+	if cmd.Flags().Lookup(flagdefs.FlagSkipConfirmation) == nil {
 		t.Fatal("close command missing common --yes flag")
 	}
-	if cmd.Flags().Lookup("dry-run") == nil {
+	if cmd.Flags().Lookup(flagdefs.FlagDryRun) == nil {
 		t.Fatal("close command missing common --dry-run flag")
 	}
 }
@@ -229,7 +231,7 @@ func TestCommandFromDefDeploy(t *testing.T) {
 			t.Fatalf("deploy command missing --%s flag", flag)
 		}
 	}
-	depositHelp := cmd.Flags().Lookup("deposit").Usage
+	depositHelp := cmd.Flags().Lookup(flagdefs.FlagDeposit).Usage
 	if !strings.Contains(depositHelp, "auto (recommended") {
 		t.Errorf("--deposit help %q does not recommend the network-derived default", depositHelp)
 	}
@@ -291,7 +293,7 @@ func TestCommandFromDefTxFlags(t *testing.T) {
 		}
 	}
 
-	dryRun := cmd.Flags().Lookup("dry-run")
+	dryRun := cmd.Flags().Lookup(flagdefs.FlagDryRun)
 	if dryRun == nil {
 		t.Fatal("close command missing --dry-run flag")
 		return

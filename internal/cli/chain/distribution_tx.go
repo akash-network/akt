@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/version"
@@ -14,12 +16,6 @@ import (
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	"pkg.akt.dev/akt/internal/output/pretty"
 	cclient "pkg.akt.dev/go/node/client/v1beta3"
-)
-
-// Transaction flags for the x/distribution module
-var (
-	FlagCommission       = "commission"
-	FlagMaxMessagesPerTx = "max-msgs"
 )
 
 const (
@@ -128,7 +124,7 @@ $ %s tx distribution withdraw-rewards %s1gghjut3ccd8ay0zduzj64hwre2fxs9ldmqhffj 
 
 			msgs := []sdk.Msg{types.NewMsgWithdrawDelegatorReward(delAddr, args[0])}
 
-			if commission, _ := cmd.Flags().GetBool(FlagCommission); commission {
+			if commission, _ := cmd.Flags().GetBool(flagdefs.FlagCommission); commission {
 				msgs = append(msgs, types.NewMsgWithdrawValidatorCommission(args[0]))
 			}
 
@@ -141,7 +137,7 @@ $ %s tx distribution withdraw-rewards %s1gghjut3ccd8ay0zduzj64hwre2fxs9ldmqhffj 
 		},
 	}
 
-	cmd.Flags().Bool(FlagCommission, false, "Withdraw the validator's commission in addition to the rewards")
+	cmd.Flags().Bool(flagdefs.FlagCommission, false, "Withdraw the validator's commission in addition to the rewards")
 	cflags.AddTxFlagsToCmd(cmd)
 
 	return cmd
@@ -159,7 +155,7 @@ Note that if you use this command with --%[2]s=%[3]s or --%[2]s=%[4]s, the %[5]s
 Example:
 $ %[1]s tx distribution withdraw-all-rewards --from mykey
 `,
-				version.AppName, cflags.FlagBroadcastMode, cflags.BroadcastSync, cflags.BroadcastAsync, FlagMaxMessagesPerTx,
+				version.AppName, flagdefs.FlagBroadcastMode, cflags.BroadcastSync, cflags.BroadcastAsync, flagdefs.FlagMaxMessagesPerTx,
 			),
 		),
 		Args:              cobra.NoArgs,
@@ -200,7 +196,7 @@ $ %[1]s tx distribution withdraw-all-rewards --from mykey
 				msg := types.NewMsgWithdrawDelegatorReward(delAddr, valAddr)
 				msgs = append(msgs, msg)
 			}
-			chunkSize, _ := cmd.Flags().GetInt(FlagMaxMessagesPerTx)
+			chunkSize, _ := cmd.Flags().GetInt(flagdefs.FlagMaxMessagesPerTx)
 
 			responses, err := newSplitAndApply(ctx, cl.Tx().BroadcastMsgs, msgs, chunkSize)
 			if err != nil {
@@ -211,7 +207,7 @@ $ %[1]s tx distribution withdraw-all-rewards --from mykey
 		},
 	}
 
-	cmd.Flags().Int(FlagMaxMessagesPerTx, MaxMessagesPerTxDefault, "Limit the number of messages per tx (0 for unlimited)")
+	cmd.Flags().Int(flagdefs.FlagMaxMessagesPerTx, MaxMessagesPerTxDefault, "Limit the number of messages per tx (0 for unlimited)")
 	cflags.AddTxFlagsToCmd(cmd)
 
 	return cmd

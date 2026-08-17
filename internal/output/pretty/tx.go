@@ -1,6 +1,8 @@
 package pretty
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"encoding/json"
 	"fmt"
@@ -38,7 +40,7 @@ const (
 //   - *sdk.TxResponse: a broadcast result; "pretty" renders the two-section
 //     layout, "json"/"yaml" emit the structured document of SPEC §10.11.6.
 func PrintTxResult(cmd *cobra.Command, cctx sdkclient.Context, resp interface{}) error {
-	output, _ := cmd.Flags().GetString(cflags.FlagOutput)
+	output, _ := cmd.Flags().GetString(flagdefs.FlagOutput)
 	checked := clioutput.NewCheckedWriter(cmd.OutOrStdout())
 	cctx = cctx.WithOutput(checked)
 	if payload, ok := resp.([]byte); ok {
@@ -139,7 +141,7 @@ func PrintTxResults(cmd *cobra.Command, cctx sdkclient.Context, responses []inte
 		return PrintTxResult(cmd, cctx, responses[0])
 	}
 
-	format, _ := cmd.Flags().GetString(cflags.FlagOutput)
+	format, _ := cmd.Flags().GetString(flagdefs.FlagOutput)
 	if format != cflags.OutputJSON && format != cflags.OutputYAML {
 		for _, response := range responses {
 			if err := PrintTxResult(cmd, cctx, response); err != nil {

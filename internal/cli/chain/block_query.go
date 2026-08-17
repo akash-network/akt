@@ -1,6 +1,8 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"context"
 	"encoding/hex"
 	"errors"
@@ -81,7 +83,7 @@ emits.
 			if err := cobra.MaximumNArgs(1)(cmd, args); err != nil {
 				return err
 			}
-			if cflags.ExprFromArgs(args, "") == "" && !cmd.Flags().Changed(cflags.FlagHeight) {
+			if cflags.ExprFromArgs(args, "") == "" && !cmd.Flags().Changed(flagdefs.FlagHeight) {
 				return errors.New("query expression is required: pass it positionally")
 			}
 
@@ -93,11 +95,11 @@ emits.
 			// trial; the positional expression is the only source (zero
 			// fallback). Restore by uncommenting if users ask for the flag
 			// form back.
-			// query, _ := cmd.Flags().GetString(cflags.FlagQuery)
+			// query, _ := cmd.Flags().GetString(flagdefs.FlagQuery)
 			queryExpr := cflags.ExprFromArgs(args, "")
-			page, _ := cmd.Flags().GetInt(cflags.FlagPage)
-			limit, _ := cmd.Flags().GetInt(cflags.FlagLimit)
-			orderBy, _ := cmd.Flags().GetString(cflags.FlagOrderBy)
+			page, _ := cmd.Flags().GetInt(flagdefs.FlagPage)
+			limit, _ := cmd.Flags().GetInt(flagdefs.FlagLimit)
+			orderBy, _ := cmd.Flags().GetString(flagdefs.FlagOrderBy)
 
 			cctx, err := GetClientQueryContext(cmd)
 			if err != nil {
@@ -140,15 +142,15 @@ emits.
 	}
 
 	cflags.AddQueryFlagsToCmd(cmd)
-	cmd.Flags().Int(cflags.FlagPage, query.DefaultPage, "Query a specific page of paginated results")
-	cmd.Flags().Int(cflags.FlagLimit, query.DefaultLimit, "Query number of transactions results per page returned")
+	cmd.Flags().Int(flagdefs.FlagPage, query.DefaultPage, "Query a specific page of paginated results")
+	cmd.Flags().Int(flagdefs.FlagLimit, query.DefaultLimit, "Query number of transactions results per page returned")
 	// FEEDBACK(2026-07): --query disabled for the positional-only UX trial
 	// (use the positional form instead). Restore by uncommenting if users
 	// ask for the flag form back.
-	// cmd.Flags().String(cflags.FlagQuery, "", "The blocks events query per CometBFT's query semantics")
+	// cmd.Flags().String(flagdefs.FlagQuery, "", "The blocks events query per CometBFT's query semantics")
 	cmd.Flags().Var(
 		clioutput.NewEnumFlag("", "", "asc", "desc"),
-		cflags.FlagOrderBy,
+		flagdefs.FlagOrderBy,
 		"The ordering semantics (asc|desc; empty uses the node default)",
 	)
 
@@ -165,19 +167,19 @@ func QueryBlockCmd() *cobra.Command {
 $ %s query block --%s=%s <height>
 $ %s query block --%s=%s <hash>
 `,
-			version.AppName, cflags.FlagType, cflags.TypeHeight,
-			version.AppName, cflags.FlagType, cflags.TypeHash)),
+			version.AppName, flagdefs.FlagType, cflags.TypeHeight,
+			version.AppName, flagdefs.FlagType, cflags.TypeHash)),
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.MaximumNArgs(1)(cmd, args); err != nil {
 				return err
 			}
 
-			typ, _ := cmd.Flags().GetString(cflags.FlagType)
-			if typ == cflags.TypeHash && cmd.Flags().Changed(cflags.FlagType) && (len(args) == 0 || args[0] == "") {
+			typ, _ := cmd.Flags().GetString(flagdefs.FlagType)
+			if typ == cflags.TypeHash && cmd.Flags().Changed(flagdefs.FlagType) && (len(args) == 0 || args[0] == "") {
 				return errors.New("block hash is required when --type=hash")
 			}
-			if cmd.Flags().Changed(cflags.FlagHeight) {
-				height, _ := cmd.Flags().GetInt64(cflags.FlagHeight)
+			if cmd.Flags().Changed(flagdefs.FlagHeight) {
+				height, _ := cmd.Flags().GetInt64(flagdefs.FlagHeight)
 				if height <= 0 {
 					return fmt.Errorf("block height must be positive: %d", height)
 				}
@@ -206,7 +208,7 @@ $ %s query block --%s=%s <hash>
 				return err
 			}
 
-			typ, _ := cmd.Flags().GetString(cflags.FlagType)
+			typ, _ := cmd.Flags().GetString(flagdefs.FlagType)
 			if len(args) == 0 {
 				// Preserve the established no-argument behavior: query latest height.
 				typ = cflags.TypeHeight
@@ -288,7 +290,7 @@ $ %s query block --%s=%s <hash>
 	cflags.AddQueryFlagsToCmd(cmd)
 	cmd.Flags().Var(
 		clioutput.NewEnumFlag(cflags.TypeHash, cflags.TypeHeight, cflags.TypeHash),
-		cflags.FlagType,
+		flagdefs.FlagType,
 		fmt.Sprintf("The block identifier type (%s|%s)", cflags.TypeHeight, cflags.TypeHash),
 	)
 
@@ -305,8 +307,8 @@ func QueryBlockResultsCmd() *cobra.Command {
 			if err := cobra.RangeArgs(0, 1)(cmd, args); err != nil {
 				return err
 			}
-			if cmd.Flags().Changed(cflags.FlagHeight) {
-				height, _ := cmd.Flags().GetInt64(cflags.FlagHeight)
+			if cmd.Flags().Changed(flagdefs.FlagHeight) {
+				height, _ := cmd.Flags().GetInt64(flagdefs.FlagHeight)
 				if height <= 0 {
 					return fmt.Errorf("block height must be positive: %d", height)
 				}

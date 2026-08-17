@@ -4,10 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
-	"pkg.akt.dev/akt/internal/cli/chain/flags"
 	"pkg.akt.dev/akt/internal/cliutil"
 	"pkg.akt.dev/akt/internal/output"
 )
@@ -30,11 +31,11 @@ func localQueryPreRunE(cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	if err := rejectChangedQueryFlag(cmd, flags.FlagNode, "the result is computed locally and does not contact a node"); err != nil {
+	if err := rejectChangedQueryFlag(cmd, flagdefs.FlagNode, "the result is computed locally and does not contact a node"); err != nil {
 		return err
 	}
 
-	if err := rejectChangedQueryFlag(cmd, flags.FlagHeight, "the result is computed locally and does not read chain state"); err != nil {
+	if err := rejectChangedQueryFlag(cmd, flagdefs.FlagHeight, "the result is computed locally and does not read chain state"); err != nil {
 		return err
 	}
 
@@ -43,7 +44,7 @@ func localQueryPreRunE(cmd *cobra.Command, _ []string) error {
 }
 
 func rejectUnsupportedHeightPreRunE(cmd *cobra.Command, _ []string) error {
-	return rejectChangedQueryFlag(cmd, flags.FlagHeight, "this query cannot select a historical snapshot")
+	return rejectChangedQueryFlag(cmd, flagdefs.FlagHeight, "this query cannot select a historical snapshot")
 }
 
 func queryWithoutHeightPreRunE(cmd *cobra.Command, args []string) error {
@@ -55,8 +56,8 @@ func queryWithoutHeightPreRunE(cmd *cobra.Command, args []string) error {
 }
 
 func rejectPositionalAndFlagHeightPreRunE(cmd *cobra.Command, args []string) error {
-	if len(args) != 0 && cmd.Flags().Changed(flags.FlagHeight) {
-		return fmt.Errorf("height cannot be supplied both positionally and with --%s", flags.FlagHeight)
+	if len(args) != 0 && cmd.Flags().Changed(flagdefs.FlagHeight) {
+		return fmt.Errorf("height cannot be supplied both positionally and with --%s", flagdefs.FlagHeight)
 	}
 
 	return nil
@@ -114,8 +115,8 @@ func markQueryVerbose(cmd *cobra.Command) bool {
 func fileOutputQueryPreRunE(cmd *cobra.Command, args []string) error {
 	switch output.FormatFromCmd(cmd) {
 	case output.FormatJSON, output.FormatYAML:
-		format, _ := cmd.Flags().GetString(flags.FlagOutput)
-		return fmt.Errorf("--%s %s is not supported by %q: the query writes its result to the output filename", flags.FlagOutput, format, cmd.CommandPath())
+		format, _ := cmd.Flags().GetString(flagdefs.FlagOutput)
+		return fmt.Errorf("--%s %s is not supported by %q: the query writes its result to the output filename", flagdefs.FlagOutput, format, cmd.CommandPath())
 	default:
 		return QueryPersistentPreRunE(cmd, args)
 	}

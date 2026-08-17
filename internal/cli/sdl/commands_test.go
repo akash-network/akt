@@ -1,6 +1,8 @@
 package sdl
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -33,7 +35,7 @@ func runSDLReader(t *testing.T, stdin io.Reader, args ...string) (stdout, stderr
 	cmd := Commands()
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
-	cmd.PersistentFlags().VarP(clioutput.NewFormatFlag("pretty"), "output", "o", "Output format: pretty, json, yaml")
+	cmd.PersistentFlags().VarP(clioutput.NewFormatFlag("pretty"), flagdefs.FlagOutput, "o", "Output format: pretty, json, yaml")
 
 	var out, errBuf bytes.Buffer
 	cmd.SetOut(&out)
@@ -398,7 +400,7 @@ func TestGeneratedSDLDefaultValidationFailureIsInternal(t *testing.T) {
 
 func TestGeneratedSDLBrokenDefaultWithOverrideIsInternal(t *testing.T) {
 	cmd := initCmd()
-	require.NoError(t, cmd.Flags().Set("image", "also-untagged"))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagImage, "also-untagged"))
 
 	broken := webScaffold
 	broken.Name = "broken"

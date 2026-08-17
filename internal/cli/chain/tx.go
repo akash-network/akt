@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
@@ -24,8 +26,8 @@ func TxPersistentPreRunE(cmd *cobra.Command, args []string) error {
 
 	ctx := cmd.Context()
 
-	if cmd.Flags().Changed(cflags.FlagNode) {
-		rpcURI, _ := cmd.Flags().GetString(cflags.FlagNode)
+	if cmd.Flags().Changed(flagdefs.FlagNode) {
+		rpcURI, _ := cmd.Flags().GetString(flagdefs.FlagNode)
 		ctx = context.WithValue(ctx, ContextTypeRPCURI, rpcURI)
 		cmd.SetContext(ctx)
 	}
@@ -126,7 +128,7 @@ func TxCmd() *cobra.Command {
 		GetTxBMECmd(),
 	)
 
-	cmd.PersistentFlags().String(cflags.FlagChainID, "", "The network chain ID")
+	cmd.PersistentFlags().String(flagdefs.FlagChainID, "", "The network chain ID")
 
 	return cmd
 }

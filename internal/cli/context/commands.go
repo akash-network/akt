@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -92,16 +94,16 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			m := mgr()
 			name := args[0]
 
-			network, _ := cmd.Flags().GetString("network")
-			keyring, _ := cmd.Flags().GetString("keyring")
-			defaultAccount, _ := cmd.Flags().GetString("default-account")
-			gas, _ := cmd.Flags().GetString("gas")
-			fees, _ := cmd.Flags().GetString("fees")
-			providerAuthType, _ := cmd.Flags().GetString("provider-auth-type")
-			authMethod, _ := cmd.Flags().GetString("auth-method")
-			consoleAPIURL, _ := cmd.Flags().GetString("console-api-url")
-			consoleAPIKey, _ := cmd.Flags().GetString("console-api-key")
-			setCurrent, _ := cmd.Flags().GetBool("set-current")
+			network, _ := cmd.Flags().GetString(flagdefs.FlagNetwork)
+			keyring, _ := cmd.Flags().GetString(flagdefs.FlagKeyring)
+			defaultAccount, _ := cmd.Flags().GetString(flagdefs.FlagDefaultAccount)
+			gas, _ := cmd.Flags().GetString(flagdefs.FlagGas)
+			fees, _ := cmd.Flags().GetString(flagdefs.FlagFees)
+			providerAuthType, _ := cmd.Flags().GetString(flagdefs.FlagProviderAuthType)
+			authMethod, _ := cmd.Flags().GetString(flagdefs.FlagAuthMethod)
+			consoleAPIURL, _ := cmd.Flags().GetString(flagdefs.FlagConsoleAPIURL)
+			consoleAPIKey, _ := cmd.Flags().GetString(flagdefs.FlagConsoleAPIKey)
+			setCurrent, _ := cmd.Flags().GetBool(flagdefs.FlagSetCurrent)
 
 			// console-api contexts may be created without a network — they
 			// operate through the Console API alone (chain commands are
@@ -156,20 +158,20 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().String("network", "", "Network name to use (required unless --auth-method console-api)")
-	cmd.Flags().String("keyring", "default", "Keyring name to use")
-	cmd.Flags().String("default-account", "", "Default account name")
-	cmd.Flags().String("gas", "auto", "Gas limit override")
-	cmd.Flags().String("fees", "", "Fixed fees override")
-	cmd.Flags().String("provider-auth-type", aktctx.ProviderAuthJWT, "Provider gateway auth default: jwt or mtls")
-	cmd.Flags().String("auth-method", "", "Authentication method: keyring (default) or console-api")
-	cmd.Flags().String("console-api-url", "", "Console API base URL (empty = default; only with console-api auth)")
-	cmd.Flags().String("console-api-key", "", "Console API key stored as a per-context credential (never written to config.yaml)")
-	cmd.Flags().Bool("set-current", false, "Set as current context after creation")
+	cmd.Flags().String(flagdefs.FlagNetwork, "", "Network name to use (required unless --auth-method console-api)")
+	cmd.Flags().String(flagdefs.FlagKeyring, "default", "Keyring name to use")
+	cmd.Flags().String(flagdefs.FlagDefaultAccount, "", "Default account name")
+	cmd.Flags().String(flagdefs.FlagGas, "auto", "Gas limit override")
+	cmd.Flags().String(flagdefs.FlagFees, "", "Fixed fees override")
+	cmd.Flags().String(flagdefs.FlagProviderAuthType, aktctx.ProviderAuthJWT, "Provider gateway auth default: jwt or mtls")
+	cmd.Flags().String(flagdefs.FlagAuthMethod, "", "Authentication method: keyring (default) or console-api")
+	cmd.Flags().String(flagdefs.FlagConsoleAPIURL, "", "Console API base URL (empty = default; only with console-api auth)")
+	cmd.Flags().String(flagdefs.FlagConsoleAPIKey, "", "Console API key stored as a per-context credential (never written to config.yaml)")
+	cmd.Flags().Bool(flagdefs.FlagSetCurrent, false, "Set as current context after creation")
 	// --network is validated in RunE rather than MarkFlagRequired: console-api
 	// contexts are allowed to omit it (network-less, Console-only operation).
 
-	_ = cmd.RegisterFlagCompletionFunc("network", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	_ = cmd.RegisterFlagCompletionFunc(flagdefs.FlagNetwork, func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
 		m := mgr()
 		if m == nil {
 			return nil, cobra.ShellCompDirectiveNoFileComp
@@ -386,8 +388,8 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			m := mgr()
 			name := args[0]
 
-			forkNetwork, _ := cmd.Flags().GetBool("fork-network")
-			if forkNetwork && cmd.Flags().Changed("network") {
+			forkNetwork, _ := cmd.Flags().GetBool(flagdefs.FlagForkNetwork)
+			if forkNetwork && cmd.Flags().Changed(flagdefs.FlagNetwork) {
 				return fmt.Errorf("cannot use --fork-network with --network; use akt context network create to fork manually")
 			}
 			networkFields := []string{"rpc", "api", "grpc", "gas-prices", "gas-adjustment"}
@@ -401,7 +403,7 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			if forkNetwork && !hasNetworkChanges {
 				return fmt.Errorf("--fork-network requires at least one network field: --rpc, --api, --grpc, --gas-prices, or --gas-adjustment")
 			}
-			yes, _ := cmd.Flags().GetBool("yes")
+			yes, _ := cmd.Flags().GetBool(flagdefs.FlagSkipConfirmation)
 			if yes && !hasNetworkChanges {
 				return fmt.Errorf("--yes is only used when editing shared network fields")
 			}
@@ -411,8 +413,8 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 				return fmt.Errorf("context %q not found", name)
 			}
 			targetNetwork := current.Network.Name
-			if cmd.Flags().Changed("network") {
-				targetNetwork, _ = cmd.Flags().GetString("network")
+			if cmd.Flags().Changed(flagdefs.FlagNetwork) {
+				targetNetwork, _ = cmd.Flags().GetString(flagdefs.FlagNetwork)
 			}
 			if hasNetworkChanges && targetNetwork == "" {
 				return fmt.Errorf("context %q has no network to edit", name)
@@ -434,40 +436,40 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			changed := map[string]string{}
 
 			applyContext := func(c *aktctx.Context) error {
-				if cmd.Flags().Changed("network") {
-					network, _ := cmd.Flags().GetString("network")
+				if cmd.Flags().Changed(flagdefs.FlagNetwork) {
+					network, _ := cmd.Flags().GetString(flagdefs.FlagNetwork)
 					changed["network"] = network
 					c.Network = aktctx.Network{Name: network}
 				}
 
-				if cmd.Flags().Changed("keyring") {
-					keyring, _ := cmd.Flags().GetString("keyring")
+				if cmd.Flags().Changed(flagdefs.FlagKeyring) {
+					keyring, _ := cmd.Flags().GetString(flagdefs.FlagKeyring)
 					changed["keyring"] = keyring
 					c.Keyring = aktctx.Keyring{Name: keyring}
 				}
 
-				if cmd.Flags().Changed("default-account") {
-					c.DefaultAccount, _ = cmd.Flags().GetString("default-account")
+				if cmd.Flags().Changed(flagdefs.FlagDefaultAccount) {
+					c.DefaultAccount, _ = cmd.Flags().GetString(flagdefs.FlagDefaultAccount)
 					changed["default-account"] = c.DefaultAccount
 				}
 
-				if cmd.Flags().Changed("gas") {
-					c.Gas, _ = cmd.Flags().GetString("gas")
+				if cmd.Flags().Changed(flagdefs.FlagGas) {
+					c.Gas, _ = cmd.Flags().GetString(flagdefs.FlagGas)
 					changed["gas"] = c.Gas
 				}
 
-				if cmd.Flags().Changed("fees") {
-					c.Fees, _ = cmd.Flags().GetString("fees")
+				if cmd.Flags().Changed(flagdefs.FlagFees) {
+					c.Fees, _ = cmd.Flags().GetString(flagdefs.FlagFees)
 					changed["fees"] = c.Fees
 				}
 
-				if cmd.Flags().Changed("provider-auth-type") {
-					c.ProviderDefaults.AuthType, _ = cmd.Flags().GetString("provider-auth-type")
+				if cmd.Flags().Changed(flagdefs.FlagProviderAuthType) {
+					c.ProviderDefaults.AuthType, _ = cmd.Flags().GetString(flagdefs.FlagProviderAuthType)
 					changed["provider-auth-type"] = c.ProviderDefaults.AuthType
 				}
 
-				if cmd.Flags().Changed("auth-method") {
-					method, _ := cmd.Flags().GetString("auth-method")
+				if cmd.Flags().Changed(flagdefs.FlagAuthMethod) {
+					method, _ := cmd.Flags().GetString(flagdefs.FlagAuthMethod)
 					if method != aktctx.AuthMethodKeyring && method != aktctx.AuthMethodConsoleAPI {
 						return fmt.Errorf("invalid auth-method %q: must be %q or %q", method, aktctx.AuthMethodKeyring, aktctx.AuthMethodConsoleAPI)
 					}
@@ -475,8 +477,8 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 					changed["auth-method"] = method
 				}
 
-				if cmd.Flags().Changed("console-api-url") {
-					c.ConsoleAPIURL, _ = cmd.Flags().GetString("console-api-url")
+				if cmd.Flags().Changed(flagdefs.FlagConsoleAPIURL) {
+					c.ConsoleAPIURL, _ = cmd.Flags().GetString(flagdefs.FlagConsoleAPIURL)
 					changed["console-api-url"] = c.ConsoleAPIURL
 				}
 
@@ -486,24 +488,24 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			var applyNetwork func(*aktctx.Network) error
 			if hasNetworkChanges {
 				applyNetwork = func(network *aktctx.Network) error {
-					if cmd.Flags().Changed("rpc") {
-						network.Endpoints.RPC, _ = cmd.Flags().GetStringSlice("rpc")
+					if cmd.Flags().Changed(flagdefs.FlagRPC) {
+						network.Endpoints.RPC, _ = cmd.Flags().GetStringSlice(flagdefs.FlagRPC)
 						changed["rpc"] = strings.Join(network.Endpoints.RPC, ",")
 					}
-					if cmd.Flags().Changed("api") {
-						network.Endpoints.API, _ = cmd.Flags().GetStringSlice("api")
+					if cmd.Flags().Changed(flagdefs.FlagAPI) {
+						network.Endpoints.API, _ = cmd.Flags().GetStringSlice(flagdefs.FlagAPI)
 						changed["api"] = strings.Join(network.Endpoints.API, ",")
 					}
-					if cmd.Flags().Changed("grpc") {
-						network.Endpoints.GRPC, _ = cmd.Flags().GetStringSlice("grpc")
+					if cmd.Flags().Changed(flagdefs.FlagGRPCEndpoint) {
+						network.Endpoints.GRPC, _ = cmd.Flags().GetStringSlice(flagdefs.FlagGRPCEndpoint)
 						changed["grpc"] = strings.Join(network.Endpoints.GRPC, ",")
 					}
-					if cmd.Flags().Changed("gas-prices") {
-						network.GasPrices, _ = cmd.Flags().GetString("gas-prices")
+					if cmd.Flags().Changed(flagdefs.FlagGasPrices) {
+						network.GasPrices, _ = cmd.Flags().GetString(flagdefs.FlagGasPrices)
 						changed["gas-prices"] = network.GasPrices
 					}
-					if cmd.Flags().Changed("gas-adjustment") {
-						network.GasAdjustment, _ = cmd.Flags().GetString("gas-adjustment")
+					if cmd.Flags().Changed(flagdefs.FlagGasAdjustment) {
+						network.GasAdjustment, _ = cmd.Flags().GetString(flagdefs.FlagGasAdjustment)
 						changed["gas-adjustment"] = network.GasAdjustment
 					}
 					return nil
@@ -520,8 +522,8 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 
 			// The credential is stored outside config.yaml (SPEC §7.1);
 			// only "updated"/"removed" is recorded, never the key itself.
-			if cmd.Flags().Changed("console-api-key") {
-				key, _ := cmd.Flags().GetString("console-api-key")
+			if cmd.Flags().Changed(flagdefs.FlagConsoleAPIKey) {
+				key, _ := cmd.Flags().GetString(flagdefs.FlagConsoleAPIKey)
 				if err := aktctx.SetConsoleAPIKey(m.Root(), name, key); err != nil {
 					return err
 				}
@@ -539,25 +541,25 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().String("network", "", "Switch to a different network")
-	cmd.Flags().String("keyring", "", "Switch to a different keyring")
-	cmd.Flags().String("default-account", "", "Change default account")
-	cmd.Flags().String("gas", "", "Change gas setting")
-	cmd.Flags().String("fees", "", "Change fees setting")
-	cmd.Flags().String("provider-auth-type", "", "Change provider gateway auth default: jwt or mtls")
-	cmd.Flags().String("auth-method", "", "Change authentication method: keyring or console-api")
-	cmd.Flags().String("console-api-url", "", "Change Console API base URL (empty = default)")
-	cmd.Flags().String("console-api-key", "", "Set the per-context Console API key (empty string removes it)")
-	cmd.Flags().Bool("fork-network", false, "Fork the context's network before editing")
-	cmd.Flags().StringSlice("rpc", nil, "Replace the selected network's RPC endpoints")
-	cmd.Flags().StringSlice("api", nil, "Replace the selected network's REST endpoints")
-	cmd.Flags().StringSlice("grpc", nil, "Replace the selected network's gRPC endpoints")
-	cmd.Flags().String("gas-prices", "", "Change the selected network's gas prices")
-	cmd.Flags().String("gas-adjustment", "", "Change the selected network's gas adjustment")
-	cmd.Flags().BoolP("yes", "y", false, "Edit a shared parent network without prompting")
-	cmd.MarkFlagsMutuallyExclusive("fork-network", "yes")
+	cmd.Flags().String(flagdefs.FlagNetwork, "", "Switch to a different network")
+	cmd.Flags().String(flagdefs.FlagKeyring, "", "Switch to a different keyring")
+	cmd.Flags().String(flagdefs.FlagDefaultAccount, "", "Change default account")
+	cmd.Flags().String(flagdefs.FlagGas, "", "Change gas setting")
+	cmd.Flags().String(flagdefs.FlagFees, "", "Change fees setting")
+	cmd.Flags().String(flagdefs.FlagProviderAuthType, "", "Change provider gateway auth default: jwt or mtls")
+	cmd.Flags().String(flagdefs.FlagAuthMethod, "", "Change authentication method: keyring or console-api")
+	cmd.Flags().String(flagdefs.FlagConsoleAPIURL, "", "Change Console API base URL (empty = default)")
+	cmd.Flags().String(flagdefs.FlagConsoleAPIKey, "", "Set the per-context Console API key (empty string removes it)")
+	cmd.Flags().Bool(flagdefs.FlagForkNetwork, false, "Fork the context's network before editing")
+	cmd.Flags().StringSlice(flagdefs.FlagRPC, nil, "Replace the selected network's RPC endpoints")
+	cmd.Flags().StringSlice(flagdefs.FlagAPI, nil, "Replace the selected network's REST endpoints")
+	cmd.Flags().StringSlice(flagdefs.FlagGRPCEndpoint, nil, "Replace the selected network's gRPC endpoints")
+	cmd.Flags().String(flagdefs.FlagGasPrices, "", "Change the selected network's gas prices")
+	cmd.Flags().String(flagdefs.FlagGasAdjustment, "", "Change the selected network's gas adjustment")
+	cmd.Flags().BoolP(flagdefs.FlagSkipConfirmation, "y", false, "Edit a shared parent network without prompting")
+	cmd.MarkFlagsMutuallyExclusive(flagdefs.FlagForkNetwork, flagdefs.FlagSkipConfirmation)
 
-	_ = cmd.RegisterFlagCompletionFunc("network", func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
+	_ = cmd.RegisterFlagCompletionFunc(flagdefs.FlagNetwork, func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
 		m := mgr()
 		if m == nil {
 			return nil, cobra.ShellCompDirectiveNoFileComp
@@ -621,7 +623,7 @@ func deleteCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
 
-			yes, _ := cmd.Flags().GetBool("yes")
+			yes, _ := cmd.Flags().GetBool(flagdefs.FlagSkipConfirmation)
 			if !yes {
 				checked := output.NewCheckedWriter(cmd.ErrOrStderr())
 				if _, err := fmt.Fprintf(checked, "Delete context %q? This removes the state store and action log. [y/N]: ", name); err != nil {
@@ -640,7 +642,7 @@ func deleteCmd(mgr func() *aktctx.Manager) *cobra.Command {
 				}
 			}
 
-			keepData, _ := cmd.Flags().GetBool("keep-data")
+			keepData, _ := cmd.Flags().GetBool(flagdefs.FlagKeepData)
 
 			m := mgr()
 			if err := m.DeleteContext(name, keepData); err != nil {
@@ -659,8 +661,8 @@ func deleteCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolP("yes", "y", false, "Skip confirmation")
-	cmd.Flags().Bool("keep-data", false, "Keep store and action log on disk")
+	cmd.Flags().BoolP(flagdefs.FlagSkipConfirmation, "y", false, "Skip confirmation")
+	cmd.Flags().Bool(flagdefs.FlagKeepData, false, "Keep store and action log on disk")
 
 	return cmd
 }
@@ -725,10 +727,10 @@ func logCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			}
 			defer func() { _ = logger.Close() }()
 
-			limit, _ := cmd.Flags().GetInt("limit")
-			actionType, _ := cmd.Flags().GetString("type")
-			workflowID, _ := cmd.Flags().GetString("workflow-id")
-			since, _ := cmd.Flags().GetString("since")
+			limit, _ := cmd.Flags().GetInt(flagdefs.FlagLimit)
+			actionType, _ := cmd.Flags().GetString(flagdefs.FlagType)
+			workflowID, _ := cmd.Flags().GetString(flagdefs.FlagWorkflowID)
+			since, _ := cmd.Flags().GetString(flagdefs.FlagSince)
 			if !validActionType(actionType) {
 				return fmt.Errorf("invalid --type %q: must be tx, workflow, provider, context, console, or error", actionType)
 			}
@@ -807,10 +809,10 @@ func logCmd(mgr func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Int("limit", 50, "Number of entries to show")
-	cmd.Flags().String("type", "", "Filter by action type: tx, workflow, provider, context, console, error")
-	cmd.Flags().String("workflow-id", "", "Show only the entries of one workflow run")
-	cmd.Flags().String("since", "", "Show entries since duration (1h) or date (2006-01-02)")
+	cmd.Flags().Int(flagdefs.FlagLimit, 50, "Number of entries to show")
+	cmd.Flags().String(flagdefs.FlagType, "", "Filter by action type: tx, workflow, provider, context, console, error")
+	cmd.Flags().String(flagdefs.FlagWorkflowID, "", "Show only the entries of one workflow run")
+	cmd.Flags().String(flagdefs.FlagSince, "", "Show entries since duration (1h) or date (2006-01-02)")
 
 	return cmd
 }

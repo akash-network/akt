@@ -1,6 +1,8 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"context"
 	"encoding/json"
@@ -174,18 +176,18 @@ func (fixture govGeneratedProposalFixture) generateProposal(
 
 	callArgs := append([]string{}, args...)
 	callArgs = append(callArgs,
-		fmt.Sprintf("--%s=%s", cflags.FlagFrom, fixture.proposer.String()),
-		fmt.Sprintf("--%s=%s", cflags.FlagAuthority, fixture.authority.String()),
-		fmt.Sprintf("--%s=%s", cflags.FlagTitle, "Deterministic Wasm proposal"),
-		fmt.Sprintf("--%s=%s", cflags.FlagSummary, "Exercise the exact nested governance message"),
-		fmt.Sprintf("--%s=%s", cflags.FlagDeposit, "13uakt,2uact"),
-		fmt.Sprintf("--%s=true", cflags.FlagExpedite),
-		fmt.Sprintf("--%s=true", cflags.FlagGenerateOnly),
-		fmt.Sprintf("--%s=true", cflags.FlagOffline),
-		fmt.Sprintf("--%s=7", cflags.FlagAccountNumber),
-		fmt.Sprintf("--%s=11", cflags.FlagSequence),
-		fmt.Sprintf("--%s=200000", cflags.FlagGas),
-		fmt.Sprintf("--%s=%s", cflags.FlagOutput, cflags.OutputJSON),
+		fmt.Sprintf("--%s=%s", flagdefs.FlagFrom, fixture.proposer.String()),
+		fmt.Sprintf("--%s=%s", flagdefs.FlagAuthority, fixture.authority.String()),
+		fmt.Sprintf("--%s=%s", flagdefs.FlagTitle, "Deterministic Wasm proposal"),
+		fmt.Sprintf("--%s=%s", flagdefs.FlagSummary, "Exercise the exact nested governance message"),
+		fmt.Sprintf("--%s=%s", flagdefs.FlagDeposit, "13uakt,2uact"),
+		fmt.Sprintf("--%s=true", flagdefs.FlagExpedite),
+		fmt.Sprintf("--%s=true", flagdefs.FlagGenerateOnly),
+		fmt.Sprintf("--%s=true", flagdefs.FlagOffline),
+		fmt.Sprintf("--%s=7", flagdefs.FlagAccountNumber),
+		fmt.Sprintf("--%s=11", flagdefs.FlagSequence),
+		fmt.Sprintf("--%s=200000", flagdefs.FlagGas),
+		fmt.Sprintf("--%s=%s", flagdefs.FlagOutput, cflags.OutputJSON),
 	)
 
 	var output bytes.Buffer
@@ -220,10 +222,63 @@ func (fixture govGeneratedProposalFixture) generateProposal(
 
 func TestGovWasmProposalCommandsGenerateExactNestedMessages(t *testing.T) {
 	fixture := newGovGeneratedProposalFixture(t)
+	wasmPath := filepath.Join(t.TempDir(), "canonical-flags.wasm")
+	require.NoError(t, os.WriteFile(wasmPath, []byte("\x00asm\x01\x00\x00\x00"), 0o600))
+
+	t.Run("store code", func(t *testing.T) {
+		_, nested := fixture.generateProposal(t, GetTxGovWasmProposalStoreCodeCmd(), wasmPath)
+		message, ok := nested.(*wtypes.MsgStoreCode)
+		require.Truef(t, ok, "nested message type = %T", nested)
+		require.Equal(t, fixture.authority.String(), message.Sender)
+	})
+
+	t.Run("instantiate", func(t *testing.T) {
+		cmd := GetTxGovWasmProposalInstantiateContractCmd()
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagLabel, "canonical-instantiate"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagNoAdmin, "true"))
+		_, nested := fixture.generateProposal(t, cmd, "17", `{"count":1}`)
+		_, ok := nested.(*wtypes.MsgInstantiateContract)
+		require.Truef(t, ok, "nested message type = %T", nested)
+	})
+
+	t.Run("instantiate2", func(t *testing.T) {
+		cmd := GetTxGovWasmProposalInstantiateContract2Cmd()
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagLabel, "canonical-instantiate2"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagNoAdmin, "true"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagFixMsg, "true"))
+		_, nested := fixture.generateProposal(t, cmd, "19", `{"count":2}`, "74657374")
+		message, ok := nested.(*wtypes.MsgInstantiateContract2)
+		require.Truef(t, ok, "nested message type = %T", nested)
+		require.True(t, message.FixMsg)
+	})
+
+	t.Run("store and instantiate", func(t *testing.T) {
+		cmd := GetTxGovWasmProposalStoreAndInstantiateContractCmd()
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagLabel, "canonical-store-instantiate"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagNoAdmin, "true"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagUnpinCode, "true"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagAmount, "31uakt"))
+		_, nested := fixture.generateProposal(t, cmd, wasmPath, `{"count":3}`)
+		message, ok := nested.(*wtypes.MsgStoreAndInstantiateContract)
+		require.Truef(t, ok, "nested message type = %T", nested)
+		require.True(t, message.UnpinCode)
+	})
+
+	t.Run("store and migrate", func(t *testing.T) {
+		_, nested := fixture.generateProposal(
+			t,
+			GetTxGovWasmProposalStoreAndMigrateContractCmd(),
+			wasmPath,
+			fixture.contract.String(),
+			`{"revision":4}`,
+		)
+		_, ok := nested.(*wtypes.MsgStoreAndMigrateContract)
+		require.Truef(t, ok, "nested message type = %T", nested)
+	})
 
 	t.Run("execute", func(t *testing.T) {
 		cmd := GetTxGovWasmProposalExecuteContractCmd()
-		require.NoError(t, cmd.Flags().Set(cflags.FlagAmount, "19uakt,3uact"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagAmount, "19uakt,3uact"))
 		_, nested := fixture.generateProposal(
 			t,
 			cmd,
@@ -419,10 +474,10 @@ func TestGovSubmitProposalParsesAndBroadcastsExactMessage(t *testing.T) {
 func TestGovLegacyProposalFlagsBuildTextProposal(t *testing.T) {
 	from, _ := govTestAddresses()
 	cmd := GetTxGovSubmitLegacyProposalCmd()
-	require.NoError(t, cmd.Flags().Set(cflags.FlagTitle, "Legacy title"))
-	require.NoError(t, cmd.Flags().Set(cflags.FlagDescription, "Legacy description"))
-	require.NoError(t, cmd.Flags().Set(cflags.FlagProposalType, "text"))
-	require.NoError(t, cmd.Flags().Set(cflags.FlagDeposit, "11uakt"))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagTitle, "Legacy title"))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagDescription, "Legacy description"))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagType, "text"))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagDeposit, "11uakt"))
 
 	txClient := &govCaptureTxClient{response: &sdk.TxResponse{TxHash: "LEGACY-PROPOSAL"}}
 	_, err := runGovTxHandler(t, cmd, txClient)
@@ -461,7 +516,7 @@ func TestGovDepositVoteWeightedVoteAndCancelMessages(t *testing.T) {
 
 	t.Run("vote", func(t *testing.T) {
 		cmd := GetTxGovVoteCmd()
-		require.NoError(t, cmd.Flags().Set(cflags.FlagMetadata, "ipfs://vote-reason"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagMetadata, "ipfs://vote-reason"))
 		txClient := &govCaptureTxClient{response: &sdk.TxResponse{TxHash: "VOTE"}}
 		_, err := runGovTxHandler(t, cmd, txClient, "43", "no_with_veto")
 		require.NoError(t, err)
@@ -475,7 +530,7 @@ func TestGovDepositVoteWeightedVoteAndCancelMessages(t *testing.T) {
 
 	t.Run("weighted vote", func(t *testing.T) {
 		cmd := GetTxGovWeightedVoteCmd()
-		require.NoError(t, cmd.Flags().Set(cflags.FlagMetadata, "weighted rationale"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagMetadata, "weighted rationale"))
 		txClient := &govCaptureTxClient{response: &sdk.TxResponse{TxHash: "WEIGHTED-VOTE"}}
 		_, err := runGovTxHandler(t, cmd, txClient, "44", "yes=0.60,no=0.25,abstain=0.10,no_with_veto=0.05")
 		require.NoError(t, err)
@@ -534,9 +589,9 @@ func TestGovTransactionBoundariesDoNotBroadcast(t *testing.T) {
 			command: GetTxGovSubmitLegacyProposalCmd,
 			configure: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				require.NoError(t, cmd.Flags().Set(cflags.FlagDescription, "description"))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagProposalType, "text"))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagDeposit, "1uakt"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagDescription, "description"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagType, "text"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagDeposit, "1uakt"))
 			},
 			wantError: "proposal title is required",
 		},
@@ -572,10 +627,10 @@ func TestGovTransactionBroadcastErrorsPreserveCause(t *testing.T) {
 			command: GetTxGovSubmitLegacyProposalCmd,
 			configure: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				require.NoError(t, cmd.Flags().Set(cflags.FlagTitle, "title"))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagDescription, "description"))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagProposalType, "text"))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagDeposit, "1uakt"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagTitle, "title"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagDescription, "description"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagType, "text"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagDeposit, "1uakt"))
 			},
 		},
 		{name: "deposit", command: GetTxGovDepositCmd, args: []string{"1", "1uakt"}},
@@ -622,8 +677,8 @@ func TestGovProposalParsingRejectsMalformedFilesAndConflictingLegacyInputs(t *te
 			Deposit:     "1uakt",
 		})
 		cmd := GetTxGovSubmitLegacyProposalCmd()
-		require.NoError(t, cmd.Flags().Set(cflags.FlagProposal, path))
-		require.NoError(t, cmd.Flags().Set(cflags.FlagTitle, "ignored title"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagProposal, path))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagTitle, "ignored title"))
 
 		proposal, err := parseSubmitLegacyProposal(cmd.Flags())
 		require.Nil(t, proposal)
@@ -660,10 +715,10 @@ func TestGovProposalHelpersPreserveProposalInputs(t *testing.T) {
 
 	t.Run("common proposal flags", func(t *testing.T) {
 		cmd := GetTxGovWasmProposalPinCodesCmd()
-		require.NoError(t, cmd.Flags().Set(cflags.FlagTitle, "Pin code"))
-		require.NoError(t, cmd.Flags().Set(cflags.FlagSummary, "Keep audited code available"))
-		require.NoError(t, cmd.Flags().Set(cflags.FlagDeposit, "9uakt"))
-		require.NoError(t, cmd.Flags().Set(cflags.FlagExpedite, "true"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagTitle, "Pin code"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagSummary, "Keep audited code available"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagDeposit, "9uakt"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagExpedite, "true"))
 
 		from, _ := govTestAddresses()
 		encoding := aktcodec.MakeEncodingConfig()

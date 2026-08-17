@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"sort"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
@@ -148,9 +150,7 @@ func CmdDeleteProviderAttributes() *cobra.Command {
 func setCmdProviderFlags(cmd *cobra.Command) {
 	cflags.AddTxFlagsToCmd(cmd)
 
-	if err := cmd.MarkFlagRequired(cflags.FlagFrom); err != nil {
-		panic(err.Error())
-	}
+	_ = cmd.MarkFlagRequired(flagdefs.FlagFrom)
 }
 
 // readAttributes try read attributes from both cobra arguments or query

@@ -1,18 +1,23 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"context"
 	"errors"
 	"io"
 	"testing"
 
+	"cosmossdk.io/x/feegrant"
+	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	vestingtypes "github.com/cosmos/cosmos-sdk/x/auth/vesting/types"
+	distrtypes "github.com/cosmos/cosmos-sdk/x/distribution/types"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
-
-	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"google.golang.org/grpc"
 	aktcodec "pkg.akt.dev/akt/internal/codec"
 	bmetypes "pkg.akt.dev/go/node/bme/v1"
 	clientv1beta3 "pkg.akt.dev/go/node/client/v1beta3"
@@ -48,12 +53,13 @@ func (capture *moduleTxCapture) BroadcastTx(
 }
 
 type moduleCommandClient struct {
-	cctx sdkclient.Context
-	tx   clientv1beta3.TxClient
+	cctx  sdkclient.Context
+	tx    clientv1beta3.TxClient
+	query clientv1beta3.QueryClient
 }
 
-func (*moduleCommandClient) Query() clientv1beta3.QueryClient { return nil }
-func (*moduleCommandClient) Node() clientv1beta3.NodeClient   { return nil }
+func (client *moduleCommandClient) Query() clientv1beta3.QueryClient { return client.query }
+func (*moduleCommandClient) Node() clientv1beta3.NodeClient          { return nil }
 func (client *moduleCommandClient) ClientContext() sdkclient.Context {
 	return client.cctx
 }
@@ -101,6 +107,9 @@ func runModuleTxHandler(
 	clientContext := cctx
 	ctx := context.WithValue(context.Background(), ClientContextKey, &clientContext)
 	ctx = context.WithValue(ctx, ContextTypeClient, &moduleCommandClient{cctx: cctx, tx: capture})
+	signingContext := cctx.TxConfig.SigningContext()
+	ctx = context.WithValue(ctx, ContextTypeAddressCodec, signingContext.AddressCodec())
+	ctx = context.WithValue(ctx, ContextTypeValidatorCodec, signingContext.ValidatorAddressCodec())
 	cmd.SetContext(ctx)
 	cmd.SetOut(writer)
 	cmd.SetErr(writer)
@@ -163,12 +172,104 @@ func TestBMECommandsBroadcastExactMessages(t *testing.T) {
 	})
 }
 
+func TestCanonicalCosmosModuleFlagsDriveExactMessages(t *testing.T) {
+	fixture := newModuleTxFixture()
+
+	t.Run("feegrant", func(t *testing.T) {
+		cmd := GetTxFeegrantGrantCmd()
+		for name, value := range map[string]string{
+			flagdefs.FlagSpendLimit:  "25uakt",
+			flagdefs.FlagExpiration:  "2099-01-30T15:04:05Z",
+			flagdefs.FlagPeriod:      "3600",
+			flagdefs.FlagPeriodLimit: "5uakt",
+			flagdefs.FlagAllowedMsgs: "/cosmos.bank.v1beta1.MsgSend",
+		} {
+			require.NoError(t, cmd.Flags().Set(name, value))
+		}
+
+		capture := &moduleTxCapture{response: &sdk.TxResponse{TxHash: "FEEGRANT"}}
+		require.NoError(t, runModuleTxHandler(t, fixture, cmd, capture, io.Discard, fixture.owner.String()))
+		requireSingleModuleMessage[*feegrant.MsgGrantAllowance](t, capture)
+	})
+
+	t.Run("delayed vesting", func(t *testing.T) {
+		cmd := GetTxVestingCreateAccountCmd()
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagDelayed, "true"))
+		capture := &moduleTxCapture{response: &sdk.TxResponse{TxHash: "VESTING"}}
+		require.NoError(t, runModuleTxHandler(
+			t, fixture, cmd, capture, io.Discard,
+			fixture.owner.String(), "17uakt", "2000000000",
+		))
+		message := requireSingleModuleMessage[*vestingtypes.MsgCreateVestingAccount](t, capture)
+		require.True(t, message.Delayed)
+	})
+
+	t.Run("wasm instantiate2", func(t *testing.T) {
+		cmd := GetTxWasmInstantiateContract2Cmd()
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagLabel, "canonical-flags"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagNoAdmin, "true"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagFixMsg, "true"))
+		capture := &moduleTxCapture{response: &sdk.TxResponse{TxHash: "WASM"}}
+		require.NoError(t, runModuleTxHandler(
+			t, fixture, cmd, capture, io.Discard,
+			"7", `{"count":1}`, "74657374",
+		))
+		message := requireSingleModuleMessage[*wasmtypes.MsgInstantiateContract2](t, capture)
+		require.True(t, message.FixMsg)
+	})
+}
+
+type distributionQueryRecorder struct {
+	distrtypes.QueryClient
+	validators []string
+}
+
+func (recorder *distributionQueryRecorder) DelegatorValidators(
+	context.Context,
+	*distrtypes.QueryDelegatorValidatorsRequest,
+	...grpc.CallOption,
+) (*distrtypes.QueryDelegatorValidatorsResponse, error) {
+	return &distrtypes.QueryDelegatorValidatorsResponse{Validators: recorder.validators}, nil
+}
+
+type distributionAggregateQuery struct {
+	clientv1beta3.QueryClient
+	distribution distrtypes.QueryClient
+}
+
+func (query *distributionAggregateQuery) Distribution() distrtypes.QueryClient {
+	return query.distribution
+}
+
+func TestWithdrawAllRewardsUsesCanonicalChunkSize(t *testing.T) {
+	fixture := newModuleTxFixture()
+	validator := sdk.ValAddress(bytes.Repeat([]byte{54}, 20)).String()
+	query := &distributionAggregateQuery{
+		distribution: &distributionQueryRecorder{validators: []string{validator}},
+	}
+	capture := &moduleTxCapture{response: &sdk.TxResponse{TxHash: "WITHDRAW-ALL"}}
+	cctx := fixture.cctx.WithOutput(io.Discard)
+	cmd := GetTxDistributionWithdrawAllRewardsCmd()
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagMaxMessagesPerTx, "1"))
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	ctx := context.WithValue(context.Background(), ClientContextKey, &cctx)
+	ctx = context.WithValue(ctx, ContextTypeClient, &moduleCommandClient{cctx: cctx, tx: capture, query: query})
+	signingContext := cctx.TxConfig.SigningContext()
+	ctx = context.WithValue(ctx, ContextTypeAddressCodec, signingContext.AddressCodec())
+	ctx = context.WithValue(ctx, ContextTypeValidatorCodec, signingContext.ValidatorAddressCodec())
+	cmd.SetContext(ctx)
+
+	require.NoError(t, cmd.RunE(cmd, nil))
+	requireSingleModuleMessage[*distrtypes.MsgWithdrawDelegatorReward](t, capture)
+}
+
 func TestEscrowDepositBroadcastsExactMessage(t *testing.T) {
 	fixture := newModuleTxFixture()
 	cmd := GetTxEscrowDeposit()
-	require.NoError(t, cmd.Flags().Set(cflags.FlagOwner, fixture.owner.String()))
-	require.NoError(t, cmd.Flags().Set(cflags.FlagDSeq, "71"))
-	require.NoError(t, cmd.Flags().Set(cflags.FlagDepositSources, "balance,grant"))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagOwner, fixture.owner.String()))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagDSeq, "71"))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagDepositSources, "balance,grant"))
 
 	capture := &moduleTxCapture{response: &sdk.TxResponse{TxHash: "ESCROW-71"}}
 	var output bytes.Buffer
@@ -188,13 +289,13 @@ func TestMarketCommandsBroadcastExactMessages(t *testing.T) {
 
 	t.Run("provider creates bid", func(t *testing.T) {
 		cmd := GetTxMarketBidCreateCmd()
-		require.NoError(t, cmd.Flags().Set(cflags.FlagPrice, "0.025uakt"))
-		require.NoError(t, cmd.Flags().Set(cflags.FlagOwner, fixture.owner.String()))
-		require.NoError(t, cmd.Flags().Set(cflags.FlagDSeq, "80"))
-		require.NoError(t, cmd.Flags().Set(cflags.FlagGSeq, "6"))
-		require.NoError(t, cmd.Flags().Set(cflags.FlagOSeq, "8"))
-		require.NoError(t, cmd.Flags().Set(cflags.FlagDeposit, "500000uakt"))
-		require.NoError(t, cmd.Flags().Set(cflags.FlagDepositSources, "grant,balance"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagPrice, "0.025uakt"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagOwner, fixture.owner.String()))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagDSeq, "80"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagGSeq, "6"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagOSeq, "8"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagDeposit, "500000uakt"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagDepositSources, "grant,balance"))
 
 		capture := &moduleTxCapture{response: &sdk.TxResponse{TxHash: "BID-CREATE-80"}}
 		var output bytes.Buffer
@@ -216,11 +317,11 @@ func TestMarketCommandsBroadcastExactMessages(t *testing.T) {
 
 	t.Run("provider closes bid", func(t *testing.T) {
 		cmd := GetTxMarketBidCloseCmd()
-		require.NoError(t, cmd.Flags().Set(cflags.FlagOwner, fixture.owner.String()))
-		require.NoError(t, cmd.Flags().Set(cflags.FlagDSeq, "81"))
-		require.NoError(t, cmd.Flags().Set(cflags.FlagGSeq, "7"))
-		require.NoError(t, cmd.Flags().Set(cflags.FlagOSeq, "9"))
-		require.NoError(t, cmd.Flags().Set(cflags.FlagClosedReason, "10001"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagOwner, fixture.owner.String()))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagDSeq, "81"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagGSeq, "7"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagOSeq, "9"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagClosedReason, "10001"))
 
 		capture := &moduleTxCapture{response: &sdk.TxResponse{TxHash: "BID-CLOSE-81"}}
 		var output bytes.Buffer
@@ -238,9 +339,9 @@ func TestMarketCommandsBroadcastExactMessages(t *testing.T) {
 
 	t.Run("owner creates lease", func(t *testing.T) {
 		cmd := GetTxMarketLeaseCreateCmd()
-		require.NoError(t, cmd.Flags().Set(cflags.FlagOwner, fixture.owner.String()))
-		require.NoError(t, cmd.Flags().Set(cflags.FlagGSeq, "11"))
-		require.NoError(t, cmd.Flags().Set(cflags.FlagOSeq, "13"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagOwner, fixture.owner.String()))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagGSeq, "11"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagOSeq, "13"))
 
 		capture := &moduleTxCapture{response: &sdk.TxResponse{TxHash: "LEASE-CREATE-91"}}
 		var output bytes.Buffer
@@ -257,8 +358,8 @@ func TestMarketCommandsBroadcastExactMessages(t *testing.T) {
 
 	t.Run("owner withdraws lease", func(t *testing.T) {
 		cmd := GetTxMarketLeaseWithdrawCmd()
-		require.NoError(t, cmd.Flags().Set(cflags.FlagGSeq, "5"))
-		require.NoError(t, cmd.Flags().Set(cflags.FlagOSeq, "6"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagGSeq, "5"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagOSeq, "6"))
 
 		capture := &moduleTxCapture{response: &sdk.TxResponse{TxHash: "LEASE-WITHDRAW-92"}}
 		var output bytes.Buffer
@@ -275,9 +376,9 @@ func TestMarketCommandsBroadcastExactMessages(t *testing.T) {
 
 	t.Run("owner closes lease", func(t *testing.T) {
 		cmd := GetTxMarketLeaseCloseCmd()
-		require.NoError(t, cmd.Flags().Set(cflags.FlagOwner, fixture.owner.String()))
-		require.NoError(t, cmd.Flags().Set(cflags.FlagGSeq, "3"))
-		require.NoError(t, cmd.Flags().Set(cflags.FlagOSeq, "4"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagOwner, fixture.owner.String()))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagGSeq, "3"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagOSeq, "4"))
 
 		capture := &moduleTxCapture{response: &sdk.TxResponse{TxHash: "LEASE-CLOSE-93"}}
 		var output bytes.Buffer
@@ -299,7 +400,7 @@ func TestDeploymentGroupCommandsBroadcastExactMessages(t *testing.T) {
 
 	t.Run("close", func(t *testing.T) {
 		cmd := GetTxDeploymentGroupCloseCmd()
-		require.NoError(t, cmd.Flags().Set(cflags.FlagOwner, fixture.owner.String()))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagOwner, fixture.owner.String()))
 
 		capture := &moduleTxCapture{response: &sdk.TxResponse{TxHash: "GROUP-CLOSE-101"}}
 		var output bytes.Buffer
@@ -324,7 +425,7 @@ func TestDeploymentGroupCommandsBroadcastExactMessages(t *testing.T) {
 
 	t.Run("start", func(t *testing.T) {
 		cmd := GetDeploymentGroupStartCmd()
-		require.NoError(t, cmd.Flags().Set(cflags.FlagOwner, fixture.owner.String()))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagOwner, fixture.owner.String()))
 
 		capture := &moduleTxCapture{response: &sdk.TxResponse{TxHash: "GROUP-START-103"}}
 		var output bytes.Buffer
@@ -347,19 +448,19 @@ func validModuleTxCases(t *testing.T, fixture moduleTxFixture) []validModuleTxCa
 	t.Helper()
 
 	escrow := GetTxEscrowDeposit()
-	require.NoError(t, escrow.Flags().Set(cflags.FlagDSeq, "201"))
+	require.NoError(t, escrow.Flags().Set(flagdefs.FlagDSeq, "201"))
 
 	bidClose := GetTxMarketBidCloseCmd()
-	require.NoError(t, bidClose.Flags().Set(cflags.FlagOwner, fixture.owner.String()))
-	require.NoError(t, bidClose.Flags().Set(cflags.FlagDSeq, "202"))
-	require.NoError(t, bidClose.Flags().Set(cflags.FlagGSeq, "2"))
-	require.NoError(t, bidClose.Flags().Set(cflags.FlagOSeq, "3"))
+	require.NoError(t, bidClose.Flags().Set(flagdefs.FlagOwner, fixture.owner.String()))
+	require.NoError(t, bidClose.Flags().Set(flagdefs.FlagDSeq, "202"))
+	require.NoError(t, bidClose.Flags().Set(flagdefs.FlagGSeq, "2"))
+	require.NoError(t, bidClose.Flags().Set(flagdefs.FlagOSeq, "3"))
 
 	bidCreate := GetTxMarketBidCreateCmd()
-	require.NoError(t, bidCreate.Flags().Set(cflags.FlagPrice, "0.03uakt"))
-	require.NoError(t, bidCreate.Flags().Set(cflags.FlagOwner, fixture.owner.String()))
-	require.NoError(t, bidCreate.Flags().Set(cflags.FlagDSeq, "209"))
-	require.NoError(t, bidCreate.Flags().Set(cflags.FlagDeposit, "5uakt"))
+	require.NoError(t, bidCreate.Flags().Set(flagdefs.FlagPrice, "0.03uakt"))
+	require.NoError(t, bidCreate.Flags().Set(flagdefs.FlagOwner, fixture.owner.String()))
+	require.NoError(t, bidCreate.Flags().Set(flagdefs.FlagDSeq, "209"))
+	require.NoError(t, bidCreate.Flags().Set(flagdefs.FlagDeposit, "5uakt"))
 
 	return []validModuleTxCase{
 		{name: "bme burn mint", command: GetTxBMEBurnMintCmd(), args: []string{"1uakt", "uact"}},
@@ -423,7 +524,7 @@ func TestMarketTransactionsRejectInvalidInputBeforeBroadcast(t *testing.T) {
 			command: GetTxMarketBidCreateCmd,
 			configure: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				require.NoError(t, cmd.Flags().Set(cflags.FlagPrice, "not-a-price"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagPrice, "not-a-price"))
 			},
 		},
 		{
@@ -431,9 +532,9 @@ func TestMarketTransactionsRejectInvalidInputBeforeBroadcast(t *testing.T) {
 			command: GetTxMarketBidCreateCmd,
 			configure: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				require.NoError(t, cmd.Flags().Set(cflags.FlagPrice, "0.02uakt"))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagOwner, fixture.owner.String()))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagDeposit, "1uakt"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagPrice, "0.02uakt"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagOwner, fixture.owner.String()))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagDeposit, "1uakt"))
 			},
 		},
 		{
@@ -441,10 +542,10 @@ func TestMarketTransactionsRejectInvalidInputBeforeBroadcast(t *testing.T) {
 			command: GetTxMarketBidCreateCmd,
 			configure: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				require.NoError(t, cmd.Flags().Set(cflags.FlagPrice, "0.02uakt"))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagOwner, fixture.owner.String()))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagDSeq, "300"))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagDeposit, "not-a-deposit"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagPrice, "0.02uakt"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagOwner, fixture.owner.String()))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagDSeq, "300"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagDeposit, "not-a-deposit"))
 			},
 		},
 		{
@@ -452,11 +553,11 @@ func TestMarketTransactionsRejectInvalidInputBeforeBroadcast(t *testing.T) {
 			command: GetTxMarketBidCreateCmd,
 			configure: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				require.NoError(t, cmd.Flags().Set(cflags.FlagPrice, "0.02uakt"))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagOwner, fixture.owner.String()))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagDSeq, "300"))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagDeposit, "1uakt"))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagDepositSources, "grant,grant"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagPrice, "0.02uakt"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagOwner, fixture.owner.String()))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagDSeq, "300"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagDeposit, "1uakt"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagDepositSources, "grant,grant"))
 			},
 		},
 		{
@@ -464,10 +565,10 @@ func TestMarketTransactionsRejectInvalidInputBeforeBroadcast(t *testing.T) {
 			command: GetTxMarketBidCreateCmd,
 			configure: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				require.NoError(t, cmd.Flags().Set(cflags.FlagPrice, "0uakt"))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagOwner, fixture.owner.String()))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagDSeq, "300"))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagDeposit, "1uakt"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagPrice, "0uakt"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagOwner, fixture.owner.String()))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagDSeq, "300"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagDeposit, "1uakt"))
 			},
 		},
 		{name: "lease create missing identity", command: GetTxMarketLeaseCreateCmd},
@@ -482,7 +583,7 @@ func TestMarketTransactionsRejectInvalidInputBeforeBroadcast(t *testing.T) {
 			args:    []string{"303", fixture.provider.String()},
 			configure: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				require.NoError(t, cmd.Flags().Set(cflags.FlagOwner, "not-an-owner"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagOwner, "not-an-owner"))
 			},
 		},
 		{
@@ -491,7 +592,7 @@ func TestMarketTransactionsRejectInvalidInputBeforeBroadcast(t *testing.T) {
 			args:    []string{"304", fixture.provider.String()},
 			configure: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				require.NoError(t, cmd.Flags().Set(cflags.FlagGSeq, "0"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagGSeq, "0"))
 			},
 		},
 		{
@@ -499,7 +600,7 @@ func TestMarketTransactionsRejectInvalidInputBeforeBroadcast(t *testing.T) {
 			command: GetTxMarketBidCloseCmd,
 			configure: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				require.NoError(t, cmd.Flags().Set(cflags.FlagOwner, fixture.owner.String()))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagOwner, fixture.owner.String()))
 			},
 		},
 		{
@@ -507,8 +608,8 @@ func TestMarketTransactionsRejectInvalidInputBeforeBroadcast(t *testing.T) {
 			command: GetTxMarketBidCloseCmd,
 			configure: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				require.NoError(t, cmd.Flags().Set(cflags.FlagOwner, "not-an-owner"))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagDSeq, "305"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagOwner, "not-an-owner"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagDSeq, "305"))
 			},
 		},
 		{
@@ -516,9 +617,9 @@ func TestMarketTransactionsRejectInvalidInputBeforeBroadcast(t *testing.T) {
 			command: GetTxMarketBidCloseCmd,
 			configure: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				require.NoError(t, cmd.Flags().Set(cflags.FlagOwner, fixture.owner.String()))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagDSeq, "306"))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagClosedReason, "9999"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagOwner, fixture.owner.String()))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagDSeq, "306"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagClosedReason, "9999"))
 			},
 		},
 	}
@@ -560,7 +661,7 @@ func TestDeploymentGroupTransactionsRejectInvalidInputBeforeBroadcast(t *testing
 			args:    []string{"403", "1"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				require.NoError(t, cmd.Flags().Set(cflags.FlagOwner, "not-an-owner"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagOwner, "not-an-owner"))
 			},
 		},
 	}
@@ -599,7 +700,7 @@ func TestBMEAndEscrowRejectInvalidMessagesBeforeBroadcast(t *testing.T) {
 			args:    []string{"1uakt", "uact"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				require.NoError(t, cmd.Flags().Set(cflags.FlagFeePayer, "not-a-fee-payer"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagFeePayer, "not-a-fee-payer"))
 			},
 		},
 		{name: "mint act zero amount", command: GetTxBMEMintACTCmd, args: []string{"0uakt"}},
@@ -610,7 +711,7 @@ func TestBMEAndEscrowRejectInvalidMessagesBeforeBroadcast(t *testing.T) {
 			args:    []string{"1uakt"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				require.NoError(t, cmd.Flags().Set(cflags.FlagFeePayer, "not-a-fee-payer"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagFeePayer, "not-a-fee-payer"))
 			},
 		},
 		{name: "burn act zero amount", command: GetTxBMEBurnACTCmd, args: []string{"0uact"}},
@@ -621,7 +722,7 @@ func TestBMEAndEscrowRejectInvalidMessagesBeforeBroadcast(t *testing.T) {
 			args:    []string{"1uact"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				require.NoError(t, cmd.Flags().Set(cflags.FlagFeePayer, "not-a-fee-payer"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagFeePayer, "not-a-fee-payer"))
 			},
 		},
 		{
@@ -640,7 +741,7 @@ func TestBMEAndEscrowRejectInvalidMessagesBeforeBroadcast(t *testing.T) {
 			args:    []string{"deployment", "0uakt"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				require.NoError(t, cmd.Flags().Set("dseq", "71"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagDSeq, "71"))
 			},
 		},
 		{
@@ -649,7 +750,7 @@ func TestBMEAndEscrowRejectInvalidMessagesBeforeBroadcast(t *testing.T) {
 			args:    []string{"deployment", "not-a-coin"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				require.NoError(t, cmd.Flags().Set(cflags.FlagDSeq, "72"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagDSeq, "72"))
 			},
 		},
 		{
@@ -658,8 +759,8 @@ func TestBMEAndEscrowRejectInvalidMessagesBeforeBroadcast(t *testing.T) {
 			args:    []string{"deployment", "1uakt"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				require.NoError(t, cmd.Flags().Set(cflags.FlagOwner, "not-an-owner"))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagDSeq, "73"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagOwner, "not-an-owner"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagDSeq, "73"))
 			},
 		},
 		{
@@ -668,8 +769,8 @@ func TestBMEAndEscrowRejectInvalidMessagesBeforeBroadcast(t *testing.T) {
 			args:    []string{"deployment", "1uakt"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				require.NoError(t, cmd.Flags().Set(cflags.FlagDSeq, "74"))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagDepositSources, "wallet"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagDSeq, "74"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagDepositSources, "wallet"))
 			},
 		},
 		{
@@ -678,8 +779,8 @@ func TestBMEAndEscrowRejectInvalidMessagesBeforeBroadcast(t *testing.T) {
 			args:    []string{"deployment", "1uakt"},
 			configure: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				require.NoError(t, cmd.Flags().Set(cflags.FlagDSeq, "75"))
-				require.NoError(t, cmd.Flags().Set(cflags.FlagDepositSources, "grant,grant"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagDSeq, "75"))
+				require.NoError(t, cmd.Flags().Set(flagdefs.FlagDepositSources, "grant,grant"))
 			},
 		},
 	}

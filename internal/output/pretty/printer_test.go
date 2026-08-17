@@ -1,6 +1,8 @@
 package pretty
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"errors"
 	"io"
@@ -85,7 +87,7 @@ func TestPrintQueryResultPropagatesCommandWriterFailures(t *testing.T) {
 			for _, failure := range failures {
 				t.Run(failure.name, func(t *testing.T) {
 					cmd := &cobra.Command{}
-					cmd.Flags().String(cflags.FlagOutput, operation.format, "")
+					cmd.Flags().String(flagdefs.FlagOutput, operation.format, "")
 					cmd.SetOut(failure.w)
 
 					var wrongDestination bytes.Buffer

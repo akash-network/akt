@@ -1,6 +1,8 @@
 package pretty
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/gogoproto/proto"
 	"github.com/spf13/cobra"
@@ -17,7 +19,7 @@ import (
 //   - "json": raw Cosmos SDK JSON output via clientCtx.PrintProto().
 //   - "yaml": raw Cosmos SDK YAML output via clientCtx.PrintProto().
 func PrintQueryResult(cmd *cobra.Command, cctx sdkclient.Context, msg proto.Message) error {
-	output, _ := cmd.Flags().GetString(cflags.FlagOutput)
+	output, _ := cmd.Flags().GetString(flagdefs.FlagOutput)
 	checked := clioutput.NewCheckedWriter(cmd.OutOrStdout())
 	cctx = cctx.WithOutput(checked)
 

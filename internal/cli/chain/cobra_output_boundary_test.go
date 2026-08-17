@@ -1,6 +1,8 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"context"
 	"errors"
@@ -67,9 +69,9 @@ func readLedgerTxContext(t *testing.T, stderr io.Writer, quiet bool) (sdkclient.
 	t.Helper()
 
 	cmd := txFlagCommand()
-	cmd.Flags().Bool("quiet", false, "test quiet mode")
+	cmd.Flags().Bool(flagdefs.FlagQuiet, false, "test quiet mode")
 	if quiet {
-		if err := cmd.Flags().Set("quiet", "true"); err != nil {
+		if err := cmd.Flags().Set(flagdefs.FlagQuiet, "true"); err != nil {
 			t.Fatalf("set quiet: %v", err)
 		}
 	}
@@ -177,9 +179,9 @@ func runWasmCodeDownload(t *testing.T, stderr io.Writer, quiet bool, path string
 	wasm := &wasmCodeQueryStub{data: data}
 	cl := &wasmDownloadLightClient{query: &wasmDownloadQueryClient{wasm: wasm}}
 	cmd := GetQueryWasmCodeCmd()
-	cmd.Flags().Bool("quiet", false, "test quiet mode")
+	cmd.Flags().Bool(flagdefs.FlagQuiet, false, "test quiet mode")
 	if quiet {
-		if err := cmd.Flags().Set("quiet", "true"); err != nil {
+		if err := cmd.Flags().Set(flagdefs.FlagQuiet, "true"); err != nil {
 			t.Fatalf("set quiet: %v", err)
 		}
 	}

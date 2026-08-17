@@ -1,9 +1,12 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
@@ -15,6 +18,7 @@ import (
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
+	"github.com/spf13/cobra"
 
 	cv1beta3 "pkg.akt.dev/go/node/client/v1beta3"
 )
@@ -22,6 +26,27 @@ import (
 type recordingBankQueryClient struct {
 	banktypes.QueryClient
 	request *banktypes.QueryAllBalancesRequest
+}
+
+type canonicalBankQueryClient struct {
+	banktypes.QueryClient
+	err error
+}
+
+func (client *canonicalBankQueryClient) SpendableBalanceByDenom(
+	context.Context,
+	*banktypes.QuerySpendableBalanceByDenomRequest,
+	...grpc.CallOption,
+) (*banktypes.QuerySpendableBalanceByDenomResponse, error) {
+	return nil, client.err
+}
+
+func (client *canonicalBankQueryClient) DenomMetadata(
+	context.Context,
+	*banktypes.QueryDenomMetadataRequest,
+	...grpc.CallOption,
+) (*banktypes.QueryDenomMetadataResponse, error) {
+	return nil, client.err
 }
 
 func (client *recordingBankQueryClient) AllBalances(
@@ -105,4 +130,28 @@ func TestBankBalancesPrettyScalesCanonicalMicroDenom(t *testing.T) {
 	require.False(t, request.ResolveDenom, "pretty output must receive the canonical chain denomination")
 	require.Contains(t, out, "1 AKT")
 	require.False(t, strings.Contains(out, "1000000"), "pretty output leaked the unscaled amount: %s", out)
+}
+
+func TestBankQueriesReadCanonicalDenomFlag(t *testing.T) {
+	wantErr := errors.New("stop after canonical denom query")
+	query := &aggregateBankQueryClient{bank: &canonicalBankQueryClient{err: wantErr}}
+
+	for _, test := range []struct {
+		name string
+		cmd  *cobra.Command
+		args []string
+	}{
+		{
+			name: "spendable balance",
+			cmd:  GetQueryBankSpendableBalancesCmd(),
+			args: []string{"akash1qqqsyqcyq5rqwzqfpg9scrgwpugpzysnwduagr"},
+		},
+		{name: "denom metadata", cmd: GetQueryBankDenomsMetadataCmd()},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.NoError(t, test.cmd.Flags().Set(flagdefs.FlagDenom, "uakt"))
+			err := runSemanticQuery(t, test.cmd, query, nil, nil, test.args...)
+			require.ErrorIs(t, err, wantErr)
+		})
+	}
 }

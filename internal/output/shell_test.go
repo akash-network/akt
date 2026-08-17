@@ -1,6 +1,8 @@
 package output
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -124,6 +126,6 @@ func shellOutputCommand(t *testing.T, format string) (*cobra.Command, *bytes.Buf
 	stderr := &bytes.Buffer{}
 	cmd.SetOut(stdout)
 	cmd.SetErr(stderr)
-	cmd.Flags().String("output", format, "")
+	cmd.Flags().String(flagdefs.FlagOutput, format, "")
 	return cmd, stdout, stderr
 }

@@ -21,6 +21,7 @@ pkg.akt.dev/akt/internal/codec	active	true
 pkg.akt.dev/akt/internal/console	active	true
 pkg.akt.dev/akt/internal/context	active	true
 pkg.akt.dev/akt/internal/events	active	true
+pkg.akt.dev/akt/internal/flags	active	false
 pkg.akt.dev/akt/internal/glyphs	active	false
 pkg.akt.dev/akt/internal/keyring	active	true
 pkg.akt.dev/akt/internal/mcp	active	true

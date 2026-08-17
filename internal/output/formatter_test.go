@@ -1,6 +1,8 @@
 package output
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"errors"
 	"io"
@@ -103,7 +105,7 @@ func TestPrintDataUsesCommandWriterAndPropagatesFailures(t *testing.T) {
 			} {
 				t.Run(failure.name, func(t *testing.T) {
 					cmd := &cobra.Command{}
-					cmd.Flags().String("output", format, "")
+					cmd.Flags().String(flagdefs.FlagOutput, format, "")
 					cmd.SetOut(failure.w)
 
 					require.ErrorIs(t, PrintData(cmd, columns, rows, data), failure.want)

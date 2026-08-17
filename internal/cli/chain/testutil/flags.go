@@ -1,6 +1,8 @@
 package testutil
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"fmt"
 	"reflect"
 	"strconv"
@@ -60,32 +62,32 @@ func (flags FlagsSet) WithFlag(key string, value any) FlagsSet {
 
 // WithFrom appends the transaction signer flag.
 func (flags FlagsSet) WithFrom(account string) FlagsSet {
-	return flags.WithFlag(cflags.FlagFrom, account)
+	return flags.WithFlag(flagdefs.FlagFrom, account)
 }
 
 // WithGenerateOnly appends the transaction generation-only flag.
 func (flags FlagsSet) WithGenerateOnly() FlagsSet {
-	return flags.WithFlag(cflags.FlagGenerateOnly, true)
+	return flags.WithFlag(flagdefs.FlagGenerateOnly, true)
 }
 
 // WithOffline appends the offline transaction flag.
 func (flags FlagsSet) WithOffline() FlagsSet {
-	return flags.WithFlag(cflags.FlagOffline, true)
+	return flags.WithFlag(flagdefs.FlagOffline, true)
 }
 
 // WithGas appends the gas limit flag.
 func (flags FlagsSet) WithGas(gas int) FlagsSet {
-	return flags.WithFlag(cflags.FlagGas, gas)
+	return flags.WithFlag(flagdefs.FlagGas, gas)
 }
 
 // WithChainID appends the chain ID flag.
 func (flags FlagsSet) WithChainID(chainID string) FlagsSet {
-	return flags.WithFlag(cflags.FlagChainID, chainID)
+	return flags.WithFlag(flagdefs.FlagChainID, chainID)
 }
 
 // WithOutput appends the output format flag.
 func (flags FlagsSet) WithOutput(format string) FlagsSet {
-	return flags.WithFlag(cflags.FlagOutput, format)
+	return flags.WithFlag(flagdefs.FlagOutput, format)
 }
 
 // WithOutputJSON appends the JSON output format flag.

@@ -11,6 +11,8 @@ import (
 	"strconv"
 	"strings"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/charmbracelet/huh"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
@@ -37,23 +39,6 @@ import (
 
 	wtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 )
-
-// Proposal flags
-const (
-	flagVoter     = "voter"
-	flagDepositor = "depositor"
-	flagStatus    = "status"
-)
-
-// ProposalFlags defines the core required fields of a legacy proposal. It is used to
-// verify that these values are not provided in conjunction with a JSON proposal
-// file.
-var ProposalFlags = []string{
-	cflags.FlagTitle,
-	cflags.FlagDescription,  // nolint:staticcheck
-	cflags.FlagProposalType, // nolint:staticcheck
-	cflags.FlagDeposit,
-}
 
 const (
 	proposalText          = "text"
@@ -315,11 +300,11 @@ $ %s tx gov submit-legacy-proposal --title="Test Proposal" --description="My awe
 		},
 	}
 
-	cmd.Flags().String(cflags.FlagTitle, "", "The proposal title")
-	cmd.Flags().String(cflags.FlagDescription, "", "The proposal description") // nolint:staticcheck
-	cmd.Flags().String(cflags.FlagProposalType, "", "The proposal Type")       // nolint:staticcheck
-	cmd.Flags().String(cflags.FlagDeposit, "", "The proposal deposit")
-	cmd.Flags().String(cflags.FlagProposal, "", "Proposal file path (if this path is given, other proposal flags are ignored)") // nolint:staticcheck
+	cmd.Flags().String(flagdefs.FlagTitle, "", "The proposal title")
+	cmd.Flags().String(flagdefs.FlagDescription, "", "The proposal description") // nolint:staticcheck
+	cmd.Flags().String(flagdefs.FlagType, "", "The proposal Type")               // nolint:staticcheck
+	cmd.Flags().String(flagdefs.FlagDeposit, "", "The proposal deposit")
+	cmd.Flags().String(flagdefs.FlagProposal, "", "Proposal file path (if this path is given, other proposal flags are ignored)") // nolint:staticcheck
 
 	cflags.AddTxFlagsToCmd(cmd)
 
@@ -416,7 +401,7 @@ $ %s tx gov vote 1 yes --from mykey
 				return err
 			}
 
-			metadata, err := cmd.Flags().GetString(cflags.FlagMetadata)
+			metadata, err := cmd.Flags().GetString(flagdefs.FlagMetadata)
 			if err != nil {
 				return err
 			}
@@ -433,7 +418,7 @@ $ %s tx gov vote 1 yes --from mykey
 		},
 	}
 
-	cmd.Flags().String(cflags.FlagMetadata, "", "Specify metadata of the vote")
+	cmd.Flags().String(flagdefs.FlagMetadata, "", "Specify metadata of the vote")
 	cflags.AddTxFlagsToCmd(cmd)
 
 	return cmd
@@ -476,7 +461,7 @@ $ %s tx gov weighted-vote 1 yes=0.6,no=0.3,abstain=0.05,no_with_veto=0.05 --from
 				return err
 			}
 
-			metadata, err := cmd.Flags().GetString(cflags.FlagMetadata)
+			metadata, err := cmd.Flags().GetString(flagdefs.FlagMetadata)
 			if err != nil {
 				return err
 			}
@@ -493,7 +478,7 @@ $ %s tx gov weighted-vote 1 yes=0.6,no=0.3,abstain=0.05,no_with_veto=0.05 --from
 		},
 	}
 
-	cmd.Flags().String(cflags.FlagMetadata, "", "Specify metadata of the weighted vote")
+	cmd.Flags().String(flagdefs.FlagMetadata, "", "Specify metadata of the weighted vote")
 	cflags.AddTxFlagsToCmd(cmd)
 
 	return cmd
@@ -647,7 +632,7 @@ func GetTxGovWasmProposalStoreCodeCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			authority, err := cmd.Flags().GetString(cflags.FlagAuthority)
+			authority, err := cmd.Flags().GetString(flagdefs.FlagAuthority)
 			if err != nil {
 				return fmt.Errorf("authority: %s", err)
 			}
@@ -688,7 +673,7 @@ func GetTxGovWasmProposalInstantiateContractCmd() *cobra.Command {
 				return err
 			}
 
-			authority, err := cmd.Flags().GetString(cflags.FlagAuthority)
+			authority, err := cmd.Flags().GetString(flagdefs.FlagAuthority)
 			if err != nil {
 				return fmt.Errorf("authority: %s", err)
 			}
@@ -711,10 +696,10 @@ func GetTxGovWasmProposalInstantiateContractCmd() *cobra.Command {
 		},
 		SilenceUsage: true,
 	}
-	cmd.Flags().String(cflags.FlagAmount, "", "Coins to send to the contract during instantiation")
-	cmd.Flags().String(cflags.FlagLabel, "", "A human-readable name for this contract in lists")
-	cmd.Flags().String(cflags.FlagAdmin, "", "Address or key name of an admin")
-	cmd.Flags().Bool(cflags.FlagNoAdmin, false, "You must set this explicitly if you don't want an admin")
+	cmd.Flags().String(flagdefs.FlagAmount, "", "Coins to send to the contract during instantiation")
+	cmd.Flags().String(flagdefs.FlagLabel, "", "A human-readable name for this contract in lists")
+	cmd.Flags().String(flagdefs.FlagAdmin, "", "Address or key name of an admin")
+	cmd.Flags().Bool(flagdefs.FlagNoAdmin, false, "You must set this explicitly if you don't want an admin")
 
 	// proposal flags
 	addCommonProposalFlags(cmd)
@@ -737,11 +722,11 @@ func GetTxGovWasmProposalInstantiateContract2Cmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("salt: %w", err)
 			}
-			fixMsg, err := cmd.Flags().GetBool(cflags.FlagFixMsg)
+			fixMsg, err := cmd.Flags().GetBool(flagdefs.FlagFixMsg)
 			if err != nil {
 				return fmt.Errorf("fix msg: %w", err)
 			}
-			authority, err := cmd.Flags().GetString(cflags.FlagAuthority)
+			authority, err := cmd.Flags().GetString(flagdefs.FlagAuthority)
 			if err != nil {
 				return fmt.Errorf("authority: %s", err)
 			}
@@ -779,11 +764,11 @@ func GetTxGovWasmProposalInstantiateContract2Cmd() *cobra.Command {
 		SilenceUsage: true,
 	}
 
-	cmd.Flags().String(cflags.FlagAmount, "", "Coins to send to the contract during instantiation")
-	cmd.Flags().String(cflags.FlagLabel, "", "A human-readable name for this contract in lists")
-	cmd.Flags().String(cflags.FlagAdmin, "", "Address of an admin")
-	cmd.Flags().Bool(cflags.FlagNoAdmin, false, "You must set this explicitly if you don't want an admin")
-	cmd.Flags().Bool(cflags.FlagFixMsg, false, "An optional flag to include the json_encoded_init_args for the predictable address generation mode")
+	cmd.Flags().String(flagdefs.FlagAmount, "", "Coins to send to the contract during instantiation")
+	cmd.Flags().String(flagdefs.FlagLabel, "", "A human-readable name for this contract in lists")
+	cmd.Flags().String(flagdefs.FlagAdmin, "", "Address of an admin")
+	cmd.Flags().Bool(flagdefs.FlagNoAdmin, false, "You must set this explicitly if you don't want an admin")
+	cmd.Flags().Bool(flagdefs.FlagFixMsg, false, "An optional flag to include the json_encoded_init_args for the predictable address generation mode")
 	decoder.RegisterFlags(cmd.PersistentFlags(), "salt")
 
 	// proposal flags
@@ -803,7 +788,7 @@ func GetTxGovWasmProposalStoreAndInstantiateContractCmd() *cobra.Command {
 				return err
 			}
 
-			authority, err := cmd.Flags().GetString(cflags.FlagAuthority)
+			authority, err := cmd.Flags().GetString(flagdefs.FlagAuthority)
 			if err != nil {
 				return fmt.Errorf("authority: %s", err)
 			}
@@ -818,7 +803,7 @@ func GetTxGovWasmProposalStoreAndInstantiateContractCmd() *cobra.Command {
 				return err
 			}
 
-			unpinCode, err := cmd.Flags().GetBool(cflags.FlagUnpinCode)
+			unpinCode, err := cmd.Flags().GetBool(flagdefs.FlagUnpinCode)
 			if err != nil {
 				return err
 			}
@@ -828,7 +813,7 @@ func GetTxGovWasmProposalStoreAndInstantiateContractCmd() *cobra.Command {
 				return err
 			}
 
-			amountStr, err := cmd.Flags().GetString(cflags.FlagAmount)
+			amountStr, err := cmd.Flags().GetString(flagdefs.FlagAmount)
 			if err != nil {
 				return fmt.Errorf("amount: %s", err)
 			}
@@ -836,18 +821,18 @@ func GetTxGovWasmProposalStoreAndInstantiateContractCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("amount: %s", err)
 			}
-			label, err := cmd.Flags().GetString(cflags.FlagLabel)
+			label, err := cmd.Flags().GetString(flagdefs.FlagLabel)
 			if err != nil {
 				return fmt.Errorf("label: %s", err)
 			}
 			if label == "" {
 				return errors.New("label is required on all contracts")
 			}
-			adminStr, err := cmd.Flags().GetString(cflags.FlagAdmin)
+			adminStr, err := cmd.Flags().GetString(flagdefs.FlagAdmin)
 			if err != nil {
 				return fmt.Errorf("admin: %s", err)
 			}
-			noAdmin, err := cmd.Flags().GetBool(cflags.FlagNoAdmin)
+			noAdmin, err := cmd.Flags().GetBool(flagdefs.FlagNoAdmin)
 			if err != nil {
 				return fmt.Errorf("no-admin: %s", err)
 			}
@@ -904,14 +889,14 @@ func GetTxGovWasmProposalStoreAndInstantiateContractCmd() *cobra.Command {
 		SilenceUsage: true,
 	}
 
-	cmd.Flags().Bool(cflags.FlagUnpinCode, false, "Unpin code on upload, optional")
-	cmd.Flags().String(cflags.FlagSource, "", "Code Source URL is a valid absolute HTTPS URI to the contract's source code,")
-	cmd.Flags().String(cflags.FlagBuilder, "", "Builder is a valid docker image name with tag, such as \"cosmwasm/workspace-optimizer:0.12.9\"")
-	cmd.Flags().BytesHex(cflags.FlagCodeHash, nil, "CodeHash is the sha256 hash of the wasm code")
-	cmd.Flags().String(cflags.FlagAmount, "", "Coins to send to the contract during instantiation")
-	cmd.Flags().String(cflags.FlagLabel, "", "A human-readable name for this contract in lists")
-	cmd.Flags().String(cflags.FlagAdmin, "", "Address or key name of an admin")
-	cmd.Flags().Bool(cflags.FlagNoAdmin, false, "You must set this explicitly if you don't want an admin")
+	cmd.Flags().Bool(flagdefs.FlagUnpinCode, false, "Unpin code on upload, optional")
+	cmd.Flags().String(flagdefs.FlagSource, "", "Code Source URL is a valid absolute HTTPS URI to the contract's source code,")
+	cmd.Flags().String(flagdefs.FlagBuilder, "", "Builder is a valid docker image name with tag, such as \"cosmwasm/workspace-optimizer:0.12.9\"")
+	cmd.Flags().BytesHex(flagdefs.FlagCodeHash, nil, "CodeHash is the sha256 hash of the wasm code")
+	cmd.Flags().String(flagdefs.FlagAmount, "", "Coins to send to the contract during instantiation")
+	cmd.Flags().String(flagdefs.FlagLabel, "", "A human-readable name for this contract in lists")
+	cmd.Flags().String(flagdefs.FlagAdmin, "", "Address or key name of an admin")
+	cmd.Flags().Bool(flagdefs.FlagNoAdmin, false, "You must set this explicitly if you don't want an admin")
 	addInstantiatePermissionFlags(cmd)
 	// proposal flags
 	addCommonProposalFlags(cmd)
@@ -929,7 +914,7 @@ func GetTxGovWasmProposalMigrateContractCmd() *cobra.Command {
 				return err
 			}
 
-			authority, err := cmd.Flags().GetString(cflags.FlagAuthority)
+			authority, err := cmd.Flags().GetString(flagdefs.FlagAuthority)
 			if err != nil {
 				return fmt.Errorf("authority: %s", err)
 			}
@@ -968,7 +953,7 @@ func GetTxGovWasmProposalExecuteContractCmd() *cobra.Command {
 				return err
 			}
 
-			authority, err := cmd.Flags().GetString(cflags.FlagAuthority)
+			authority, err := cmd.Flags().GetString(flagdefs.FlagAuthority)
 			if err != nil {
 				return fmt.Errorf("authority: %s", err)
 			}
@@ -979,7 +964,7 @@ func GetTxGovWasmProposalExecuteContractCmd() *cobra.Command {
 
 			contract := args[0]
 			execMsg := []byte(args[1])
-			amountStr, err := cmd.Flags().GetString(cflags.FlagAmount)
+			amountStr, err := cmd.Flags().GetString(flagdefs.FlagAmount)
 			if err != nil {
 				return fmt.Errorf("amount: %s", err)
 			}
@@ -1007,7 +992,7 @@ func GetTxGovWasmProposalExecuteContractCmd() *cobra.Command {
 		},
 		SilenceUsage: true,
 	}
-	cmd.Flags().String(cflags.FlagAmount, "", "Coins to send to the contract during instantiation")
+	cmd.Flags().String(flagdefs.FlagAmount, "", "Coins to send to the contract during instantiation")
 
 	// proposal flags
 	addCommonProposalFlags(cmd)
@@ -1025,7 +1010,7 @@ func GetTxGovWasmProposalSudoContractCmd() *cobra.Command {
 				return err
 			}
 
-			authority, err := cmd.Flags().GetString(cflags.FlagAuthority)
+			authority, err := cmd.Flags().GetString(flagdefs.FlagAuthority)
 			if err != nil {
 				return fmt.Errorf("authority: %s", err)
 			}
@@ -1068,7 +1053,7 @@ func GetTxGovWasmProposalUpdateContractAdminCmd() *cobra.Command {
 				return err
 			}
 
-			authority, err := cmd.Flags().GetString(cflags.FlagAuthority)
+			authority, err := cmd.Flags().GetString(flagdefs.FlagAuthority)
 			if err != nil {
 				return fmt.Errorf("authority: %s", err)
 			}
@@ -1107,7 +1092,7 @@ func GetTxGovWasmProposalClearContractAdminCmd() *cobra.Command {
 				return err
 			}
 
-			authority, err := cmd.Flags().GetString(cflags.FlagAuthority)
+			authority, err := cmd.Flags().GetString(flagdefs.FlagAuthority)
 			if err != nil {
 				return fmt.Errorf("authority: %s", err)
 			}
@@ -1149,7 +1134,7 @@ func GetTxGovWasmProposalPinCodesCmd() *cobra.Command {
 				return err
 			}
 
-			authority, err := cmd.Flags().GetString(cflags.FlagAuthority)
+			authority, err := cmd.Flags().GetString(flagdefs.FlagAuthority)
 			if err != nil {
 				return fmt.Errorf("authority: %s", err)
 			}
@@ -1195,7 +1180,7 @@ func GetTxGovWasmProposalUnpinCodesCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			authority, err := cmd.Flags().GetString(cflags.FlagAuthority)
+			authority, err := cmd.Flags().GetString(flagdefs.FlagAuthority)
 			if err != nil {
 				return fmt.Errorf("authority: %s", err)
 			}
@@ -1249,7 +1234,7 @@ $ %s tx gov submit-proposal update-instantiate-config 1:nobody 2:everybody 3:%s1
 				return err
 			}
 
-			authority, err := cmd.Flags().GetString(cflags.FlagAuthority)
+			authority, err := cmd.Flags().GetString(flagdefs.FlagAuthority)
 			if err != nil {
 				return fmt.Errorf("authority: %s", err)
 			}
@@ -1302,7 +1287,7 @@ func GetTxGovWasmProposalAddCodeUploadParamsAddresses() *cobra.Command {
 				return err
 			}
 
-			authority, err := cmd.Flags().GetString(cflags.FlagAuthority)
+			authority, err := cmd.Flags().GetString(flagdefs.FlagAuthority)
 			if err != nil {
 				return fmt.Errorf("authority: %s", err)
 			}
@@ -1345,7 +1330,7 @@ func GetTxGovWasmProposalRemoveCodeUploadParamsAddresses() *cobra.Command {
 				return err
 			}
 
-			authority, err := cmd.Flags().GetString(cflags.FlagAuthority)
+			authority, err := cmd.Flags().GetString(flagdefs.FlagAuthority)
 			if err != nil {
 				return fmt.Errorf("authority: %s", err)
 			}
@@ -1388,7 +1373,7 @@ func GetTxGovWasmProposalStoreAndMigrateContractCmd() *cobra.Command {
 				return err
 			}
 
-			authority, err := cmd.Flags().GetString(cflags.FlagAuthority)
+			authority, err := cmd.Flags().GetString(flagdefs.FlagAuthority)
 			if err != nil {
 				return fmt.Errorf("authority: %s", err)
 			}
@@ -1436,8 +1421,8 @@ func addCommonProposalFlags(cmd *cobra.Command) {
 	cmd.Flags().String(cli.FlagTitle, "", "Title of proposal")
 	cmd.Flags().String(cli.FlagSummary, "", "Summary of proposal")
 	cmd.Flags().String(cli.FlagDeposit, "", "Deposit of proposal")
-	cmd.Flags().String(cflags.FlagAuthority, DefaultGovAuthority.String(), "The address of the governance account. Default is the sdk gov module account")
-	cmd.Flags().Bool(cflags.FlagExpedite, false, "Expedite proposals have shorter voting period but require higher voting threshold")
+	cmd.Flags().String(flagdefs.FlagAuthority, DefaultGovAuthority.String(), "The address of the governance account. Default is the sdk gov module account")
+	cmd.Flags().Bool(flagdefs.FlagExpedite, false, "Expedite proposals have shorter voting period but require higher voting threshold")
 }
 
 func getProposalInfo(cmd *cobra.Command) (client.Context, string, string, sdk.Coins, bool, error) {
@@ -1446,17 +1431,17 @@ func getProposalInfo(cmd *cobra.Command) (client.Context, string, string, sdk.Co
 		return client.Context{}, "", "", nil, false, err
 	}
 
-	proposalTitle, err := cmd.Flags().GetString(cflags.FlagTitle)
+	proposalTitle, err := cmd.Flags().GetString(flagdefs.FlagTitle)
 	if err != nil {
 		return cctx, proposalTitle, "", nil, false, err
 	}
 
-	summary, err := cmd.Flags().GetString(cflags.FlagSummary)
+	summary, err := cmd.Flags().GetString(flagdefs.FlagSummary)
 	if err != nil {
 		return client.Context{}, proposalTitle, summary, nil, false, err
 	}
 
-	depositArg, err := cmd.Flags().GetString(cflags.FlagDeposit)
+	depositArg, err := cmd.Flags().GetString(flagdefs.FlagDeposit)
 	if err != nil {
 		return client.Context{}, proposalTitle, summary, nil, false, err
 	}
@@ -1466,7 +1451,7 @@ func getProposalInfo(cmd *cobra.Command) (client.Context, string, string, sdk.Co
 		return client.Context{}, proposalTitle, summary, deposit, false, err
 	}
 
-	expedite, err := cmd.Flags().GetBool(cflags.FlagExpedite)
+	expedite, err := cmd.Flags().GetBool(flagdefs.FlagExpedite)
 	if err != nil {
 		return client.Context{}, proposalTitle, summary, deposit, false, err
 	}
@@ -1738,14 +1723,14 @@ func parseSubmitProposal(cdc codec.Codec, path string) (ProposalMsg, []sdk.Msg, 
 // parseSubmitLegacyProposal reads and parses the legacy proposal.
 func parseSubmitLegacyProposal(fs *pflag.FlagSet) (*legacyProposal, error) {
 	proposal := &legacyProposal{}
-	proposalFile, _ := fs.GetString(cflags.FlagProposal) // nolint:staticcheck
+	proposalFile, _ := fs.GetString(flagdefs.FlagProposal) // nolint:staticcheck
 
 	if proposalFile == "" {
-		proposalType, _ := fs.GetString(cflags.FlagProposalType) // nolint:staticcheck
-		proposal.Title, _ = fs.GetString(cflags.FlagTitle)
-		proposal.Description, _ = fs.GetString(cflags.FlagDescription) // nolint:staticcheck
+		proposalType, _ := fs.GetString(flagdefs.FlagType) // nolint:staticcheck
+		proposal.Title, _ = fs.GetString(flagdefs.FlagTitle)
+		proposal.Description, _ = fs.GetString(flagdefs.FlagDescription) // nolint:staticcheck
 		proposal.Type = govutils.NormalizeProposalType(proposalType)
-		proposal.Deposit, _ = fs.GetString(cflags.FlagDeposit)
+		proposal.Deposit, _ = fs.GetString(flagdefs.FlagDeposit)
 		if err := proposal.validate(); err != nil {
 			return nil, err
 		}
@@ -1753,7 +1738,7 @@ func parseSubmitLegacyProposal(fs *pflag.FlagSet) (*legacyProposal, error) {
 		return proposal, nil
 	}
 
-	for _, flag := range ProposalFlags {
+	for _, flag := range proposalFlags() {
 		if v, _ := fs.GetString(flag); v != "" {
 			return nil, fmt.Errorf("--%s flag provided alongside --proposal, which is a noop", flag)
 		}
@@ -1774,6 +1759,17 @@ func parseSubmitLegacyProposal(fs *pflag.FlagSet) (*legacyProposal, error) {
 	}
 
 	return proposal, nil
+}
+
+// proposalFlags returns the core fields of a legacy proposal. A fresh slice
+// keeps command parsing from exposing mutable package state.
+func proposalFlags() []string {
+	return []string{
+		flagdefs.FlagTitle,
+		flagdefs.FlagDescription, // nolint:staticcheck
+		flagdefs.FlagType,        // nolint:staticcheck
+		flagdefs.FlagDeposit,
+	}
 }
 
 // validate the legacyProposal

@@ -1,6 +1,8 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"strings"
 	"testing"
 
@@ -33,7 +35,7 @@ func TestEveryOutputFlagRejectsUnknownFormats(t *testing.T) {
 	var violations []string
 	walkInputContractCommands(root, func(cmd *cobra.Command) {
 		for _, flags := range []*pflag.FlagSet{cmd.LocalFlags(), cmd.PersistentFlags()} {
-			flag := flags.Lookup("output")
+			flag := flags.Lookup(flagdefs.FlagOutput)
 			if flag == nil {
 				continue
 			}
@@ -60,7 +62,7 @@ func TestOutputEnumsAreCommandSpecific(t *testing.T) {
 	t.Setenv("AKT_HOME", t.TempDir())
 	root := NewRootCmd(BuildInfo{Version: "test"})
 
-	rootOutput := root.PersistentFlags().Lookup("output")
+	rootOutput := root.PersistentFlags().Lookup(flagdefs.FlagOutput)
 	for _, value := range []string{"pretty", "json", "yaml"} {
 		if err := rootOutput.Value.Set(value); err != nil {
 			t.Errorf("root --output %q: %v", value, err)
@@ -76,7 +78,7 @@ func TestOutputEnumsAreCommandSpecific(t *testing.T) {
 	if deploy == nil {
 		t.Fatal("deploy command not found")
 	}
-	if err := deploy.Flags().Lookup("output").Value.Set("jsonl"); err != nil {
+	if err := deploy.Flags().Lookup(flagdefs.FlagOutput).Value.Set("jsonl"); err != nil {
 		t.Fatalf("deploy --output jsonl: %v", err)
 	}
 }
@@ -91,7 +93,7 @@ func TestAdoptedOutputHelpMatchesEnforcedEnum(t *testing.T) {
 		t.Fatal("query ibc client states command not found")
 	}
 
-	flag := states.Flags().Lookup("output")
+	flag := states.Flags().Lookup(flagdefs.FlagOutput)
 	if flag == nil {
 		t.Fatal("query ibc client states output flag not found")
 		return
@@ -105,7 +107,7 @@ func TestQuietHelpDescribesInformationalSuppression(t *testing.T) {
 	t.Setenv("AKT_HOME", t.TempDir())
 	root := NewRootCmd(BuildInfo{Version: "test"})
 
-	usage := root.PersistentFlags().Lookup("quiet").Usage
+	usage := root.PersistentFlags().Lookup(flagdefs.FlagQuiet).Usage
 	if !strings.Contains(usage, "informational") || strings.Contains(usage, "all output") {
 		t.Fatalf("quiet help = %q", usage)
 	}

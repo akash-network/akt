@@ -1,6 +1,8 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"errors"
 	"fmt"
@@ -17,20 +19,18 @@ import (
 	"github.com/CosmWasm/wasmd/x/wasm/types"
 	wasmvm "github.com/CosmWasm/wasmvm/v3"
 	"github.com/distribution/reference"
-
-	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 )
 
 func ParseWasmVerificationFlags(gzippedWasm []byte, flags *flag.FlagSet) (string, string, []byte, error) {
-	source, err := flags.GetString(cflags.FlagSource)
+	source, err := flags.GetString(flagdefs.FlagSource)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("source: %s", err)
 	}
-	builder, err := flags.GetString(cflags.FlagBuilder)
+	builder, err := flags.GetString(flagdefs.FlagBuilder)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("builder: %s", err)
 	}
-	codeHash, err := flags.GetBytesHex(cflags.FlagCodeHash)
+	codeHash, err := flags.GetBytesHex(flagdefs.FlagCodeHash)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("codeHash: %s", err)
 	}
@@ -111,20 +111,20 @@ func ParseWasmStoreCodeArgs(file, sender string, flags *flag.FlagSet) (types.Msg
 }
 
 func ParseWasmAccessConfigFlags(flags *flag.FlagSet) (*types.AccessConfig, error) {
-	addrs, err := flags.GetStringSlice(cflags.FlagInstantiateByAnyOfAddress)
+	addrs, err := flags.GetStringSlice(flagdefs.FlagInstantiateByAnyOfAddress)
 	if err != nil {
 		return nil, fmt.Errorf("flag any of: %s", err)
 	}
 
-	onlyAddrStr, err := flags.GetString(cflags.FlagInstantiateByAddress)
+	onlyAddrStr, err := flags.GetString(flagdefs.FlagInstantiateByAddress)
 	if err != nil {
 		return nil, fmt.Errorf("instantiate by address: %s", err)
 	}
 	if onlyAddrStr != "" {
-		return nil, fmt.Errorf("not supported anymore. Use: %s", cflags.FlagInstantiateByAnyOfAddress)
+		return nil, fmt.Errorf("not supported anymore. Use: %s", flagdefs.FlagInstantiateByAnyOfAddress)
 	}
 
-	everybodyStr, err := flags.GetString(cflags.FlagInstantiateByEverybody)
+	everybodyStr, err := flags.GetString(flagdefs.FlagInstantiateByEverybody)
 	if err != nil {
 		return nil, fmt.Errorf("instantiate by everybody: %s", err)
 	}
@@ -136,7 +136,7 @@ func ParseWasmAccessConfigFlags(flags *flag.FlagSet) (*types.AccessConfig, error
 		}
 	}
 
-	nobodyStr, err := flags.GetString(cflags.FlagInstantiateNobody)
+	nobodyStr, err := flags.GetString(flagdefs.FlagInstantiateNobody)
 	if err != nil {
 		return nil, fmt.Errorf("instantiate by nobody: %s", err)
 	}
@@ -203,7 +203,7 @@ func ParseWasmInstantiateArgs(rawCodeID, initMsg string, kr keyring.Keyring, sen
 		return nil, err
 	}
 
-	amountStr, err := flags.GetString(cflags.FlagAmount)
+	amountStr, err := flags.GetString(flagdefs.FlagAmount)
 	if err != nil {
 		return nil, fmt.Errorf("amount: %s", err)
 	}
@@ -211,19 +211,19 @@ func ParseWasmInstantiateArgs(rawCodeID, initMsg string, kr keyring.Keyring, sen
 	if err != nil {
 		return nil, fmt.Errorf("amount: %s", err)
 	}
-	label, err := flags.GetString(cflags.FlagLabel)
+	label, err := flags.GetString(flagdefs.FlagLabel)
 	if err != nil {
 		return nil, fmt.Errorf("label: %s", err)
 	}
 	if label == "" {
 		return nil, errors.New("label is required on all contracts")
 	}
-	adminStr, err := flags.GetString(cflags.FlagAdmin)
+	adminStr, err := flags.GetString(flagdefs.FlagAdmin)
 	if err != nil {
 		return nil, fmt.Errorf("admin: %s", err)
 	}
 
-	noAdmin, err := flags.GetBool(cflags.FlagNoAdmin)
+	noAdmin, err := flags.GetBool(flagdefs.FlagNoAdmin)
 	if err != nil {
 		return nil, fmt.Errorf("no-admin: %s", err)
 	}
@@ -266,7 +266,7 @@ func ParseWasmInstantiateArgs(rawCodeID, initMsg string, kr keyring.Keyring, sen
 }
 
 func ParseWasmExecuteArgs(contractAddr, execMsg string, sender sdk.AccAddress, flags *flag.FlagSet) (types.MsgExecuteContract, error) {
-	amountStr, err := flags.GetString(cflags.FlagAmount)
+	amountStr, err := flags.GetString(flagdefs.FlagAmount)
 	if err != nil {
 		return types.MsgExecuteContract{}, fmt.Errorf("amount: %s", err)
 	}

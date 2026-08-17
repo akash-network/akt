@@ -1,6 +1,8 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"context"
 	"encoding/json"
@@ -271,7 +273,7 @@ func TestVendoredIBCYAMLEmitsYAML(t *testing.T) {
 	root := adoptVendoredQueryCmd(ibccore.AppModuleBasic{}.GetQueryCmd())
 	var constrainOutput func(*cobra.Command)
 	constrainOutput = func(cmd *cobra.Command) {
-		clioutput.ConstrainFlag(cmd.LocalFlags().Lookup(cflags.FlagOutput), cflags.OutputPretty, cflags.OutputPretty, cflags.OutputJSON, cflags.OutputYAML)
+		clioutput.ConstrainFlag(cmd.LocalFlags().Lookup(flagdefs.FlagOutput), cflags.OutputPretty, cflags.OutputPretty, cflags.OutputJSON, cflags.OutputYAML)
 		for _, child := range cmd.Commands() {
 			constrainOutput(child)
 		}
@@ -345,8 +347,8 @@ func TestAlternateQueryPreRunsHonorVerbose(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := tc.cmd()
 			cmd.Flags().CountP("verbose", "v", "verbose")
-			require.NoError(t, cmd.Flags().Set("verbose", "1"))
-			require.NoError(t, cmd.Flags().Set(cflags.FlagNode, "https://rpc.test.invalid"))
+			require.NoError(t, cmd.Flags().Set(flagdefs.FlagVerbose, "1"))
+			require.NoError(t, cmd.Flags().Set(flagdefs.FlagNode, "https://rpc.test.invalid"))
 
 			var stderr bytes.Buffer
 			cctx := queryTestClientContext(&stderr).WithNodeURI("https://rpc.test.invalid")
@@ -528,7 +530,7 @@ func TestQueryNodeFlagOverridesContextEndpoint(t *testing.T) {
 	t.Run("explicit endpoint wins", func(t *testing.T) {
 		cmd := &cobra.Command{Use: "query"}
 		cflags.AddQueryFlagsToCmd(cmd)
-		require.NoError(t, cmd.Flags().Set(cflags.FlagNode, "http://127.0.0.1:29999"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagNode, "http://127.0.0.1:29999"))
 
 		var out bytes.Buffer
 		cctx := queryTestClientContext(&out)
@@ -544,7 +546,7 @@ func TestQueryNodeFlagOverridesContextEndpoint(t *testing.T) {
 	t.Run("empty endpoint is refused", func(t *testing.T) {
 		cmd := &cobra.Command{Use: "query"}
 		cflags.AddQueryFlagsToCmd(cmd)
-		require.NoError(t, cmd.Flags().Set(cflags.FlagNode, ""))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagNode, ""))
 
 		var out bytes.Buffer
 		cctx := queryTestClientContext(&out)
@@ -568,13 +570,13 @@ func TestLocalQueryLeavesRejectTransportAndSnapshotFlags(t *testing.T) {
 			name: "module address node",
 			cmd:  GetQueryModuleNameToAddressCmd,
 			args: []string{"gov", "--node", "http://127.0.0.1:29999"},
-			flag: cflags.FlagNode,
+			flag: flagdefs.FlagNode,
 		},
 		{
 			name: "module address height",
 			cmd:  GetQueryModuleNameToAddressCmd,
 			args: []string{"gov", "--height", "10"},
-			flag: cflags.FlagHeight,
+			flag: flagdefs.FlagHeight,
 		},
 		{
 			name: "transfer escrow node",
@@ -582,7 +584,7 @@ func TestLocalQueryLeavesRejectTransportAndSnapshotFlags(t *testing.T) {
 				return adoptVendoredQueryCmd(ibctransfer.AppModuleBasic{}.GetQueryCmd())
 			},
 			args: []string{"escrow-address", "transfer", "channel-0", "--node", "http://127.0.0.1:29999"},
-			flag: cflags.FlagNode,
+			flag: flagdefs.FlagNode,
 		},
 		{
 			name: "transfer escrow height",
@@ -590,7 +592,7 @@ func TestLocalQueryLeavesRejectTransportAndSnapshotFlags(t *testing.T) {
 				return adoptVendoredQueryCmd(ibctransfer.AppModuleBasic{}.GetQueryCmd())
 			},
 			args: []string{"escrow-address", "transfer", "channel-0", "--height", "10"},
-			flag: cflags.FlagHeight,
+			flag: flagdefs.FlagHeight,
 		},
 	}
 
@@ -720,7 +722,7 @@ func TestQueryBlockResultsPropagatesCommandContext(t *testing.T) {
 
 func TestLocalModuleAddressValidatesChainID(t *testing.T) {
 	root := &cobra.Command{Use: "query"}
-	root.PersistentFlags().String(cflags.FlagChainID, "", "chain ID")
+	root.PersistentFlags().String(flagdefs.FlagChainID, "", "chain ID")
 	root.AddCommand(GetQueryModuleNameToAddressCmd())
 
 	var out bytes.Buffer
@@ -805,7 +807,7 @@ func TestWasmCodeRejectsStructuredStdoutBeforeQuery(t *testing.T) {
 	for _, format := range []string{cflags.OutputJSON, cflags.OutputYAML} {
 		t.Run(format, func(t *testing.T) {
 			cmd := GetQueryWasmCodeCmd()
-			require.NoError(t, cmd.Flags().Set(cflags.FlagOutput, format))
+			require.NoError(t, cmd.Flags().Set(flagdefs.FlagOutput, format))
 
 			var out bytes.Buffer
 			cctx := queryTestClientContext(&out)

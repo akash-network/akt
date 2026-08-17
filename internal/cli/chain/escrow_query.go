@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/version"
@@ -362,7 +364,7 @@ akt query escrow blocks-remaining akash1owner.../12345`,
 				EstimatedTimeRemaining: netutil.AverageBlockTime * time.Duration(blocksRemaining),
 			}
 
-			outputType, err := cmd.Flags().GetString("output")
+			outputType, err := cmd.Flags().GetString(flagdefs.FlagOutput)
 			if err != nil {
 				return err
 			}

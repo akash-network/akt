@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	wasmtypes "github.com/CosmWasm/wasmd/x/wasm/types"
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"gopkg.in/yaml.v3"
@@ -165,7 +167,7 @@ func TestBuildAddressCommandDoesNotRequireQueryClient(t *testing.T) {
 	)
 
 	cmd := GetQueryWasmBuildAddressCmd()
-	cmd.Flags().String(cflags.FlagOutput, cflags.OutputPretty, "")
+	cmd.Flags().String(flagdefs.FlagOutput, cflags.OutputPretty, "")
 	cctx := sdkclient.Context{ChainID: "akashnet-2"}
 	cmd.SetContext(context.WithValue(context.Background(), ClientContextKey, &cctx))
 	var out bytes.Buffer
@@ -184,7 +186,7 @@ func TestBuildAddressCommandDoesNotRequireQueryClient(t *testing.T) {
 func runBuildAddressCommand(t *testing.T, format, encodingFlag string, args ...string) (string, error) {
 	t.Helper()
 	cmd := GetQueryWasmBuildAddressCmd()
-	cmd.Flags().String(cflags.FlagOutput, format, "")
+	cmd.Flags().String(flagdefs.FlagOutput, format, "")
 	if encodingFlag != "" {
 		if err := cmd.PersistentFlags().Set(encodingFlag, "true"); err != nil {
 			t.Fatal(err)

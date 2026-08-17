@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
@@ -73,8 +75,8 @@ func vendoredQueryPreRunE(cmd *cobra.Command, _ []string) error {
 
 	ctx := cmd.Context()
 
-	if cmd.Flags().Changed(cflags.FlagNode) {
-		rpcURI, _ := cmd.Flags().GetString(cflags.FlagNode)
+	if cmd.Flags().Changed(flagdefs.FlagNode) {
+		rpcURI, _ := cmd.Flags().GetString(flagdefs.FlagNode)
 		ctx = context.WithValue(ctx, ContextTypeRPCURI, rpcURI)
 		cmd.SetContext(ctx)
 	}
@@ -99,12 +101,12 @@ func vendoredQueryPreRunE(cmd *cobra.Command, _ []string) error {
 // akt's enum remains truthful, but mark it consumed so an upstream handler's
 // second GetClientQueryContext call does not overwrite the translated context.
 func normalizeVendoredQueryOutput(cmd *cobra.Command, cctx sdkclient.Context) sdkclient.Context {
-	flag := cmd.Flags().Lookup(cflags.FlagOutput)
+	flag := cmd.Flags().Lookup(flagdefs.FlagOutput)
 	if flag == nil {
 		return cctx
 	}
 
-	format, _ := cmd.Flags().GetString(cflags.FlagOutput)
+	format, _ := cmd.Flags().GetString(flagdefs.FlagOutput)
 	if format != cflags.OutputYAML {
 		return cctx
 	}

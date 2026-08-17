@@ -4,6 +4,8 @@ import (
 	"os"
 	"testing"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
@@ -24,16 +26,16 @@ func TestApplyTransactionDefaultsPrecedence(t *testing.T) {
 
 	applyTransactionDefaults(cmd, resolved)
 
-	if got, _ := cmd.Flags().GetString(cflags.FlagGas); got != "300000" {
+	if got, _ := cmd.Flags().GetString(flagdefs.FlagGas); got != "300000" {
 		t.Errorf("gas = %q, want context value", got)
 	}
-	if got, _ := cmd.Flags().GetFloat64(cflags.FlagGasAdjustment); got != 1.8 {
+	if got, _ := cmd.Flags().GetFloat64(flagdefs.FlagGasAdjustment); got != 1.8 {
 		t.Errorf("gas adjustment = %v, want context value", got)
 	}
-	if got, _ := cmd.Flags().GetString(cflags.FlagGasPrices); got != "0.07uakt" {
+	if got, _ := cmd.Flags().GetString(flagdefs.FlagGasPrices); got != "0.07uakt" {
 		t.Errorf("gas prices = %q, want environment value", got)
 	}
-	if got, _ := cmd.Flags().GetString(cflags.FlagFees); got != "" {
+	if got, _ := cmd.Flags().GetString(flagdefs.FlagFees); got != "" {
 		t.Errorf("environment gas prices must suppress context fees, got %q", got)
 	}
 }
@@ -43,16 +45,16 @@ func TestApplyTransactionDefaultsLeavesExplicitFlagsAlone(t *testing.T) {
 
 	cmd := &cobra.Command{}
 	cflags.AddTxFlagsToCmd(cmd)
-	if err := cmd.Flags().Set(cflags.FlagGasPrices, "0.09uakt"); err != nil {
+	if err := cmd.Flags().Set(flagdefs.FlagGasPrices, "0.09uakt"); err != nil {
 		t.Fatal(err)
 	}
 
 	applyTransactionDefaults(cmd, &aktctx.Context{Fees: "42uakt", GasPrices: "0.04uakt"})
 
-	if got, _ := cmd.Flags().GetString(cflags.FlagGasPrices); got != "0.09uakt" {
+	if got, _ := cmd.Flags().GetString(flagdefs.FlagGasPrices); got != "0.09uakt" {
 		t.Errorf("explicit gas prices changed to %q", got)
 	}
-	if got, _ := cmd.Flags().GetString(cflags.FlagFees); got != "" {
+	if got, _ := cmd.Flags().GetString(flagdefs.FlagFees); got != "" {
 		t.Errorf("explicit gas prices must suppress lower-precedence fees, got %q", got)
 	}
 }
@@ -60,13 +62,13 @@ func TestApplyTransactionDefaultsLeavesExplicitFlagsAlone(t *testing.T) {
 func TestApplyTransactionDefaultsDryRunUsesSimulationOnly(t *testing.T) {
 	cmd := &cobra.Command{}
 	cflags.AddTxFlagsToCmd(cmd)
-	if err := cmd.Flags().Set(cflags.FlagDryRun, "true"); err != nil {
+	if err := cmd.Flags().Set(flagdefs.FlagDryRun, "true"); err != nil {
 		t.Fatal(err)
 	}
 
 	applyTransactionDefaults(cmd, &aktctx.Context{Gas: "auto"})
 
-	if got, _ := cmd.Flags().GetString(cflags.FlagGas); got != "0" {
+	if got, _ := cmd.Flags().GetString(flagdefs.FlagGas); got != "0" {
 		t.Errorf("dry-run gas = %q, want 0 to disable simulate-and-execute", got)
 	}
 }
@@ -129,10 +131,10 @@ func TestApplyTransactionDefaultsFeeSourcePrecedence(t *testing.T) {
 			cflags.AddTxFlagsToCmd(cmd)
 			applyTransactionDefaults(cmd, tc.context)
 
-			if got, _ := cmd.Flags().GetString(cflags.FlagFees); got != tc.wantFees {
+			if got, _ := cmd.Flags().GetString(flagdefs.FlagFees); got != tc.wantFees {
 				t.Errorf("fees = %q, want %q", got, tc.wantFees)
 			}
-			if got, _ := cmd.Flags().GetString(cflags.FlagGasPrices); got != tc.wantPrices {
+			if got, _ := cmd.Flags().GetString(flagdefs.FlagGasPrices); got != tc.wantPrices {
 				t.Errorf("gas prices = %q, want %q", got, tc.wantPrices)
 			}
 		})
@@ -143,7 +145,7 @@ func TestApplyTransactionDefaultsIgnoresCommandsWithoutTransactionFlags(t *testi
 	cmd := &cobra.Command{}
 	applyTransactionDefaults(cmd, &aktctx.Context{Fees: "42uakt"})
 
-	if cmd.Flags().Lookup(cflags.FlagFees) != nil {
+	if cmd.Flags().Lookup(flagdefs.FlagFees) != nil {
 		t.Fatal("non-transaction command gained transaction flags")
 	}
 }

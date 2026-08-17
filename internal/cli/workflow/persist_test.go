@@ -1,6 +1,8 @@
 package workflow
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"context"
 	"os"
@@ -583,7 +585,7 @@ func TestRecordWorkflowOutcomeRespectsQuiet(t *testing.T) {
 
 	var stderr bytes.Buffer
 	cmd := &cobra.Command{Use: "deploy"}
-	cmd.Flags().BoolP("quiet", "q", true, "")
+	cmd.Flags().BoolP(flagdefs.FlagQuiet, "q", true, "")
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&stderr)
 	cmd.SetContext(context.Background())

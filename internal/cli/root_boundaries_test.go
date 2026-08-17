@@ -1,6 +1,8 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"encoding/json"
 	"runtime"
@@ -122,12 +124,42 @@ func TestInteractivePolicyHonorsFlagThenConfiguration(t *testing.T) {
 	}
 }
 
+func TestRootCanonicalFlagsDrivePreRunAndCompletion(t *testing.T) {
+	t.Run("quiet conflicts with verbose", func(t *testing.T) {
+		root := NewRootCmd(BuildInfo{})
+		root.SetArgs([]string{"--home", t.TempDir(), "--quiet", "--verbose", "version"})
+		err := Execute(root)
+		if err == nil || !strings.Contains(err.Error(), "mutually exclusive") {
+			t.Fatalf("root error = %v", err)
+		}
+	})
+
+	t.Run("interactive root", func(t *testing.T) {
+		root := NewRootCmd(BuildInfo{})
+		root.SetArgs([]string{"--home", t.TempDir(), "--interactive"})
+		err := Execute(root)
+		if err == nil || !strings.Contains(err.Error(), "TUI is currently disabled") {
+			t.Fatalf("root error = %v", err)
+		}
+	})
+
+	root := NewRootCmd(BuildInfo{})
+	complete, ok := root.GetFlagCompletionFunc(flagdefs.FlagContext)
+	if !ok {
+		t.Fatal("context completion is not registered")
+	}
+	names, directive := complete(root, nil, "")
+	if len(names) != 0 || directive != cobra.ShellCompDirectiveNoFileComp {
+		t.Fatalf("context completions = %v, directive = %v", names, directive)
+	}
+}
+
 func TestLocalIdentityDryRunsDoNotOpenSigningKeyrings(t *testing.T) {
 	root := &cobra.Command{Use: "akt"}
 
 	provider := &cobra.Command{Use: "provider"}
 	providerDryRun := &cobra.Command{Use: "send-manifest"}
-	providerDryRun.Flags().Bool("dry-run", true, "")
+	providerDryRun.Flags().Bool(flagdefs.FlagDryRun, true, "")
 	provider.AddCommand(providerDryRun)
 	root.AddCommand(provider)
 	if got := localIdentityMode(providerDryRun); got != aktclient.LocalIdentityOnDemand {
@@ -135,7 +167,7 @@ func TestLocalIdentityDryRunsDoNotOpenSigningKeyrings(t *testing.T) {
 	}
 
 	workflow := &cobra.Command{Use: "deploy"}
-	workflow.Flags().Bool("dry-run", true, "")
+	workflow.Flags().Bool(flagdefs.FlagDryRun, true, "")
 	root.AddCommand(workflow)
 	if got := localIdentityMode(workflow); got != aktclient.LocalIdentityNone {
 		t.Fatalf("workflow dry-run identity mode = %v, want none", got)
@@ -147,7 +179,7 @@ func TestVersionOutputContracts(t *testing.T) {
 
 	t.Run("short pretty", func(t *testing.T) {
 		cmd := versionCmd(bi)
-		cmd.Flags().VarP(output.NewFormatFlag("pretty"), "output", "o", "test output")
+		cmd.Flags().VarP(output.NewFormatFlag("pretty"), flagdefs.FlagOutput, "o", "test output")
 		var out bytes.Buffer
 		cmd.SetOut(&out)
 		if err := cmd.Execute(); err != nil {
@@ -161,7 +193,7 @@ func TestVersionOutputContracts(t *testing.T) {
 
 	t.Run("long pretty", func(t *testing.T) {
 		cmd := versionCmd(bi)
-		cmd.Flags().VarP(output.NewFormatFlag("pretty"), "output", "o", "test output")
+		cmd.Flags().VarP(output.NewFormatFlag("pretty"), flagdefs.FlagOutput, "o", "test output")
 		var out bytes.Buffer
 		cmd.SetOut(&out)
 		cmd.SetArgs([]string{"--long"})
@@ -182,7 +214,7 @@ func TestVersionOutputContracts(t *testing.T) {
 
 	t.Run("long JSON", func(t *testing.T) {
 		cmd := versionCmd(bi)
-		cmd.Flags().VarP(output.NewFormatFlag("pretty"), "output", "o", "test output")
+		cmd.Flags().VarP(output.NewFormatFlag("pretty"), flagdefs.FlagOutput, "o", "test output")
 		var out bytes.Buffer
 		cmd.SetOut(&out)
 		cmd.SetArgs([]string{"--long", "--output", "json"})

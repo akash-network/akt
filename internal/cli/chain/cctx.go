@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 	"google.golang.org/grpc"
@@ -148,13 +150,13 @@ func defaultOwnerForQueryArg(cctx sdkclient.Context, args []string) (string, err
 // - client.Context field pre-populated & flag not set: uses pre-populated value
 // - client.Context field pre-populated & flag set: uses set flag value
 func ReadQueryCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) (sdkclient.Context, error) {
-	if cctx.Height == 0 || flagSet.Changed(cflags.FlagHeight) {
-		height, _ := flagSet.GetInt64(cflags.FlagHeight)
+	if cctx.Height == 0 || flagSet.Changed(flagdefs.FlagHeight) {
+		height, _ := flagSet.GetInt64(flagdefs.FlagHeight)
 		cctx = cctx.WithHeight(height)
 	}
 
-	if !cctx.UseLedger || flagSet.Changed(cflags.FlagUseLedger) {
-		useLedger, _ := flagSet.GetBool(cflags.FlagUseLedger)
+	if !cctx.UseLedger || flagSet.Changed(flagdefs.FlagUseLedger) {
+		useLedger, _ := flagSet.GetBool(flagdefs.FlagUseLedger)
 		cctx = cctx.WithUseLedger(useLedger)
 	}
 
@@ -175,11 +177,11 @@ func validateQueryChainID(cctx sdkclient.Context, flagSet *pflag.FlagSet) error 
 	//
 	// Queries only. A tx may legitimately name another chain while building an
 	// unsigned or offline payload, and that path does not come through here.
-	if flagSet.Lookup(cflags.FlagChainID) == nil || !flagSet.Changed(cflags.FlagChainID) {
+	if flagSet.Lookup(flagdefs.FlagChainID) == nil || !flagSet.Changed(flagdefs.FlagChainID) {
 		return nil
 	}
 
-	chainID, _ := flagSet.GetString(cflags.FlagChainID)
+	chainID, _ := flagSet.GetString(flagdefs.FlagChainID)
 	if chainID != "" && cctx.ChainID != "" && chainID != cctx.ChainID {
 		return fmt.Errorf(
 			"--chain-id %q does not match the active context's chain %q; switch context with --context, or point at another node with --node",
@@ -207,23 +209,23 @@ func GetRPCURIFromContext(ctx context.Context) string {
 // - client.Context field pre-populated & flag not set: uses pre-populated value
 // - client.Context field pre-populated & flag set: uses set flag value
 func ReadPersistentCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) (sdkclient.Context, error) {
-	if cctx.OutputFormat == "" || flagSet.Changed(cflags.FlagOutput) {
-		output, _ := flagSet.GetString(cflags.FlagOutput)
+	if cctx.OutputFormat == "" || flagSet.Changed(flagdefs.FlagOutput) {
+		output, _ := flagSet.GetString(flagdefs.FlagOutput)
 		cctx = cctx.WithOutputFormat(output)
 	}
 
-	if cctx.HomeDir == "" || flagSet.Changed(cflags.FlagHome) {
-		homeDir, _ := flagSet.GetString(cflags.FlagHome)
+	if cctx.HomeDir == "" || flagSet.Changed(flagdefs.FlagHome) {
+		homeDir, _ := flagSet.GetString(flagdefs.FlagHome)
 		cctx = cctx.WithHomeDir(homeDir)
 	}
 
-	if !cctx.Simulate || flagSet.Changed(cflags.FlagDryRun) {
-		dryRun, _ := flagSet.GetBool(cflags.FlagDryRun)
+	if !cctx.Simulate || flagSet.Changed(flagdefs.FlagDryRun) {
+		dryRun, _ := flagSet.GetBool(flagdefs.FlagDryRun)
 		cctx = cctx.WithSimulation(dryRun)
 	}
 
-	if cctx.KeyringDir == "" || flagSet.Changed(cflags.FlagKeyringDir) {
-		keyringDir, _ := flagSet.GetString(cflags.FlagKeyringDir)
+	if cctx.KeyringDir == "" || flagSet.Changed(flagdefs.FlagKeyringDir) {
+		keyringDir, _ := flagSet.GetString(flagdefs.FlagKeyringDir)
 
 		// The keyring directory is optional and falls back to the home directory
 		// if omitted.
@@ -234,8 +236,8 @@ func ReadPersistentCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) 
 		cctx = cctx.WithKeyringDir(keyringDir)
 	}
 
-	if cctx.ChainID == "" || flagSet.Changed(cflags.FlagChainID) {
-		chainID, _ := flagSet.GetString(cflags.FlagChainID)
+	if cctx.ChainID == "" || flagSet.Changed(flagdefs.FlagChainID) {
+		chainID, _ := flagSet.GetString(flagdefs.FlagChainID)
 
 		cctx = cctx.WithChainID(chainID)
 	}
@@ -250,23 +252,23 @@ func ReadPersistentCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) 
 	// own pre-run on every command, would open a key store for commands that
 	// declare no local identity at all (SPEC §1.7).
 
-	nodeChanged := flagSet.Lookup(cflags.FlagNode) != nil && flagSet.Changed(cflags.FlagNode)
+	nodeChanged := flagSet.Lookup(flagdefs.FlagNode) != nil && flagSet.Changed(flagdefs.FlagNode)
 	if cctx.Client == nil || nodeChanged {
 		var rpcURI string
 		if nodeChanged {
 			// An explicit invocation override always wins over the endpoint stored
 			// in the active context, including when a client was already built.
-			rpcURI, _ = flagSet.GetString(cflags.FlagNode)
+			rpcURI, _ = flagSet.GetString(flagdefs.FlagNode)
 			if strings.TrimSpace(rpcURI) == "" {
-				return cctx, fmt.Errorf("--%s cannot be empty", cflags.FlagNode)
+				return cctx, fmt.Errorf("--%s cannot be empty", flagdefs.FlagNode)
 			}
 		} else {
 			rpcURI = GetRPCURIFromContext(cctx.CmdContext)
 
 			// Fall back to the command default when the context does not provide
 			// an RPC URI.
-			if rpcURI == "" && flagSet.Lookup(cflags.FlagNode) != nil {
-				rpcURI, _ = flagSet.GetString(cflags.FlagNode)
+			if rpcURI == "" && flagSet.Lookup(flagdefs.FlagNode) != nil {
+				rpcURI, _ = flagSet.GetString(flagdefs.FlagNode)
 			}
 		}
 
@@ -282,11 +284,11 @@ func ReadPersistentCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) 
 		}
 	}
 
-	if cctx.GRPCClient == nil || flagSet.Changed(cflags.FlagGRPC) {
-		if grpcURI, _ := flagSet.GetString(cflags.FlagGRPC); grpcURI != "" {
+	if cctx.GRPCClient == nil || flagSet.Changed(flagdefs.FlagGRPC) {
+		if grpcURI, _ := flagSet.GetString(flagdefs.FlagGRPC); grpcURI != "" {
 			var dialOpts []grpc.DialOption
 
-			useInsecure, _ := flagSet.GetBool(cflags.FlagGRPCInsecure)
+			useInsecure, _ := flagSet.GetBool(flagdefs.FlagGRPCInsecure)
 			if useInsecure {
 				dialOpts = append(dialOpts, grpc.WithTransportCredentials(insecure.NewCredentials()))
 			} else {
@@ -326,38 +328,38 @@ func ReadTxCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet, diagnost
 		return cctx, err
 	}
 
-	if !cctx.GenerateOnly || flagSet.Changed(cflags.FlagGenerateOnly) {
-		genOnly, _ := flagSet.GetBool(cflags.FlagGenerateOnly)
+	if !cctx.GenerateOnly || flagSet.Changed(flagdefs.FlagGenerateOnly) {
+		genOnly, _ := flagSet.GetBool(flagdefs.FlagGenerateOnly)
 		cctx = cctx.WithGenerateOnly(genOnly)
 	}
 
-	if !cctx.Offline || flagSet.Changed(cflags.FlagOffline) {
-		offline, _ := flagSet.GetBool(cflags.FlagOffline)
+	if !cctx.Offline || flagSet.Changed(flagdefs.FlagOffline) {
+		offline, _ := flagSet.GetBool(flagdefs.FlagOffline)
 		cctx = cctx.WithOffline(offline)
 	}
 
-	if !cctx.UseLedger || flagSet.Changed(cflags.FlagUseLedger) {
-		useLedger, _ := flagSet.GetBool(cflags.FlagUseLedger)
+	if !cctx.UseLedger || flagSet.Changed(flagdefs.FlagUseLedger) {
+		useLedger, _ := flagSet.GetBool(flagdefs.FlagUseLedger)
 		cctx = cctx.WithUseLedger(useLedger)
 	}
 
-	if cctx.BroadcastMode == "" || flagSet.Changed(cflags.FlagBroadcastMode) {
-		bMode, _ := flagSet.GetString(cflags.FlagBroadcastMode)
+	if cctx.BroadcastMode == "" || flagSet.Changed(flagdefs.FlagBroadcastMode) {
+		bMode, _ := flagSet.GetString(flagdefs.FlagBroadcastMode)
 		cctx = cctx.WithBroadcastMode(bMode)
 	}
 
-	if !cctx.SkipConfirm || flagSet.Changed(cflags.FlagSkipConfirmation) {
-		skipConfirm, _ := flagSet.GetBool(cflags.FlagSkipConfirmation)
+	if !cctx.SkipConfirm || flagSet.Changed(flagdefs.FlagSkipConfirmation) {
+		skipConfirm, _ := flagSet.GetBool(flagdefs.FlagSkipConfirmation)
 		cctx = cctx.WithSkipConfirmation(skipConfirm)
 	}
 
-	if cctx.SignModeStr == "" || flagSet.Changed(cflags.FlagSignMode) {
-		signModeStr, _ := flagSet.GetString(cflags.FlagSignMode)
+	if cctx.SignModeStr == "" || flagSet.Changed(flagdefs.FlagSignMode) {
+		signModeStr, _ := flagSet.GetString(flagdefs.FlagSignMode)
 		cctx = cctx.WithSignModeStr(signModeStr)
 	}
 
-	if cctx.FeePayer == nil || flagSet.Changed(cflags.FlagFeePayer) {
-		payer, _ := flagSet.GetString(cflags.FlagFeePayer)
+	if cctx.FeePayer == nil || flagSet.Changed(flagdefs.FlagFeePayer) {
+		payer, _ := flagSet.GetString(flagdefs.FlagFeePayer)
 
 		if payer != "" {
 			payerAcc, err := sdk.AccAddressFromBech32(payer)
@@ -369,8 +371,8 @@ func ReadTxCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet, diagnost
 		}
 	}
 
-	if cctx.FeeGranter == nil || flagSet.Changed(cflags.FlagFeeGranter) {
-		granter, _ := flagSet.GetString(cflags.FlagFeeGranter)
+	if cctx.FeeGranter == nil || flagSet.Changed(flagdefs.FlagFeeGranter) {
+		granter, _ := flagSet.GetString(flagdefs.FlagFeeGranter)
 
 		if granter != "" {
 			granterAcc, err := sdk.AccAddressFromBech32(granter)
@@ -383,10 +385,10 @@ func ReadTxCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet, diagnost
 	}
 
 	fromUnresolved := cctx.From != "" && cctx.FromName == "" && len(cctx.FromAddress) == 0
-	if cctx.From == "" || fromUnresolved || flagSet.Changed(cflags.FlagFrom) {
+	if cctx.From == "" || fromUnresolved || flagSet.Changed(flagdefs.FlagFrom) {
 		from := cctx.From
-		if flagSet.Changed(cflags.FlagFrom) || from == "" {
-			from, _ = flagSet.GetString(cflags.FlagFrom)
+		if flagSet.Changed(flagdefs.FlagFrom) || from == "" {
+			from, _ = flagSet.GetString(flagdefs.FlagFrom)
 		}
 		fromAddr, fromName, keyType, err := sdkclient.GetFromFields(cctx, cctx.Keyring, from)
 		if err != nil {
@@ -408,19 +410,19 @@ func ReadTxCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet, diagnost
 		}
 	}
 
-	if !cctx.IsAux || flagSet.Changed(cflags.FlagAux) {
-		isAux, _ := flagSet.GetBool(cflags.FlagAux)
+	if !cctx.IsAux || flagSet.Changed(flagdefs.FlagAux) {
+		isAux, _ := flagSet.GetBool(flagdefs.FlagAux)
 		cctx = cctx.WithAux(isAux)
 		if isAux {
 			// If the user didn't explicitly set an --output flag, use JSON by
 			// default.
-			if cctx.OutputFormat == "" || !flagSet.Changed(cflags.FlagOutput) {
+			if cctx.OutputFormat == "" || !flagSet.Changed(flagdefs.FlagOutput) {
 				cctx = cctx.WithOutputFormat("json")
 			}
 
 			// If the user didn't explicitly set a --sign-mode flag, use
 			// DIRECT_AUX by default.
-			if cctx.SignModeStr == "" || !flagSet.Changed(cflags.FlagSignMode) {
+			if cctx.SignModeStr == "" || !flagSet.Changed(flagdefs.FlagSignMode) {
 				cctx = cctx.WithSignModeStr(cflags.SignModeDirectAux)
 			}
 		}
@@ -434,19 +436,19 @@ func ReadTxCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet, diagnost
 // simulation, and broadcast stay on the context's chain; an explicitly
 // offline invocation may construct a payload for another chain.
 func validateTxInvocation(cctx sdkclient.Context, flagSet *pflag.FlagSet) error {
-	chainFlag := flagSet.Lookup(cflags.FlagChainID)
+	chainFlag := flagSet.Lookup(flagdefs.FlagChainID)
 	if chainFlag == nil || !chainFlag.Changed {
 		return nil
 	}
 
-	chainID, _ := flagSet.GetString(cflags.FlagChainID)
+	chainID, _ := flagSet.GetString(flagdefs.FlagChainID)
 	if strings.TrimSpace(chainID) == "" {
-		return fmt.Errorf("--%s cannot be empty", cflags.FlagChainID)
+		return fmt.Errorf("--%s cannot be empty", flagdefs.FlagChainID)
 	}
 
 	offline := false
-	if offlineFlag := flagSet.Lookup(cflags.FlagOffline); offlineFlag != nil && offlineFlag.Changed {
-		offline, _ = flagSet.GetBool(cflags.FlagOffline)
+	if offlineFlag := flagSet.Lookup(flagdefs.FlagOffline); offlineFlag != nil && offlineFlag.Changed {
+		offline, _ = flagSet.GetBool(flagdefs.FlagOffline)
 	}
 	if !offline && cctx.ChainID != "" && chainID != cctx.ChainID {
 		return fmt.Errorf(

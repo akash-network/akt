@@ -1,6 +1,8 @@
 package testutil
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"context"
 	"fmt"
 
@@ -9,7 +11,6 @@ import (
 	"github.com/cosmos/cosmos-sdk/testutil"
 
 	cli "pkg.akt.dev/akt/internal/cli/chain"
-	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 )
 
 func TxSignExec(ctx context.Context, cctx client.Context, args ...string) (testutil.BufferWriter, error) {
@@ -24,7 +25,7 @@ func TxBroadcastExec(ctx context.Context, cctx client.Context, args ...string) (
 
 func TxEncodeExec(ctx context.Context, cctx client.Context, filename string, extraArgs ...string) (testutil.BufferWriter, error) {
 	args := TestFlags().
-		WithFlag(cflags.FlagKeyringBackend, keyring.BackendTest).
+		WithFlag(flagdefs.FlagKeyringBackend, keyring.BackendTest).
 		With(filename).
 		With(extraArgs...)
 
@@ -49,7 +50,7 @@ func TxSignBatchExec(ctx context.Context, cctx client.Context, args ...string) (
 
 func TxDecodeExec(ctx context.Context, cctx client.Context, encodedTx string, extraArgs ...string) (testutil.BufferWriter, error) {
 	args := TestFlags().
-		WithFlag(cflags.FlagKeyringBackend, keyring.BackendTest).
+		WithFlag(flagdefs.FlagKeyringBackend, keyring.BackendTest).
 		With(encodedTx).
 		With(extraArgs...)
 

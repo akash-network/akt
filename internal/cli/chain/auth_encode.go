@@ -3,6 +3,8 @@ package cli
 import (
 	"encoding/base64"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/cosmos/cosmos-sdk/client"
 	authclient "github.com/cosmos/cosmos-sdk/x/auth/client"
 	"github.com/spf13/cobra"
@@ -42,7 +44,7 @@ If you supply a dash (-) argument in place of an input filename, the command rea
 	}
 
 	cflags.AddTxFlagsToCmd(cmd)
-	_ = cmd.Flags().MarkHidden(cflags.FlagOutput) // encoding makes sense to output only json
+	_ = cmd.Flags().MarkHidden(flagdefs.FlagOutput) // encoding makes sense to output only json
 
 	return cmd
 }

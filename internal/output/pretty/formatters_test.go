@@ -1,6 +1,8 @@
 package pretty
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"strings"
 	"testing"
@@ -52,7 +54,7 @@ func TestRegisteredFormattersDispatch(t *testing.T) {
 		WithInterfaceRegistry(enc.InterfaceRegistry)
 
 	cmd := &cobra.Command{}
-	cmd.Flags().String("output", "pretty", "")
+	cmd.Flags().String(flagdefs.FlagOutput, "pretty", "")
 
 	// Empty (but non-nil) responses: every list formatter must render its
 	// header without a live chain, and must not panic on an empty result.

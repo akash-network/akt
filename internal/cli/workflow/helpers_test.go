@@ -1,6 +1,8 @@
 package workflow
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -348,12 +350,12 @@ func TestOutputFormatDefaultsToPretty(t *testing.T) {
 	}
 
 	withFlag := &cobra.Command{}
-	withFlag.Flags().String("output", "", "")
+	withFlag.Flags().String(flagdefs.FlagOutput, "", "")
 	if got := outputFormat(withFlag); got != "pretty" {
 		t.Errorf("empty --output = %q, want pretty", got)
 	}
 
-	if err := withFlag.Flags().Set("output", "jsonl"); err != nil {
+	if err := withFlag.Flags().Set(flagdefs.FlagOutput, "jsonl"); err != nil {
 		t.Fatalf("set flag: %v", err)
 	}
 	if got := outputFormat(withFlag); got != "jsonl" {
@@ -413,12 +415,12 @@ func TestFilterProviderStepsDropsOnlyProviderSteps(t *testing.T) {
 // param flag would silently drop the user's value.
 func TestAddMissingTxFlagsDoesNotClobberWorkflowParams(t *testing.T) {
 	cmd := &cobra.Command{Use: "deploy"}
-	cmd.Flags().String("gas", "workflow-owned", "the workflow's own gas param")
-	cmd.Flags().StringP("note", "y", "", "a param that squats on -y")
+	cmd.Flags().String(flagdefs.FlagGas, "workflow-owned", "the workflow's own gas param")
+	cmd.Flags().StringP(flagdefs.FlagNote, "y", "", "a param that squats on -y")
 
 	addMissingTxFlags(cmd)
 
-	if got := cmd.Flags().Lookup("gas").Usage; got != "the workflow's own gas param" {
+	if got := cmd.Flags().Lookup(flagdefs.FlagGas).Usage; got != "the workflow's own gas param" {
 		t.Errorf("an existing flag was replaced: %q", got)
 	}
 	if f := cmd.Flags().ShorthandLookup("y"); f == nil || f.Name != "note" {

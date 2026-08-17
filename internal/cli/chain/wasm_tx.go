@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strconv"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	errorsmod "cosmossdk.io/errors"
 	"github.com/CosmWasm/wasmd/x/wasm/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -74,10 +76,10 @@ func GetTxWasmStoreCodeCmd() *cobra.Command {
 }
 
 func addInstantiatePermissionFlags(cmd *cobra.Command) {
-	cmd.Flags().String(cflags.FlagInstantiateByEverybody, "", "Everybody can instantiate a contract from the code, optional")
-	cmd.Flags().String(cflags.FlagInstantiateNobody, "", "Nobody except the governance process can instantiate a contract from the code, optional")
-	cmd.Flags().String(cflags.FlagInstantiateByAddress, "", fmt.Sprintf("Removed: use %s instead", cflags.FlagInstantiateByAnyOfAddress))
-	cmd.Flags().StringSlice(cflags.FlagInstantiateByAnyOfAddress, []string{}, "Any of the addresses can instantiate a contract from the code, optional")
+	cmd.Flags().String(flagdefs.FlagInstantiateByEverybody, "", "Everybody can instantiate a contract from the code, optional")
+	cmd.Flags().String(flagdefs.FlagInstantiateNobody, "", "Nobody except the governance process can instantiate a contract from the code, optional")
+	cmd.Flags().String(flagdefs.FlagInstantiateByAddress, "", fmt.Sprintf("Removed: use %s instead", flagdefs.FlagInstantiateByAnyOfAddress))
+	cmd.Flags().StringSlice(flagdefs.FlagInstantiateByAnyOfAddress, []string{}, "Any of the addresses can instantiate a contract from the code, optional")
 }
 
 // GetTxWasmInstantiateContractCmd will instantiate a contract from previously uploaded code.
@@ -114,10 +116,10 @@ $ %s tx wasm instantiate 1 '{"foo":"bar"}' --admin="$(%s context keys show mykey
 		SilenceUsage: true,
 	}
 
-	cmd.Flags().String(cflags.FlagAmount, "", "Coins to send to the contract during instantiation")
-	cmd.Flags().String(cflags.FlagLabel, "", "A human-readable name for this contract in lists")
-	cmd.Flags().String(cflags.FlagAdmin, "", "Address or key name of an admin")
-	cmd.Flags().Bool(cflags.FlagNoAdmin, false, "You must set this explicitly if you don't want an admin")
+	cmd.Flags().String(flagdefs.FlagAmount, "", "Coins to send to the contract during instantiation")
+	cmd.Flags().String(flagdefs.FlagLabel, "", "A human-readable name for this contract in lists")
+	cmd.Flags().String(flagdefs.FlagAdmin, "", "Address or key name of an admin")
+	cmd.Flags().Bool(flagdefs.FlagNoAdmin, false, "You must set this explicitly if you don't want an admin")
 	cflags.AddTxFlagsToCmd(cmd)
 
 	return cmd
@@ -151,7 +153,7 @@ $ %s tx wasm instantiate2 1 '{"foo":"bar"}' $(echo -n "testing" | xxd -ps) --adm
 			if err != nil {
 				return fmt.Errorf("salt: %w", err)
 			}
-			fixMsg, err := cmd.Flags().GetBool(cflags.FlagFixMsg)
+			fixMsg, err := cmd.Flags().GetBool(flagdefs.FlagFixMsg)
 			if err != nil {
 				return fmt.Errorf("fix msg: %w", err)
 			}
@@ -180,11 +182,11 @@ $ %s tx wasm instantiate2 1 '{"foo":"bar"}' $(echo -n "testing" | xxd -ps) --adm
 		SilenceUsage: true,
 	}
 
-	cmd.Flags().String(cflags.FlagAmount, "", "Coins to send to the contract during instantiation")
-	cmd.Flags().String(cflags.FlagLabel, "", "A human-readable name for this contract in lists")
-	cmd.Flags().String(cflags.FlagAdmin, "", "Address or key name of an admin")
-	cmd.Flags().Bool(cflags.FlagNoAdmin, false, "You must set this explicitly if you don't want an admin")
-	cmd.Flags().Bool(cflags.FlagFixMsg, false, "An optional flag to include the json_encoded_init_args for the predictable address generation mode")
+	cmd.Flags().String(flagdefs.FlagAmount, "", "Coins to send to the contract during instantiation")
+	cmd.Flags().String(flagdefs.FlagLabel, "", "A human-readable name for this contract in lists")
+	cmd.Flags().String(flagdefs.FlagAdmin, "", "Address or key name of an admin")
+	cmd.Flags().Bool(flagdefs.FlagNoAdmin, false, "You must set this explicitly if you don't want an admin")
+	cmd.Flags().Bool(flagdefs.FlagFixMsg, false, "An optional flag to include the json_encoded_init_args for the predictable address generation mode")
 	decoder.RegisterFlags(cmd.PersistentFlags(), "salt")
 	cflags.AddTxFlagsToCmd(cmd)
 	return cmd
@@ -217,7 +219,7 @@ func GetTxWasmExecuteContractCmd() *cobra.Command {
 		SilenceUsage: true,
 	}
 
-	cmd.Flags().String(cflags.FlagAmount, "", "Coins to send to the contract along with command")
+	cmd.Flags().String(flagdefs.FlagAmount, "", "Coins to send to the contract along with command")
 	cflags.AddTxFlagsToCmd(cmd)
 	return cmd
 }

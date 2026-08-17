@@ -1,6 +1,8 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"os"
 	"path/filepath"
@@ -14,8 +16,6 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
-
-	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	aktcodec "pkg.akt.dev/akt/internal/codec"
 	aktkeyring "pkg.akt.dev/akt/internal/keyring"
 )
@@ -58,7 +58,7 @@ func TestParseWasmStoreCodeArgsValidatesAndNormalizesArtifact(t *testing.T) {
 
 		cmd := GetTxWasmStoreCodeCmd()
 		require.NoError(t, cmd.Flags().Set(
-			cflags.FlagInstantiateByAnyOfAddress,
+			flagdefs.FlagInstantiateByAnyOfAddress,
 			first.String()+","+second.String(),
 		))
 		msg, err := ParseWasmStoreCodeArgs(path, sender, cmd.Flags())
@@ -122,10 +122,10 @@ func TestParseWasmVerificationFlagsRequiresMatchingCompleteProvenance(t *testing
 	newCommand := func(t *testing.T, source, builder, hash string) *cobra.Command {
 		t.Helper()
 		cmd := GetTxGovWasmProposalStoreAndInstantiateContractCmd()
-		require.NoError(t, cmd.Flags().Set(cflags.FlagSource, source))
-		require.NoError(t, cmd.Flags().Set(cflags.FlagBuilder, builder))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagSource, source))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagBuilder, builder))
 		if hash != "" {
-			require.NoError(t, cmd.Flags().Set(cflags.FlagCodeHash, hash))
+			require.NoError(t, cmd.Flags().Set(flagdefs.FlagCodeHash, hash))
 		}
 		return cmd
 	}
@@ -238,8 +238,8 @@ func TestParseWasmAccessConfigFlagsRequireOneUnambiguousMode(t *testing.T) {
 
 	t.Run("false does not select a mode", func(t *testing.T) {
 		cmd := GetTxWasmStoreCodeCmd()
-		require.NoError(t, cmd.Flags().Set(cflags.FlagInstantiateByEverybody, "false"))
-		require.NoError(t, cmd.Flags().Set(cflags.FlagInstantiateNobody, "false"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagInstantiateByEverybody, "false"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagInstantiateNobody, "false"))
 		access, err := ParseWasmAccessConfigFlags(cmd.Flags())
 		require.NoError(t, err)
 		require.Nil(t, access)
@@ -247,7 +247,7 @@ func TestParseWasmAccessConfigFlagsRequireOneUnambiguousMode(t *testing.T) {
 
 	t.Run("everybody", func(t *testing.T) {
 		cmd := GetTxWasmStoreCodeCmd()
-		require.NoError(t, cmd.Flags().Set(cflags.FlagInstantiateByEverybody, "true"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagInstantiateByEverybody, "true"))
 		access, err := ParseWasmAccessConfigFlags(cmd.Flags())
 		require.NoError(t, err)
 		require.Equal(t, wasmtypes.AllowEverybody, *access)
@@ -255,7 +255,7 @@ func TestParseWasmAccessConfigFlagsRequireOneUnambiguousMode(t *testing.T) {
 
 	t.Run("nobody", func(t *testing.T) {
 		cmd := GetTxWasmStoreCodeCmd()
-		require.NoError(t, cmd.Flags().Set(cflags.FlagInstantiateNobody, "true"))
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagInstantiateNobody, "true"))
 		access, err := ParseWasmAccessConfigFlags(cmd.Flags())
 		require.NoError(t, err)
 		require.Equal(t, wasmtypes.AllowNobody, *access)
@@ -264,7 +264,7 @@ func TestParseWasmAccessConfigFlagsRequireOneUnambiguousMode(t *testing.T) {
 	t.Run("any-of complete addresses", func(t *testing.T) {
 		cmd := GetTxWasmStoreCodeCmd()
 		require.NoError(t, cmd.Flags().Set(
-			cflags.FlagInstantiateByAnyOfAddress,
+			flagdefs.FlagInstantiateByAnyOfAddress,
 			first.String()+","+second.String(),
 		))
 		access, err := ParseWasmAccessConfigFlags(cmd.Flags())
@@ -280,10 +280,10 @@ func TestParseWasmAccessConfigFlagsRequireOneUnambiguousMode(t *testing.T) {
 		}
 		cmd := GetTxWasmStoreCodeCmd()
 		require.NoError(t, cmd.Flags().Set(
-			cflags.FlagInstantiateByAnyOfAddress,
+			flagdefs.FlagInstantiateByAnyOfAddress,
 			strings.Join(addresses, ","),
 		))
-		parsed, err := cmd.Flags().GetStringSlice(cflags.FlagInstantiateByAnyOfAddress)
+		parsed, err := cmd.Flags().GetStringSlice(flagdefs.FlagInstantiateByAnyOfAddress)
 		require.NoError(t, err)
 		require.Len(t, parsed, wasmtypes.MaxAddressCount+1)
 
@@ -302,51 +302,51 @@ func TestParseWasmAccessConfigFlagsRequireOneUnambiguousMode(t *testing.T) {
 		{
 			name: "removed single address",
 			setFlags: map[string]string{
-				cflags.FlagInstantiateByAddress: first.String(),
+				flagdefs.FlagInstantiateByAddress: first.String(),
 			},
 			wantError: "not supported anymore",
 		},
 		{
 			name: "malformed everybody boolean",
 			setFlags: map[string]string{
-				cflags.FlagInstantiateByEverybody: "sometimes",
+				flagdefs.FlagInstantiateByEverybody: "sometimes",
 			},
 			wantError: "boolean value expected",
 		},
 		{
 			name: "malformed nobody boolean",
 			setFlags: map[string]string{
-				cflags.FlagInstantiateNobody: "sometimes",
+				flagdefs.FlagInstantiateNobody: "sometimes",
 			},
 			wantError: "boolean value expected",
 		},
 		{
 			name: "conflicting booleans",
 			setFlags: map[string]string{
-				cflags.FlagInstantiateByEverybody: "true",
-				cflags.FlagInstantiateNobody:      "true",
+				flagdefs.FlagInstantiateByEverybody: "true",
+				flagdefs.FlagInstantiateNobody:      "true",
 			},
 			wantError: "mutually exclusive",
 		},
 		{
 			name: "addresses conflict with everybody",
 			setFlags: map[string]string{
-				cflags.FlagInstantiateByAnyOfAddress: first.String(),
-				cflags.FlagInstantiateByEverybody:    "true",
+				flagdefs.FlagInstantiateByAnyOfAddress: first.String(),
+				flagdefs.FlagInstantiateByEverybody:    "true",
 			},
 			wantError: "mutually exclusive",
 		},
 		{
 			name: "invalid address",
 			setFlags: map[string]string{
-				cflags.FlagInstantiateByAnyOfAddress: "not-an-address",
+				flagdefs.FlagInstantiateByAnyOfAddress: "not-an-address",
 			},
 			wantError: "parse",
 		},
 		{
 			name: "duplicate address",
 			setFlags: map[string]string{
-				cflags.FlagInstantiateByAnyOfAddress: first.String() + "," + first.String(),
+				flagdefs.FlagInstantiateByAnyOfAddress: first.String() + "," + first.String(),
 			},
 			wantError: "duplicated",
 		},
@@ -462,7 +462,7 @@ func TestParseWasmExecuteArgsPreservesMessageIntent(t *testing.T) {
 	sender := sdk.AccAddress(bytes.Repeat([]byte{11}, 20))
 	contract := sdk.AccAddress(bytes.Repeat([]byte{12}, 32)).String()
 	cmd := GetTxWasmExecuteContractCmd()
-	require.NoError(t, cmd.Flags().Set(cflags.FlagAmount, "9uakt,4uact"))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagAmount, "9uakt,4uact"))
 
 	msg, err := ParseWasmExecuteArgs(contract, `{"increment":{}}`, sender, cmd.Flags())
 	require.NoError(t, err)
@@ -475,7 +475,7 @@ func TestParseWasmExecuteArgsPreservesMessageIntent(t *testing.T) {
 		sdk.Coins(msg.Funds),
 	)
 
-	require.NoError(t, cmd.Flags().Set(cflags.FlagAmount, "not-a-coin"))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagAmount, "not-a-coin"))
 	_, err = ParseWasmExecuteArgs(contract, `{}`, sender, cmd.Flags())
 	require.Error(t, err)
 }
@@ -490,10 +490,10 @@ func wasmInstantiateCommand(
 	t.Helper()
 
 	cmd := GetTxWasmInstantiateContractCmd()
-	require.NoError(t, cmd.Flags().Set(cflags.FlagLabel, label))
-	require.NoError(t, cmd.Flags().Set(cflags.FlagAmount, amount))
-	require.NoError(t, cmd.Flags().Set(cflags.FlagAdmin, admin))
-	require.NoError(t, cmd.Flags().Set(cflags.FlagNoAdmin, boolString(noAdmin)))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagLabel, label))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagAmount, amount))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagAdmin, admin))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagNoAdmin, boolString(noAdmin)))
 	return cmd
 }
 

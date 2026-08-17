@@ -5,6 +5,8 @@ import (
 	"strconv"
 	"strings"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -55,10 +57,10 @@ func AddDeploymentIDFlags(flags *pflag.FlagSet, opts ...DeploymentIDOption) {
 	}
 
 	if !opt.NoOwner {
-		flags.String(FlagOwner, "", "Deployment Owner")
+		flags.String(flagdefs.FlagOwner, "", "Deployment Owner")
 	}
 
-	flags.Uint64(FlagDSeq, 0, "Deployment Sequence")
+	flags.Uint64(flagdefs.FlagDSeq, 0, "Deployment Sequence")
 }
 
 // MarkReqDeploymentIDFlags marks flags required except for Owner when NoOwner is set
@@ -70,10 +72,10 @@ func MarkReqDeploymentIDFlags(cmd *cobra.Command, opts ...DeploymentIDOption) {
 	}
 
 	if !opt.NoOwner {
-		_ = cmd.MarkFlagRequired(FlagOwner)
+		_ = cmd.MarkFlagRequired(flagdefs.FlagOwner)
 	}
 
-	_ = cmd.MarkFlagRequired(FlagDSeq)
+	_ = cmd.MarkFlagRequired(flagdefs.FlagDSeq)
 }
 
 // DeploymentIDFromFlags returns DeploymentID with given flags, owner and error if occurred
@@ -86,7 +88,7 @@ func DeploymentIDFromFlags(flags *pflag.FlagSet, opts ...MarketOption) (dv1.Depl
 	}
 
 	var owner string
-	if flag := flags.Lookup(FlagOwner); flag != nil {
+	if flag := flags.Lookup(flagdefs.FlagOwner); flag != nil {
 		owner = flag.Value.String()
 	}
 
@@ -104,8 +106,8 @@ func DeploymentIDFromFlags(flags *pflag.FlagSet, opts ...MarketOption) (dv1.Depl
 	// FEEDBACK(2026-07): several commands disabled --dseq for the
 	// positional-only UX trial, so tolerate a missing flag and leave DSeq
 	// zero (the positional argument is then the only source).
-	if flags.Lookup(FlagDSeq) != nil {
-		if id.DSeq, err = flags.GetUint64(FlagDSeq); err != nil {
+	if flags.Lookup(flagdefs.FlagDSeq) != nil {
+		if id.DSeq, err = flags.GetUint64(flagdefs.FlagDSeq); err != nil {
 			return id, err
 		}
 	}
@@ -120,7 +122,7 @@ func DeploymentIDFromFlagsForOwner(flags *pflag.FlagSet, owner sdk.Address) (dv1
 	}
 
 	var err error
-	if id.DSeq, err = flags.GetUint64(FlagDSeq); err != nil {
+	if id.DSeq, err = flags.GetUint64(flagdefs.FlagDSeq); err != nil {
 		return id, err
 	}
 
@@ -130,7 +132,7 @@ func DeploymentIDFromFlagsForOwner(flags *pflag.FlagSet, owner sdk.Address) (dv1
 // AddGroupIDFlags add flags for Group
 func AddGroupIDFlags(flags *pflag.FlagSet, opts ...DeploymentIDOption) {
 	AddDeploymentIDFlags(flags, opts...)
-	flags.Uint32(FlagGSeq, 1, "Group Sequence")
+	flags.Uint32(flagdefs.FlagGSeq, 1, "Group Sequence")
 }
 
 // MarkReqGroupIDFlags marks flags required for group
@@ -150,8 +152,8 @@ func GroupIDFromFlags(flags *pflag.FlagSet, opts ...MarketOption) (dv1.GroupID, 
 	// positional-only UX trial, so tolerate a missing flag and leave GSeq
 	// zero (the positional argument is then the only source).
 	var gseq uint32
-	if flags.Lookup(FlagGSeq) != nil {
-		if gseq, err = flags.GetUint32(FlagGSeq); err != nil {
+	if flags.Lookup(flagdefs.FlagGSeq) != nil {
+		if gseq, err = flags.GetUint32(flagdefs.FlagGSeq); err != nil {
 			return id, err
 		}
 	}
@@ -210,12 +212,12 @@ func DepFiltersFromFlags(flags *pflag.FlagSet) (dv1beta.DeploymentFilters, error
 }
 
 func AddDepositSourcesFlags(flags *pflag.FlagSet) {
-	flags.StringSlice(FlagDepositSources, []string{"grant", "balance"}, "Comma separated list of deposit sources. allowed values grant|balance")
+	flags.StringSlice(flagdefs.FlagDepositSources, []string{"grant", "balance"}, "Comma separated list of deposit sources. allowed values grant|balance")
 }
 
 func AddDepositFlags(flags *pflag.FlagSet) {
-	flags.String(FlagDeposit, "", "Deposit amount")
-	flags.StringSlice(FlagDepositSources, []string{"grant", "balance"}, "Comma separated list of deposit sources. allowed values grant|balance")
+	flags.String(flagdefs.FlagDeposit, "", "Deposit amount")
+	flags.StringSlice(flagdefs.FlagDepositSources, []string{"grant", "balance"}, "Comma separated list of deposit sources. allowed values grant|balance")
 }
 
 // DepFiltersIsID returns true when the deployment filters specify a single

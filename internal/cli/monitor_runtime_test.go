@@ -1,6 +1,8 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"os"
 	"path/filepath"
 	"strings"
@@ -82,6 +84,28 @@ func TestResolveMonitorRuntimeHonorsHomeAndContextAPI(t *testing.T) {
 	}
 	if runtime.restEndpoint != "https://override.example.com" {
 		t.Errorf("REST override = %q, want explicit endpoint", runtime.restEndpoint)
+	}
+}
+
+func TestResolveMonitorRuntimeUsesCanonicalHomeFlag(t *testing.T) {
+	home := t.TempDir()
+	v := viper.New()
+	v.Set(flagdefs.FlagHome, home)
+
+	runtime, err := resolveMonitorRuntime(
+		v,
+		"https://rpc.example.test:443",
+		true,
+		"https://api.example.test:443",
+		func() string { return "" },
+		func() *aktctx.Manager { return nil },
+		"akashnet-2",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.cacheDir != filepath.Join(home, "cache") {
+		t.Fatalf("cache dir = %q", runtime.cacheDir)
 	}
 }
 
@@ -228,7 +252,7 @@ func TestMonitorInsecureFlagDefaultsToFalse(t *testing.T) {
 	commands := []*cobra.Command{cmd}
 	commands = append(commands, cmd.Commands()...)
 	for _, candidate := range commands {
-		flag := candidate.Flags().Lookup("insecure")
+		flag := candidate.Flags().Lookup(flagdefs.FlagInsecure)
 		if flag == nil {
 			t.Fatalf("%s has no --insecure flag", candidate.CommandPath())
 			return

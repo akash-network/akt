@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"time"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
@@ -75,8 +77,8 @@ func deploymentListCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			skip, _ := cmd.Flags().GetInt("skip")
-			limit, _ := cmd.Flags().GetInt("limit")
+			skip, _ := cmd.Flags().GetInt(flagdefs.FlagSkip)
+			limit, _ := cmd.Flags().GetInt(flagdefs.FlagLimit)
 
 			list, err := cl.ListDeployments(cmd.Context(), skip, limit)
 			if err != nil {
@@ -87,8 +89,8 @@ func deploymentListCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Int("skip", 0, "Pagination offset")
-	cmd.Flags().Int("limit", 20, "Page size")
+	cmd.Flags().Int(flagdefs.FlagSkip, 0, "Pagination offset")
+	cmd.Flags().Int(flagdefs.FlagLimit, 20, "Page size")
 
 	return cmd
 }
@@ -511,8 +513,8 @@ func leaseCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 			}
 
 			dseq := args[0]
-			gseq, _ := cmd.Flags().GetUint32("gseq")
-			oseq, _ := cmd.Flags().GetUint32("oseq")
+			gseq, _ := cmd.Flags().GetUint32(flagdefs.FlagGSeq)
+			oseq, _ := cmd.Flags().GetUint32(flagdefs.FlagOSeq)
 			// FEEDBACK(2026-07): --provider disabled for the positional-only
 			// UX trial; the positional [provider] argument is the only
 			// source. Restore by uncommenting if users ask for the flag form
@@ -525,7 +527,7 @@ func leaseCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 			if provider == "" {
 				return fmt.Errorf("provider is required: pass it as the [provider] argument")
 			}
-			manifestFile, _ := cmd.Flags().GetString("manifest")
+			manifestFile, _ := cmd.Flags().GetString(flagdefs.FlagManifest)
 
 			var manifest string
 			switch {
@@ -559,13 +561,13 @@ func leaseCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	create.Flags().Uint32("gseq", 1, "Group sequence number")
-	create.Flags().Uint32("oseq", 1, "Order sequence number")
+	create.Flags().Uint32(flagdefs.FlagGSeq, 1, "Group sequence number")
+	create.Flags().Uint32(flagdefs.FlagOSeq, 1, "Order sequence number")
 	// FEEDBACK(2026-07): --provider disabled for the positional-only UX trial
 	// (use the positional form instead). Restore by uncommenting if users
 	// ask for the flag form back.
 	// create.Flags().String("provider", "", "Provider address; alternative to the positional argument")
-	create.Flags().String("manifest", "", "Manifest file (defaults to the one cached by `deployment create`)")
+	create.Flags().String(flagdefs.FlagManifest, "", "Manifest file (defaults to the one cached by `deployment create`)")
 
 	cmd.AddCommand(create)
 

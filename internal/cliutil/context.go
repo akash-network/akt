@@ -3,6 +3,8 @@ package cliutil
 import (
 	"os"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 
 	aktctx "pkg.akt.dev/akt/internal/context"
@@ -16,7 +18,7 @@ func SelectedContextName(cmd *cobra.Command, manager *aktctx.Manager) string {
 		return ""
 	}
 
-	if flag := cmd.Flags().Lookup("context"); flag != nil && flag.Changed {
+	if flag := cmd.Flags().Lookup(flagdefs.FlagContext); flag != nil && flag.Changed {
 		return manager.ActiveContext(flag.Value.String())
 	}
 

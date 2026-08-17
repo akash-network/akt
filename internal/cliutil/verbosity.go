@@ -2,18 +2,19 @@ package cliutil
 
 import (
 	"github.com/spf13/cobra"
+	flagdefs "pkg.akt.dev/akt/internal/flags"
 )
 
 // Verbosity reads the counted -v flag. Returns -1 when --quiet is set,
 // 0 for default, 1 for -v, 2 for -vv. Safe to call even when flags are
 // not registered (returns 0).
 func Verbosity(cmd *cobra.Command) int {
-	q, err := cmd.Flags().GetBool("quiet")
+	q, err := cmd.Flags().GetBool(flagdefs.FlagQuiet)
 	if err == nil && q {
 		return -1
 	}
 
-	v, err := cmd.Flags().GetCount("verbose")
+	v, err := cmd.Flags().GetCount(flagdefs.FlagVerbose)
 	if err != nil {
 		return 0
 	}

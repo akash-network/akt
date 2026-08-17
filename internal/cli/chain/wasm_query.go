@@ -9,6 +9,8 @@ import (
 	"os"
 	"strconv"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 	flag "github.com/spf13/pflag"
 
@@ -618,9 +620,9 @@ func newArgDecoder(def func(string) ([]byte, error)) *argumentDecoder {
 }
 
 func (a *argumentDecoder) RegisterFlags(f *flag.FlagSet, argName string) {
-	f.BoolVar(&a.asciiF, "ascii", false, "ascii encoded "+argName)
-	f.BoolVar(&a.hexF, "hex", false, "hex encoded "+argName)
-	f.BoolVar(&a.b64F, "b64", false, "base64 encoded "+argName)
+	f.BoolVar(&a.asciiF, flagdefs.FlagASCII, false, "ascii encoded "+argName)
+	f.BoolVar(&a.hexF, flagdefs.FlagHex, false, "hex encoded "+argName)
+	f.BoolVar(&a.b64F, flagdefs.FlagBase64, false, "base64 encoded "+argName)
 }
 
 func (a *argumentDecoder) DecodeString(s string) ([]byte, error) {

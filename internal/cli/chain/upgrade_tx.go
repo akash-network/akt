@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"cosmossdk.io/x/upgrade/plan"
 	"cosmossdk.io/x/upgrade/types"
 	"github.com/cosmos/cosmos-sdk/client"
@@ -62,18 +64,18 @@ func NewCmdSubmitUpgradeProposal() *cobra.Command {
 				return err
 			}
 
-			noValidate, err := cmd.Flags().GetBool(cflags.FlagNoValidate)
+			noValidate, err := cmd.Flags().GetBool(flagdefs.FlagNoValidate)
 			if err != nil {
 				return err
 			}
 
 			if !noValidate {
-				daemonName, err := cmd.Flags().GetString(cflags.FlagDaemonName)
+				daemonName, err := cmd.Flags().GetString(flagdefs.FlagDaemonName)
 				if err != nil {
 					return err
 				}
 
-				noChecksum, err := cmd.Flags().GetBool(cflags.FlagNoChecksumRequired)
+				noChecksum, err := cmd.Flags().GetBool(flagdefs.FlagNoChecksumRequired)
 				if err != nil {
 					return err
 				}
@@ -88,7 +90,7 @@ func NewCmdSubmitUpgradeProposal() *cobra.Command {
 				}
 			}
 
-			authority, _ := cmd.Flags().GetString(cflags.FlagAuthority)
+			authority, _ := cmd.Flags().GetString(flagdefs.FlagAuthority)
 			if authority != "" {
 				if _, err = ac.StringToBytes(authority); err != nil {
 					return fmt.Errorf("invalid authority address: %w", err)
@@ -110,17 +112,17 @@ func NewCmdSubmitUpgradeProposal() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Int64(cflags.FlagUpgradeHeight, 0, "The height at which the upgrade must happen")
-	cmd.Flags().String(cflags.FlagUpgradeInfo, "", "Info for the upgrade plan such as new version download urls, etc.")
-	cmd.Flags().Bool(cflags.FlagNoValidate, false, "Skip validation of the upgrade info (dangerous!)")
-	cmd.Flags().Bool(cflags.FlagNoChecksumRequired, false, "Skip requirement of checksums for binaries in the upgrade info")
-	cmd.Flags().String(cflags.FlagDaemonName, getDefaultDaemonName(), "The name of the executable being upgraded (for upgrade-info validation). Default is the DAEMON_NAME env var if set, or else this executable")
-	cmd.Flags().String(cflags.FlagAuthority, "", "The address of the upgrade module authority (defaults to gov)")
+	cmd.Flags().Int64(flagdefs.FlagUpgradeHeight, 0, "The height at which the upgrade must happen")
+	cmd.Flags().String(flagdefs.FlagUpgradeInfo, "", "Info for the upgrade plan such as new version download urls, etc.")
+	cmd.Flags().Bool(flagdefs.FlagNoValidate, false, "Skip validation of the upgrade info (dangerous!)")
+	cmd.Flags().Bool(flagdefs.FlagNoChecksumRequired, false, "Skip requirement of checksums for binaries in the upgrade info")
+	cmd.Flags().String(flagdefs.FlagDaemonName, getDefaultDaemonName(), "The name of the executable being upgraded (for upgrade-info validation). Default is the DAEMON_NAME env var if set, or else this executable")
+	cmd.Flags().String(flagdefs.FlagAuthority, "", "The address of the upgrade module authority (defaults to gov)")
 
 	// add common proposal flags
 	cflags.AddTxFlagsToCmd(cmd)
 	cflags.AddGovPropFlagsToCmd(cmd)
-	_ = cmd.MarkFlagRequired(cflags.FlagTitle)
+	_ = cmd.MarkFlagRequired(flagdefs.FlagTitle)
 
 	return cmd
 }
@@ -146,7 +148,7 @@ func NewCmdSubmitCancelUpgradeProposal() *cobra.Command {
 				return err
 			}
 
-			authority, _ := cmd.Flags().GetString(cflags.FlagAuthority)
+			authority, _ := cmd.Flags().GetString(flagdefs.FlagAuthority)
 			if authority != "" {
 				if _, err = ac.StringToBytes(authority); err != nil {
 					return fmt.Errorf("invalid authority address: %w", err)
@@ -167,12 +169,12 @@ func NewCmdSubmitCancelUpgradeProposal() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().String(cflags.FlagAuthority, "", "The address of the upgrade module authority (defaults to gov)")
+	cmd.Flags().String(flagdefs.FlagAuthority, "", "The address of the upgrade module authority (defaults to gov)")
 
 	// add common proposal flags
 	cflags.AddTxFlagsToCmd(cmd)
 	cflags.AddGovPropFlagsToCmd(cmd)
-	_ = cmd.MarkFlagRequired(cflags.FlagTitle)
+	_ = cmd.MarkFlagRequired(flagdefs.FlagTitle)
 
 	return cmd
 }
@@ -190,12 +192,12 @@ func getDefaultDaemonName() string {
 }
 
 func parsePlan(fs *pflag.FlagSet, name string) (types.Plan, error) {
-	height, err := fs.GetInt64(cflags.FlagUpgradeHeight)
+	height, err := fs.GetInt64(flagdefs.FlagUpgradeHeight)
 	if err != nil {
 		return types.Plan{}, err
 	}
 
-	info, err := fs.GetString(cflags.FlagUpgradeInfo)
+	info, err := fs.GetString(flagdefs.FlagUpgradeInfo)
 	if err != nil {
 		return types.Plan{}, err
 	}

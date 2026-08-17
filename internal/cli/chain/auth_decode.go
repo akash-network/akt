@@ -4,14 +4,14 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 
 	"github.com/cosmos/cosmos-sdk/client"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 )
-
-const flagHex = "hex"
 
 // GetDecodeCommand returns the decode command to take serialized bytes and turn
 // it into a JSON-encoded transaction.
@@ -24,7 +24,7 @@ func GetDecodeCommand() *cobra.Command {
 			cctx := client.GetClientContextFromCmd(cmd)
 			var txBytes []byte
 
-			if useHex, _ := cmd.Flags().GetBool(flagHex); useHex {
+			if useHex, _ := cmd.Flags().GetBool(flagdefs.FlagHex); useHex {
 				txBytes, err = hex.DecodeString(args[0])
 			} else {
 				txBytes, err = base64.StdEncoding.DecodeString(args[0])
@@ -47,9 +47,9 @@ func GetDecodeCommand() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolP(flagHex, "x", false, "Treat input as hexadecimal instead of base64")
+	cmd.Flags().BoolP(flagdefs.FlagHex, "x", false, "Treat input as hexadecimal instead of base64")
 	cflags.AddTxFlagsToCmd(cmd)
-	_ = cmd.Flags().MarkHidden(cflags.FlagOutput) // decoding makes sense to output only json
+	_ = cmd.Flags().MarkHidden(flagdefs.FlagOutput) // decoding makes sense to output only json
 
 	return cmd
 }

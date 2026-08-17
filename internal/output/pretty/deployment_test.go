@@ -1,6 +1,8 @@
 package pretty
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -228,7 +230,7 @@ func TestPrintGroupsListStructuredOutputIsOneArrayIncludingWhenEmpty(t *testing.
 			}
 			t.Run(name, func(t *testing.T) {
 				cmd := &cobra.Command{}
-				cmd.Flags().String(cflags.FlagOutput, format, "")
+				cmd.Flags().String(flagdefs.FlagOutput, format, "")
 				var stdout bytes.Buffer
 				cmd.SetOut(&stdout)
 				cctx := sdkclient.Context{Codec: codec.NewProtoCodec(codectypes.NewInterfaceRegistry())}
@@ -276,7 +278,7 @@ func TestPrintGroupsListRejectsCodecFailuresAndMalformedJSON(t *testing.T) {
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			cmd := &cobra.Command{}
-			cmd.Flags().String(cflags.FlagOutput, cflags.OutputJSON, "")
+			cmd.Flags().String(flagdefs.FlagOutput, cflags.OutputJSON, "")
 			cmd.SetOut(io.Discard)
 
 			err := PrintGroupsList(cmd, sdkclient.Context{Codec: tt.codec}, groups)
@@ -304,7 +306,7 @@ func TestPrintGroupsListPropagatesCommandWriterFailures(t *testing.T) {
 			} {
 				t.Run(failure.name, func(t *testing.T) {
 					cmd := &cobra.Command{}
-					cmd.Flags().String(cflags.FlagOutput, format, "")
+					cmd.Flags().String(flagdefs.FlagOutput, format, "")
 					cmd.SetOut(failure.w)
 
 					var wrongDestination bytes.Buffer

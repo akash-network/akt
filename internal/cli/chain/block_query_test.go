@@ -1,6 +1,8 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"context"
 	"encoding/json"
@@ -232,7 +234,7 @@ func TestBlockQueryHandlersPropagateClientContextErrors(t *testing.T) {
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			cmd := test.cmd()
-			if err := cmd.Flags().Set(cflags.FlagNode, ""); err != nil {
+			if err := cmd.Flags().Set(flagdefs.FlagNode, ""); err != nil {
 				t.Fatalf("set empty node: %v", err)
 			}
 
@@ -325,7 +327,7 @@ func TestQueryBlocksCmdRejectsInvalidInputAndRPCFailures(t *testing.T) {
 
 	t.Run("missing RPC client", func(t *testing.T) {
 		cmd := QueryBlocksCmd()
-		nodeFlag := cmd.Flags().Lookup(cflags.FlagNode)
+		nodeFlag := cmd.Flags().Lookup(flagdefs.FlagNode)
 		if err := nodeFlag.Value.Set(""); err != nil {
 			t.Fatalf("clear node default: %v", err)
 		}
@@ -477,7 +479,7 @@ func TestQueryBlockCmdHeightFailures(t *testing.T) {
 
 	t.Run("missing RPC client", func(t *testing.T) {
 		cmd := QueryBlockCmd()
-		nodeFlag := cmd.Flags().Lookup(cflags.FlagNode)
+		nodeFlag := cmd.Flags().Lookup(flagdefs.FlagNode)
 		if err := nodeFlag.Value.Set(""); err != nil {
 			t.Fatalf("clear node default: %v", err)
 		}
@@ -749,7 +751,7 @@ func TestQueryBlockResultsCmdFailures(t *testing.T) {
 	t.Run("RunE rejects negative context height", func(t *testing.T) {
 		probe := &blockRPCProbe{Client: rpcclientmock.New()}
 		cmd := QueryBlockResultsCmd()
-		if err := cmd.Flags().Lookup(cflags.FlagHeight).Value.Set("-1"); err != nil {
+		if err := cmd.Flags().Lookup(flagdefs.FlagHeight).Value.Set("-1"); err != nil {
 			t.Fatalf("set height value: %v", err)
 		}
 		err := executeBlockHandler(t, cmd, probe)
@@ -760,7 +762,7 @@ func TestQueryBlockResultsCmdFailures(t *testing.T) {
 
 	t.Run("missing RPC client", func(t *testing.T) {
 		cmd := QueryBlockResultsCmd()
-		nodeFlag := cmd.Flags().Lookup(cflags.FlagNode)
+		nodeFlag := cmd.Flags().Lookup(flagdefs.FlagNode)
 		if nodeFlag == nil {
 			t.Fatal("block-results command has no node flag")
 		}
@@ -791,7 +793,7 @@ func TestQueryBlockResultsCmdFailures(t *testing.T) {
 
 	t.Run("latest lookup without RPC client", func(t *testing.T) {
 		cmd := QueryBlockResultsCmd()
-		nodeFlag := cmd.Flags().Lookup(cflags.FlagNode)
+		nodeFlag := cmd.Flags().Lookup(flagdefs.FlagNode)
 		if err := nodeFlag.Value.Set(""); err != nil {
 			t.Fatalf("clear node default: %v", err)
 		}
@@ -903,7 +905,7 @@ func TestBlockQueryHandlersDefendAgainstInvalidProgrammaticArguments(t *testing.
 			cmd:  QueryBlockCmd,
 			setup: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				if err := cmd.Flags().Set(cflags.FlagType, cflags.TypeHeight); err != nil {
+				if err := cmd.Flags().Set(flagdefs.FlagType, cflags.TypeHeight); err != nil {
 					t.Fatalf("set block type: %v", err)
 				}
 			},
@@ -915,7 +917,7 @@ func TestBlockQueryHandlersDefendAgainstInvalidProgrammaticArguments(t *testing.
 			cmd:  QueryBlockCmd,
 			setup: func(t *testing.T, cmd *cobra.Command) {
 				t.Helper()
-				if err := cmd.Flags().Lookup(cflags.FlagHeight).Value.Set("-1"); err != nil {
+				if err := cmd.Flags().Lookup(flagdefs.FlagHeight).Value.Set("-1"); err != nil {
 					t.Fatalf("set height value: %v", err)
 				}
 			},

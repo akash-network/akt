@@ -14,6 +14,7 @@ import (
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	aktcodec "pkg.akt.dev/akt/internal/codec"
+	flagdefs "pkg.akt.dev/akt/internal/flags"
 	aktkeyring "pkg.akt.dev/akt/internal/keyring"
 )
 
@@ -32,7 +33,7 @@ func TestTransactionModeFlagsRejectUnknownValues(t *testing.T) {
 	}{
 		{
 			name: "sign mode",
-			flag: cflags.FlagSignMode,
+			flag: flagdefs.FlagSignMode,
 			allowed: []string{
 				cflags.SignModeDirect,
 				cflags.SignModeLegacyAminoJSON,
@@ -43,7 +44,7 @@ func TestTransactionModeFlagsRejectUnknownValues(t *testing.T) {
 		},
 		{
 			name: "broadcast mode",
-			flag: cflags.FlagBroadcastMode,
+			flag: flagdefs.FlagBroadcastMode,
 			allowed: []string{
 				cflags.BroadcastSync,
 				cflags.BroadcastAsync,
@@ -82,7 +83,7 @@ func TestValidateTxInvocationChainIdentity(t *testing.T) {
 
 	t.Run("matching online chain", func(t *testing.T) {
 		cmd := txFlagCommand()
-		if err := cmd.Flags().Set(cflags.FlagChainID, "akashnet-2"); err != nil {
+		if err := cmd.Flags().Set(flagdefs.FlagChainID, "akashnet-2"); err != nil {
 			t.Fatal(err)
 		}
 		if err := validateTxInvocation(context, cmd.Flags()); err != nil {
@@ -92,7 +93,7 @@ func TestValidateTxInvocationChainIdentity(t *testing.T) {
 
 	t.Run("mismatched online chain", func(t *testing.T) {
 		cmd := txFlagCommand()
-		if err := cmd.Flags().Set(cflags.FlagChainID, "wrong-chain"); err != nil {
+		if err := cmd.Flags().Set(flagdefs.FlagChainID, "wrong-chain"); err != nil {
 			t.Fatal(err)
 		}
 		err := validateTxInvocation(context, cmd.Flags())
@@ -103,10 +104,10 @@ func TestValidateTxInvocationChainIdentity(t *testing.T) {
 
 	t.Run("mismatched explicit offline chain", func(t *testing.T) {
 		cmd := txFlagCommand()
-		if err := cmd.Flags().Set(cflags.FlagChainID, "other-chain"); err != nil {
+		if err := cmd.Flags().Set(flagdefs.FlagChainID, "other-chain"); err != nil {
 			t.Fatal(err)
 		}
-		if err := cmd.Flags().Set(cflags.FlagOffline, "true"); err != nil {
+		if err := cmd.Flags().Set(flagdefs.FlagOffline, "true"); err != nil {
 			t.Fatal(err)
 		}
 		if err := validateTxInvocation(context, cmd.Flags()); err != nil {
@@ -116,7 +117,7 @@ func TestValidateTxInvocationChainIdentity(t *testing.T) {
 
 	t.Run("empty explicit chain", func(t *testing.T) {
 		cmd := txFlagCommand()
-		if err := cmd.Flags().Set(cflags.FlagChainID, ""); err != nil {
+		if err := cmd.Flags().Set(flagdefs.FlagChainID, ""); err != nil {
 			t.Fatal(err)
 		}
 		err := validateTxInvocation(context, cmd.Flags())
@@ -140,19 +141,66 @@ func TestReadTxFlagsRejectsUnresolvedPreselectedSigner(t *testing.T) {
 	}
 }
 
+func TestCanonicalTransportAndAuxFlagsReachClientContext(t *testing.T) {
+	t.Run("gRPC", func(t *testing.T) {
+		cmd := &cobra.Command{Use: "query"}
+		cflags.AddQueryFlagsToCmd(cmd)
+		if err := cmd.Flags().Set(flagdefs.FlagGRPC, "127.0.0.1:9090"); err != nil {
+			t.Fatal(err)
+		}
+		if err := cmd.Flags().Set(flagdefs.FlagGRPCInsecure, "true"); err != nil {
+			t.Fatal(err)
+		}
+
+		got, err := ReadPersistentCommandFlags(
+			sdkclient.Context{}.WithCmdContext(context.Background()),
+			cmd.Flags(),
+		)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.GRPCClient == nil {
+			t.Fatal("--grpc did not create a gRPC client")
+		}
+		if err := got.GRPCClient.Close(); err != nil {
+			t.Fatal(err)
+		}
+	})
+
+	t.Run("aux defaults", func(t *testing.T) {
+		cmd := txFlagCommand()
+		if err := cmd.Flags().Set(flagdefs.FlagAux, "true"); err != nil {
+			t.Fatal(err)
+		}
+		address := sdk.AccAddress([]byte("01234567890123456789"))
+		base := sdkclient.Context{}.
+			WithCmdContext(context.Background()).
+			WithFrom(address.String()).
+			WithFromAddress(address)
+
+		got, err := ReadTxCommandFlags(base, cmd.Flags(), io.Discard)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !got.IsAux || got.OutputFormat != "json" || got.SignModeStr != cflags.SignModeDirectAux {
+			t.Fatalf("aux context = aux:%t output:%q sign-mode:%q", got.IsAux, got.OutputFormat, got.SignModeStr)
+		}
+	})
+}
+
 func TestCertificateFlagsRemainLeafLocal(t *testing.T) {
 	clientGenerate := GetTxCertGenerateClientCmd()
 	serverGenerate := GetTxCertGenerateServerCmd()
 	for name, value := range map[string]string{
-		flagStart:            "2026-01-02T03:04:05Z",
-		flagValidTime:        "2h",
-		cflags.FlagOverwrite: "true",
+		flagdefs.FlagStartTime:     "2026-01-02T03:04:05Z",
+		flagdefs.FlagValidDuration: "2h",
+		flagdefs.FlagOverwrite:     "true",
 	} {
 		if err := clientGenerate.Flags().Set(name, value); err != nil {
 			t.Fatalf("set client --%s: %v", name, err)
 		}
 	}
-	if err := serverGenerate.Flags().Set(flagStart, "2030-01-02T03:04:05Z"); err != nil {
+	if err := serverGenerate.Flags().Set(flagdefs.FlagStartTime, "2030-01-02T03:04:05Z"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -179,19 +227,25 @@ func TestCertificateFlagsRemainLeafLocal(t *testing.T) {
 
 	clientPublish := GetTxCertPublishClientCmd()
 	serverPublish := GetTxCertPublishServerCmd()
-	if err := clientPublish.Flags().Set(flagToGenesis, "true"); err != nil {
+	if err := clientPublish.Flags().Set(flagdefs.FlagToGenesis, "true"); err != nil {
 		t.Fatal(err)
 	}
 	if !certToGenesisFromCmd(clientPublish) || certToGenesisFromCmd(serverPublish) {
 		t.Fatal("--to-genesis leaked between publish siblings")
 	}
+	baseContext := sdkclient.Context{}
+	clientPublish.SetContext(context.WithValue(context.Background(), ClientContextKey, &baseContext))
+	_ = clientPublish.PersistentPreRunE(clientPublish, nil)
+	if offline, err := clientPublish.Flags().GetBool(flagdefs.FlagOffline); err != nil || !offline {
+		t.Fatalf("--to-genesis did not force --offline: %t, %v", offline, err)
+	}
 
 	clientRevoke := GetTxCertsRevokeClientCmd()
 	serverRevoke := GetTxCertRevokeServerCmd()
-	if err := clientRevoke.Flags().Set(flagSerial, "11"); err != nil {
+	if err := clientRevoke.Flags().Set(flagdefs.FlagSerial, "11"); err != nil {
 		t.Fatal(err)
 	}
-	if err := serverRevoke.Flags().Set(flagSerial, "22"); err != nil {
+	if err := serverRevoke.Flags().Set(flagdefs.FlagSerial, "22"); err != nil {
 		t.Fatal(err)
 	}
 	if got := certSerialFromCmd(clientRevoke); got != "11" {
@@ -199,6 +253,16 @@ func TestCertificateFlagsRemainLeafLocal(t *testing.T) {
 	}
 	if got := certSerialFromCmd(serverRevoke); got != "22" {
 		t.Errorf("server serial = %q", got)
+	}
+}
+
+func TestCertificateOptionsRejectCanonicalStartTime(t *testing.T) {
+	cmd := GetTxCertGenerateClientCmd()
+	if err := cmd.Flags().Set(flagdefs.FlagStartTime, "not-rfc3339"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := certGenerateOptionsFromCmd(cmd); err == nil || !strings.Contains(err.Error(), "--"+flagdefs.FlagStartTime) {
+		t.Fatalf("invalid start time error = %v", err)
 	}
 }
 

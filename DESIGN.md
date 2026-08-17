@@ -911,7 +911,7 @@ pkg.akt.dev/akt/                         # module path (repo: github.com/akash-n
 ├── internal/
 │   ├── cli/                             # CLI mode (cobra commands)
 │   │   ├── chain/                       # Clean-copied chain-sdk go/cli (tx/query)
-│   │   │   └── flags/                   # Shared chain tx/query flag definitions
+│   │   │   └── flags/                   # Chain tx/query flag builders and parsers
 │   │   ├── workflow/                    # Workflow commands generated from definitions (§3.5)
 │   │   ├── console/                     # Console group + gateway access (§3.1.5)
 │   │   ├── sdl/                         # SDL scaffolds, validation, lint (fully local)
@@ -951,6 +951,7 @@ pkg.akt.dev/akt/                         # module path (repo: github.com/akash-n
 │   │   └── bbolt/                       # bbolt backend implementation
 │   ├── sync/                            # Chain sync engine
 │   ├── events/                          # Shared blockchain event service (pubsub bus)
+│   ├── flags/                           # Canonical names for every static CLI flag
 │   ├── monitor/                          # Real-time monitoring (akt monitor)
 │   │   ├── ui/                          # Bubbletea model, views, styles
 │   │   ├── consensus/                   # Consensus state types and parsers
@@ -1017,6 +1018,12 @@ change that public behavior.
 > current. See the status note at the end of this section.
 
 - **Cobra** handles command parsing, flag management, help generation, and shell completion for CLI mode. It is the standard in the Go and Cosmos SDK ecosystem.
+- **Static flag names have one owner**: every statically declared Cobra flag
+  name is defined once in `internal/flags`. Registration, lookup, change
+  detection, and Viper binding import those constants directly. The
+  `internal/cli/chain/flags` package owns chain flag builders, parsers, defaults,
+  and allowed values but does not re-export flag names. Data-driven workflow
+  parameters remain dynamic because their definitions are the source of truth.
 - **Boundary validation** is applied uniformly to the assembled Cobra tree:
   pure command groups reject unknown positional tokens instead of treating
   them as a successful help request, and enum-valued flags reject values not

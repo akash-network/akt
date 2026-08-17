@@ -1,6 +1,8 @@
 package output
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"testing"
 
 	"github.com/spf13/pflag"
@@ -9,8 +11,8 @@ import (
 
 func TestConstrainOutputFlagUpdatesItsAdvertisedEnum(t *testing.T) {
 	flags := pflag.NewFlagSet("test", pflag.ContinueOnError)
-	flags.String("output", "text", "Output format (text|json)")
-	flag := flags.Lookup("output")
+	flags.String(flagdefs.FlagOutput, "text", "Output format (text|json)")
+	flag := flags.Lookup(flagdefs.FlagOutput)
 
 	ConstrainFlag(flag, "pretty", "pretty", "json", "yaml")
 

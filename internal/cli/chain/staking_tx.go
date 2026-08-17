@@ -1,6 +1,8 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -200,13 +202,13 @@ where we can get the pubkey using "%s tendermint show-validator"
 
 			var opts []cclient.BroadcastOption
 
-			genOnly, _ := cmd.Flags().GetBool(cflags.FlagGenerateOnly)
+			genOnly, _ := cmd.Flags().GetBool(flagdefs.FlagGenerateOnly)
 			if genOnly {
-				ip, _ := cmd.Flags().GetString(cflags.FlagIP)
-				p2pPort, _ := cmd.Flags().GetUint(cflags.FlagP2PPort)
-				nodeID, _ := cmd.Flags().GetString(cflags.FlagNodeID)
+				ip, _ := cmd.Flags().GetString(flagdefs.FlagIP)
+				p2pPort, _ := cmd.Flags().GetUint(flagdefs.FlagP2PPort)
+				nodeID, _ := cmd.Flags().GetString(flagdefs.FlagNodeID)
 				if p2pPort == 0 || p2pPort > 65535 {
-					return fmt.Errorf("--%s must be between 1 and 65535", cflags.FlagP2PPort)
+					return fmt.Errorf("--%s must be between 1 and 65535", flagdefs.FlagP2PPort)
 				}
 
 				if nodeID != "" && ip != "" && p2pPort > 0 {
@@ -223,9 +225,9 @@ where we can get the pubkey using "%s tendermint show-validator"
 		},
 	}
 
-	cmd.Flags().String(cflags.FlagIP, "", fmt.Sprintf("The node's public IP. It takes effect only when used in combination with --%s", cflags.FlagGenerateOnly))
-	cmd.Flags().Uint(cflags.FlagP2PPort, 26656, "The node's public P2P port")
-	cmd.Flags().String(cflags.FlagNodeID, "", "The node's ID")
+	cmd.Flags().String(flagdefs.FlagIP, "", fmt.Sprintf("The node's public IP. It takes effect only when used in combination with --%s", flagdefs.FlagGenerateOnly))
+	cmd.Flags().Uint(flagdefs.FlagP2PPort, 26656, "The node's public P2P port")
+	cmd.Flags().String(flagdefs.FlagNodeID, "", "The node's ID")
 	cflags.AddTxFlagsToCmd(cmd)
 
 	return cmd
@@ -245,16 +247,16 @@ func GetTxStakingEditValidatorCmd() *cobra.Command {
 			cl := MustClientFromContext(ctx)
 			cctx := cl.ClientContext()
 
-			moniker, _ := cmd.Flags().GetString(cflags.FlagEditMoniker)
-			identity, _ := cmd.Flags().GetString(cflags.FlagIdentity)
-			website, _ := cmd.Flags().GetString(cflags.FlagWebsite)
-			security, _ := cmd.Flags().GetString(cflags.FlagSecurityContact)
-			details, _ := cmd.Flags().GetString(cflags.FlagDetails)
+			moniker, _ := cmd.Flags().GetString(flagdefs.FlagEditMoniker)
+			identity, _ := cmd.Flags().GetString(flagdefs.FlagIdentity)
+			website, _ := cmd.Flags().GetString(flagdefs.FlagWebsite)
+			security, _ := cmd.Flags().GetString(flagdefs.FlagSecurityContact)
+			details, _ := cmd.Flags().GetString(flagdefs.FlagDetails)
 			description := stakingtypes.NewDescription(moniker, identity, website, security, details)
 
 			var newRate *sdkmath.LegacyDec
 
-			commissionRate, _ := cmd.Flags().GetString(cflags.FlagCommissionRate)
+			commissionRate, _ := cmd.Flags().GetString(flagdefs.FlagCommissionRate)
 			if commissionRate != "" {
 				rate, err := sdkmath.LegacyNewDecFromStr(commissionRate)
 				if err != nil {
@@ -266,7 +268,7 @@ func GetTxStakingEditValidatorCmd() *cobra.Command {
 
 			var newMinSelfDelegation *sdkmath.Int
 
-			minSelfDelegationString, _ := cmd.Flags().GetString(cflags.FlagMinSelfDelegation)
+			minSelfDelegationString, _ := cmd.Flags().GetString(flagdefs.FlagMinSelfDelegation)
 			if minSelfDelegationString != "" {
 				msb, ok := sdkmath.NewIntFromString(minSelfDelegationString)
 				if !ok {

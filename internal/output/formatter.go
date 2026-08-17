@@ -10,6 +10,8 @@ import (
 	"strings"
 	"text/tabwriter"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -25,7 +27,7 @@ const (
 
 // FormatFromCmd reads the --output flag value from a cobra command.
 func FormatFromCmd(cmd *cobra.Command) Format {
-	val, _ := cmd.Flags().GetString("output")
+	val, _ := cmd.Flags().GetString(flagdefs.FlagOutput)
 	switch Format(val) {
 	case FormatJSON:
 		return FormatJSON

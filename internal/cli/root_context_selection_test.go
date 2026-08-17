@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"github.com/spf13/cobra"
@@ -296,7 +298,7 @@ func TestRootResolvesFromFlagThenEnvironmentThenContext(t *testing.T) {
 				return nil
 			},
 		}
-		inspect.Flags().String(cflags.FlagFrom, "", "test signer")
+		inspect.Flags().String(flagdefs.FlagFrom, "", "test signer")
 		root.AddCommand(inspect)
 		root.SetOut(&bytes.Buffer{})
 		root.SetErr(&bytes.Buffer{})

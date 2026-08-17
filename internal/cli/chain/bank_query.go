@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 
 	"github.com/cosmos/cosmos-sdk/client"
@@ -58,7 +60,7 @@ Example:
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)
 
-			denom, err := cmd.Flags().GetString(cflags.FlagDenom)
+			denom, err := cmd.Flags().GetString(flagdefs.FlagDenom)
 			if err != nil {
 				return err
 			}
@@ -95,7 +97,7 @@ Example:
 		},
 	}
 
-	cmd.Flags().String(cflags.FlagDenom, "", "The specific balance denomination to query for")
+	cmd.Flags().String(flagdefs.FlagDenom, "", "The specific balance denomination to query for")
 	cflags.AddQueryFlagsToCmd(cmd)
 	cflags.AddPaginationFlagsToCmd(cmd, "all balances")
 
@@ -113,7 +115,7 @@ func GetQueryBankSpendableBalancesCmd() *cobra.Command {
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)
 
-			denom, err := cmd.Flags().GetString(cflags.FlagDenom)
+			denom, err := cmd.Flags().GetString(flagdefs.FlagDenom)
 			if err != nil {
 				return err
 			}
@@ -150,7 +152,7 @@ func GetQueryBankSpendableBalancesCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().String(cflags.FlagDenom, "", "The specific balance denomination to query for")
+	cmd.Flags().String(flagdefs.FlagDenom, "", "The specific balance denomination to query for")
 	cflags.AddQueryFlagsToCmd(cmd)
 	cflags.AddPaginationFlagsToCmd(cmd, "spendable balances")
 
@@ -181,7 +183,7 @@ To query for the client metadata of a specific coin denomination use:
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)
 
-			denom, err := cmd.Flags().GetString(cflags.FlagDenom)
+			denom, err := cmd.Flags().GetString(flagdefs.FlagDenom)
 			if err != nil {
 				return err
 			}
@@ -204,7 +206,7 @@ To query for the client metadata of a specific coin denomination use:
 		},
 	}
 
-	cmd.Flags().String(cflags.FlagDenom, "", "The specific denomination to query client metadata for")
+	cmd.Flags().String(flagdefs.FlagDenom, "", "The specific denomination to query client metadata for")
 	cflags.AddQueryFlagsToCmd(cmd)
 
 	return cmd
@@ -232,7 +234,7 @@ To query for the total supply of a specific coin denomination use:
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)
 
-			denom, err := cmd.Flags().GetString(cflags.FlagDenom)
+			denom, err := cmd.Flags().GetString(flagdefs.FlagDenom)
 			if err != nil {
 				return err
 			}
@@ -260,7 +262,7 @@ To query for the total supply of a specific coin denomination use:
 		},
 	}
 
-	cmd.Flags().String(cflags.FlagDenom, "", "The specific balance denomination to query for")
+	cmd.Flags().String(flagdefs.FlagDenom, "", "The specific balance denomination to query for")
 	cflags.AddQueryFlagsToCmd(cmd)
 	cflags.AddPaginationFlagsToCmd(cmd, "all supply totals")
 

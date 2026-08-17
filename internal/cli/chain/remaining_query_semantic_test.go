@@ -1,6 +1,8 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -329,16 +331,16 @@ func (query *remainingQueryAggregate) Evidence() evidencetypes.QueryClient { ret
 
 func remainingPageFlags(t *testing.T, cmd *cobra.Command) {
 	t.Helper()
-	require.NoError(t, cmd.Flags().Set("page", "2"))
-	require.NoError(t, cmd.Flags().Set("limit", "5"))
-	require.NoError(t, cmd.Flags().Set("count-total", "true"))
-	require.NoError(t, cmd.Flags().Set("reverse", "true"))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagPage, "2"))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagLimit, "5"))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagCountTotal, "true"))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagReverse, "true"))
 }
 
 func remainingConflictingPageFlags(t *testing.T, cmd *cobra.Command) {
 	t.Helper()
-	require.NoError(t, cmd.Flags().Set("page", "2"))
-	require.NoError(t, cmd.Flags().Set("offset", "1"))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagPage, "2"))
+	require.NoError(t, cmd.Flags().Set(flagdefs.FlagOffset, "1"))
 }
 
 func TestRemainingChainQueryRequestsPreserveInputs(t *testing.T) {
@@ -433,10 +435,10 @@ func TestRemainingChainQueryRequestsPreserveInputs(t *testing.T) {
 		{name: "bme status", command: GetBMEStatusCmd(), recorder: &remainingQueryRecorder{}, method: "bme-status", assertRequest: func(t *testing.T, request interface{}) { require.Equal(t, &bmetypes.QueryStatusRequest{}, request) }},
 		{name: "bme ledger", command: GetBMELedgerRecordsCmd(), recorder: &remainingQueryRecorder{}, configure: func(t *testing.T, cmd *cobra.Command) {
 			remainingPageFlags(t, cmd)
-			require.NoError(t, cmd.Flags().Set("owner", stateTestOwner))
-			require.NoError(t, cmd.Flags().Set("denom", "uakt"))
-			require.NoError(t, cmd.Flags().Set("to-denom", "uact"))
-			require.NoError(t, cmd.Flags().Set("status", "ledger_record_status_pending"))
+			require.NoError(t, cmd.Flags().Set(flagdefs.FlagOwner, stateTestOwner))
+			require.NoError(t, cmd.Flags().Set(flagdefs.FlagDenom, "uakt"))
+			require.NoError(t, cmd.Flags().Set(flagdefs.FlagToDenom, "uact"))
+			require.NoError(t, cmd.Flags().Set(flagdefs.FlagStatus, "ledger_record_status_pending"))
 		}, method: "bme-ledger", assertRequest: func(t *testing.T, value interface{}) {
 			request := value.(*bmetypes.QueryLedgerRecordsRequest)
 			require.Equal(t, bmetypes.LedgerRecordFilters{Source: stateTestOwner, Denom: "uakt", ToDenom: "uact", Status: "ledger_record_status_pending"}, request.Filters)
@@ -449,10 +451,10 @@ func TestRemainingChainQueryRequestsPreserveInputs(t *testing.T) {
 		}},
 		{name: "oracle prices", command: GetOraclePricesCmd(), recorder: &remainingQueryRecorder{}, configure: func(t *testing.T, cmd *cobra.Command) {
 			remainingPageFlags(t, cmd)
-			require.NoError(t, cmd.Flags().Set("asset-denom", "akt"))
-			require.NoError(t, cmd.Flags().Set("base-denom", "usd"))
-			require.NoError(t, cmd.Flags().Set("start-time", start))
-			require.NoError(t, cmd.Flags().Set("end-time", end))
+			require.NoError(t, cmd.Flags().Set(flagdefs.FlagAssetDenom, "akt"))
+			require.NoError(t, cmd.Flags().Set(flagdefs.FlagBaseDenom, "usd"))
+			require.NoError(t, cmd.Flags().Set(flagdefs.FlagStartTime, start))
+			require.NoError(t, cmd.Flags().Set(flagdefs.FlagEndTime, end))
 		}, method: "oracle-prices", assertRequest: func(t *testing.T, value interface{}) {
 			request := value.(*oracletypes.QueryPricesRequest)
 			require.Equal(t, oracletypes.PricesFilter{AssetDenom: "akt", BaseDenom: "usd", StartTime: startTime, EndTime: endTime}, request.Filters)
@@ -575,13 +577,17 @@ func TestRemainingChainQueriesRejectInvalidInputBeforeTransport(t *testing.T) {
 		{name: "feegrant grantee pagination", command: GetQueryFeeGrantsByGranteeCmd(), recorder: &remainingQueryRecorder{}, args: []string{stateTestOwner}, configure: remainingConflictingPageFlags},
 		{name: "feegrant granter command address", command: GetQueryFeeGrantsByGranterCmd(), recorder: &remainingQueryRecorder{}, args: []string{"bad"}},
 		{name: "feegrant granter pagination", command: GetQueryFeeGrantsByGranterCmd(), recorder: &remainingQueryRecorder{}, args: []string{stateTestOwner}, configure: remainingConflictingPageFlags},
-		{name: "bme owner", command: GetBMELedgerRecordsCmd(), recorder: &remainingQueryRecorder{}, configure: func(t *testing.T, cmd *cobra.Command) { require.NoError(t, cmd.Flags().Set("owner", "bad")) }},
+		{name: "bme owner", command: GetBMELedgerRecordsCmd(), recorder: &remainingQueryRecorder{}, configure: func(t *testing.T, cmd *cobra.Command) { require.NoError(t, cmd.Flags().Set(flagdefs.FlagOwner, "bad")) }},
 		{name: "bme pagination", command: GetBMELedgerRecordsCmd(), recorder: &remainingQueryRecorder{}, configure: remainingConflictingPageFlags},
-		{name: "oracle start time", command: GetOraclePricesCmd(), recorder: &remainingQueryRecorder{}, configure: func(t *testing.T, cmd *cobra.Command) { require.NoError(t, cmd.Flags().Set("start-time", "not-time")) }},
-		{name: "oracle end time", command: GetOraclePricesCmd(), recorder: &remainingQueryRecorder{}, configure: func(t *testing.T, cmd *cobra.Command) { require.NoError(t, cmd.Flags().Set("end-time", "not-time")) }},
+		{name: "oracle start time", command: GetOraclePricesCmd(), recorder: &remainingQueryRecorder{}, configure: func(t *testing.T, cmd *cobra.Command) {
+			require.NoError(t, cmd.Flags().Set(flagdefs.FlagStartTime, "not-time"))
+		}},
+		{name: "oracle end time", command: GetOraclePricesCmd(), recorder: &remainingQueryRecorder{}, configure: func(t *testing.T, cmd *cobra.Command) {
+			require.NoError(t, cmd.Flags().Set(flagdefs.FlagEndTime, "not-time"))
+		}},
 		{name: "oracle inverted range", command: GetOraclePricesCmd(), recorder: &remainingQueryRecorder{}, configure: func(t *testing.T, cmd *cobra.Command) {
-			require.NoError(t, cmd.Flags().Set("start-time", "2026-08-12T00:00:00Z"))
-			require.NoError(t, cmd.Flags().Set("end-time", "2026-08-11T00:00:00Z"))
+			require.NoError(t, cmd.Flags().Set(flagdefs.FlagStartTime, "2026-08-12T00:00:00Z"))
+			require.NoError(t, cmd.Flags().Set(flagdefs.FlagEndTime, "2026-08-11T00:00:00Z"))
 		}},
 		{name: "oracle pagination", command: GetOraclePricesCmd(), recorder: &remainingQueryRecorder{}, configure: remainingConflictingPageFlags},
 		{name: "slashing consensus pubkey", command: GetQuerySlashingSigningInfoCmd(), recorder: &remainingQueryRecorder{}, args: []string{"not-json"}},

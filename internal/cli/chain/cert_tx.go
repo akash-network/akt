@@ -8,6 +8,8 @@ import (
 	"math/big"
 	"time"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
@@ -20,14 +22,6 @@ import (
 	"pkg.akt.dev/akt/internal/output/pretty"
 	types "pkg.akt.dev/go/node/cert/v1"
 	utiltls "pkg.akt.dev/go/util/tls"
-)
-
-const (
-	// flagOverwrite = "overwrite"
-	flagSerial    = "serial"
-	flagValidTime = "valid-duration"
-	flagStart     = "start-time"
-	flagToGenesis = "to-genesis"
 )
 
 var (
@@ -92,7 +86,7 @@ type certGenerateOptions struct {
 }
 
 func certGenerateOptionsFromCmd(cmd *cobra.Command) (certGenerateOptions, error) {
-	startTimeStr, err := cmd.Flags().GetString(flagStart)
+	startTimeStr, err := cmd.Flags().GetString(flagdefs.FlagStartTime)
 	if err != nil {
 		return certGenerateOptions{}, err
 	}
@@ -100,15 +94,15 @@ func certGenerateOptionsFromCmd(cmd *cobra.Command) (certGenerateOptions, error)
 	if startTimeStr != "" {
 		startTime, err = time.Parse(time.RFC3339, startTimeStr)
 		if err != nil {
-			return certGenerateOptions{}, fmt.Errorf("invalid --%s: %w", flagStart, err)
+			return certGenerateOptions{}, fmt.Errorf("invalid --%s: %w", flagdefs.FlagStartTime, err)
 		}
 	}
 
-	validDuration, err := cmd.Flags().GetDuration(flagValidTime)
+	validDuration, err := cmd.Flags().GetDuration(flagdefs.FlagValidDuration)
 	if err != nil {
 		return certGenerateOptions{}, err
 	}
-	allowOverwrite, err := cmd.Flags().GetBool(cflags.FlagOverwrite)
+	allowOverwrite, err := cmd.Flags().GetBool(flagdefs.FlagOverwrite)
 	if err != nil {
 		return certGenerateOptions{}, err
 	}
@@ -265,15 +259,15 @@ func GetTxCertGenerateCmd() *cobra.Command {
 }
 
 func addTxCertGenerateFlags(cmd *cobra.Command) {
-	cmd.Flags().String(flagStart, "", "certificate is not valid before this date. default current timestamp. RFC3339")
-	cmd.Flags().Duration(flagValidTime, time.Hour*24*365, "certificate is not valid after this date. RFC3339")
-	cmd.Flags().Bool(cflags.FlagOverwrite, false, "overwrite existing certificate if present")
+	cmd.Flags().String(flagdefs.FlagStartTime, "", "certificate is not valid before this date. default current timestamp. RFC3339")
+	cmd.Flags().Duration(flagdefs.FlagValidDuration, time.Hour*24*365, "certificate is not valid after this date. RFC3339")
+	cmd.Flags().Bool(flagdefs.FlagOverwrite, false, "overwrite existing certificate if present")
 
 	cflags.AddTxFlagsToCmd(cmd) // TODO - add just the keyring flags? not all the TX ones
 }
 
 func certGeneratePersistentPreRunE(cmd *cobra.Command, args []string) error {
-	err := cmd.Flags().Set(cflags.FlagOffline, "true")
+	err := cmd.Flags().Set(flagdefs.FlagOffline, "true")
 	if err != nil {
 		return err
 	}
@@ -285,7 +279,7 @@ func certPublishPersistentPreRunE(cmd *cobra.Command, args []string) error {
 	toGenesis := certToGenesisFromCmd(cmd)
 
 	if toGenesis {
-		err := cmd.Flags().Set(cflags.FlagOffline, "true")
+		err := cmd.Flags().Set(flagdefs.FlagOffline, "true")
 		if err != nil {
 			return err
 		}
@@ -295,7 +289,7 @@ func certPublishPersistentPreRunE(cmd *cobra.Command, args []string) error {
 }
 
 func certToGenesisFromCmd(cmd *cobra.Command) bool {
-	toGenesis, _ := cmd.Flags().GetBool(flagToGenesis)
+	toGenesis, _ := cmd.Flags().GetBool(flagdefs.FlagToGenesis)
 	return toGenesis
 }
 
@@ -382,7 +376,7 @@ func GetTxCertPublishServerCmd() *cobra.Command {
 }
 
 func addTxCertPublishFlags(cmd *cobra.Command) {
-	cmd.Flags().Bool(flagToGenesis, false, "add to genesis")
+	cmd.Flags().Bool(flagdefs.FlagToGenesis, false, "add to genesis")
 
 	cflags.AddTxFlagsToCmd(cmd)
 }
@@ -482,11 +476,11 @@ func GetTxCertRevokeServerCmd() *cobra.Command {
 }
 
 func addRevokeCmdFlags(cmd *cobra.Command) {
-	cmd.Flags().String(flagSerial, "", "revoke certificate by serial number")
+	cmd.Flags().String(flagdefs.FlagSerial, "", "revoke certificate by serial number")
 	cflags.AddTxFlagsToCmd(cmd)
 }
 
 func certSerialFromCmd(cmd *cobra.Command) string {
-	serial, _ := cmd.Flags().GetString(flagSerial)
+	serial, _ := cmd.Flags().GetString(flagdefs.FlagSerial)
 	return serial
 }

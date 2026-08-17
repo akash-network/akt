@@ -15,6 +15,7 @@ import (
 	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	flagdefs "pkg.akt.dev/akt/internal/flags"
 	"pkg.akt.dev/akt/internal/output/pretty"
 	cutils "pkg.akt.dev/go/node/utils"
 )
@@ -113,9 +114,9 @@ $ %s query gov proposals --page=2 --limit=100
 
 			cl := MustLightClientFromContext(ctx)
 
-			bechDepositorAddr, _ := cmd.Flags().GetString(flagDepositor)
-			bechVoterAddr, _ := cmd.Flags().GetString(flagVoter)
-			strProposalStatus, _ := cmd.Flags().GetString(flagStatus)
+			bechDepositorAddr, _ := cmd.Flags().GetString(flagdefs.FlagDepositor)
+			bechVoterAddr, _ := cmd.Flags().GetString(flagdefs.FlagVoter)
+			strProposalStatus, _ := cmd.Flags().GetString(flagdefs.FlagStatus)
 
 			var proposalStatus v1.ProposalStatus
 
@@ -165,9 +166,9 @@ $ %s query gov proposals --page=2 --limit=100
 		},
 	}
 
-	cmd.Flags().String(flagDepositor, "", "(optional) filter by proposals deposited on by depositor")
-	cmd.Flags().String(flagVoter, "", "(optional) filter by proposals voted on by voted")
-	cmd.Flags().String(flagStatus, "", "(optional) filter proposals by proposal status, status: deposit_period/voting_period/passed/rejected")
+	cmd.Flags().String(flagdefs.FlagDepositor, "", "(optional) filter by proposals deposited on by depositor")
+	cmd.Flags().String(flagdefs.FlagVoter, "", "(optional) filter by proposals voted on by voted")
+	cmd.Flags().String(flagdefs.FlagStatus, "", "(optional) filter proposals by proposal status, status: deposit_period/voting_period/passed/rejected")
 	cflags.AddPaginationFlagsToCmd(cmd, "proposals")
 	cflags.AddQueryFlagsToCmd(cmd)
 
@@ -291,8 +292,8 @@ $ %[1]s query gov votes 1 --page=2 --limit=100
 
 			propStatus := proposalRes.GetProposal().Status
 			if (propStatus != v1.StatusVotingPeriod) && (propStatus != v1.StatusDepositPeriod) {
-				page, _ := cmd.Flags().GetInt(cflags.FlagPage)
-				limit, _ := cmd.Flags().GetInt(cflags.FlagLimit)
+				page, _ := cmd.Flags().GetInt(flagdefs.FlagPage)
+				limit, _ := cmd.Flags().GetInt(flagdefs.FlagLimit)
 
 				params := v1.NewQueryProposalVotesParams(proposalID, page, limit)
 				resByTxQuery, err := cutils.QueryVotesByTxQuery(ctx, cctx, params)

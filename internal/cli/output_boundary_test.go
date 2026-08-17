@@ -1,6 +1,8 @@
 package cli
 
 import (
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"bytes"
 	"encoding/json"
 	"errors"
@@ -35,7 +37,7 @@ func (commandOutputShortWriter) Write(p []byte) (int, error) {
 
 func TestVersionStructuredOutputUsesCommandWriter(t *testing.T) {
 	cmd := versionCmd(BuildInfo{Version: "1.2.3", Commit: "abc123", Date: "2026-08-11"})
-	cmd.Flags().VarP(output.NewFormatFlag("pretty"), "output", "o", "test output")
+	cmd.Flags().VarP(output.NewFormatFlag("pretty"), flagdefs.FlagOutput, "o", "test output")
 
 	var stdout bytes.Buffer
 	cmd.SetOut(&stdout)
@@ -55,7 +57,7 @@ func TestVersionStructuredOutputUsesCommandWriter(t *testing.T) {
 
 	sentinel := errors.New("version destination failed")
 	cmd = versionCmd(BuildInfo{Version: "1.2.3"})
-	cmd.Flags().VarP(output.NewFormatFlag("pretty"), "output", "o", "test output")
+	cmd.Flags().VarP(output.NewFormatFlag("pretty"), flagdefs.FlagOutput, "o", "test output")
 	cmd.SetOut(commandOutputErrorWriter{err: sentinel})
 	cmd.SetArgs([]string{"--output", "yaml"})
 	if err := cmd.Execute(); !errors.Is(err, sentinel) {
@@ -71,7 +73,7 @@ func TestVersionPrettyOutputRejectsShortWrites(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			cmd := versionCmd(BuildInfo{Version: "1.2.3", Commit: "abc123", Date: "2026-08-11"})
-			cmd.Flags().VarP(output.NewFormatFlag("pretty"), "output", "o", "test output")
+			cmd.Flags().VarP(output.NewFormatFlag("pretty"), flagdefs.FlagOutput, "o", "test output")
 			cmd.SetOut(commandOutputShortWriter{})
 			cmd.SetArgs(args)
 

@@ -13,6 +13,8 @@ import (
 	"strings"
 	"time"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
@@ -213,11 +215,11 @@ func exportCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 			defer func() { _ = s.Close() }()
 
 			format := sstore.FormatYAML
-			if o, _ := cmd.Flags().GetString("output"); o == "json" {
+			if o, _ := cmd.Flags().GetString(flagdefs.FlagOutput); o == "json" {
 				format = sstore.FormatJSON
 			}
 
-			file, _ := cmd.Flags().GetString("file")
+			file, _ := cmd.Flags().GetString(flagdefs.FlagFile)
 			if file != "" {
 				return exportFileAtomically(cmd.Context(), s, file, format, ctxNameFn())
 			}
@@ -226,7 +228,7 @@ func exportCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().String("file", "", "Output file (default: stdout)")
+	cmd.Flags().String(flagdefs.FlagFile, "", "Output file (default: stdout)")
 
 	return cmd
 }
@@ -273,12 +275,6 @@ func writeStoreExport(ctx context.Context, s *bbolt.BoltStore, destination synce
 }
 
 func importCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
-	var (
-		merge   bool
-		replace bool
-		dryRun  bool
-	)
-
 	cmd := &cobra.Command{
 		Use:   "import <file>",
 		Short: "Import records from a previously exported file",
@@ -292,6 +288,9 @@ func importCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
   # Dry run — show what would be imported
   akt store import backup.yaml --dry-run`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			merge, _ := cmd.Flags().GetBool(flagdefs.FlagMerge)
+			replace, _ := cmd.Flags().GetBool(flagdefs.FlagReplace)
+			dryRun, _ := cmd.Flags().GetBool(flagdefs.FlagDryRun)
 			if !merge && !replace {
 				return errors.New("replacing store contents requires the explicit --replace flag")
 			}
@@ -321,7 +320,7 @@ func importCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 				return nil
 			}
 			if replace {
-				yes, _ := cmd.Flags().GetBool("yes")
+				yes, _ := cmd.Flags().GetBool(flagdefs.FlagSkipConfirmation)
 				if !yes {
 					confirmed, err := confirmStoreReplacement(cmd, ctxNameFn())
 					if err != nil {
@@ -359,10 +358,10 @@ func importCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().BoolVar(&merge, "merge", true, "Merge with existing records (default)")
-	cmd.Flags().BoolVar(&replace, "replace", false, "Replace entire store contents")
-	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "Show what would be imported")
-	cmd.Flags().BoolP("yes", "y", false, "Skip replacement confirmation")
+	cmd.Flags().Bool(flagdefs.FlagMerge, true, "Merge with existing records (default)")
+	cmd.Flags().Bool(flagdefs.FlagReplace, false, "Replace entire store contents")
+	cmd.Flags().Bool(flagdefs.FlagDryRun, false, "Show what would be imported")
+	cmd.Flags().BoolP(flagdefs.FlagSkipConfirmation, "y", false, "Skip replacement confirmation")
 
 	return cmd
 }

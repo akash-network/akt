@@ -3,6 +3,8 @@ package cli
 import (
 	"errors"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
@@ -54,7 +56,7 @@ func GetTxMarketBidCreateCmd() *cobra.Command {
 			cl := MustClientFromContext(ctx)
 			cctx := cl.ClientContext()
 
-			price, err := cmd.Flags().GetString("price")
+			price, err := cmd.Flags().GetString(flagdefs.FlagPrice)
 			if err != nil {
 				return err
 			}
@@ -96,7 +98,7 @@ func GetTxMarketBidCreateCmd() *cobra.Command {
 	cflags.AddTxFlagsToCmd(cmd)
 	cflags.AddOrderIDFlags(cmd.Flags())
 
-	cmd.Flags().String("price", "", "Bid Price")
+	cmd.Flags().String(flagdefs.FlagPrice, "", "Bid Price")
 	cflags.AddDepositFlags(cmd.Flags())
 
 	return cmd
@@ -296,17 +298,17 @@ func GetTxMarketLeaseCloseCmd() *cobra.Command {
 // replacing this helper's body with the original registration:
 // cflags.AddLeaseIDFlags(cmd.Flags())
 func addLeaseOwnerTxFlags(cmd *cobra.Command) {
-	cmd.Flags().String(cflags.FlagOwner, "", "Deployment Owner")
-	cmd.Flags().Uint32(cflags.FlagGSeq, 1, "Group Sequence")
-	cmd.Flags().Uint32(cflags.FlagOSeq, 1, "Order Sequence")
+	cmd.Flags().String(flagdefs.FlagOwner, "", "Deployment Owner")
+	cmd.Flags().Uint32(flagdefs.FlagGSeq, 1, "Group Sequence")
+	cmd.Flags().Uint32(flagdefs.FlagOSeq, 1, "Order Sequence")
 	// FEEDBACK(2026-07): --dseq disabled for the positional-only UX trial
 	// (use the positional form instead). Restore by uncommenting if users
 	// ask for the flag form back.
-	// cmd.Flags().Uint64(cflags.FlagDSeq, 0, "Deployment Sequence")
+	// cmd.Flags().Uint64(flagdefs.FlagDSeq, 0, "Deployment Sequence")
 	// FEEDBACK(2026-07): --provider disabled for the positional-only UX trial
 	// (use the positional form instead). Restore by uncommenting if users
 	// ask for the flag form back.
-	// cmd.Flags().String(cflags.FlagProvider, "", "Provider")
+	// cmd.Flags().String(flagdefs.FlagProvider, "", "Provider")
 }
 
 // leaseIDFromFlagsAndArgs resolves a LeaseID from the optional positional
@@ -321,7 +323,7 @@ func leaseIDFromFlagsAndArgs(cmd *cobra.Command, args []string, owner sdk.AccAdd
 	// FEEDBACK(2026-07): --provider disabled for the positional-only UX
 	// trial (use the positional form instead). Restore by uncommenting if
 	// users ask for the flag form back.
-	// provider, err := cmd.Flags().GetString(cflags.FlagProvider)
+	// provider, err := cmd.Flags().GetString(flagdefs.FlagProvider)
 	// if err != nil {
 	// 	return mv1.LeaseID{}, err
 	// }

@@ -8,6 +8,8 @@ import (
 	"sync"
 	"testing"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	abci "github.com/cometbft/cometbft/abci/types"
 
 	"github.com/charmbracelet/x/exp/golden"
@@ -34,7 +36,7 @@ import (
 
 func TestPrintTxResultWritesEncodedTransactionBytesAsJSONObject(t *testing.T) {
 	cmd := &cobra.Command{}
-	cmd.Flags().String("output", "json", "")
+	cmd.Flags().String(flagdefs.FlagOutput, "json", "")
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 
@@ -54,7 +56,7 @@ func TestPrintTxResultWritesEncodedTransactionBytesAsJSONObject(t *testing.T) {
 
 func TestPrintTxResultsWritesOneJSONArray(t *testing.T) {
 	cmd := &cobra.Command{}
-	cmd.Flags().String("output", "json", "")
+	cmd.Flags().String(flagdefs.FlagOutput, "json", "")
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 
@@ -221,7 +223,7 @@ func TestTransactionOutputModesPropagateCommandWriterFailures(t *testing.T) {
 			for _, failure := range failures {
 				t.Run(failure.name, func(t *testing.T) {
 					cmd := &cobra.Command{}
-					cmd.Flags().String(cflags.FlagOutput, operation.format, "")
+					cmd.Flags().String(flagdefs.FlagOutput, operation.format, "")
 					cmd.SetOut(failure.w)
 
 					var wrongDestination bytes.Buffer
@@ -245,7 +247,7 @@ func TestPrintTxResultPrettyPropagatesWriterFailures(t *testing.T) {
 
 	t.Run("summary destination error", func(t *testing.T) {
 		cmd := &cobra.Command{}
-		cmd.Flags().String(cflags.FlagOutput, cflags.OutputPretty, "")
+		cmd.Flags().String(flagdefs.FlagOutput, cflags.OutputPretty, "")
 		cmd.SetOut(txResultErrorWriter{err: wantErr})
 
 		err := PrintTxResult(cmd, sdkclient.Context{}, &sdk.TxResponse{TxHash: testTxHash})
@@ -254,7 +256,7 @@ func TestPrintTxResultPrettyPropagatesWriterFailures(t *testing.T) {
 
 	t.Run("summary short write", func(t *testing.T) {
 		cmd := &cobra.Command{}
-		cmd.Flags().String(cflags.FlagOutput, cflags.OutputPretty, "")
+		cmd.Flags().String(flagdefs.FlagOutput, cflags.OutputPretty, "")
 		cmd.SetOut(txResultShortWriter{})
 
 		err := PrintTxResult(cmd, sdkclient.Context{}, &sdk.TxResponse{TxHash: testTxHash})
@@ -265,7 +267,7 @@ func TestPrintTxResultPrettyPropagatesWriterFailures(t *testing.T) {
 		cctx, response := txResponseWithMessages(t, &banktypes.MsgSend{})
 		writer := &txResultMatchingErrorWriter{match: "Send", err: wantErr}
 		cmd := &cobra.Command{}
-		cmd.Flags().String(cflags.FlagOutput, cflags.OutputPretty, "")
+		cmd.Flags().String(flagdefs.FlagOutput, cflags.OutputPretty, "")
 		cmd.SetOut(writer)
 
 		err := PrintTxResult(cmd, cctx, response)
@@ -277,7 +279,7 @@ func TestPrintTxResultPrettyPropagatesWriterFailures(t *testing.T) {
 		cctx, response := txResponseWithMessages(t, msg)
 		writer := &txResultMatchingErrorWriter{match: "fallback-writer-probe", err: wantErr}
 		cmd := &cobra.Command{}
-		cmd.Flags().String(cflags.FlagOutput, cflags.OutputPretty, "")
+		cmd.Flags().String(flagdefs.FlagOutput, cflags.OutputPretty, "")
 		cmd.SetOut(writer)
 
 		err := PrintTxResult(cmd, cctx, response)
@@ -324,7 +326,7 @@ func TestPrintTxResultPrettyPropagatesLateWriterFailures(t *testing.T) {
 				t.Run(failure.name, func(t *testing.T) {
 					cctx, response := txResponseWithMessages(t, operation.msgs...)
 					cmd := &cobra.Command{}
-					cmd.Flags().String(cflags.FlagOutput, cflags.OutputPretty, "")
+					cmd.Flags().String(flagdefs.FlagOutput, cflags.OutputPretty, "")
 					cmd.SetOut(&txResultMatchingErrorWriter{
 						match: operation.match,
 						err:   failure.err,
@@ -359,7 +361,7 @@ func TestPrintTxResultPrettyPropagatesNestedFormatterError(t *testing.T) {
 	cctx, response := txResponseWithMessages(t, &authz.MsgExec{Msgs: []*codectypes.Any{inner}})
 
 	cmd := &cobra.Command{}
-	cmd.Flags().String(cflags.FlagOutput, cflags.OutputPretty, "")
+	cmd.Flags().String(flagdefs.FlagOutput, cflags.OutputPretty, "")
 	cmd.SetOut(io.Discard)
 
 	require.ErrorIs(t, PrintTxResult(cmd, cctx, response), wantErr)
@@ -383,7 +385,7 @@ func TestPrintTxResultPrettyRendersRegisteredAndFallbackMessages(t *testing.T) {
 
 	var output bytes.Buffer
 	cmd := &cobra.Command{}
-	cmd.Flags().String(cflags.FlagOutput, cflags.OutputPretty, "")
+	cmd.Flags().String(flagdefs.FlagOutput, cflags.OutputPretty, "")
 	cmd.SetOut(&output)
 
 	require.NoError(t, PrintTxResult(cmd, cctx, response))
@@ -583,7 +585,7 @@ func TestPrintTxResultJSONHeightPresence(t *testing.T) {
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
 			cmd := &cobra.Command{}
-			cmd.Flags().String(cflags.FlagOutput, cflags.OutputJSON, "")
+			cmd.Flags().String(flagdefs.FlagOutput, cflags.OutputJSON, "")
 			var out bytes.Buffer
 			cmd.SetOut(&out)
 
@@ -612,7 +614,7 @@ func TestPrintTxResultJSONHeightPresence(t *testing.T) {
 
 func TestPrintTxResultYAMLOmitsUnconfirmedHeight(t *testing.T) {
 	cmd := &cobra.Command{}
-	cmd.Flags().String(cflags.FlagOutput, cflags.OutputYAML, "")
+	cmd.Flags().String(flagdefs.FlagOutput, cflags.OutputYAML, "")
 	var out bytes.Buffer
 	cmd.SetOut(&out)
 
@@ -632,10 +634,10 @@ func TestPrintTxResultRendersSimulation(t *testing.T) {
 
 	newCmd := func(format string) (*cobra.Command, *bytes.Buffer) {
 		cmd := &cobra.Command{}
-		cmd.Flags().String(cflags.FlagOutput, format, "")
-		cmd.Flags().Float64(cflags.FlagGasAdjustment, 1.5, "")
-		cmd.Flags().String(cflags.FlagFees, "", "")
-		cmd.Flags().String(cflags.FlagGasPrices, "0.0025uakt", "")
+		cmd.Flags().String(flagdefs.FlagOutput, format, "")
+		cmd.Flags().Float64(flagdefs.FlagGasAdjustment, 1.5, "")
+		cmd.Flags().String(flagdefs.FlagFees, "", "")
+		cmd.Flags().String(flagdefs.FlagGasPrices, "0.0025uakt", "")
 		out := &bytes.Buffer{}
 		cmd.SetOut(out)
 
@@ -678,9 +680,9 @@ func TestPrintTxResultRendersSimulation(t *testing.T) {
 
 func TestSimulationEstimatedFeePrefersExplicitFees(t *testing.T) {
 	cmd := &cobra.Command{}
-	cmd.Flags().Float64(cflags.FlagGasAdjustment, 1.5, "")
-	cmd.Flags().String(cflags.FlagFees, "7500uakt", "")
-	cmd.Flags().String(cflags.FlagGasPrices, "0.0025uakt", "")
+	cmd.Flags().Float64(flagdefs.FlagGasAdjustment, 1.5, "")
+	cmd.Flags().String(flagdefs.FlagFees, "7500uakt", "")
+	cmd.Flags().String(flagdefs.FlagGasPrices, "0.0025uakt", "")
 
 	result := NewSimulationResult(cmd, &txtypes.SimulateResponse{
 		GasInfo: &sdk.GasInfo{GasUsed: 118_432},

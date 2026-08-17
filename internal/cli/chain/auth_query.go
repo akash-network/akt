@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 
 	tmtypes "github.com/cometbft/cometbft/types"
@@ -293,7 +295,7 @@ $ %[2]s query txs 'message.sender=akash1...&message.action=withdraw_delegator_re
 			// trial; the positional expression is the only source (zero
 			// fallback). Restore by uncommenting if users ask for the flag
 			// form back.
-			// eventsRaw, _ := cmd.Flags().GetString(cflags.FlagEvents)
+			// eventsRaw, _ := cmd.Flags().GetString(flagdefs.FlagEvents)
 			eventsRaw := cflags.ExprFromArgs(args, "")
 			if eventsRaw == "" {
 				return fmt.Errorf("events are required: pass them positionally")
@@ -326,8 +328,8 @@ $ %[2]s query txs 'message.sender=akash1...&message.action=withdraw_delegator_re
 				tmEvents = append(tmEvents, event)
 			}
 
-			page, _ := cmd.Flags().GetInt(cflags.FlagPage)
-			limit, _ := cmd.Flags().GetInt(cflags.FlagLimit)
+			page, _ := cmd.Flags().GetInt(flagdefs.FlagPage)
+			limit, _ := cmd.Flags().GetInt(flagdefs.FlagLimit)
 
 			txs, err := nutils.QueryTxsByEvents(ctx, cctx, tmEvents, page, limit, "")
 			if err != nil {
@@ -339,12 +341,12 @@ $ %[2]s query txs 'message.sender=akash1...&message.action=withdraw_delegator_re
 	}
 
 	cflags.AddQueryFlagsToCmd(cmd)
-	cmd.Flags().Int(cflags.FlagPage, query.DefaultPage, "Query a specific page of paginated results")
-	cmd.Flags().Int(cflags.FlagLimit, query.DefaultLimit, "Query number of transactions results per page returned")
+	cmd.Flags().Int(flagdefs.FlagPage, query.DefaultPage, "Query a specific page of paginated results")
+	cmd.Flags().Int(flagdefs.FlagLimit, query.DefaultLimit, "Query number of transactions results per page returned")
 	// FEEDBACK(2026-07): --events disabled for the positional-only UX trial
 	// (use the positional form instead). Restore by uncommenting if users
 	// ask for the flag form back.
-	// cmd.Flags().String(cflags.FlagEvents, "", fmt.Sprintf("list of transaction events in the form of %s", eventFormat))
+	// cmd.Flags().String(flagdefs.FlagEvents, "", fmt.Sprintf("list of transaction events in the form of %s", eventFormat))
 
 	return cmd
 }
@@ -361,8 +363,8 @@ $ %s query tx --%s=%s <addr>/<sequence>
 $ %s query tx --%s=%s <sig1_base64>,<sig2_base64...>
 `,
 			version.AppName,
-			version.AppName, cflags.FlagType, typeAccSeq,
-			version.AppName, cflags.FlagType, typeSig)),
+			version.AppName, flagdefs.FlagType, typeAccSeq,
+			version.AppName, flagdefs.FlagType, typeSig)),
 		Args:              cobra.ExactArgs(1),
 		PersistentPreRunE: queryWithoutHeightPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -370,7 +372,7 @@ $ %s query tx --%s=%s <sig1_base64>,<sig2_base64...>
 			cl := MustLightClientFromContext(ctx)
 			cctx := cl.ClientContext()
 
-			typ, _ := cmd.Flags().GetString(cflags.FlagType)
+			typ, _ := cmd.Flags().GetString(flagdefs.FlagType)
 
 			switch typ {
 			case typeHash:
@@ -445,13 +447,13 @@ $ %s query tx --%s=%s <sig1_base64>,<sig2_base64...>
 					return pretty.PrintQueryResultAny(cmd, cl.ClientContext(), txs.Txs[0])
 				}
 			default:
-				return fmt.Errorf("unknown --%s value %s", cflags.FlagType, typ)
+				return fmt.Errorf("unknown --%s value %s", flagdefs.FlagType, typ)
 			}
 		},
 	}
 
 	cflags.AddQueryFlagsToCmd(cmd)
-	cmd.Flags().String(cflags.FlagType, typeHash, fmt.Sprintf("The type to be used when querying tx, can be one of \"%s\", \"%s\", \"%s\"", typeHash, typeAccSeq, typeSig))
+	cmd.Flags().String(flagdefs.FlagType, typeHash, fmt.Sprintf("The type to be used when querying tx, can be one of \"%s\", \"%s\", \"%s\"", typeHash, typeAccSeq, typeSig))
 
 	return cmd
 }

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	flagdefs "pkg.akt.dev/akt/internal/flags"
+
 	"github.com/spf13/cobra"
 
 	"cosmossdk.io/x/feegrant"
@@ -67,7 +69,7 @@ Examples:
 			}
 
 			granter := cctx.GetFromAddress()
-			sl, err := cmd.Flags().GetString(cflags.FlagSpendLimit)
+			sl, err := cmd.Flags().GetString(flagdefs.FlagSpendLimit)
 			if err != nil {
 				return err
 			}
@@ -78,7 +80,7 @@ Examples:
 				return err
 			}
 
-			exp, err := cmd.Flags().GetString(cflags.FlagExpiration)
+			exp, err := cmd.Flags().GetString(flagdefs.FlagExpiration)
 			if err != nil {
 				return err
 			}
@@ -99,12 +101,12 @@ Examples:
 			var grant feegrant.FeeAllowanceI
 			grant = &basic
 
-			periodClock, err := cmd.Flags().GetInt64(cflags.FlagPeriod)
+			periodClock, err := cmd.Flags().GetInt64(flagdefs.FlagPeriod)
 			if err != nil {
 				return err
 			}
 
-			periodLimitVal, err := cmd.Flags().GetString(cflags.FlagPeriodLimit)
+			periodLimitVal, err := cmd.Flags().GetString(flagdefs.FlagPeriodLimit)
 			if err != nil {
 				return err
 			}
@@ -140,7 +142,7 @@ Examples:
 				grant = &periodic
 			}
 
-			allowedMsgs, err := cmd.Flags().GetStringSlice(cflags.FlagAllowedMsgs)
+			allowedMsgs, err := cmd.Flags().GetStringSlice(flagdefs.FlagAllowedMsgs)
 			if err != nil {
 				return err
 			}
@@ -167,11 +169,11 @@ Examples:
 	}
 
 	cflags.AddTxFlagsToCmd(cmd)
-	cmd.Flags().StringSlice(cflags.FlagAllowedMsgs, []string{}, "Set of allowed messages for fee allowance")
-	cmd.Flags().String(cflags.FlagExpiration, "", "The RFC 3339 timestamp after which the grant expires for the user")
-	cmd.Flags().String(cflags.FlagSpendLimit, "", "Spend limit specifies the max limit can be used, if not mentioned there is no limit")
-	cmd.Flags().Int64(cflags.FlagPeriod, 0, "period specifies the time duration(in seconds) in which period_limit coins can be spent before that allowance is reset (ex: 3600)")
-	cmd.Flags().String(cflags.FlagPeriodLimit, "", "period limit specifies the maximum number of coins that can be spent in the period")
+	cmd.Flags().StringSlice(flagdefs.FlagAllowedMsgs, []string{}, "Set of allowed messages for fee allowance")
+	cmd.Flags().String(flagdefs.FlagExpiration, "", "The RFC 3339 timestamp after which the grant expires for the user")
+	cmd.Flags().String(flagdefs.FlagSpendLimit, "", "Spend limit specifies the max limit can be used, if not mentioned there is no limit")
+	cmd.Flags().Int64(flagdefs.FlagPeriod, 0, "period specifies the time duration(in seconds) in which period_limit coins can be spent before that allowance is reset (ex: 3600)")
+	cmd.Flags().String(flagdefs.FlagPeriodLimit, "", "period limit specifies the maximum number of coins that can be spent in the period")
 
 	return cmd
 }
