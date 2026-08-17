@@ -4,6 +4,19 @@
 
 ### Fixed
 
+- **Automatic transaction fees now honor the selected RPC node's live
+  CheckTx minimum**: Online gas-price-derived transactions query the node
+  configuration through the same RPC client used for simulation and broadcast,
+  then raise matching configured prices only when they fall below that live
+  floor. This fixes transactions whose gas limit was estimated correctly but
+  whose fee was rejected because a stale `0.0025uakt` price produced `517uakt`
+  while the selected node required `5169uakt` at `0.025uakt`. Higher user
+  prices remain unchanged, explicit fixed fees and offline construction retain
+  their existing behavior, and unavailable, malformed, or denomination-
+  incompatible node policy fails before signing instead of using a hardcoded
+  fallback. Dry-run fee output consumes the same reconciled price as the real
+  transaction factory.
+
 - **Console sandbox spend accounting now uses the owned deployment ledger**:
   the point-in-time account total has no lifecycle-run identity or observation
   height, so its pre/post change cannot prove one deployment's spend. The

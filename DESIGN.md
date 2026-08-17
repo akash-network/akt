@@ -345,6 +345,21 @@ such as `tcp://localhost:26657` must never replace a resolved endpoint. Local
 transaction leaves use the same pre-run boundary; a leaf that needs codecs or
 clients cannot reach its handler without that initialization.
 
+Transaction economics use that same endpoint boundary. Before an online
+transaction derives a fee from gas prices, akt queries the selected RPC node's
+`cosmos.base.node.v1beta1.Service/Config` service through ABCI and treats the
+reported minimum gas prices as the node's live CheckTx acceptance floor. A
+configured or invocation gas price may request a higher-priority transaction,
+but a lower matching price is raised to the node minimum before simulation,
+signing, or generated fee output. This query deliberately follows the RPC
+client used for broadcast even when a separate gRPC endpoint is configured, so
+the estimate cannot describe one operator's policy and then submit to another.
+Fixed fees remain explicit and authoritative, and offline construction keeps
+the configured price because no node policy is available. An online
+gas-price-derived transaction fails before signing when the selected node's
+minimum cannot be obtained or reconciled; akt never guesses a replacement
+price or parses a rejected broadcast to retry with a larger fee.
+
 Step 2 assigns one of three identity modes: none, on demand, or required.
 "Resolve the context" and "open the user's key store" are separate decisions
 because opening a backend can prompt, fail on a headless host, or request an OS

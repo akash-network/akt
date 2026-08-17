@@ -3106,9 +3106,32 @@ A missing transaction client is a normal CLI error, never a panic.
 When `--fees` is non-empty it is authoritative: both configured and explicit
 `--gas-prices` values are cleared before the transaction factory is built.
 Without fixed fees, the effective gas price follows the normal precedence
-chain (flag > environment > context network > built-in default). A simulation
-response with a non-zero SDK code is a failed transaction and exits non-zero;
-simulation remains non-mutating and is not written to the action log.
+chain (flag > environment > context network > built-in default), then an
+online transaction reconciles that value with the selected RPC node's live
+minimum gas prices. The preflight queries
+`cosmos.base.node.v1beta1.Service/Config` through ABCI on the same RPC client
+used for simulation and broadcast, even when a separate gRPC endpoint is
+configured. For every configured denomination present in the node minimum,
+the effective price is `max(configured, node minimum)`. Higher configured
+prices are preserved. When no gas price is configured, the node minimum is the
+effective value; when the non-empty configured and minimum sets have no common
+denomination, preflight fails with both sets named rather than attaching an
+unusable fee. An empty node minimum leaves the configured value unchanged.
+
+The live-minimum query applies whenever an online command will construct a
+transaction and derive its fee from gas prices, including simulation-only
+(`--dry-run`), generate-only, and message transactions with an explicit gas
+limit. A query failure or malformed minimum is a pre-signing error: akt does
+not continue with a hardcoded fallback and does not parse an insufficient-fee
+broadcast response to retry. Explicit fixed `--fees` skip the query and remain
+unchanged. `--offline` cannot query node policy and retains the configured gas
+prices in the constructed document. `akt tx broadcast` submits a prebuilt,
+already-signed payload whose fee cannot be changed and therefore skips fee
+derivation entirely.
+
+A simulation response with a non-zero SDK code is a failed transaction and
+exits non-zero; simulation remains non-mutating and is not written to the
+action log.
 The active fee string is parsed before it reaches the SDK transaction factory:
 fixed fees use the integer-coin grammar and gas prices use the decimal-coin
 grammar. Invalid input is a normal error naming `--fees` or `--gas-prices`,
@@ -6579,10 +6602,14 @@ The adjusted gas estimate is computed by the chain client but discarded on the s
 ```
 gas_estimate  = uint64(--gas-adjustment * GasInfo.GasUsed)
 estimated_fee = --fees, when set
-              = ceil(--gas-prices[i] * gas_estimate) per denom, otherwise
+              = ceil(effective_gas_prices[i] * gas_estimate) per denom,
+                otherwise
 ```
 
-This matches `tx.Factory.BuildUnsignedTx`, so the estimate the dry run reports is the fee the real broadcast would attach.
+For an online dry run, `effective_gas_prices` includes the selected RPC node's
+live minimum-price reconciliation from §3.2. This matches
+`tx.Factory.BuildUnsignedTx`, so the estimate the dry run reports is the fee
+the real broadcast would attach.
 
 **Pretty output** renders a single `Simulation` section:
 

@@ -17,6 +17,9 @@ func GetBroadcastCommand() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "broadcast [file_path]",
 		Short: "Broadcast transactions generated offline",
+		Annotations: map[string]string{
+			feePolicyAnnotationKey: feePolicyPrebuiltTx,
+		},
 		Long: strings.TrimSpace(`Broadcast transactions created with the --generate-only
 flag and signed with the sign command. Read a transaction from [file_path] and
 broadcast it to a node. If you supply a dash (-) argument in place of an input
