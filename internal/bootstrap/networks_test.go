@@ -72,7 +72,11 @@ const mainnetMeta = `{
   "pretty_name": "Akash",
   "network_type": "mainnet",
   "status": "live",
-  "fees": {"fee_tokens": [{"denom": "uakt", "average_gas_price": 0.0025}]},
+  "fees": {"fee_tokens": [{
+    "denom": "uakt",
+    "average_gas_price": 0.0025,
+    "high_gas_price": 0.025
+  }]},
   "apis": {
     "rpc":  [{"address": "https://rpc.example.com:443"}, {"address": ""}],
     "rest": [{"address": "https://api.example.com"}],
@@ -110,8 +114,8 @@ func TestMetaToNetworkMapsEndpointsAndGasPrice(t *testing.T) {
 	if len(n.Endpoints.GRPC) != 1 || n.Endpoints.GRPC[0] != "grpc.example.com:9090" {
 		t.Errorf("grpc endpoints = %v", n.Endpoints.GRPC)
 	}
-	if n.GasPrices != "0.0025uakt" {
-		t.Errorf("gas prices = %q, want 0.0025uakt", n.GasPrices)
+	if n.GasPrices != "0.025uakt" {
+		t.Errorf("gas prices = %q, want registry high price 0.025uakt", n.GasPrices)
 	}
 	if n.GasAdjustment != "1.5" {
 		t.Errorf("gas adjustment = %q, want 1.5", n.GasAdjustment)
@@ -139,8 +143,8 @@ func TestMetaToNetworkOmitsUnusableGasPrice(t *testing.T) {
 func metaWithFee(denom string, price float64) *metaJSON {
 	m := &metaJSON{ChainID: "x-1"}
 	m.Fees.FeeTokens = append(m.Fees.FeeTokens, struct {
-		Denom           string  `json:"denom"`
-		AverageGasPrice float64 `json:"average_gas_price"`
+		Denom        string  `json:"denom"`
+		HighGasPrice float64 `json:"high_gas_price"`
 	}{denom, price})
 
 	return m

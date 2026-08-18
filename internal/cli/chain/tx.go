@@ -36,11 +36,6 @@ func TxPersistentPreRunE(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	if commandDerivesFees(cmd) {
-		if err := reconcileGasPricesWithNode(ctx, cctx, cmd.Flags()); err != nil {
-			return err
-		}
-	}
 	// Persist the fully resolved context for SDK-owned handlers that call the
 	// Cosmos client package directly. Without this, their second flag read sees
 	// a nil RPC client and recreates it from the SDK localhost default.

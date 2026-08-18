@@ -4,18 +4,17 @@
 
 ### Fixed
 
-- **Automatic transaction fees now honor the selected RPC node's live
-  CheckTx minimum**: Online gas-price-derived transactions query the node
-  configuration through the same RPC client used for simulation and broadcast,
-  then raise matching configured prices only when they fall below that live
-  floor. This fixes transactions whose gas limit was estimated correctly but
-  whose fee was rejected because a stale `0.0025uakt` price produced `517uakt`
-  while the selected node required `5169uakt` at `0.025uakt`. Higher user
-  prices remain unchanged, explicit fixed fees and offline construction retain
-  their existing behavior, and unavailable, malformed, or denomination-
-  incompatible node policy fails before signing instead of using a hardcoded
-  fallback. Dry-run fee output consumes the same reconciled price as the real
-  transaction factory.
+- **Automatic transaction fees now use the selected network's configured
+  policy**: First-run bootstrap stores each Akash network registry entry's
+  `high_gas_price` instead of its inadequate average, and CLI initialization
+  treats that stored price as the floor for gas-price-derived transactions.
+  This fixes transactions whose gas limit was estimated correctly but whose
+  `0.0025uakt` price produced `517uakt` while validators required `5169uakt` at
+  `0.025uakt`. Higher invocation and environment prices remain unchanged,
+  explicit fixed fees remain authoritative, and dry-run, generate-only,
+  offline, and online construction all use the same deterministic policy. akt
+  no longer trusts an individual RPC node's local minimum or retries a rejected
+  broadcast with a guessed fee.
 
 - **Console sandbox spend accounting now uses the owned deployment ledger**:
   the point-in-time account total has no lifecycle-run identity or observation
