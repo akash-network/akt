@@ -732,7 +732,7 @@ func withConsoleDefaultOwnerResolver(ctx context.Context, rc *aktctx.Context) co
 			}
 		}
 
-		return "", errors.New("Console account has no managed wallet address")
+		return "", errors.New("console account has no managed wallet address")
 	})
 
 	return context.WithValue(ctx, chaincli.ContextTypeDefaultOwnerResolver, resolver)

@@ -136,7 +136,7 @@ func (s *Server) registerChainTools(
 	// the write rail, never the already-healthy public query rail.
 	cl, err := client.NewClient(ctx, cctx)
 	if err != nil {
-		return nil
+		return nil //nolint:nilerr // signer discovery is optional after query registration
 	}
 	s.registerWriteTools(ctx, cl, providerAuthType)
 

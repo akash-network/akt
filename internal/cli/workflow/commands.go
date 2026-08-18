@@ -119,7 +119,13 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 					return nil
 				}
 				parsed, parseErr := transport.ParseDeposit(depositFlag.Value.String())
-				if parseErr != nil || !parsed.Auto {
+				if parseErr != nil {
+					// RunE owns the user-facing deposit validation. PreRunE only
+					// decides whether an otherwise-valid auto value needs a query
+					// client before planning.
+					return nil //nolint:nilerr // the parsing error is returned by RunE
+				}
+				if !parsed.Auto {
 					return nil
 				}
 
@@ -569,7 +575,7 @@ func enrichDeployCompletion(
 	var fetch readinessFetcher
 	if rc.AuthMethod == aktctx.AuthMethodConsoleAPI {
 		if cc == nil {
-			return errors.New("Console readiness client is unavailable")
+			return errors.New("console readiness client is unavailable")
 		}
 		fetch = func(callCtx context.Context) (json.RawMessage, error) {
 			detail, getErr := cc.GetDeployment(callCtx, strconv.FormatUint(dseq, 10))
@@ -623,7 +629,7 @@ func mergeCompletionOutput(state *wf.RunState, completion map[string]any) {
 
 func consoleRuntimeStatus(detail *console.DeploymentDetail) (json.RawMessage, error) {
 	if detail == nil {
-		return nil, errors.New("Console deployment status is empty")
+		return nil, errors.New("console deployment status is empty")
 	}
 	services := make(map[string]json.RawMessage)
 	for _, lease := range detail.Leases {
@@ -824,7 +830,7 @@ func printPlan(out io.Writer, rtDef *wf.WorkflowDef, params map[string]any, rail
 		} else if step.Msg != "" {
 			fmt.Fprintf(&rendered, " -> %s", step.Msg)
 		}
-		if step.Action != "" && !(rail == transport.KindConsole && step.Type == wf.StepProvider) {
+		if step.Action != "" && (rail != transport.KindConsole || step.Type != wf.StepProvider) {
 			fmt.Fprintf(&rendered, " -> %s", step.Action)
 		}
 		if step.OnError != "" {
