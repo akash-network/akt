@@ -639,17 +639,16 @@ func TestConsoleLiveManagedWalletLifecycle(t *testing.T) {
 	assertConsoleActions(t, home, contextName, dseq, expectedActions...)
 
 	var closed struct {
-		DSeq          consoleFlexibleID `json:"dseq"`
-		State         string            `json:"state"`
-		AlreadyClosed *bool             `json:"already_closed"`
+		DSeq  consoleFlexibleID `json:"dseq"`
+		State string            `json:"state"`
 	}
 	requireConsoleJSON(t,
 		runConsoleAkt(lifecycleCtx, t, home, "console", "deployment", "close", dseq),
 		"akt console deployment close",
 		&closed,
 	)
-	if closed.DSeq.String() != dseq || closed.State != "closed" || closed.AlreadyClosed == nil || *closed.AlreadyClosed {
-		t.Fatalf("first close acknowledgement did not report dseq=%s state=closed already_closed=false", dseq)
+	if closed.DSeq.String() != dseq || closed.State != "closed" {
+		t.Fatalf("first close acknowledgement did not report dseq=%s state=closed", dseq)
 	}
 	expectedActions = append(expectedActions, "close-deployment")
 	assertConsoleActions(t, home, contextName, dseq, expectedActions...)
@@ -662,29 +661,28 @@ func TestConsoleLiveManagedWalletLifecycle(t *testing.T) {
 	cancelTerminal()
 	assertConsoleActions(t, home, contextName, dseq, expectedActions...)
 
-	// The public command promises idempotent close. Exercise the terminal
-	// transition again and require another successful mutation audit record.
-	var closedAgain struct {
-		DSeq          consoleFlexibleID `json:"dseq"`
-		State         string            `json:"state"`
-		AlreadyClosed *bool             `json:"already_closed"`
+	// A repeated close did not perform a mutation, so it must fail without a
+	// success document and must record the failed attempt truthfully.
+	repeatedClose := runConsoleAkt(lifecycleCtx, t, home, "console", "deployment", "close", dseq)
+	if repeatedClose.Exit == 0 || repeatedClose.Err == nil || repeatedClose.CredentialLeak {
+		t.Fatalf("repeated close did not fail closed without disclosure (%s)", consoleCommandDiagnostic(repeatedClose))
 	}
-	requireConsoleJSON(t,
-		runConsoleAkt(lifecycleCtx, t, home, "console", "deployment", "close", dseq),
-		"akt console deployment close (idempotent repeat)",
-		&closedAgain,
-	)
-	if closedAgain.DSeq.String() != dseq || closedAgain.State != "closed" || closedAgain.AlreadyClosed == nil {
-		t.Fatalf("repeated close acknowledgement did not report dseq=%s state=closed with an already_closed boolean", dseq)
+	if strings.TrimSpace(repeatedClose.Stdout) != "" || !strings.Contains(strings.ToLower(repeatedClose.Stderr), "already closed") {
+		t.Fatalf("repeated close output was not a clear error without a success document (%s)", consoleCommandDiagnostic(repeatedClose))
 	}
-	expectedActions = append(expectedActions, "close-deployment")
-	assertConsoleActions(t, home, contextName, dseq, expectedActions...)
+	closeEntries, err := readConsoleActions(home, contextName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(closeEntries) != len(expectedActions)+1 {
+		t.Fatalf("repeated close action log has %d entries, want %d", len(closeEntries), len(expectedActions)+1)
+	}
+	failedClose := closeEntries[0]
+	if failedClose.Type != "console" || failedClose.Action != "close-deployment" || failedClose.Status != "failed" || failedClose.DSeq != dseqNumber || !strings.Contains(strings.ToLower(failedClose.Error), "already closed") {
+		t.Fatalf("repeated close action = %s, want failed already-closed attempt", consoleActionSummary(failedClose))
+	}
+	actionBaselineCount := len(expectedActions) + 1
 
-	// Console intentionally returns the same success envelope when its backend
-	// observes an already-closed deployment and performs no transaction. The
-	// CLI therefore cannot infer prior state from a 200 response; the second
-	// successful command plus the action log and independent terminal-state
-	// observation below are the idempotency proof.
 	if err := waitForConsoleTerminalState(lifecycleCtx, observer, dseq); err != nil {
 		t.Fatalf("repeated close lost terminal state for dseq %s: %v", dseq, err)
 	}
@@ -732,7 +730,7 @@ func TestConsoleLiveManagedWalletLifecycle(t *testing.T) {
 	}
 	childSecret := childKey.APIKey
 	t.Cleanup(func() { assertConsoleSecretAbsent(t, home, contextName, childSecret) })
-	assertConsoleActionTail(t, home, contextName, len(expectedActions), "create-api-key")
+	assertConsoleActionTail(t, home, contextName, actionBaselineCount, "create-api-key")
 
 	keyObserveCtx, cancelKeyObserve := context.WithTimeout(lifecycleCtx, 15*time.Second)
 	var observedKeys []consoleAPIKeyObservation
@@ -790,7 +788,7 @@ func TestConsoleLiveManagedWalletLifecycle(t *testing.T) {
 	if deletedKey.ID != childKey.ID || !deletedKey.Deleted {
 		t.Fatalf("API-key delete acknowledgement = id %q deleted %t, want exact ID and true", deletedKey.ID, deletedKey.Deleted)
 	}
-	assertConsoleActionTail(t, home, contextName, len(expectedActions), "create-api-key", "delete-api-key")
+	assertConsoleActionTail(t, home, contextName, actionBaselineCount, "create-api-key", "delete-api-key")
 
 	keyDeleteCtx, cancelKeyDelete := context.WithTimeout(lifecycleCtx, 15*time.Second)
 	err = waitForConsoleCondition(keyDeleteCtx, time.Second, func() (bool, string, error) {
@@ -815,19 +813,24 @@ func TestConsoleLiveManagedWalletLifecycle(t *testing.T) {
 		t.Fatal("akt console apikey list did not return to the independent baseline")
 	}
 
-	var deletedAgain struct {
-		ID      string `json:"id"`
-		Deleted bool   `json:"deleted"`
+	repeatedDelete := runConsoleAkt(lifecycleCtx, t, home, "console", "apikey", "delete", childKey.ID)
+	if repeatedDelete.Exit == 0 || repeatedDelete.Err == nil || repeatedDelete.CredentialLeak {
+		t.Fatalf("repeated API-key delete did not fail closed without disclosure (%s)", consoleCommandDiagnostic(repeatedDelete))
 	}
-	requireConsoleJSON(t,
-		runConsoleAkt(lifecycleCtx, t, home, "console", "apikey", "delete", childKey.ID),
-		"akt console apikey delete (idempotent repeat)",
-		&deletedAgain,
-	)
-	if deletedAgain.ID != childKey.ID || !deletedAgain.Deleted {
-		t.Fatalf("repeated API-key delete acknowledgement = id %q deleted %t, want exact ID and true", deletedAgain.ID, deletedAgain.Deleted)
+	if strings.TrimSpace(repeatedDelete.Stdout) != "" || !strings.Contains(strings.ToLower(repeatedDelete.Stderr), "not found") {
+		t.Fatalf("repeated API-key delete output was not a clear error without a success document (%s)", consoleCommandDiagnostic(repeatedDelete))
 	}
-	assertConsoleActionTail(t, home, contextName, len(expectedActions), "create-api-key", "delete-api-key", "delete-api-key")
+	keyEntries, err := readConsoleActions(home, contextName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(keyEntries) != actionBaselineCount+3 {
+		t.Fatalf("repeated API-key delete action log has %d entries, want %d", len(keyEntries), actionBaselineCount+3)
+	}
+	failedDelete := keyEntries[0]
+	if failedDelete.Type != "console" || failedDelete.Action != "delete-api-key" || failedDelete.Status != "failed" || failedDelete.DSeq != 0 || !strings.Contains(strings.ToLower(failedDelete.Error), "not found") {
+		t.Fatalf("repeated API-key delete action = %s, want failed not-found attempt", consoleActionSummary(failedDelete))
+	}
 
 	if username, err := childObserver.username(lifecycleCtx); err == nil || username != "" {
 		t.Fatalf("revoked child API key remained usable through the independent observer: username_present=%t error=%v", username != "", err)

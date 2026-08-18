@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -366,14 +367,11 @@ func TestConsoleCloseDeploymentAlreadyClosed(t *testing.T) {
 	})
 
 	res, err := c.BroadcastTx(context.Background(), msgCloseDeployment, map[string]string{"dseq": "999"})
-	if err != nil {
-		t.Fatalf("already-closed must be treated as success, got: %v", err)
+	if !errors.Is(err, console.ErrAlreadyClosed) {
+		t.Fatalf("already-closed error = %v, want ErrAlreadyClosed", err)
 	}
-
-	var data map[string]string
-	_ = json.Unmarshal(res.Data, &data)
-	if data["dseq"] != "999" {
-		t.Errorf("data dseq = %q, want \"999\"", data["dseq"])
+	if res != nil {
+		t.Fatalf("already-closed result = %+v, want no completed transaction", res)
 	}
 }
 

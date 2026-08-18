@@ -111,7 +111,7 @@ func apikeyCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 func apikeyDeleteCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	return &cobra.Command{
 		Use:     "delete <id>",
-		Short:   "Delete an API key by ID (already-absent is a no-op)",
+		Short:   "Delete an API key by ID",
 		Args:    cobra.ExactArgs(1),
 		Example: `  akt console apikey delete 0b8052e2-...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -120,7 +120,6 @@ func apikeyDeleteCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			// DeleteAPIKey treats 404 as a no-op.
 			if err := cl.DeleteAPIKey(cmd.Context(), args[0]); err != nil {
 				return fmt.Errorf("delete API key %s: %w", args[0], err)
 			}

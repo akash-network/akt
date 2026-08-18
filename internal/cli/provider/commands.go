@@ -71,7 +71,7 @@ func Commands() *cobra.Command {
 }
 
 func statusCmd() *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:   "status [provider-addr]",
 		Short: "Query provider status",
 		Long:  "Query the live status of a provider including cluster capacity, active leases, and bid engine status.",
@@ -83,6 +83,10 @@ func statusCmd() *cobra.Command {
   akt provider status --provider akash1...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
+			timeout, _ := cmd.Flags().GetDuration(flagdefs.FlagTimeout)
+			if timeout <= 0 {
+				return fmt.Errorf("--timeout must be greater than zero")
+			}
 			if cmd.Flags().Changed(flagdefs.FlagAuthType) {
 				return fmt.Errorf("--auth-type does not apply to public provider status")
 			}
@@ -92,7 +96,12 @@ func statusCmd() *cobra.Command {
 				return err
 			}
 
-			cl, err := aktprovider.NewPublicGatewayClient(ctx, providerAddr, providerURL)
+			cl, err := aktprovider.NewPublicGatewayClient(
+				ctx,
+				providerAddr,
+				providerURL,
+				aktprovider.WithOneShotTimeout(timeout),
+			)
 			if err != nil {
 				return err
 			}
@@ -105,6 +114,10 @@ func statusCmd() *cobra.Command {
 			return printJSON(cmd, status)
 		},
 	}
+
+	cmd.Flags().Duration(flagdefs.FlagTimeout, 30*time.Second, "Maximum time to wait for the provider status response")
+
+	return cmd
 }
 
 func leaseStatusCmd() *cobra.Command {

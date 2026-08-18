@@ -54,7 +54,7 @@ func TestConsoleRequestBoundariesRejectInvalidValuesBeforeHTTP(t *testing.T) {
 			return err
 		}, want: "invalid dseq"},
 		{name: "create deposit", call: func() error {
-			_, err := client.CreateDeployment(context.Background(), validUpdateSDL, 0.499999)
+			_, err := client.CreateDeployment(context.Background(), validUpdateSDL, 0.49)
 			return err
 		}, want: "at least $0.50"},
 		{name: "escrow deposit", call: func() error {

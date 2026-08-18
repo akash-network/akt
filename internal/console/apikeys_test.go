@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -95,26 +96,74 @@ func TestCreateAPIKeyRejectsIncompleteOneTimeSecret(t *testing.T) {
 
 func TestDeleteAPIKey(t *testing.T) {
 	id := "11111111-1111-4111-8111-111111111111"
+	var lists atomic.Int32
+	var deletes atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodDelete, r.Method)
-		assert.Equal(t, "/v1/api-keys/"+id, r.URL.Path)
-
-		w.WriteHeader(http.StatusNoContent)
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/api-keys":
+			lists.Add(1)
+			_, _ = w.Write([]byte(`{"data":[{"id":"` + id + `","name":"ci"}]}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/api-keys/"+id:
+			deletes.Add(1)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+		}
 	}))
 	defer srv.Close()
 
 	c := console.New(srv.URL, "test-key")
 	require.NoError(t, c.DeleteAPIKey(context.Background(), id))
+	assert.Equal(t, int32(1), lists.Load())
+	assert.Equal(t, int32(1), deletes.Load())
 }
 
-func TestDeleteAPIKeyNotFoundIsNoop(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
+func TestDeleteAPIKeyNotFoundIsError(t *testing.T) {
+	var deletes atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"data":[]}`))
+		case http.MethodDelete:
+			deletes.Add(1)
+			w.WriteHeader(http.StatusNoContent)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
 	}))
 	defer srv.Close()
 
 	c := console.New(srv.URL, "test-key")
-	assert.NoError(t, c.DeleteAPIKey(context.Background(), "22222222-2222-4222-8222-222222222222"), "404 on delete is a no-op")
+	err := c.DeleteAPIKey(context.Background(), "22222222-2222-4222-8222-222222222222")
+	assert.ErrorIs(t, err, console.ErrNotFound)
+	assert.Zero(t, deletes.Load(), "an absent key must not reach the idempotent DELETE endpoint")
+}
+
+func TestDeleteAPIKeyPreservesDeleteNotFound(t *testing.T) {
+	id := "22222222-2222-4222-8222-222222222222"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"data":[{"id":"` + id + `","name":"ci"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	err := console.New(srv.URL, "test-key").DeleteAPIKey(context.Background(), id)
+	assert.ErrorIs(t, err, console.ErrNotFound)
+}
+
+func TestDeleteAPIKeyPreflightFailureIsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	defer srv.Close()
+
+	err := console.New(srv.URL, "test-key").DeleteAPIKey(
+		context.Background(), "22222222-2222-4222-8222-222222222222")
+	require.ErrorContains(t, err, "preflight API key deletion")
 }
 
 func TestCreateJWTToken(t *testing.T) {

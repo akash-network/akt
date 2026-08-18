@@ -4,7 +4,9 @@ import (
 	flagdefs "pkg.akt.dev/akt/internal/flags"
 
 	"bytes"
+	"context"
 	"encoding/json"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
@@ -12,10 +14,29 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/spf13/viper"
 
+	"pkg.akt.dev/akt/internal/actionlog"
 	aktclient "pkg.akt.dev/akt/internal/client"
+	"pkg.akt.dev/akt/internal/cliutil"
 	aktctx "pkg.akt.dev/akt/internal/context"
 	"pkg.akt.dev/akt/internal/output"
 )
+
+func TestRootPostRunReportsActionLogCloseFailure(t *testing.T) {
+	logger, err := actionlog.Open(filepath.Join(t.TempDir(), "actions.log"))
+	if err != nil {
+		t.Fatalf("open action log: %v", err)
+	}
+	if err := logger.Close(); err != nil {
+		t.Fatalf("close action log: %v", err)
+	}
+
+	root := NewRootCmd(BuildInfo{})
+	root.SetContext(cliutil.WithActionLog(context.Background(), logger))
+	err = root.PersistentPostRunE(root, nil)
+	if err == nil || !strings.Contains(err.Error(), "file already closed") {
+		t.Fatalf("root post-run error = %v, want action-log close failure", err)
+	}
+}
 
 func TestRootConfigurationBoundaries(t *testing.T) {
 	root := &cobra.Command{Use: "akt"}

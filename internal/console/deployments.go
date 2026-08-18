@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -436,10 +437,10 @@ func isTransientManifestVersionError(err error) bool {
 		strings.Contains(strings.ToLower(httpErr.Body), "manifest version validation failed")
 }
 
-// CloseDeployment closes a deployment. If the deployment is already closed
-// (the API answers 404, or 400 with an already-closed message) it returns
-// ErrAlreadyClosed, which callers may treat as success for idempotent
-// behavior. Any other 400 is a genuine failure and is returned as-is.
+// CloseDeployment closes an active deployment. It first reads the deployment
+// so an absent or already-closed target is reported as ErrAlreadyClosed and no
+// DELETE is sent. The command therefore never reports a mutation it did not
+// perform.
 //
 // Wire: DELETE /v1/deployments/{dseq}.
 func (c *Client) CloseDeployment(ctx context.Context, dseq string) error {
@@ -447,11 +448,26 @@ func (c *Client) CloseDeployment(ctx context.Context, dseq string) error {
 		c.record("close-deployment", dseq, err)
 		return err
 	}
+	detail, err := c.GetDeployment(ctx, dseq)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			err = fmt.Errorf("%w (dseq %s)", ErrAlreadyClosed, dseq)
+		} else {
+			err = fmt.Errorf("preflight close deployment: %w", err)
+		}
+		c.record("close-deployment", dseq, err)
+		return err
+	}
+	if strings.EqualFold(strings.TrimSpace(detail.Deployment.State), "closed") {
+		err = fmt.Errorf("%w (dseq %s)", ErrAlreadyClosed, dseq)
+		c.record("close-deployment", dseq, err)
+		return err
+	}
 
 	var out struct {
 		Success *bool `json:"success"`
 	}
-	err := c.doData(ctx, http.MethodDelete, "/v1/deployments/"+url.PathEscape(dseq), nil, &out)
+	err = c.doData(ctx, http.MethodDelete, "/v1/deployments/"+url.PathEscape(dseq), nil, &out)
 	if err == nil && (out.Success == nil || !*out.Success) {
 		err = errors.New("console: close deployment response did not acknowledge success: true")
 	}
@@ -462,9 +478,9 @@ func (c *Client) CloseDeployment(ctx context.Context, dseq string) error {
 		return nil
 
 	case isAlreadyClosed(err):
-		// Desired end state reached; log as success but surface the sentinel.
-		c.record("close-deployment", dseq, nil)
-		return fmt.Errorf("%w (dseq %s)", ErrAlreadyClosed, dseq)
+		err = fmt.Errorf("%w (dseq %s)", ErrAlreadyClosed, dseq)
+		c.record("close-deployment", dseq, err)
+		return err
 
 	default:
 		c.record("close-deployment", dseq, err)
@@ -591,11 +607,19 @@ func consoleDepositMicros(amountUSD float64) (*big.Int, error) {
 }
 
 func validateDepositUSD(amountUSD float64) error {
+	if math.IsNaN(amountUSD) || math.IsInf(amountUSD, 0) {
+		return fmt.Errorf("console: deployment deposit must be a finite USD amount")
+	}
+	if amountUSD < 0 {
+		return fmt.Errorf("console: deployment deposit must not be negative")
+	}
+
+	text := strconv.FormatFloat(amountUSD, 'f', -1, 64)
+	if _, fraction, ok := strings.Cut(text, "."); ok && len(fraction) > 2 {
+		return fmt.Errorf("console: deployment deposit must have at most two fractional digits")
+	}
 	if amountUSD < MinDepositUSD {
 		return fmt.Errorf("console: deployment deposit must be at least $%.2f, got %v", MinDepositUSD, amountUSD)
-	}
-	if _, err := consoleDepositMicros(amountUSD); err != nil {
-		return fmt.Errorf("console: invalid deployment deposit: %w", err)
 	}
 
 	return nil

@@ -714,37 +714,40 @@ func TestAPIKeyCreateShowsSecretOnceWithWarning(t *testing.T) {
 	}
 }
 
-// TestAPIKeyDeleteIsIdempotent covers the delete no-op: the client maps 404 to
-// success, so re-running a delete script must not fail.
-func TestAPIKeyDeleteIsIdempotent(t *testing.T) {
+func TestAPIKeyDeleteMissingResourceDoesNotReportSuccess(t *testing.T) {
 	m := newAuthedManager(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete {
-			t.Errorf("unexpected method %s", r.Method)
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/api-keys" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		w.WriteHeader(http.StatusNotFound)
+		writeJSON(t, w, `{"data":[]}`)
 	}))
 	defer srv.Close()
 
 	const id = "11111111-1111-1111-1111-111111111111"
 	out, err := execConsole(t, m, srv.URL, "--output", "pretty", "apikey", "delete", id)
-	if err != nil {
-		t.Fatalf("deleting an absent key must be a no-op, got %v", err)
+	if !errors.Is(err, console.ErrNotFound) {
+		t.Fatalf("deleting an absent key error = %v, want ErrNotFound", err)
 	}
-	if !strings.Contains(out, id+" deleted") {
-		t.Errorf("unexpected output %q", out)
+	if strings.Contains(out, "deleted") {
+		t.Errorf("absent API key emitted false success output %q", out)
 	}
 }
 
-func TestAPIKeyDeleteStructuredAcknowledgement(t *testing.T) {
+func TestAPIKeyDeleteStructuredAcknowledgementRequiresDeletion(t *testing.T) {
 	m := newAuthedManager(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete || r.URL.Path != "/v1/api-keys/11111111-1111-1111-1111-111111111111" {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/api-keys":
+			writeJSON(t, w, `{"data":[{"id":"11111111-1111-1111-1111-111111111111","name":"ci"}]}`)
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/api-keys/11111111-1111-1111-1111-111111111111":
+			w.WriteHeader(http.StatusNoContent)
+		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
 		}
-		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
 
@@ -753,7 +756,7 @@ func TestAPIKeyDeleteStructuredAcknowledgement(t *testing.T) {
 			const id = "11111111-1111-1111-1111-111111111111"
 			out, err := execConsole(t, m, srv.URL, "--output", format, "apikey", "delete", id)
 			if err != nil {
-				t.Fatalf("delete absent API key: %v", err)
+				t.Fatalf("delete API key: %v", err)
 			}
 			got := decodeStructuredOutput(t, format, out)
 			want := map[string]any{"id": id, "deleted": true}

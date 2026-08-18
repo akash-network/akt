@@ -414,7 +414,7 @@ func TestGatewayStreamRetainsCallerCancellation(t *testing.T) {
 	if err != nil {
 		t.Fatalf("wrap gateway client: %v", err)
 	}
-	bounded := wrapped.(*gatewayClient)
+	bounded := wrapped
 	bounded.oneShotTimeout = 10 * time.Millisecond
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -843,7 +843,7 @@ func TestGatewayBoundaryStreamCancellationAndDecodeFailures(t *testing.T) {
 		defer server.Close()
 
 		wrapped := gatewayBoundaryClientForWebsocketServer(t, server.URL)
-		client := wrapped.(*gatewayClient)
+		client := wrapped
 		source := client.Client.(gatewayStreamRequestSource)
 		ctx, cancel := context.WithCancel(context.Background())
 		stream, onClose, err := openGatewayStream[rest.ServiceLogMessage](
@@ -1126,7 +1126,7 @@ func newClosedWebsocketConn(t *testing.T) *websocket.Conn {
 	return conn
 }
 
-func gatewayBoundaryClientForWebsocketServer(t *testing.T, rawURL string) rest.Client {
+func gatewayBoundaryClientForWebsocketServer(t *testing.T, rawURL string) *gatewayClient {
 	t.Helper()
 	serverURL, err := url.Parse(rawURL)
 	if err != nil {
@@ -1557,7 +1557,7 @@ func gatewayClientForRequest(t *testing.T, do gatewayRequestClientFunc) *gateway
 	if err != nil {
 		t.Fatalf("wrap request client: %v", err)
 	}
-	return wrapped.(*gatewayClient)
+	return wrapped
 }
 
 func sdkClientContextForBoundary(kr sdkkeyring.Keyring, owner sdk.AccAddress) sdkclient.Context {

@@ -309,7 +309,7 @@ func deploymentUpdateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 func deploymentCloseCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	return &cobra.Command{
 		Use:     "close <dseq>",
-		Short:   "Close a deployment (idempotent: already-closed is a no-op)",
+		Short:   "Close an active deployment",
 		Args:    cobra.ExactArgs(1),
 		Example: `  akt console deployment close 12345`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -319,15 +319,12 @@ func deploymentCloseCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			}
 
 			err = cl.CloseDeployment(cmd.Context(), args[0])
-			alreadyClosed := false
-			pretty := fmt.Sprintf("Deployment %s closed.", args[0])
-			switch {
-			case err == nil:
-			case errors.Is(err, console.ErrAlreadyClosed):
-				alreadyClosed = true
-				pretty = fmt.Sprintf("Deployment %s already closed.", args[0])
-
-			default:
+			if err != nil {
+				if errors.Is(err, console.ErrAlreadyClosed) {
+					if convergeErr := convergeClosedDeployment(cmd, rc, args[0]); convergeErr != nil && !cliutil.IsQuiet(cmd) {
+						fmt.Fprintf(cmd.ErrOrStderr(), "warning: the local store was not updated: %v\n", convergeErr)
+					}
+				}
 				return fmt.Errorf("close deployment %s: %w", args[0], err)
 			}
 
@@ -335,11 +332,10 @@ func deploymentCloseCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				fmt.Fprintf(cmd.ErrOrStderr(), "warning: the local store was not updated: %v\n", err)
 			}
 
-			return printConsoleResult(cmd, pretty, struct {
-				DSeq          string `json:"dseq"`
-				State         string `json:"state"`
-				AlreadyClosed bool   `json:"already_closed"`
-			}{args[0], "closed", alreadyClosed})
+			return printConsoleResult(cmd, fmt.Sprintf("Deployment %s closed.", args[0]), struct {
+				DSeq  string `json:"dseq"`
+				State string `json:"state"`
+			}{args[0], "closed"})
 		},
 	}
 }

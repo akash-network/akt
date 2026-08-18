@@ -381,9 +381,11 @@ the deployment is created.`,
 		PersistentPostRunE: func(cmd *cobra.Command, _ []string) error {
 			// Close the action logger opened in PersistentPreRunE (SPEC §5.6).
 			if l := cliutil.ActionLogFromContext(cmd.Context()); l != nil {
-				return l.Close()
+				if err := l.Close(); err != nil {
+					return err
+				}
 			}
-			return nil
+			return cliconsole.PrintNextStep(cmd)
 		},
 		SilenceUsage:  true,
 		SilenceErrors: true,

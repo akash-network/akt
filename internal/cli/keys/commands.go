@@ -157,7 +157,10 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *c
   akt context keys add alice --recover
 
   # Add a Ledger key
-  akt context keys add alice --ledger`,
+  akt context keys add alice --ledger
+
+  # Scripted creation without printing the mnemonic
+  akt context keys add ci --yes --no-backup`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := strings.TrimSpace(args[0])
 			if name == "" {
@@ -303,6 +306,7 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *c
 
 	cmd.Flags().Bool(flagdefs.FlagRecover, false, "Recover key from existing mnemonic")
 	cmd.Flags().Bool(flagdefs.FlagNoBackup, false, "Don't print mnemonic after creation")
+	cmd.Flags().BoolP(flagdefs.FlagSkipConfirmation, "y", false, "Skip confirmation prompts (accepted for Cosmos CLI compatibility; key add never overwrites)")
 	cmd.Flags().BoolP(flagdefs.FlagInteractive, "i", false, "Interactive BIP39 passphrase prompt")
 	cmd.Flags().Bool(flagdefs.FlagUseLedger, false, "Use Ledger hardware wallet")
 	cmd.Flags().Uint32(flagdefs.FlagCoinType, 118, "BIP44 coin type")

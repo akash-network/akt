@@ -494,6 +494,13 @@ func TestConsoleDryRunResolvesAndValidatesDeposit(t *testing.T) {
 			t.Errorf("deposit %q error = %v, want Console minimum guidance", deposit, err)
 		}
 	}
+
+	for _, deposit := range []string{"0.005", "1e0"} {
+		_, err := executeCommand(t, newCommand(), sdl, "--deposit", deposit, "--dry-run")
+		if err == nil {
+			t.Errorf("deposit %q unexpectedly passed Console dry-run validation", deposit)
+		}
+	}
 }
 
 // TestExecuteKeyringContextWithoutChainClient verifies the clear
@@ -706,7 +713,7 @@ func TestWorkflowCommandFailsWhenFinalReportWriteFails(t *testing.T) {
 			responseStatus: http.StatusInternalServerError,
 			wantReport:     "write workflow JSONL report",
 			wantRunFailure: true,
-			wantRequests:   3,
+			wantRequests:   4,
 		},
 	}
 
@@ -719,6 +726,10 @@ func TestWorkflowCommandFailsWhenFinalReportWriteFails(t *testing.T) {
 			requests := 0
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				requests++
+				if r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/123" {
+					_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"123"},"state":"active"}}}`))
+					return
+				}
 				if r.Method != http.MethodDelete || r.URL.Path != "/v1/deployments/123" {
 					t.Errorf("unexpected Console request: %s %s", r.Method, r.URL.Path)
 					w.WriteHeader(http.StatusNotFound)
@@ -776,7 +787,7 @@ func TestWorkflowCommandFailsWhenFinalReportWriteFails(t *testing.T) {
 			case -1:
 				wantRequests = 0
 			case 0:
-				wantRequests = 1
+				wantRequests = 2
 			}
 			if requests != wantRequests {
 				t.Fatalf("Console close requests = %d, want %d engine attempts before rendering", requests, wantRequests)
@@ -861,6 +872,10 @@ func TestWorkflowCommandReturnsRunFailureAfterWritingFinalReport(t *testing.T) {
 	requests := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/123" {
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"123"},"state":"active"}}}`))
+			return
+		}
 		if r.Method != http.MethodDelete || r.URL.Path != "/v1/deployments/123" {
 			t.Errorf("unexpected Console request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -891,8 +906,8 @@ func TestWorkflowCommandReturnsRunFailureAfterWritingFinalReport(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `workflow "close" failed`) {
 		t.Fatalf("execute error = %v, want workflow failure", err)
 	}
-	if requests != 3 {
-		t.Fatalf("Console close requests = %d, want 3 engine attempts", requests)
+	if requests != 4 {
+		t.Fatalf("Console close requests = %d, want one preflight and three DELETE attempts", requests)
 	}
 	for _, want := range []string{"Results:", "close-deployment", "failed", "HTTP 500"} {
 		if !strings.Contains(out, want) {

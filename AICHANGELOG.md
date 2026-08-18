@@ -4,6 +4,22 @@
 
 ### Fixed
 
+- **Six partially addressed backlog issues now have complete boundary
+  contracts**: every successful Console leaf prints an action-specific `Next:`
+  hint on stderr without contaminating structured stdout, while quiet mode
+  suppresses it (#66); `context keys add` accepts Cosmos-compatible `--yes` /
+  `-y` without weakening duplicate-key or secret handling (#71); provider
+  status exposes a positive `--timeout` that configures the actual gateway
+  request deadline (#73); already-closed or absent deployments fail before a
+  close mutation and retain a failed action-log entry through direct and
+  workflow paths (#75); API-key deletion proves the UUID exists before DELETE,
+  preserving a missing target as failure even though the live endpoint returns
+  idempotent success, and never prints `deleted: true` for an absent key (#79);
+  and every rail accepts USD
+  deposits only as plain decimal values with at most two fractional digits,
+  rejecting exponent, non-finite, signed, and sub-cent forms before network
+  work (#82). Structural and boundary tests pin each behavior.
+
 - **Automatic transaction fees now use the selected network's configured
   policy**: First-run bootstrap stores each Akash network registry entry's
   `high_gas_price` instead of its inadequate average, and CLI initialization
@@ -100,13 +116,13 @@
   The generated active-union report exposes the remaining provider gap without
   treating that run's package counts as policy.
 
-- **Console repeated-close E2E follows the live idempotency contract**: The
-  Console backend can return the same successful close envelope for both an
-  initial close and an already-closed no-op, so `already_closed: false` cannot
-  distinguish those cases. The live lifecycle now requires the repeated CLI
-  command to succeed with an exact close acknowledgement and action-log entry,
-  then independently verifies that GET/list retain terminal state with no
-  active lease. A hermetic two-close test pins the successful-200 behavior.
+- **Console repeated-close E2E rejects false mutation success**: The client
+  reads current deployment state before DELETE, so a terminal or absent
+  deployment returns a non-zero already-closed error without a success
+  document or another DELETE. The live lifecycle requires that failure,
+  verifies its failed action-log entry, and independently confirms that the
+  deployment remains terminal with no active lease. The same truthfulness rule
+  now covers repeated deletion of an already-absent API key.
 
 - **Console sandbox escrow verification accepts the chain's decimal coin
   encoding**: Production deposit reconciliation preserves fixed-point `funds`
@@ -339,10 +355,10 @@
   provider readiness and workload ingress, semantically validates bounded log
   and event streams, executes a deterministic non-interactive shell command,
   and proves read calls remain absent from the action log. It also creates,
-  authenticates with, lists, revokes, and re-revokes a child API key while an
-  independent HTTP observer corroborates tenant identity and the temporary
-  home is scanned for parent and child secrets. Structured API-key deletion now
-  emits a structured acknowledgement instead of plain text.
+  authenticates with, lists, revokes, and rejects re-revocation of a child API
+  key while an independent HTTP observer corroborates tenant identity and the
+  temporary home is scanned for parent and child secrets. Structured API-key
+  deletion now emits a structured acknowledgement instead of plain text.
 
 - **Audit logging now fails closed at both startup and storage boundaries**:
   a selected context cannot execute when its action log cannot be opened, one
@@ -556,10 +572,10 @@
 - **Adversarial regression review closed terminal and Console false-success
   paths**: the standalone monitor once again owns Bubble Tea's alternate screen
   instead of painting into the caller's scrollback, while the embedded monitor
-  leaves screen ownership to its shell. Console close now recognizes only
-  unambiguous already-closed or not-found responses as idempotent success; a
-  server rejection such as "cannot be closed while active leases exist" stays
-  failed and cannot be logged as a successful close. Console-only MCP startup
+  leaves screen ownership to its shell. Console close now preserves
+  unambiguous already-closed or not-found responses as typed failed mutations;
+  a server rejection such as "cannot be closed while active leases exist"
+  likewise stays failed and cannot be logged as a successful close. Console-only MCP startup
   is also defined for an environment API key with no active context, without
   manufacturing chain or provider capabilities or invoking the first-run
   wizard. Contextless MCP remains read-only: write enablement fails closed
@@ -890,7 +906,7 @@
   unmarked endpoints,
   makes provider readiness mandatory after opt-in, bounds captured output,
   redacts response bodies and action payloads from failures, scans the complete
-  temporary home for credentials, requires idempotent-close acknowledgement,
+  temporary home for credentials, requires truthful repeated-close failure,
   and gives discovery, auto-top-up disable/close, terminal verification, and
   final balance observation separate cleanup deadlines. Ambiguous creates are
   rediscovered by unique post-baseline SDL hash; in-process cleanup attempts
@@ -1844,9 +1860,9 @@
 
 - **Workflow execution with auth-aware routing (AKT-647)**: `akt deploy/update/close` now actually execute (previously they printed a plan and bailed with "Execution requires chain client (not yet wired)"). The generated commands resolve the active context and pick the auth mechanism per action, hidden from the user: `console-api` contexts route tx steps through the Console API (provider send-manifest steps are skipped with a note — Console submits manifests internally; missing key → clear guidance to set `AKT_CONSOLE_API_KEY`, store a per-context key, or switch context), `keyring` contexts sign and broadcast locally via the chain adapters (tx flags merged onto workflow commands; missing wallet/chain client → clear error). Per-step results render in pretty mode; `-o jsonl` emits one SPEC §2.3.8 line per step; steps are recorded in the per-context action log. Full httptest-backed console deploy e2e test (create → bids → cheapest → lease from cached manifest). 17 new tests across adapters/steps/CLI.
 
-- **`akt console` command group (AKT-648)**: New top-level command group porting the managed-Console CLI surface to Go per the console-axi reference: `login/logout/whoami` (login validates against `/v1/user/me` before storing the per-context credential; TTY prompt hides input), `deployment list/get/create/update/close/deposit/settings`, `bid list`, `lease create` (defaults to the per-context manifest cache), `wallet list/balance/settings/cost`, `usage`, public keyless `provider list/get/regions/auditors`, `gpu`, `template list/get/sdl` (raw SDL to stdout for piping), `apikey list/create/delete` (secret shown once), and `jwt create`. Positional-primary args per AKT-650 conventions; idempotent close; USD `$X.XX` formatting; mutations recorded in the action log. SPEC gains §2.9 "Console Commands". 8 command tests.
+- **`akt console` command group (AKT-648)**: New top-level command group porting the managed-Console CLI surface to Go per the console-axi reference: `login/logout/whoami` (login validates against `/v1/user/me` before storing the per-context credential; TTY prompt hides input), `deployment list/get/create/update/close/deposit/settings`, `bid list`, `lease create` (defaults to the per-context manifest cache), `wallet list/balance/settings/cost`, `usage`, public keyless `provider list/get/regions/auditors`, `gpu`, `template list/get/sdl` (raw SDL to stdout for piping), `apikey list/create/delete` (secret shown once), and `jwt create`. Positional-primary args per AKT-650 conventions; truthful already-closed failure; USD `$X.XX` formatting; mutations recorded in the action log. SPEC gains §2.9 "Console Commands". 8 command tests.
 
-- **Console API client reworked to match the real API (AKT-648)**: The client's request shapes were wrong — the Console API wraps write bodies/responses in a `{"data": ...}` envelope and `deposit-deployment` takes `{data:{dseq,deposit}}`, not `{dseq,amount}`. Rebuilt the client with correct wire shapes (verified against the console-axi reference CLI) and expanded it from 8 to ~30 endpoints across deployments (incl. `/v2/deployment-settings` with PATCH→POST fallback and idempotent close via `ErrAlreadyClosed`), wallet/balances/usage, public marketplace (providers, regions, auditors, GPU prices, templates, bid screening), API keys, and provider-scoped JWT minting. Adds a per-context manifest cache at `contexts/<name>/manifests/<dseq>.json` (0600) so `deployment create` → `lease create` works without re-passing the manifest. µACT↔USD helpers (1 ACT = 1 USD, 1e6 micro). 36 tests.
+- **Console API client reworked to match the real API (AKT-648)**: The client's request shapes were wrong — the Console API wraps write bodies/responses in a `{"data": ...}` envelope and `deposit-deployment` takes `{data:{dseq,deposit}}`, not `{dseq,amount}`. Rebuilt the client with correct wire shapes (verified against the console-axi reference CLI) and expanded it from 8 to ~30 endpoints across deployments (incl. `/v2/deployment-settings` with PATCH→POST fallback and typed already-closed failure via `ErrAlreadyClosed`), wallet/balances/usage, public marketplace (providers, regions, auditors, GPU prices, templates, bid screening), API keys, and provider-scoped JWT minting. Adds a per-context manifest cache at `contexts/<name>/manifests/<dseq>.json` (0600) so `deployment create` → `lease create` works without re-passing the manifest. µACT↔USD helpers (1 ACT = 1 USD, 1e6 micro). 36 tests.
 
 - **Workflow execution adapters (AKT-647)**: New `internal/workflow/adapters` package implementing the engine's `steps.ChainClient`/`steps.ProviderClient` interfaces over the real chain client and provider gateway: msg builders for deployment create/update/close and market lease-create replicating the tx command logic (SDL groups + version hash, dseq from chain height, `auto` deposit via min-deposit params, update-group safety check), workflow query routing for `market.bids`/`market.leases`/`deployment.deployments` shaped for the wait-step's `until:` templates, and a provider adapter that resolves gateway URLs from on-chain HostURI. dseq is deliberately emitted as a JSON string in step outputs so Go templates don't render it in scientific notation. 22 tests.
 

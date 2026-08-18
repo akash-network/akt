@@ -57,11 +57,9 @@ var (
 	ErrNotFound = errors.New("console: resource not found")
 
 	// ErrAlreadyClosed is returned by CloseDeployment when the deployment is
-	// already closed (the API answers 404, or 400 with an already-closed
-	// message). Callers that want idempotent close semantics should treat it
-	// as success:
-	//
-	//	if err := c.CloseDeployment(ctx, dseq); err != nil && !errors.Is(err, console.ErrAlreadyClosed) { ... }
+	// already closed or absent (the preflight answers 404 or reports a closed
+	// state, or the DELETE reports unambiguous already-closed semantics).
+	// Callers must preserve this as a failed mutation.
 	ErrAlreadyClosed = errors.New("console: deployment already closed")
 )
 

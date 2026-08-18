@@ -3,6 +3,8 @@ package console
 import (
 	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -17,6 +19,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	consoleapi "pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
 	flagdefs "pkg.akt.dev/akt/internal/flags"
 	sstore "pkg.akt.dev/akt/internal/store"
@@ -341,50 +344,42 @@ func TestDeploymentDepositStructuredAcknowledgement(t *testing.T) {
 }
 
 func TestDeploymentCloseStructuredAcknowledgement(t *testing.T) {
-	for _, tc := range []struct {
-		name          string
-		status        int
-		alreadyClosed bool
-	}{
-		{name: "closed", status: http.StatusOK},
-		{name: "already closed", status: http.StatusNotFound, alreadyClosed: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			m := newTestManager(t)
-			if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
-				t.Fatalf("SetConsoleAPIKey: %v", err)
+	m := newTestManager(t)
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
+		t.Fatalf("SetConsoleAPIKey: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/deployments/42" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if r.Method == http.MethodGet {
+			writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"42"},"state":"active"}}}`)
+			return
+		}
+		if r.Method != http.MethodDelete {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		writeJSON(t, w, `{"data":{"success":true}}`)
+	}))
+	defer srv.Close()
+
+	for _, format := range []string{"json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			out, err := execConsole(t, m, srv.URL, "deployment", "close", "42", "-o", format)
+			if err != nil {
+				t.Fatalf("close -o %s: %v", format, err)
 			}
 
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodDelete || r.URL.Path != "/v1/deployments/42" {
-					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
-				}
-				if tc.status == http.StatusOK {
-					writeJSON(t, w, `{"data":{"success":true}}`)
-					return
-				}
-				w.WriteHeader(tc.status)
-			}))
-			defer srv.Close()
-
-			for _, format := range []string{"json", "yaml"} {
-				t.Run(format, func(t *testing.T) {
-					out, err := execConsole(t, m, srv.URL, "deployment", "close", "42", "-o", format)
-					if err != nil {
-						t.Fatalf("close -o %s: %v", format, err)
-					}
-
-					got := decodeStructuredMap(t, format, out)
-					if got["dseq"] != "42" || got["state"] != "closed" || got["already_closed"] != tc.alreadyClosed {
-						t.Errorf("close acknowledgement = %#v, want dseq=42 state=closed already_closed=%v", got, tc.alreadyClosed)
-					}
-				})
+			got := decodeStructuredMap(t, format, out)
+			if len(got) != 2 || got["dseq"] != "42" || got["state"] != "closed" {
+				t.Errorf("close acknowledgement = %#v, want dseq=42 state=closed", got)
 			}
 		})
 	}
 }
 
-func TestDeploymentCloseRepeatedSuccessDoesNotInventPriorState(t *testing.T) {
+func TestDeploymentCloseRepeatedAttemptFailsWithoutSecondDelete(t *testing.T) {
 	m := newTestManager(t)
 	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
 		t.Fatalf("SetConsoleAPIKey: %v", err)
@@ -392,29 +387,36 @@ func TestDeploymentCloseRepeatedSuccessDoesNotInventPriorState(t *testing.T) {
 
 	var deletes atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete || r.URL.Path != "/v1/deployments/42" {
+		if r.URL.Path != "/v1/deployments/42" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if r.Method == http.MethodGet {
+			state := "active"
+			if deletes.Load() > 0 {
+				state = "closed"
+			}
+			fmt.Fprintf(w, `{"data":{"deployment":{"id":{"dseq":"42"},"state":%q}}}`, state)
+			return
 		}
 		deletes.Add(1)
 		writeJSON(t, w, `{"data":{"success":true}}`)
 	}))
 	defer srv.Close()
 
-	for attempt := 1; attempt <= 2; attempt++ {
-		out, err := execConsole(t, m, srv.URL, "deployment", "close", "42", "-o", "json")
-		if err != nil {
-			t.Fatalf("close attempt %d: %v", attempt, err)
-		}
-
-		got := decodeStructuredMap(t, "json", out)
-		alreadyClosed, isBool := got["already_closed"].(bool)
-		if len(got) != 3 || got["dseq"] != "42" || got["state"] != "closed" || !isBool || alreadyClosed {
-			t.Errorf("close attempt %d acknowledgement = %#v, want dseq=42 state=closed already_closed=false", attempt, got)
-		}
+	out, err := execConsole(t, m, srv.URL, "deployment", "close", "42", "-o", "json")
+	if err != nil {
+		t.Fatalf("first close: %v", err)
+	}
+	got := decodeStructuredMap(t, "json", out)
+	if len(got) != 2 || got["dseq"] != "42" || got["state"] != "closed" {
+		t.Errorf("first close acknowledgement = %#v", got)
+	}
+	if _, err := execConsole(t, m, srv.URL, "deployment", "close", "42", "-o", "json"); !errors.Is(err, consoleapi.ErrAlreadyClosed) {
+		t.Fatalf("second close = %v, want ErrAlreadyClosed", err)
 	}
 
-	if got := deletes.Load(); got != 2 {
-		t.Fatalf("DELETE requests = %d, want 2", got)
+	if got := deletes.Load(); got != 1 {
+		t.Fatalf("DELETE requests = %d, want 1", got)
 	}
 }
 
@@ -442,6 +444,10 @@ func TestDeploymentCloseConvergesUniqueLocalDeploymentAndLeases(t *testing.T) {
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/42" {
+			writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"42"},"state":"active"}}}`)
+			return
+		}
 		if r.Method != http.MethodDelete || r.URL.Path != "/v1/deployments/42" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -492,17 +498,21 @@ func TestDeploymentCloseDoesNotGuessBetweenLocalOwners(t *testing.T) {
 		t.Fatalf("close seed store: %v", err)
 	}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"42"},"state":"active"}}}`)
+			return
+		}
 		writeJSON(t, w, `{"data":{"success":true}}`)
 	}))
 	defer srv.Close()
 
-	out, err := execConsole(t, m, srv.URL, "deployment", "close", "42")
+	_, stderr, err := execConsoleContextStreams(context.Background(), t, m, srv.URL, "deployment", "close", "42")
 	if err != nil {
 		t.Fatalf("deployment close: %v", err)
 	}
-	if !strings.Contains(out, "multiple local owners") {
-		t.Errorf("ambiguous local close did not warn:\n%s", out)
+	if !strings.Contains(stderr, "multiple local owners") {
+		t.Errorf("ambiguous local close did not warn:\n%s", stderr)
 	}
 
 	s, err = bbolt.OpenContext(ctx, m.Root(), "prod")
@@ -515,6 +525,46 @@ func TestDeploymentCloseDoesNotGuessBetweenLocalOwners(t *testing.T) {
 		if getErr != nil || dep == nil || dep.State != "active" {
 			t.Fatalf("ambiguous close changed %s: %+v, err %v", owner, dep, getErr)
 		}
+	}
+}
+
+func TestDeploymentCloseAlreadyClosedWarnsWhenLocalStateIsAmbiguous(t *testing.T) {
+	m := newTestManager(t)
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
+		t.Fatalf("SetConsoleAPIKey: %v", err)
+	}
+
+	ctx := context.Background()
+	s, err := bbolt.OpenContext(ctx, m.Root(), "prod")
+	if err != nil {
+		t.Fatalf("OpenContext: %v", err)
+	}
+	for _, owner := range []string{
+		"akash1zn43lmk4dmvcjmfhtaqk4wa9zpuru3xy0kzupu",
+		"akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx",
+	} {
+		if err := s.PutDeployment(ctx, &sstore.DeploymentRecord{Owner: owner, DSeq: 42, State: "active"}); err != nil {
+			t.Fatalf("PutDeployment: %v", err)
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close seed store: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/deployments/42" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	_, stderr, err := execConsoleContextStreams(ctx, t, m, srv.URL, "deployment", "close", "42")
+	if !errors.Is(err, consoleapi.ErrAlreadyClosed) {
+		t.Fatalf("deployment close error = %v, want ErrAlreadyClosed", err)
+	}
+	if !strings.Contains(stderr, "multiple local owners") {
+		t.Fatalf("already-closed local convergence warning = %q", stderr)
 	}
 }
 

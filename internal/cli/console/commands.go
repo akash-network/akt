@@ -28,6 +28,8 @@ import (
 	"pkg.akt.dev/akt/internal/output"
 )
 
+const consoleNextAnnotation = "akt.console.next"
+
 func Commands(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "console",
@@ -67,8 +69,79 @@ func Commands(mgrFn func() *aktctx.Manager) *cobra.Command {
 		requireConsole(statusCmd(mgrFn)),
 		requireConsole(shellCmd(mgrFn)),
 	)
+	annotateConsoleNextSteps(cmd)
 
 	return cmd
+}
+
+func annotateConsoleNextSteps(cmd *cobra.Command) {
+	children := cmd.Commands()
+	if len(children) == 0 {
+		if cmd.Run != nil || cmd.RunE != nil {
+			if cmd.Annotations == nil {
+				cmd.Annotations = map[string]string{}
+			}
+			cmd.Annotations[consoleNextAnnotation] = consoleNextSuggestion(cmd)
+		}
+		return
+	}
+
+	for _, child := range children {
+		annotateConsoleNextSteps(child)
+	}
+}
+
+func consoleNextSuggestion(cmd *cobra.Command) string {
+	path := cmd.CommandPath()
+	switch {
+	case path == "console login":
+		return "akt console whoami"
+	case path == "console logout":
+		return "akt console login"
+	case path == "console whoami":
+		return "akt console deployment list active"
+	case strings.HasPrefix(path, "console deployment "),
+		strings.HasPrefix(path, "console bid "),
+		strings.HasPrefix(path, "console lease "),
+		path == "console logs",
+		path == "console events",
+		path == "console status",
+		path == "console shell":
+		return "akt console deployment list active"
+	case strings.HasPrefix(path, "console wallet "):
+		return "akt console usage"
+	case path == "console usage":
+		return "akt console wallet balance"
+	case strings.HasPrefix(path, "console apikey "):
+		return "akt console apikey list"
+	case strings.HasPrefix(path, "console jwt "):
+		return "akt console whoami"
+	case strings.HasPrefix(path, "console template "):
+		return "akt console template list"
+	case strings.HasPrefix(path, "console provider "), path == "console gpu", path == "console screen":
+		return "akt console provider list"
+	default:
+		return "akt console --help"
+	}
+}
+
+// PrintNextStep writes a successful Console leaf's follow-up guidance to the
+// informational channel. The application root calls it after closing the
+// action log; commands outside the Console subtree have no annotation and are
+// unchanged.
+func PrintNextStep(cmd *cobra.Command) error {
+	if cliutil.IsQuiet(cmd) {
+		return nil
+	}
+	next := strings.TrimSpace(cmd.Annotations[consoleNextAnnotation])
+	if next == "" {
+		return nil
+	}
+
+	checked := output.NewCheckedWriter(cmd.ErrOrStderr())
+	_, err := fmt.Fprintf(checked, "Next:\n  %s\n", next)
+
+	return checked.Complete(err)
 }
 
 // requireConsole tags a command as needing the console capability so the
