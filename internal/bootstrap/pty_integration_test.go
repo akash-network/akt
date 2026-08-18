@@ -277,7 +277,7 @@ func TestConsoleOnboardingThroughPTY(t *testing.T) {
 func networkMetaJSON(chainID, rpc string) string {
 	return fmt.Sprintf(`{
 		"chain_id": %q,
-		"fees": {"fee_tokens": [{"denom":"uakt","average_gas_price":0.025}]},
+		"fees": {"fee_tokens": [{"denom":"uakt","high_gas_price":0.025}]},
 		"apis": {
 			"rpc": [{"address":%q}],
 			"rest": [{"address":"https://api.invalid"}],

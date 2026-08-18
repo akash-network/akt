@@ -17,6 +17,7 @@ import (
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
 	sdkserver "github.com/cosmos/cosmos-sdk/server"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkversion "github.com/cosmos/cosmos-sdk/version"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	"github.com/spf13/cobra"
@@ -280,7 +281,9 @@ the deployment is created.`,
 						return err
 					}
 				}
-				applyTransactionDefaults(cmd, rc)
+				if err := applyTransactionDefaults(cmd, rc); err != nil {
+					return err
+				}
 				if err := applyProviderDefaults(cmd, rc); err != nil {
 					return err
 				}
@@ -500,10 +503,10 @@ the deployment is created.`,
 // inherited defaults as explicit flags. Fixed fees and gas prices are two ways
 // to determine one fee, so a higher-precedence value on either side suppresses
 // a lower-precedence value on the other.
-func applyTransactionDefaults(cmd *cobra.Command, rc *aktctx.Context) {
+func applyTransactionDefaults(cmd *cobra.Command, rc *aktctx.Context) error {
 	flags := cmd.Flags()
 	if flags.Lookup(flagdefs.FlagGas) == nil {
-		return
+		return nil
 	}
 
 	setDefault := func(name, envName, contextValue string) {
@@ -532,28 +535,88 @@ func applyTransactionDefaults(cmd *cobra.Command, rc *aktctx.Context) {
 
 	feesFlag := flags.Lookup(flagdefs.FlagFees)
 	pricesFlag := flags.Lookup(flagdefs.FlagGasPrices)
-	if feesFlag == nil || pricesFlag == nil || feesFlag.Changed || pricesFlag.Changed {
-		return
+	if feesFlag == nil || pricesFlag == nil {
+		return nil
 	}
 
-	envFees, hasEnvFees := os.LookupEnv("AKT_FEES")
-	envPrices, hasEnvPrices := os.LookupEnv("AKT_GAS_PRICES")
-	switch {
-	case hasEnvFees && envFees != "":
-		_ = feesFlag.Value.Set(envFees)
-		_ = pricesFlag.Value.Set("")
-	case hasEnvPrices:
-		_ = feesFlag.Value.Set("")
-		_ = pricesFlag.Value.Set(envPrices)
-	case hasEnvFees:
-		_ = feesFlag.Value.Set("")
-		_ = pricesFlag.Value.Set(rc.GasPrices)
-	case rc.Fees != "":
-		_ = feesFlag.Value.Set(rc.Fees)
-		_ = pricesFlag.Value.Set("")
-	case rc.GasPrices != "":
-		_ = pricesFlag.Value.Set(rc.GasPrices)
+	if !feesFlag.Changed && !pricesFlag.Changed {
+		envFees, hasEnvFees := os.LookupEnv("AKT_FEES")
+		envPrices, hasEnvPrices := os.LookupEnv("AKT_GAS_PRICES")
+		switch {
+		case hasEnvFees && envFees != "":
+			_ = feesFlag.Value.Set(envFees)
+			_ = pricesFlag.Value.Set("")
+		case hasEnvPrices:
+			_ = feesFlag.Value.Set("")
+			_ = pricesFlag.Value.Set(envPrices)
+		case hasEnvFees:
+			_ = feesFlag.Value.Set("")
+			_ = pricesFlag.Value.Set(rc.GasPrices)
+		case rc.Fees != "":
+			_ = feesFlag.Value.Set(rc.Fees)
+			_ = pricesFlag.Value.Set("")
+		case rc.GasPrices != "":
+			_ = pricesFlag.Value.Set(rc.GasPrices)
+		}
 	}
+
+	fees, _ := flags.GetString(flagdefs.FlagFees)
+	candidate, _ := flags.GetString(flagdefs.FlagGasPrices)
+	if fees != "" || candidate == "" || rc.GasPrices == "" {
+		return nil
+	}
+
+	effective, err := applyGasPriceFloor(candidate, rc.GasPrices)
+	if err != nil {
+		return err
+	}
+	// The value belongs to a Cobra string flag and was parsed successfully
+	// above, so its Set implementation cannot fail here.
+	_ = pricesFlag.Value.Set(effective)
+
+	return nil
+}
+
+func applyGasPriceFloor(candidateRaw, floorRaw string) (string, error) {
+	candidate, err := sdk.ParseDecCoins(candidateRaw)
+	if err != nil {
+		return "", fmt.Errorf("--%s: %w", flagdefs.FlagGasPrices, err)
+	}
+	floor, err := sdk.ParseDecCoins(floorRaw)
+	if err != nil {
+		return "", fmt.Errorf("configured network gas prices %q: %w", floorRaw, err)
+	}
+
+	effective := append(sdk.DecCoins(nil), candidate...)
+	matched := false
+	changed := false
+	for i := range effective {
+		for _, minimum := range floor {
+			if effective[i].Denom != minimum.Denom {
+				continue
+			}
+
+			matched = true
+			if minimum.Amount.GT(effective[i].Amount) {
+				effective[i].Amount = minimum.Amount
+				changed = true
+			}
+			break
+		}
+	}
+
+	if !matched {
+		return "", fmt.Errorf(
+			"gas prices %q have no denomination in the selected network gas prices %q",
+			candidate,
+			floor,
+		)
+	}
+	if !changed {
+		return candidateRaw, nil
+	}
+
+	return effective.String(), nil
 }
 
 func applyProviderDefaults(cmd *cobra.Command, rc *aktctx.Context) error {

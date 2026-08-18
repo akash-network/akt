@@ -3183,10 +3183,35 @@ A missing transaction client is a normal CLI error, never a panic.
 
 When `--fees` is non-empty it is authoritative: both configured and explicit
 `--gas-prices` values are cleared before the transaction factory is built.
-Without fixed fees, the effective gas price follows the normal precedence
-chain (flag > environment > context network > built-in default). A simulation
-response with a non-zero SDK code is a failed transaction and exits non-zero;
-simulation remains non-mutating and is not written to the action log.
+Without fixed fees, the candidate gas price follows the normal precedence
+chain (flag > environment > context network > built-in default). The selected
+context network's stored gas price is also the network fee-policy floor. For
+every candidate denomination present in that floor, the effective price is
+`max(candidate, network floor)`. Higher invocation or environment prices are
+preserved. When the non-empty candidate and floor sets have no common
+denomination, initialization fails with both sets named rather than attaching
+an unusable fee.
+
+First-run bootstrap derives this stored policy from the selected entry in the
+Akash network registry. Each fee token's `high_gas_price` is used instead of
+`average_gas_price`, because an RPC node can advertise zero or a value below
+the CheckTx minimum enforced by validators. Built-in templates use the same
+high-price policy. Custom network creation stores its `--gas-prices` value,
+whose default is `0.025uakt`. Users retain control through
+`akt context network edit`, while invocation and environment values remain
+valid ways to request a higher price.
+
+The network floor applies whenever a command constructs a transaction and
+derives its fee from gas prices, including online, offline, simulation-only
+(`--dry-run`), generate-only, and explicit-gas transactions. Explicit fixed
+`--fees` remain unchanged. `akt tx broadcast` submits a prebuilt,
+already-signed payload and does not derive a new fee. akt does not query an RPC
+operator's local minimum, use a hardcoded retry price, or parse an
+insufficient-fee broadcast response to resubmit a transaction.
+
+A simulation response with a non-zero SDK code is a failed transaction and
+exits non-zero; simulation remains non-mutating and is not written to the
+action log.
 The active fee string is parsed before it reaches the SDK transaction factory:
 fixed fees use the integer-coin grammar and gas prices use the decimal-coin
 grammar. Invalid input is a normal error naming `--fees` or `--gas-prices`,
@@ -6671,10 +6696,13 @@ The adjusted gas estimate is computed by the chain client but discarded on the s
 ```
 gas_estimate  = uint64(--gas-adjustment * GasInfo.GasUsed)
 estimated_fee = --fees, when set
-              = ceil(--gas-prices[i] * gas_estimate) per denom, otherwise
+              = ceil(effective_gas_prices[i] * gas_estimate) per denom,
+                otherwise
 ```
 
-This matches `tx.Factory.BuildUnsignedTx`, so the estimate the dry run reports is the fee the real broadcast would attach.
+`effective_gas_prices` includes the selected context network's fee-policy
+floor from §3.2. This matches `tx.Factory.BuildUnsignedTx`, so the estimate the
+dry run reports is the fee the real broadcast would attach.
 
 **Pretty output** renders a single `Simulation` section:
 

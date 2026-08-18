@@ -345,6 +345,20 @@ such as `tcp://localhost:26657` must never replace a resolved endpoint. Local
 transaction leaves use the same pre-run boundary; a leaf that needs codecs or
 clients cannot reach its handler without that initialization.
 
+Transaction economics come from the selected network definition, not an
+individual RPC operator. The Akash network registry publishes low, average,
+and high gas prices; akt stores the high price when first-run bootstrap adds a
+network because a validator can enforce a higher CheckTx minimum than the RPC
+node used for simulation advertises. Built-in network templates carry the same
+policy. At root CLI initialization, a gas-price-derived transaction treats the
+stored network price as its acceptance floor. Invocation and environment
+prices can request higher priority, but a lower matching price is raised to the
+network price before simulation, signing, or generated fee output. Fixed fees
+remain explicit and authoritative. This keeps online, offline, generate-only,
+and dry-run construction deterministic and avoids querying one validator's
+local configuration or parsing a rejected broadcast to retry with a guessed
+fee.
+
 Step 2 assigns one of three identity modes: none, on demand, or required.
 "Resolve the context" and "open the user's key store" are separate decisions
 because opening a backend can prompt, fail on a headless host, or request an OS

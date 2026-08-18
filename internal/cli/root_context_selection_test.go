@@ -368,6 +368,47 @@ func TestRootRejectsOnlineChainMismatchBeforeLeafHooks(t *testing.T) {
 	}
 }
 
+func TestRootRejectsGasPriceOutsideNetworkPolicyBeforeLeaf(t *testing.T) {
+	m := rootTestManager(t)
+	if err := m.CreateContext(aktctx.Context{
+		Name:    "prod",
+		Network: aktctx.Network{Name: "mainnet"},
+	}); err != nil {
+		t.Fatalf("CreateContext: %v", err)
+	}
+	if err := m.UseContext("prod"); err != nil {
+		t.Fatalf("UseContext: %v", err)
+	}
+
+	root := NewRootCmd(BuildInfo{Version: "test"})
+	ran := false
+	inspect := &cobra.Command{
+		Use:  "inspect-gas-policy",
+		Args: cobra.NoArgs,
+		RunE: func(*cobra.Command, []string) error {
+			ran = true
+			return nil
+		},
+	}
+	cflags.AddTxFlagsToCmd(inspect)
+	root.AddCommand(inspect)
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{
+		"--home", m.Root(),
+		"inspect-gas-policy",
+		"--gas-prices", "0.04uatom",
+	})
+
+	err := Execute(root)
+	if err == nil || !strings.Contains(err.Error(), "no denomination") {
+		t.Fatalf("network gas-price error = %v", err)
+	}
+	if ran {
+		t.Fatal("invalid gas price reached the leaf RunE")
+	}
+}
+
 func TestWorkflowDryRunRejectsOnlineChainMismatchBeforePlan(t *testing.T) {
 	m := rootTestManager(t)
 	if err := m.CreateContext(aktctx.Context{

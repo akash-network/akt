@@ -4,6 +4,18 @@
 
 ### Fixed
 
+- **Automatic transaction fees now use the selected network's configured
+  policy**: First-run bootstrap stores each Akash network registry entry's
+  `high_gas_price` instead of its inadequate average, and CLI initialization
+  treats that stored price as the floor for gas-price-derived transactions.
+  This fixes transactions whose gas limit was estimated correctly but whose
+  `0.0025uakt` price produced `517uakt` while validators required `5169uakt` at
+  `0.025uakt`. Higher invocation and environment prices remain unchanged,
+  explicit fixed fees remain authoritative, and dry-run, generate-only,
+  offline, and online construction all use the same deterministic policy. akt
+  no longer trusts an individual RPC node's local minimum or retries a rejected
+  broadcast with a guessed fee.
+
 - **The open CLI correctness and UX backlog now shares enforceable
   boundaries**: workflow JSONL preserves step outputs and deployment results;
   deploy completion reports identity, URIs, readiness, and next actions;
@@ -14,10 +26,9 @@
   pretty output uses human semantic renderers with correct micro-ACT dollar
   and monthly cost semantics. Shell service selection, resource-based provider
   screening, state filtering, context creation confirmations, bootstrap
-  warnings, keyring guidance, empty streams, and store/SDL documentation now follow the same
-  command-boundary rules. This resolves the behavior tracked in issues #57
-  through #82 without masking
-  failures with fallback values.
+  warnings, keyring guidance, empty streams, and store/SDL documentation now
+  follow the same command-boundary rules. This resolves the behavior tracked
+  in issues #57 through #82 without masking failures with fallback values.
 
 - **Console sandbox spend accounting now uses the owned deployment ledger**:
   the point-in-time account total has no lifecycle-run identity or observation
