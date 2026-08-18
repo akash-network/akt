@@ -1,18 +1,21 @@
 package console
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"strconv"
+	"strings"
 	"time"
 
 	flagdefs "pkg.akt.dev/akt/internal/flags"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"pkg.akt.dev/akt/internal/cliutil"
 	"pkg.akt.dev/akt/internal/console"
@@ -43,6 +46,34 @@ func parseConsoleUSD(arg string) (float64, error) {
 	return dep.USD, nil
 }
 
+func confirmDeploymentCreate(cmd *cobra.Command, prompt bool, path string, deposit float64) error {
+	if !prompt {
+		return nil
+	}
+	if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Create deployment from %s with a %s deposit? [y/N] ", path, formatUSD(deposit)); err != nil {
+		return err
+	}
+	answer, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
+	if err != nil && strings.TrimSpace(answer) == "" {
+		return fmt.Errorf("read deployment confirmation: %w", err)
+	}
+	answer = strings.ToLower(strings.TrimSpace(answer))
+	if answer != "y" && answer != "yes" {
+		return fmt.Errorf("deployment creation cancelled")
+	}
+
+	return nil
+}
+
+func addNegativePositionalHint(cmd *cobra.Command, positional string) {
+	cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
+		if strings.Contains(err.Error(), "unknown shorthand flag") {
+			return fmt.Errorf("%w; if %s begins with '-', place `--` before the positional value", err, positional)
+		}
+		return err
+	})
+}
+
 func deploymentCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "deployment",
@@ -67,11 +98,19 @@ func deploymentCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 func deploymentListCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "list",
+		Use:     "list [active|closed]",
 		Short:   "List deployments",
-		Args:    cobra.NoArgs,
-		Example: `  akt console deployment list --limit 10`,
-		RunE: func(cmd *cobra.Command, _ []string) error {
+		Args:    cobra.MaximumNArgs(1),
+		Example: `  akt console deployment list active --limit 10`,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			state := ""
+			if len(args) == 1 {
+				state = strings.ToLower(strings.TrimSpace(args[0]))
+				if state != "active" && state != "closed" {
+					return fmt.Errorf("deployment state must be active or closed, got %q", args[0])
+				}
+			}
+
 			cl, _, err := clientFromCmd(cmd, mgrFn, true)
 			if err != nil {
 				return err
@@ -80,7 +119,12 @@ func deploymentListCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			skip, _ := cmd.Flags().GetInt(flagdefs.FlagSkip)
 			limit, _ := cmd.Flags().GetInt(flagdefs.FlagLimit)
 
-			list, err := cl.ListDeployments(cmd.Context(), skip, limit)
+			var list *console.DeploymentList
+			if state == "" {
+				list, err = cl.ListDeployments(cmd.Context(), skip, limit)
+			} else {
+				list, err = cl.ListDeploymentsByState(cmd.Context(), state, skip, limit)
+			}
 			if err != nil {
 				return fmt.Errorf("list deployments: %w", err)
 			}
@@ -148,6 +192,11 @@ func deploymentCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			// NOTE: internal/workflow/adapters/console.go carries a private
 			if deposit < transport.MinConsoleDepositUSD {
 				return fmt.Errorf("deposit must be at least %s (got %s): pass it as the [deposit-usd] argument", formatUSD(transport.MinConsoleDepositUSD), formatUSD(deposit))
+			}
+			skipConfirmation, _ := cmd.Flags().GetBool(flagdefs.FlagSkipConfirmation)
+			if err := confirmDeploymentCreate(cmd,
+				!skipConfirmation && term.IsTerminal(int(os.Stdin.Fd())), args[0], deposit); err != nil {
+				return err
 			}
 
 			sdl, err := os.ReadFile(args[0])
@@ -217,6 +266,8 @@ func deploymentCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	// (use the positional form instead). Restore by uncommenting if users
 	// ask for the flag form back.
 	// cmd.Flags().Float64("deposit", 0, "Deposit amount in USD (minimum 0.5); alternative to the positional argument")
+	cmd.Flags().BoolP(flagdefs.FlagSkipConfirmation, "y", false, "Skip the deployment creation confirmation")
+	addNegativePositionalHint(cmd, "deposit-usd")
 
 	return cmd
 }
@@ -345,8 +396,8 @@ func deploymentDepositCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 					return err
 				}
 			}
-			if amount <= 0 {
-				return fmt.Errorf("amount must be a positive USD amount (got %s): pass it as the [amount-usd] argument", formatUSD(amount))
+			if amount < transport.MinConsoleDepositUSD {
+				return fmt.Errorf("amount must be at least %s (got %s): pass it as the [amount-usd] argument", formatUSD(transport.MinConsoleDepositUSD), formatUSD(amount))
 			}
 
 			if err := cl.Deposit(cmd.Context(), args[0], amount); err != nil {
@@ -368,6 +419,7 @@ func deploymentDepositCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	// (use the positional form instead). Restore by uncommenting if users
 	// ask for the flag form back.
 	// cmd.Flags().Float64("amount", 0, "Amount to add in USD; alternative to the positional argument")
+	addNegativePositionalHint(cmd, "amount-usd")
 
 	return cmd
 }
@@ -415,10 +467,6 @@ func deploymentSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			// enabled on deployments that do not exist and on deployments
 			// belonging to other accounts. Resolve the deployment first, which
 			// is the 404 the sibling `deployment get` already returns.
-			if _, err := cl.GetDeployment(cmd.Context(), args[0]); err != nil {
-				return fmt.Errorf("deployment %s: %w", args[0], err)
-			}
-
 			if len(args) > 1 {
 				settings, err := cl.SetDeploymentAutoTopUp(cmd.Context(), args[0], enabled)
 				if err != nil {
@@ -426,6 +474,10 @@ func deploymentSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				}
 
 				return printJSON(cmd, renderSettings(settings))
+			}
+
+			if _, err := cl.GetDeployment(cmd.Context(), args[0]); err != nil {
+				return fmt.Errorf("deployment %s: %w", args[0], err)
 			}
 
 			settings, err := cl.GetDeploymentSettings(cmd.Context(), args[0])

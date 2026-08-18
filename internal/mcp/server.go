@@ -121,24 +121,24 @@ func (s *Server) registerChainTools(
 		return errors.New("no chain RPC endpoint configured for the active context")
 	}
 
-	if enableWrites {
-		cl, err := client.NewClient(ctx, cctx)
-		if err != nil {
-			return err
-		}
-
-		s.registerQueryTools(cl, providerAuthType)
-		s.registerWriteTools(ctx, cl, providerAuthType)
-
-		return nil
-	}
-
-	cl, err := client.NewLightClient(cctx)
+	light, err := client.NewLightClient(cctx)
 	if err != nil {
 		return err
 	}
+	s.registerQueryTools(light, providerAuthType)
 
-	s.registerQueryTools(cl, providerAuthType)
+	if !enableWrites {
+		return nil
+	}
+
+	// A signing client resolves the account against chain state. A new or
+	// unfunded key can legitimately have no account yet; that must only remove
+	// the write rail, never the already-healthy public query rail.
+	cl, err := client.NewClient(ctx, cctx)
+	if err != nil {
+		return nil
+	}
+	s.registerWriteTools(ctx, cl, providerAuthType)
 
 	return nil
 }

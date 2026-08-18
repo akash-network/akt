@@ -230,3 +230,18 @@ func GatewayError(action string, err error) error {
 
 	return fmt.Errorf("%s: %w", action, err)
 }
+
+// GatewayErrorForProvider preserves the gateway failure and gives operators
+// an exact read-only chain fallback for the provider's registered attributes.
+func GatewayErrorForProvider(action, provider string, err error) error {
+	wrapped := GatewayError(action, err)
+	if wrapped == nil {
+		return nil
+	}
+	provider = strings.TrimSpace(provider)
+	if provider == "" {
+		return wrapped
+	}
+
+	return fmt.Errorf("%w; inspect on-chain provider attributes with `akt query provider %s`", wrapped, provider)
+}

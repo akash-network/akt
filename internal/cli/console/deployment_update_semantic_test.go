@@ -38,8 +38,15 @@ func TestDeploymentUpdateUsesExactSDLAndReturnsUpdatedIdentity(t *testing.T) {
 	requests := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
-		if r.Method != http.MethodPut || r.URL.EscapedPath() != "/v1/deployments/555" {
-			t.Errorf("request = %s %s, want PUT /v1/deployments/555", r.Method, r.URL.EscapedPath())
+		if r.URL.EscapedPath() != "/v1/deployments/555" {
+			t.Errorf("request path = %s, want /v1/deployments/555", r.URL.EscapedPath())
+		}
+		if r.Method == http.MethodGet {
+			writeJSON(t, w, `{"data":{"deployment":{"id":{"owner":"akash1owner","dseq":"555"},"state":"active"},"leases":[]}}`)
+			return
+		}
+		if r.Method != http.MethodPut {
+			t.Errorf("request method = %s, want GET or PUT", r.Method)
 		}
 		if got := r.Header.Get("x-api-key"); got != "sekrit" {
 			t.Errorf("x-api-key = %q, want configured credential", got)
@@ -64,8 +71,8 @@ func TestDeploymentUpdateUsesExactSDLAndReturnsUpdatedIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatalf("deployment update: %v", err)
 	}
-	if requests != 1 {
-		t.Fatalf("requests = %d, want exactly one update", requests)
+	if requests != 2 {
+		t.Fatalf("requests = %d, want one preflight and one update", requests)
 	}
 
 	got := decodeStructuredMap(t, "json", out)

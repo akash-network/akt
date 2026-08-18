@@ -9,6 +9,7 @@ import (
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
+	consoleapi "pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
 )
 
@@ -132,8 +133,9 @@ func apikeyDeleteCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	}
 }
 
-// defaultJWTScope mirrors the Console reference CLI's default lease scopes.
-var defaultJWTScope = []string{"status", "logs", "events", "shell", "send-manifest", "get-manifest"}
+func defaultJWTScope() []string {
+	return []string{"status", "logs", "events", "shell", "send-manifest", "get-manifest"}
+}
 
 func jwtCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
@@ -154,13 +156,13 @@ func jwtCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 			}
 
 			ttl, _ := cmd.Flags().GetInt(flagdefs.FlagTTL)
-			if ttl <= 0 {
-				return fmt.Errorf("--ttl must be a positive number of seconds, got %d", ttl)
+			if ttl < 1 || ttl > consoleapi.MaxJWTTTLSeconds {
+				return fmt.Errorf("--ttl must be between 1 and %d seconds, got %d", consoleapi.MaxJWTTTLSeconds, ttl)
 			}
 
 			scopeCSV, _ := cmd.Flags().GetString(flagdefs.FlagScope)
 
-			scope := defaultJWTScope
+			scope := defaultJWTScope()
 			if scopeCSV != "" {
 				scope = nil
 				for _, s := range strings.Split(scopeCSV, ",") {
@@ -186,8 +188,8 @@ func jwtCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	create.Flags().Int(flagdefs.FlagTTL, 300, "Token lifetime in seconds")
-	create.Flags().String(flagdefs.FlagScope, "", "Comma-separated scopes (default: "+strings.Join(defaultJWTScope, ",")+")")
+	create.Flags().Int(flagdefs.FlagTTL, 300, fmt.Sprintf("Token lifetime in seconds (maximum %d)", consoleapi.MaxJWTTTLSeconds))
+	create.Flags().String(flagdefs.FlagScope, "", "Comma-separated scopes (default: "+strings.Join(defaultJWTScope(), ",")+")")
 
 	cmd.AddCommand(create)
 

@@ -332,7 +332,7 @@ func TestEmptyBodyIsFineWhenNoResultExpected(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if err := console.New(srv.URL, "k").DeleteAPIKey(context.Background(), "k1"); err != nil {
+	if err := console.New(srv.URL, "k").DeleteAPIKey(context.Background(), "11111111-1111-4111-8111-111111111111"); err != nil {
 		t.Fatalf("empty body with no expected result must succeed: %v", err)
 	}
 }

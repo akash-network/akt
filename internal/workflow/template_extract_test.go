@@ -291,7 +291,7 @@ func builtinStepTemplate(t *testing.T, workflow, step string) string {
 	return ""
 }
 
-func TestBuiltinDeployResultReportsConsoleAutoTopUp(t *testing.T) {
+func TestBuiltinDeployResultDefersConsoleCompletionDetails(t *testing.T) {
 	tmpl := builtinStepTemplate(t, "deploy", "display-result")
 	state := wf.NewRunState("wf-1", "deploy", "akash1owner", nil)
 	state.SetStepResult("create-deployment", &wf.StepResult{
@@ -309,17 +309,17 @@ func TestBuiltinDeployResultReportsConsoleAutoTopUp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveTemplate: %v", err)
 	}
-	for _, want := range []string{
-		"Auto top-up: enabled (daily)",
-		"akt console deployment settings 9911 false",
-	} {
-		if !strings.Contains(rendered, want) {
-			t.Errorf("Console result does not contain %q:\n%s", want, rendered)
+	if !strings.Contains(rendered, "Deployment created!") {
+		t.Errorf("Console result does not report creation:\n%s", rendered)
+	}
+	for _, premature := range []string{"Deployment active!", "Auto top-up", "console deployment settings"} {
+		if strings.Contains(rendered, premature) {
+			t.Errorf("pre-readiness result contains %q:\n%s", premature, rendered)
 		}
 	}
 }
 
-func TestBuiltinDeployResultOmitsConsoleSettingOnChain(t *testing.T) {
+func TestBuiltinDeployResultDefersChainCompletionDetails(t *testing.T) {
 	tmpl := builtinStepTemplate(t, "deploy", "display-result")
 	state := wf.NewRunState("wf-1", "deploy", "akash1owner", nil)
 	state.SetStepResult("create-deployment", &wf.StepResult{
@@ -333,8 +333,13 @@ func TestBuiltinDeployResultOmitsConsoleSettingOnChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ResolveTemplate: %v", err)
 	}
-	if strings.Contains(rendered, "Auto top-up") || strings.Contains(rendered, "console deployment settings") {
-		t.Errorf("chain result contains a Console-only setting:\n%s", rendered)
+	if !strings.Contains(rendered, "Deployment created!") {
+		t.Errorf("chain result does not report creation:\n%s", rendered)
+	}
+	for _, premature := range []string{"Deployment active!", "Auto top-up", "console deployment settings"} {
+		if strings.Contains(rendered, premature) {
+			t.Errorf("pre-readiness result contains %q:\n%s", premature, rendered)
+		}
 	}
 }
 

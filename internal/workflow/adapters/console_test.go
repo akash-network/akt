@@ -306,6 +306,10 @@ func TestConsoleUpdateDeployment(t *testing.T) {
 
 	c, _ := newConsoleClient(t, func(w http.ResponseWriter, r *http.Request) {
 		gotMethod, gotPath = r.Method, r.URL.Path
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"777"},"state":"active"},"leases":[]}}`))
+			return
+		}
 		gotData = decodeEnvelope(t, r)
 		_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"777"},"state":"active","hash":"` + expectedHash + `"},"leases":[]}}`))
 	})

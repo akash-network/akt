@@ -141,6 +141,42 @@ func TestReadTxFlagsRejectsUnresolvedPreselectedSigner(t *testing.T) {
 	}
 }
 
+func TestReadTxFlagsResolveNamedSignerBeforeSimulation(t *testing.T) {
+	kr := aktkeyring.NewInMemory(aktcodec.MakeEncodingConfig().Codec)
+	record, _, err := kr.NewMnemonic(
+		"e2e",
+		sdkkeyring.English,
+		"m/44'/118'/0'/0/0",
+		"",
+		aktkeyring.DefaultAlgo(),
+	)
+	if err != nil {
+		t.Fatalf("create signer: %v", err)
+	}
+	want, err := record.GetAddress()
+	if err != nil {
+		t.Fatalf("signer address: %v", err)
+	}
+
+	cmd := txFlagCommand()
+	if err := cmd.Flags().Set(flagdefs.FlagDryRun, "true"); err != nil {
+		t.Fatal(err)
+	}
+	cctx := sdkclient.Context{}.
+		WithCmdContext(context.Background()).
+		WithHomeDir(t.TempDir()).
+		WithKeyring(kr).
+		WithFrom("e2e")
+
+	got, err := ReadTxCommandFlags(cctx, cmd.Flags(), io.Discard)
+	if err != nil {
+		t.Fatalf("resolve dry-run signer: %v", err)
+	}
+	if !got.Simulate || got.FromName != "e2e" || !got.GetFromAddress().Equals(want) {
+		t.Fatalf("dry-run signer = simulate:%t name:%q address:%s, want true/e2e/%s", got.Simulate, got.FromName, got.GetFromAddress(), want)
+	}
+}
+
 func TestCanonicalTransportAndAuxFlagsReachClientContext(t *testing.T) {
 	t.Run("gRPC", func(t *testing.T) {
 		cmd := &cobra.Command{Use: "query"}

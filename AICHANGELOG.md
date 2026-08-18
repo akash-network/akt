@@ -4,6 +4,21 @@
 
 ### Fixed
 
+- **The open CLI correctness and UX backlog now shares enforceable
+  boundaries**: workflow JSONL preserves step outputs and deployment results;
+  deploy completion reports identity, URIs, readiness, and next actions;
+  Console commands validate DSEQs, pagination, UUIDs, names, JWT lifetimes,
+  active mutation state, and the $0.50 deposit minimum before transport work;
+  dry-runs resolve the deposit and signer they will actually use; MCP query
+  tools remain available when optional signing cannot initialize; and Console
+  pretty output uses human semantic renderers with correct micro-ACT dollar
+  and monthly cost semantics. Shell service selection, resource-based provider
+  screening, state filtering, context creation confirmations, bootstrap
+  warnings, keyring guidance, empty streams, and store/SDL documentation now follow the same
+  command-boundary rules. This resolves the behavior tracked in issues #57
+  through #82 without masking
+  failures with fallback values.
+
 - **Console sandbox spend accounting now uses the owned deployment ledger**:
   the point-in-time account total has no lifecycle-run identity or observation
   height, so its pre/post change cannot prove one deployment's spend. The

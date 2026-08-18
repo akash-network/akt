@@ -4,6 +4,7 @@ import (
 	flagdefs "pkg.akt.dev/akt/internal/flags"
 
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
 	wf "pkg.akt.dev/akt/internal/workflow"
 	"pkg.akt.dev/akt/internal/workflow/steps"
@@ -110,6 +112,7 @@ func TestEmitJSONLShape(t *testing.T) {
 		Status: "success",
 		TxHash: "ABC123",
 		Height: 42,
+		Output: map[string]any{"dseq": "12345", "provider": "akash1provider"},
 	})
 	state.SetStepResult("skipme", &wf.StepResult{Name: "skipme", Status: "skipped"})
 	state.SetStepResult("boom", &wf.StepResult{Name: "boom", Status: "failed", Error: "out of gas"})
@@ -130,6 +133,7 @@ func TestEmitJSONLShape(t *testing.T) {
 		Step     string `json:"step"`
 		Result   string `json:"result"`
 		Errors   []string
+		Outputs  map[string]any `json:"outputs"`
 		Txs      []struct {
 			Hash   string `json:"hash"`
 			Height int64  `json:"height"`
@@ -160,6 +164,9 @@ func TestEmitJSONLShape(t *testing.T) {
 
 	if got[0].Result != "completed" || len(got[0].Txs) != 1 || got[0].Txs[0].Hash != "ABC123" || got[0].Txs[0].Height != 42 {
 		t.Errorf("success line = %+v, want completed with the tx", got[0])
+	}
+	if got[0].Outputs["dseq"] != "12345" || got[0].Outputs["provider"] != "akash1provider" {
+		t.Errorf("success outputs = %#v, want workflow step values", got[0].Outputs)
 	}
 	if got[1].Result != "skipped" {
 		t.Errorf("skipped line = %+v", got[1])
@@ -315,6 +322,26 @@ func TestDeployRecoveryAdviceJSONLFields(t *testing.T) {
 	}
 }
 
+func TestReadinessFailureDoesNotSuggestResendingManifest(t *testing.T) {
+	state := wf.NewRunState("run-1", "deploy", "akash1owner", map[string]any{"sdl-file": "deploy.yaml"})
+	state.SetStepResult("create-deployment", &wf.StepResult{
+		Name: "create-deployment", Status: "success", Output: map[string]any{"dseq": "77"},
+	})
+	state.SetStepResult("create-lease", &wf.StepResult{
+		Name: "create-lease", Status: "success", Output: map[string]any{"provider": "akash1provider"},
+	})
+	state.SetStepResult("send-manifest", &wf.StepResult{Name: "send-manifest", Status: "success"})
+	state.SetStepResult("wait-for-ready", &wf.StepResult{Name: "wait-for-ready", Status: "failed"})
+
+	advice := deployRecoveryAdvice(state, errors.New("readiness timeout"))
+	if advice == nil || advice.Cleanup != "akt close 77" {
+		t.Fatalf("readiness recovery = %+v", advice)
+	}
+	if advice.Recovery != "" {
+		t.Fatalf("readiness recovery incorrectly resends a successful manifest: %s", advice.Recovery)
+	}
+}
+
 func TestDeployRecoveryAdviceRequiresCompletedCreate(t *testing.T) {
 	state := wf.NewRunState("run-1", "deploy", "akash1owner", map[string]any{"sdl-file": "deploy.yaml"})
 	state.SetStepResult("create-deployment", &wf.StepResult{Name: "create-deployment", Status: "failed"})
@@ -337,6 +364,76 @@ func TestDeployRecoveryAdviceRequiresCompletedCreate(t *testing.T) {
 func TestShellQuoteKeepsRecoveryCommandsCopyPasteable(t *testing.T) {
 	if got, want := shellQuote("/tmp/operator's deployment.yaml"), `'/tmp/operator'"'"'s deployment.yaml'`; got != want {
 		t.Errorf("shellQuote = %q, want %q", got, want)
+	}
+}
+
+func TestDeploymentReadyRequiresEveryServiceAndPreservesURIs(t *testing.T) {
+	raw := json.RawMessage(`{"services":{"web":{"available":2,"total":2,"uris":["one.example","two.example"]},"worker":{"available":1,"total":1,"uris":[]}}}`)
+	ready, uris, err := deploymentReady(raw)
+	if err != nil || !ready {
+		t.Fatalf("ready status = %t, error %v", ready, err)
+	}
+	if got := strings.Join(uris["web"], ","); got != "one.example,two.example" {
+		t.Fatalf("web URIs = %q", got)
+	}
+
+	ready, _, err = deploymentReady(json.RawMessage(`{"services":{"web":{"available":0,"total":1}}}`))
+	if err != nil || ready {
+		t.Fatalf("unavailable service status = %t, error %v", ready, err)
+	}
+}
+
+func TestWaitForDeploymentReadinessReturnsBoundedTimeout(t *testing.T) {
+	_, _, err := waitForDeploymentReadiness(
+		context.Background(),
+		5*time.Millisecond,
+		func(context.Context) (json.RawMessage, error) {
+			return json.RawMessage(`{"services":{}}`), nil
+		},
+	)
+	if err == nil || !strings.Contains(err.Error(), "within 5ms") {
+		t.Fatalf("readiness timeout = %v", err)
+	}
+}
+
+func TestConsoleDeployCompletionIncludesDeepLinkAndOptOut(t *testing.T) {
+	state := wf.NewRunState("run-1", "deploy", "", map[string]any{
+		"ready-timeout":  "2m",
+		"no-wait-active": true,
+	})
+	state.SetStepResult("create-deployment", &wf.StepResult{
+		Name: "create-deployment", Status: "success", Output: map[string]any{"dseq": "4242"},
+	})
+	state.SetStepResult("select-bid", &wf.StepResult{
+		Name: "select-bid", Status: "success", Output: map[string]any{"provider": "akash1provider", "price": "1uact"},
+	})
+	state.SetStepResult("display-result", &wf.StepResult{Name: "display-result", Status: "success"})
+
+	err := enrichDeployCompletion(
+		context.Background(),
+		state,
+		&aktctx.Context{AuthMethod: aktctx.AuthMethodConsoleAPI},
+		console.New("", "key"),
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("enrich Console completion: %v", err)
+	}
+	output := state.Steps["display-result"].Output
+	if output["console_url"] != "https://console.akash.network/deployments/4242" || output["auto_top_up"] != "daily" {
+		t.Fatalf("Console completion output = %#v", output)
+	}
+
+	var rendered strings.Builder
+	renderDeployNext(&rendered, state)
+	for _, want := range []string{
+		"https://console.akash.network/deployments/4242",
+		"akt console deployment settings 4242 false",
+		"akt console status 4242",
+	} {
+		if !strings.Contains(rendered.String(), want) {
+			t.Errorf("completion output missing %q:\n%s", want, rendered.String())
+		}
 	}
 }
 

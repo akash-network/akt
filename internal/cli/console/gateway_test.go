@@ -608,6 +608,35 @@ func TestPrintLeaseEventStructured(t *testing.T) {
 	}
 }
 
+func TestPrintEmptyEventsOnlyInBoundedPrettyMode(t *testing.T) {
+	cmd, buf := streamOutputCommand(t, "pretty")
+	if err := printEmptyEvents(cmd, 0, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != "No recent events\n" {
+		t.Fatalf("empty events = %q", got)
+	}
+
+	for _, test := range []struct {
+		format string
+		count  int
+		follow bool
+	}{
+		{format: "json"},
+		{format: "yaml"},
+		{format: "pretty", count: 1},
+		{format: "pretty", follow: true},
+	} {
+		cmd, buf := streamOutputCommand(t, test.format)
+		if err := printEmptyEvents(cmd, test.count, test.follow); err != nil {
+			t.Fatal(err)
+		}
+		if got := buf.String(); got != "" {
+			t.Fatalf("unexpected empty-event output = %q", got)
+		}
+	}
+}
+
 func streamOutputCommand(t *testing.T, format string) (*cobra.Command, *bytes.Buffer) {
 	t.Helper()
 
@@ -634,6 +663,73 @@ func TestShellRejectsStructuredInteractiveModeBeforeContextResolution(t *testing
 	}
 	if resolved {
 		t.Fatal("structured interactive shell resolved context before refusal")
+	}
+}
+
+func TestShellWithoutCommandRejectsNonTerminalBeforeContextResolution(t *testing.T) {
+	resolved := false
+	cmd := shellCmd(func() *aktctx.Manager {
+		resolved = true
+		return nil
+	})
+	cmd.Flags().String(flagdefs.FlagOutput, "pretty", "")
+	cmd.SetArgs([]string{"12345"})
+
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "non-interactive stdin") {
+		t.Fatalf("shell error = %v", err)
+	}
+	if resolved {
+		t.Fatal("non-terminal shell resolved context before refusal")
+	}
+}
+
+func TestManifestServiceNames(t *testing.T) {
+	names, err := manifestServiceNames(`[{"name":"group","services":[{"name":"worker"},{"name":"web"}]}]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(names, ","); got != "web,worker" {
+		t.Fatalf("services = %q", got)
+	}
+}
+
+func TestScreeningRequestSupportsResourceFlagsWithoutSDL(t *testing.T) {
+	cmd := screenCmd(func() *aktctx.Manager { return nil })
+	for flag, value := range map[string]string{
+		"cpu": "250m", "memory": "2Gi", "storage": "10Gi", "gpu": "1",
+		"gpu-model": "a100", "count": "2", "attribute": "region=us-west",
+		"signed-by": "akash1auditor", "reclamation-window": "600",
+	} {
+		if err := cmd.Flags().Set(flag, value); err != nil {
+			t.Fatalf("set --%s: %v", flag, err)
+		}
+	}
+
+	req, err := screeningRequestFromCmd(cmd, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var units []map[string]any
+	if err := json.Unmarshal(req.Resources, &units); err != nil {
+		t.Fatal(err)
+	}
+	if len(units) != 1 || units[0]["count"] != float64(2) {
+		t.Fatalf("screening units = %#v", units)
+	}
+	resource := units[0]["resource"].(map[string]any)
+	cpu := resource["cpu"].(map[string]any)["units"].(map[string]any)["val"]
+	if cpu != "250" {
+		t.Fatalf("cpu = %#v, want 250 millicpu", cpu)
+	}
+	if len(req.Requirements.Attributes) != 1 || req.Requirements.Attributes[0].Key != "region" {
+		t.Fatalf("requirements = %#v", req.Requirements)
+	}
+	if strings.Join(req.Requirements.SignedBy.AnyOf, ",") != "akash1auditor" {
+		t.Fatalf("signed by = %#v", req.Requirements.SignedBy)
+	}
+	if string(req.ReclamationWindow) != "600" {
+		t.Fatalf("reclamation window = %s", req.ReclamationWindow)
 	}
 }
 

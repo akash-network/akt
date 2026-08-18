@@ -296,28 +296,33 @@ func (c *chainClient) deriveDSeq(ctx context.Context, params map[string]string) 
 // "auto" (or empty) queries the chain minimum deployment deposit, mirroring
 // DetectDeploymentDeposit used by `akt tx deployment create`.
 func (c *chainClient) resolveDeposit(ctx context.Context, depositStr string) (depositv1.Deposit, error) {
-	if depositStr == "" || depositStr == depositAuto {
-		resp, err := c.cl.Query().Deployment().Params(ctx, &dv1beta.QueryParamsRequest{})
-		if err != nil {
-			return depositv1.Deposit{}, err
-		}
+	resolved, err := ResolveChainDepositValue(ctx, c.cl, depositStr)
+	if err != nil {
+		return depositv1.Deposit{}, err
+	}
 
-		depositStr = ""
+	return depositFromString(resolved)
+}
 
-		// always default to ACT
-		for _, sCoin := range resp.Params.MinDeposits {
-			if sCoin.Denom == "uact" {
-				depositStr = fmt.Sprintf("%s%s", sCoin.Amount, sCoin.Denom)
-				break
-			}
-		}
+// ResolveChainDepositValue returns the exact coin the chain adapter will put
+// on a deployment message. Planning and execution share this function so an
+// auto dry-run cannot advertise a value different from the broadcast path.
+func ResolveChainDepositValue(ctx context.Context, cl aclient.LightClient, depositStr string) (string, error) {
+	if depositStr != "" && depositStr != depositAuto {
+		return depositStr, nil
+	}
 
-		if depositStr == "" {
-			return depositv1.Deposit{}, fmt.Errorf("couldn't query default deposit amount for uAKT")
+	resp, err := cl.Query().Deployment().Params(ctx, &dv1beta.QueryParamsRequest{})
+	if err != nil {
+		return "", err
+	}
+	for _, coin := range resp.Params.MinDeposits {
+		if coin.Denom == "uact" {
+			return fmt.Sprintf("%s%s", coin.Amount, coin.Denom), nil
 		}
 	}
 
-	return depositFromString(depositStr)
+	return "", fmt.Errorf("chain deployment parameters contain no uact minimum deposit")
 }
 
 // verifyGroupsUnchanged replicates the safety check performed by

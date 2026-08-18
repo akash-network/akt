@@ -99,7 +99,7 @@ func statusCmd() *cobra.Command {
 
 			status, err := cl.Status(ctx)
 			if err != nil {
-				return aktprovider.GatewayError("query provider status", err)
+				return aktprovider.GatewayErrorForProvider("query provider status", providerAddr.String(), err)
 			}
 
 			return printJSON(cmd, status)

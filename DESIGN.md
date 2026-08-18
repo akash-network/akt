@@ -461,6 +461,11 @@ Each context has an `auth-method` that determines how transactions are signed an
   requires an explicitly selected context because every mutation must have a
   durable per-context action-log destination; contextless writes fail before
   any tool is registered.
+- Console request construction is a validation boundary shared by direct CLI,
+  workflows, and MCP. Numeric identities, pagination, minimum USD deposits,
+  UUIDs, key names, mutation state, and JWT lifetime are rejected there before
+  transport work. This prevents each surface from acquiring its own partial
+  version of the same rules.
 
 A context uses **one** auth method. Users who need both can create separate contexts (e.g., `prod` with keyring auth and `console` with console-api auth), potentially sharing the same network definition.
 
@@ -512,6 +517,12 @@ that provider, deployment identity, and required scope (`status` or
 `send-manifest`). They never send the provider client's broad full-access JWT,
 so a registered provider cannot replay an observed MCP credential against a
 different provider, deployment, or operation.
+
+MCP startup assembles read and write capabilities independently. A usable
+query client always registers its read tools. Requesting writes does not make
+query availability depend on a signer: when signing cannot be initialized,
+only signing-dependent tools are omitted and the server remains useful for
+queries.
 
 MCP tool schemas are executable boundaries. Unknown fields, blank required
 strings, invalid enums, and numeric identifiers that cannot be represented
@@ -780,6 +791,13 @@ The final workflow report has the same contract as an output step. Human and
 JSONL renderers return writer and short-write failures to the Cobra boundary;
 a successful engine run cannot exit zero after its promised stdout payload was
 lost.
+
+Step outputs are first-class workflow data. JSONL carries the values produced
+by each step instead of reducing a successful action to its status. Deployment
+completion therefore exposes its DSEQ, full provider address, selected price,
+service URIs, readiness, and rail-appropriate deep link. The Console and chain
+adapters both feed a bounded readiness observation through this shared result
+rather than adding rail-specific command output.
 
 Console mutation responses are not trusted as the only evidence of resulting
 state. Before creating a deployment, the client derives the SDL's deterministic
@@ -1210,6 +1228,13 @@ For Console API values, the public JSON representation is canonical. YAML is
 generated from that JSON semantic tree rather than by reflecting the Go
 transport type, so JSON field names, raw embedded objects, byte/string
 representations, and integer precision remain identical across formats.
+
+Human Console output walks the canonical JSON semantic model through a
+field-aware renderer. It applies USD conversion for micro-ACT escrow values,
+monthly estimates for `uact` per-block prices, full identifiers, and empty-state
+text without changing JSON/YAML wire semantics. Workflow completion has its own
+summary renderer for readiness and next actions. Pretty mode never obtains its
+layout by colorizing or indenting raw API JSON.
 
 The output flag is an enum at the parsing boundary. A misspelling such as
 `-o josn` is a usage error; it must never fall through to pretty output. The

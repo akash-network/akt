@@ -94,16 +94,17 @@ func TestCreateAPIKeyRejectsIncompleteOneTimeSecret(t *testing.T) {
 }
 
 func TestDeleteAPIKey(t *testing.T) {
+	id := "11111111-1111-4111-8111-111111111111"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodDelete, r.Method)
-		assert.Equal(t, "/v1/api-keys/key-1", r.URL.Path)
+		assert.Equal(t, "/v1/api-keys/"+id, r.URL.Path)
 
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
 
 	c := console.New(srv.URL, "test-key")
-	require.NoError(t, c.DeleteAPIKey(context.Background(), "key-1"))
+	require.NoError(t, c.DeleteAPIKey(context.Background(), id))
 }
 
 func TestDeleteAPIKeyNotFoundIsNoop(t *testing.T) {
@@ -113,7 +114,7 @@ func TestDeleteAPIKeyNotFoundIsNoop(t *testing.T) {
 	defer srv.Close()
 
 	c := console.New(srv.URL, "test-key")
-	assert.NoError(t, c.DeleteAPIKey(context.Background(), "missing"), "404 on delete is a no-op")
+	assert.NoError(t, c.DeleteAPIKey(context.Background(), "22222222-2222-4222-8222-222222222222"), "404 on delete is a no-op")
 }
 
 func TestCreateJWTToken(t *testing.T) {

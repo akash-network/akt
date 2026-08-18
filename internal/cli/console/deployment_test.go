@@ -1,6 +1,7 @@
 package console
 
 import (
+	"bytes"
 	"context"
 	"io"
 	"net/http"
@@ -12,10 +13,28 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	aktctx "pkg.akt.dev/akt/internal/context"
 	sstore "pkg.akt.dev/akt/internal/store"
 	"pkg.akt.dev/akt/internal/store/bbolt"
 )
+
+func TestConfirmDeploymentCreateDefaultsToNo(t *testing.T) {
+	cmd := &cobra.Command{}
+	var diagnostics bytes.Buffer
+	cmd.SetErr(&diagnostics)
+
+	cmd.SetIn(strings.NewReader("\n"))
+	require.ErrorContains(t, confirmDeploymentCreate(cmd, true, "deploy.yaml", 5), "cancelled")
+	assert.Contains(t, diagnostics.String(), "Create deployment")
+
+	cmd.SetIn(strings.NewReader("yes\n"))
+	require.NoError(t, confirmDeploymentCreate(cmd, true, "deploy.yaml", 5))
+	require.NoError(t, confirmDeploymentCreate(cmd, false, "deploy.yaml", 5))
+}
 
 const validConsoleDeploymentSDL = `version: "2.0"
 services:
@@ -408,9 +427,9 @@ func TestDeploymentCloseDoesNotGuessBetweenLocalOwners(t *testing.T) {
 	}
 }
 
-// TestDeploymentListZeroFlagValues pins that legitimately-zero flag values
-// are not mis-reported as errors: --skip 0 is forwarded and --limit 0 falls
-// back to the server default page size (the API requires limit >= 1).
+// TestDeploymentListZeroFlagValues pins that skip may be zero but the API's
+// one-based page size may not. Both are rejected before a malformed request
+// can reach Console.
 func TestDeploymentListZeroFlagValues(t *testing.T) {
 	m := newTestManager(t)
 	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
@@ -424,15 +443,12 @@ func TestDeploymentListZeroFlagValues(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := execConsole(t, m, srv.URL, "deployment", "list", "--skip", "0", "--limit", "0"); err != nil {
-		t.Fatalf("deployment list with zero flag values must succeed, got %v", err)
+	if _, err := execConsole(t, m, srv.URL, "deployment", "list", "--skip", "0", "--limit", "0"); err == nil {
+		t.Fatal("deployment list with a zero limit must fail")
 	}
 
-	if gotQuery.Get("skip") != "0" {
-		t.Errorf("skip=0 must be forwarded, got query %v", gotQuery)
-	}
-	if _, present := gotQuery["limit"]; present {
-		t.Errorf("limit=0 must be omitted so the server default applies, got query %v", gotQuery)
+	if gotQuery != nil {
+		t.Errorf("invalid pagination reached Console with query %v", gotQuery)
 	}
 }
 

@@ -321,6 +321,35 @@ func TestListDeployments(t *testing.T) {
 	assert.True(t, resp.Pagination.HasMore)
 }
 
+func TestListDeploymentsByStateFiltersBeforeApplyingPageWindow(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("skip") {
+		case "0":
+			_, _ = w.Write([]byte(`{"data":{"deployments":[
+				{"deployment":{"id":{"dseq":"1"},"state":"active"}},
+				{"deployment":{"id":{"dseq":"2"},"state":"closed"}}
+			],"pagination":{"skip":0,"limit":2,"hasMore":true}}}`))
+		case "2":
+			_, _ = w.Write([]byte(`{"data":{"deployments":[
+				{"deployment":{"id":{"dseq":"3"},"state":"active"}},
+				{"deployment":{"id":{"dseq":"4"},"state":"active"}}
+			],"pagination":{"skip":2,"limit":2,"hasMore":false}}}`))
+		default:
+			t.Fatalf("unexpected pagination request %s", r.URL.RawQuery)
+		}
+	}))
+	defer srv.Close()
+
+	result, err := console.New(srv.URL, "test-key").ListDeploymentsByState(
+		context.Background(), "active", 1, 1,
+	)
+	require.NoError(t, err)
+	require.Len(t, result.Deployments, 1)
+	assert.Equal(t, "3", result.Deployments[0].Deployment.ID.DSeq.String())
+	assert.Equal(t, 3, result.Pagination.Total)
+	assert.True(t, result.Pagination.HasMore)
+}
+
 func TestGetDeployment(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
@@ -358,6 +387,11 @@ func TestGetDeployment(t *testing.T) {
 func TestUpdateDeployment(t *testing.T) {
 	expectedHash := versionHash(t, validUpdateSDL)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			assert.Equal(t, "/v1/deployments/555", r.URL.Path)
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"555"},"state":"active"}}}`))
+			return
+		}
 		assert.Equal(t, http.MethodPut, r.Method)
 		assert.Equal(t, "/v1/deployments/555", r.URL.Path)
 
@@ -607,7 +641,7 @@ func TestDepositRejectsInvalidAmountBeforeNetwork(t *testing.T) {
 	defer srv.Close()
 
 	err := console.New(srv.URL, "test-key").Deposit(context.Background(), "321", 0)
-	require.ErrorContains(t, err, "prepare deployment deposit")
+	require.ErrorContains(t, err, "at least $0.50")
 	assert.Equal(t, int32(0), requests.Load(), "invalid amount must not read or mutate remote state")
 }
 
@@ -981,6 +1015,11 @@ func TestGetDeploymentSettingsNotFound(t *testing.T) {
 
 func TestSetDeploymentAutoTopUpPatch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			assert.Equal(t, "/v1/deployments/321", r.URL.Path)
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"321"},"state":"active"}}}`))
+			return
+		}
 		assert.Equal(t, http.MethodPatch, r.Method)
 		assert.Equal(t, "/v2/deployment-settings/321", r.URL.Path)
 
@@ -1002,6 +1041,9 @@ func TestSetDeploymentAutoTopUpFallsBackToPost(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
+		case http.MethodGet:
+			assert.Equal(t, "/v1/deployments/654", r.URL.Path)
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"654"},"state":"active"}}}`))
 		case http.MethodPatch:
 			patchCalled = true
 			assert.Equal(t, "/v2/deployment-settings/654", r.URL.Path)

@@ -1,6 +1,7 @@
 package console
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -11,9 +12,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"pkg.akt.dev/akt/internal/capability"
 	"pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
+	flagdefs "pkg.akt.dev/akt/internal/flags"
 )
 
 // newAuthedManager returns a manager whose "prod" context already carries a
@@ -99,6 +103,34 @@ func TestFormatUSDPreservesSubCentValues(t *testing.T) {
 		if got := formatUSD(tt.value); got != tt.want {
 			t.Errorf("formatUSD(%g) = %q, want %q", tt.value, got, tt.want)
 		}
+	}
+}
+
+func TestConsolePrettyRendererUsesHumanMoneySemantics(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().String(flagdefs.FlagOutput, "pretty", "")
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	detail := console.DeploymentDetail{
+		Deployment: console.Deployment{ID: console.DeploymentID{Owner: "akash1owner", DSeq: "42"}, State: "active"},
+		Leases: []console.Lease{{
+			ID:    console.LeaseID{Provider: "akash1provider", DSeq: "42"},
+			Price: &console.Price{Denom: "uact", Amount: "1"},
+		}},
+		EscrowAccount: json.RawMessage(`{"state":{"funds":{"denom":"uact","amount":"500000"}}}`),
+	}
+	if err := printJSON(cmd, detail); err != nil {
+		t.Fatal(err)
+	}
+	rendered := out.String()
+	for _, want := range []string{"akash1owner", "akash1provider", "$0.50", "$0.43/month"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("pretty output %q missing %q", rendered, want)
+		}
+	}
+	if strings.Contains(rendered, "{") {
+		t.Fatalf("pretty output fell back to raw JSON: %q", rendered)
 	}
 }
 
@@ -309,7 +341,7 @@ func TestDepositRejectsNonPositiveAmount(t *testing.T) {
 			t.Errorf("%v must be rejected", arg)
 			continue
 		}
-		if !strings.Contains(err.Error(), "positive USD amount") {
+		if !strings.Contains(err.Error(), "at least $0.50") {
 			t.Errorf("%v: unexpected error %v", arg, err)
 		}
 	}
@@ -624,11 +656,12 @@ func TestAPIKeyDeleteIsIdempotent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	out, err := execConsole(t, m, srv.URL, "apikey", "delete", "key-1")
+	const id = "11111111-1111-1111-1111-111111111111"
+	out, err := execConsole(t, m, srv.URL, "--output", "pretty", "apikey", "delete", id)
 	if err != nil {
 		t.Fatalf("deleting an absent key must be a no-op, got %v", err)
 	}
-	if !strings.Contains(out, "key-1 deleted") {
+	if !strings.Contains(out, id+" deleted") {
 		t.Errorf("unexpected output %q", out)
 	}
 }
@@ -637,7 +670,7 @@ func TestAPIKeyDeleteStructuredAcknowledgement(t *testing.T) {
 	m := newAuthedManager(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete || r.URL.Path != "/v1/api-keys/key-1" {
+		if r.Method != http.MethodDelete || r.URL.Path != "/v1/api-keys/11111111-1111-1111-1111-111111111111" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
 		w.WriteHeader(http.StatusNotFound)
@@ -646,12 +679,13 @@ func TestAPIKeyDeleteStructuredAcknowledgement(t *testing.T) {
 
 	for _, format := range []string{"json", "yaml"} {
 		t.Run(format, func(t *testing.T) {
-			out, err := execConsole(t, m, srv.URL, "--output", format, "apikey", "delete", "key-1")
+			const id = "11111111-1111-1111-1111-111111111111"
+			out, err := execConsole(t, m, srv.URL, "--output", format, "apikey", "delete", id)
 			if err != nil {
 				t.Fatalf("delete absent API key: %v", err)
 			}
 			got := decodeStructuredOutput(t, format, out)
-			want := map[string]any{"id": "key-1", "deleted": true}
+			want := map[string]any{"id": id, "deleted": true}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("structured delete output = %#v, want %#v", got, want)
 			}

@@ -250,8 +250,8 @@ func TestLocalIdentityModes(t *testing.T) {
 		t.Errorf("read-only mcp mode = %v, want on demand", got)
 	}
 	require.NoError(t, mcp.Flags().Set(flagdefs.FlagEnableWrites, "true"))
-	if got := localIdentityMode(mcp); got != aktclient.LocalIdentityRequired {
-		t.Errorf("write-enabled mcp mode = %v, want required", got)
+	if got := localIdentityMode(mcp); got != aktclient.LocalIdentityOnDemand {
+		t.Errorf("write-enabled mcp mode = %v, want on demand", got)
 	}
 
 	provider := &cobra.Command{Use: "provider"}

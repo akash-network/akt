@@ -159,12 +159,15 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *c
   # Add a Ledger key
   akt context keys add alice --ledger`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			name := strings.TrimSpace(args[0])
+			if name == "" {
+				return fmt.Errorf("key name must not be blank")
+			}
+
 			kr, err := getKeyring()
 			if err != nil {
 				return err
 			}
-
-			name := args[0]
 
 			// Check if key already exists.
 			if _, err := kr.Key(name); err == nil {

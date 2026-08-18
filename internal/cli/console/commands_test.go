@@ -74,9 +74,21 @@ func execConsoleContext(ctx context.Context, t *testing.T, m *aktctx.Manager, sr
 	cmd.SetOut(&buf)
 	cmd.SetErr(&buf)
 
+	prefix := make([]string, 0, 4)
 	if srvURL != "" {
-		args = append(args, "--console-api-url", srvURL)
+		prefix = append(prefix, "--console-api-url", srvURL)
 	}
+	hasOutput := false
+	for _, arg := range args {
+		if arg == "--output" || arg == "-o" || strings.HasPrefix(arg, "--output=") {
+			hasOutput = true
+			break
+		}
+	}
+	if !hasOutput {
+		prefix = append(prefix, "--output", "json")
+	}
+	args = append(prefix, args...)
 	cmd.SetArgs(args)
 
 	err := cmd.Execute()
@@ -293,7 +305,7 @@ func executeConsoleWithOutput(
 	cmd.SetOut(out)
 	cmd.SetErr(io.Discard)
 	if srvURL != "" {
-		args = append(args, "--console-api-url", srvURL)
+		args = append([]string{"--console-api-url", srvURL}, args...)
 	}
 	cmd.SetArgs(args)
 
@@ -581,7 +593,7 @@ func TestDeploymentCloseAlreadyClosedExitsClean(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	out, err := execConsole(t, m, srv.URL, "deployment", "close", "42")
+	out, err := execConsole(t, m, srv.URL, "--output", "pretty", "deployment", "close", "42")
 	if err != nil {
 		t.Fatalf("close of an already-closed deployment must succeed, got %v", err)
 	}
@@ -629,7 +641,7 @@ func TestTemplateSDLPrintsRawSDL(t *testing.T) {
 	defer srv.Close()
 
 	// Public endpoint: no key configured anywhere.
-	out, err := execConsole(t, m, srv.URL, "template", "sdl", "tpl-1")
+	out, err := execConsole(t, m, srv.URL, "--output", "pretty", "template", "sdl", "tpl-1")
 	if err != nil {
 		t.Fatalf("template sdl: %v", err)
 	}
@@ -661,7 +673,7 @@ func TestPlainConsoleCommandsPropagateOutputFailures(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests[r.Method+" "+r.URL.Path]++
 		switch {
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1/api-keys/key-1":
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/api-keys/11111111-1111-1111-1111-111111111111":
 			w.WriteHeader(http.StatusNotFound)
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/deployments/777":
 			w.WriteHeader(http.StatusNotFound)
@@ -689,7 +701,7 @@ func TestPlainConsoleCommandsPropagateOutputFailures(t *testing.T) {
 		name string
 		args []string
 	}{
-		{name: "API key delete result", args: []string{"apikey", "delete", "key-1"}},
+		{name: "API key delete result", args: []string{"apikey", "delete", "11111111-1111-1111-1111-111111111111"}},
 		{name: "raw template SDL", args: []string{"template", "sdl", "tpl-1"}},
 		{name: "empty bid result", args: []string{"bid", "list", "12345"}},
 		{name: "empty bid screening result", args: []string{"screen", sdlPath}},
@@ -719,7 +731,7 @@ func TestPlainConsoleCommandsPropagateOutputFailures(t *testing.T) {
 	}
 
 	for _, request := range []string{
-		http.MethodDelete + " /v1/api-keys/key-1",
+		http.MethodDelete + " /v1/api-keys/11111111-1111-1111-1111-111111111111",
 		http.MethodDelete + " /v1/deployments/777",
 	} {
 		if requests[request] != len(failures) {
@@ -754,8 +766,8 @@ func TestJWTCreatePrintsToken(t *testing.T) {
 		if body.Data.TTL != 300 {
 			t.Errorf("default ttl = %d, want 300", body.Data.TTL)
 		}
-		if len(body.Data.Leases.Scope) != len(defaultJWTScope) {
-			t.Errorf("default scope = %v, want %v", body.Data.Leases.Scope, defaultJWTScope)
+		if len(body.Data.Leases.Scope) != len(defaultJWTScope()) {
+			t.Errorf("default scope = %v, want %v", body.Data.Leases.Scope, defaultJWTScope())
 		}
 
 		writeJSON(t, w, `{"data":{"token":"tok-abc123"}}`)

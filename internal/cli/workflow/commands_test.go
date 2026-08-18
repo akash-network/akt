@@ -226,7 +226,7 @@ func TestCommandFromDefDeploy(t *testing.T) {
 	if cmd.Flags().Lookup("sdl-file") != nil {
 		t.Fatal("deploy command has --sdl-file flag; file param must be positional only")
 	}
-	for _, flag := range []string{"deposit", "bid-timeout", "bid-select", "yes", "dry-run"} {
+	for _, flag := range []string{"deposit", "bid-timeout", "ready-timeout", "no-wait-active", "bid-select", "yes", "dry-run"} {
 		if cmd.Flags().Lookup(flag) == nil {
 			t.Fatalf("deploy command missing --%s flag", flag)
 		}
@@ -465,6 +465,37 @@ func TestExecuteDryRunJSONLEmitsPlannedSteps(t *testing.T) {
 	}
 }
 
+func TestConsoleDryRunResolvesAndValidatesDeposit(t *testing.T) {
+	home := t.TempDir()
+	m := newTestManager(t, home, "console", aktctx.AuthMethodConsoleAPI)
+	sdl := writeValidWorkflowSDL(t)
+	newCommand := func() *cobra.Command {
+		return findCommand(CommandsWithManager(
+			func() string { return home },
+			func() string { return "console" },
+			func() *aktctx.Manager { return m },
+		), "deploy")
+	}
+
+	out, err := executeCommand(t, newCommand(), sdl, "--deposit", "$5", "--dry-run")
+	if err != nil {
+		t.Fatalf("Console dry-run: %v\n%s", err, out)
+	}
+	if !strings.Contains(out, "deposit:") || !strings.Contains(out, "5") || strings.Contains(out, "$5") {
+		t.Fatalf("dry-run did not show resolved Console deposit:\n%s", out)
+	}
+	if !strings.Contains(out, "Rail: console") || !strings.Contains(out, "Console API create deployment") || strings.Contains(out, "deployment.MsgCreateDeployment") {
+		t.Fatalf("dry-run did not translate steps for the Console rail:\n%s", out)
+	}
+
+	for _, deposit := range []string{"auto", "0.49usd"} {
+		_, err := executeCommand(t, newCommand(), sdl, "--deposit", deposit, "--dry-run")
+		if err == nil || !strings.Contains(err.Error(), "$0.50") {
+			t.Errorf("deposit %q error = %v, want Console minimum guidance", deposit, err)
+		}
+	}
+}
+
 // TestExecuteKeyringContextWithoutChainClient verifies the clear
 // wallet/chain-client error when a keyring context has no chain client in
 // the command context (the "neither credential" case).
@@ -505,6 +536,8 @@ func TestExecuteConsoleDeployEndToEnd(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/4242":
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"owner":"o","dseq":"4242"},"state":"active"},"leases":[{"id":{"owner":"o","dseq":"4242","gseq":1,"oseq":1,"provider":"akash1cheap"},"state":"active","status":{"services":{"web":{"available":1,"total":1,"uris":["web.example.test"]}}}}]}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments":
 			_, _ = w.Write([]byte(`{"data":{"deployments":[],"pagination":{"hasMore":false}}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments":
@@ -572,6 +605,7 @@ func TestExecuteConsoleDeployEndToEnd(t *testing.T) {
 	for _, want := range []string{
 		"create-deployment", "tx: CREATEHASH",
 		"wait-for-bids", "select-bid", "create-lease",
+		"wait-for-ready", "URI (web): web.example.test", "Next:",
 		"skipping step \"send-manifest\" (manifest submission handled by Console)",
 		"completed successfully",
 	} {
@@ -1046,6 +1080,10 @@ func TestExecuteConsoleUpdateUsesConsoleManifestHandling(t *testing.T) {
 	requests := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests++
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/4242" {
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"owner":"o","dseq":"4242"},"state":"active"},"leases":[]}}`))
+			return
+		}
 		if r.Method != http.MethodPut || r.URL.Path != "/v1/deployments/4242" {
 			t.Errorf("unexpected console request: %s %s", r.Method, r.URL.Path)
 			w.WriteHeader(http.StatusNotFound)
@@ -1076,8 +1114,8 @@ func TestExecuteConsoleUpdateUsesConsoleManifestHandling(t *testing.T) {
 	if err != nil {
 		t.Fatalf("update execute: %v\noutput:\n%s", err, out)
 	}
-	if requests != 1 {
-		t.Errorf("Console requests = %d, want one update request", requests)
+	if requests != 2 {
+		t.Errorf("Console requests = %d, want one preflight and one update", requests)
 	}
 	for _, want := range []string{
 		"skipping step \"send-manifest\" (manifest submission handled by Console)",

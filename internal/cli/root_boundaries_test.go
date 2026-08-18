@@ -20,9 +20,16 @@ import (
 func TestRootConfigurationBoundaries(t *testing.T) {
 	root := &cobra.Command{Use: "akt"}
 
-	for _, name := range []string{"version", "completion", "monitor", "mcp", "sdl"} {
-		cmd := &cobra.Command{Use: name}
-		root.AddCommand(cmd)
+	for _, name := range []string{"version", "completion", "monitor", "mcp", "sdl", "context create", "context network create"} {
+		parts := strings.Split(name, " ")
+		cmd := &cobra.Command{Use: parts[len(parts)-1]}
+		if len(parts) == 1 {
+			root.AddCommand(cmd)
+		} else {
+			parent := &cobra.Command{Use: parts[0]}
+			root.AddCommand(parent)
+			parent.AddCommand(cmd)
+		}
 		if requiresConfig(cmd) {
 			t.Errorf("%s unexpectedly requires bootstrap configuration", name)
 		}
@@ -171,6 +178,17 @@ func TestLocalIdentityDryRunsDoNotOpenSigningKeyrings(t *testing.T) {
 	root.AddCommand(workflow)
 	if got := localIdentityMode(workflow); got != aktclient.LocalIdentityNone {
 		t.Fatalf("workflow dry-run identity mode = %v, want none", got)
+	}
+}
+
+func TestMCPWriteOptInKeepsIdentityOnDemand(t *testing.T) {
+	root := &cobra.Command{Use: "akt"}
+	mcpCmd := &cobra.Command{Use: "mcp"}
+	mcpCmd.Flags().Bool("enable-writes", true, "")
+	root.AddCommand(mcpCmd)
+
+	if got := localIdentityMode(mcpCmd); got != aktclient.LocalIdentityOnDemand {
+		t.Fatalf("MCP write identity mode = %v, want on demand", got)
 	}
 }
 

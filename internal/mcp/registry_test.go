@@ -13,6 +13,7 @@ import (
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/client/flags"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 
 	v1beta3 "pkg.akt.dev/go/node/client/v1beta3"
@@ -94,6 +95,10 @@ func TestNewRegistersExactToolsForEachAvailableRail(t *testing.T) {
 		WithAccountRetriever(authtypes.AccountRetriever{}).
 		WithBroadcastMode("sync").
 		WithSignModeStr(flags.SignModeDirect)
+	missingAccountAddress := sdk.AccAddress([]byte("01234567890123456789"))
+	missingAccountContext := keyringChainContext.
+		WithFrom(missingAccountAddress.String()).
+		WithFromAddress(missingAccountAddress)
 
 	tests := []struct {
 		name          string
@@ -146,6 +151,12 @@ func TestNewRegistersExactToolsForEachAvailableRail(t *testing.T) {
 				),
 				consoleWriteToolNames()...,
 			),
+		},
+		{
+			name:          "missing chain account retains query rail",
+			clientContext: missingAccountContext,
+			enableWrites:  true,
+			want:          chainQueryToolNames(),
 		},
 	}
 

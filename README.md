@@ -114,7 +114,7 @@ Transport-independent SDL scaffolding, generation, and linting. Every `akt sdl` 
 - **`akt sdl init <scaffold>`** -- print a deployable SDL to stdout, self-checked against the validator before it is printed. Flags (`--image`, `--cpu`, `--memory`, `--gpu-model`, `--price`, ...) are generation parameters with per-scaffold defaults, so the zero-flag invocation always produces valid output. Pipe it into `akt sdl validate -`, or redirect it to a file for `akt deploy` / `akt console deployment create`.
 - **`akt sdl validate <file>`** -- validate offline (`-` reads stdin). Parsing uses `pkg.akt.dev/go/sdl`, the same parser behind `akt deploy` and the chain tx commands, followed by lint rules.
 
-Lint rules: an unpinned image is an **error** -- every service image must carry an explicit tag or `@sha256:` digest, so untagged images and `:latest` are rejected as non-reproducible. For pricing, `uact` passes, `uakt` is a **warning** (valid on-chain, but managed console-api deployments are priced in `uact`), and any other denom is an error. Exit 0 when valid, 1 when not. See [SPEC.md §2.11](SPEC.md#211-sdl-commands).
+Lint rules: an unpinned image is an **error** -- every service image must carry an explicit tag or `@sha256:` digest, so untagged images and `:latest` are rejected as non-reproducible. For pricing, `uact` passes on both rails. `uakt` is a **warning** because it requires an explicitly matching `--deposit <amount>uakt` on chain; any other denom is an error. Exit 0 when valid, 1 when not. See [SPEC.md §2.11](SPEC.md#211-sdl-commands).
 
 ### Console Integration (`akt console`)
 
@@ -309,6 +309,9 @@ akt context network edit mainnet --gas-prices 0.04uakt
 # Add a new key
 akt context keys add alice
 
+# Non-interactive creation without printing a mnemonic backup
+akt context keys add ci-deployer --no-backup
+
 # Recover from mnemonic
 akt context keys add alice --recover
 
@@ -328,6 +331,9 @@ akt context keys import alice-backup alice.key
 # Parse an address between formats
 akt context keys parse akash1abc...
 ```
+
+`keys add` has no confirmation prompt, so it does not accept `--yes`. Blank
+names are rejected before the keyring is opened.
 
 ### SDL Authoring
 
@@ -356,7 +362,7 @@ A valid document prints `valid: 1 service(s), 1 group(s), 0 warning(s)`. Problem
 invalid: 1 error(s), 1 warning(s)
   error: services/web/image: image "nginx" has no tag; pin an explicit version for reproducible deployments
     hint: use "nginx:<version>" instead of an untagged image
-  warning: profiles/placement/dcloud/pricing: pricing denom "uakt" is on-chain only; managed (console-api) deployments are priced in "uact" (micro-ACT, 1:1 USD)
+  warning: profiles/placement/dcloud/pricing: pricing denom "uakt" does not match the default deposit; use "uact" on either rail or pass a matching explicit uakt deposit on chain
 ```
 
 Redirect the generated SDL to a file to feed `akt deploy` or `akt console deployment create`; both take a file path.
@@ -393,6 +399,17 @@ All transaction commands accept `--from`, `--gas`, `--fees`, `--broadcast-mode`,
 
 Workflow commands orchestrate multi-step operations, routing each step through the active context's auth method (local signing for `keyring`, Console API for `console-api`). They support two execution modes:
 
+SDL prices use canonical `uact` on both rails. A legacy `uakt` price is valid
+on chain only with an explicitly matching `--deposit <amount>uakt`. Console
+deposits are USD with a $0.50 minimum. On the
+chain rail, an omitted or `auto` deposit resolves the live on-chain minimum;
+an explicit coin is preserved. `--dry-run` displays the resolved rail-specific
+deposit and fails if it cannot be determined.
+
+Successful deploys wait up to two minutes for service readiness and then print
+live URIs. Use `--ready-timeout` to change the bound or `--no-wait-active` to
+return immediately after manifest submission.
+
 **Interactive mode** (default) -- a per-workflow progress display:
 ```bash
 # Full deployment lifecycle with interactive bid selection
@@ -409,7 +426,8 @@ Output is one JSON object per line, one line per step (`create-deployment`, `wai
 ```jsonl
 {"workflow":"deploy","id":"wf_a1b2c3","step":"create-deployment","result":"completed","errors":[],"txs":[{"hash":"ABCD...","height":12345,"gas_used":150000,"code":0}]}
 {"workflow":"deploy","id":"wf_a1b2c3","step":"wait-for-bids","result":"completed","errors":[],"txs":[]}
-{"workflow":"deploy","id":"wf_a1b2c3","step":"create-lease","result":"completed","errors":[],"txs":[{"hash":"EFGH...","height":12350,"gas_used":120000,"code":0}]}
+{"workflow":"deploy","id":"wf_a1b2c3","step":"create-lease","result":"completed","errors":[],"txs":[{"hash":"EFGH...","height":12350,"gas_used":120000,"code":0}],"outputs":{"dseq":"12345","provider":"akash1provider..."}}
+{"workflow":"deploy","id":"wf_a1b2c3","step":"display-result","result":"completed","errors":[],"txs":[],"outputs":{"dseq":"12345","provider":"akash1provider...","uris":{"web":["https://example.test"]},"ready":true}}
 ```
 
 Parse with `jq`:
@@ -585,7 +603,17 @@ akt console shell 12345 web -- ls -la
 
 # Which providers can run this SDL? (public endpoint, no key required)
 akt console screen deploy.yaml
+
+# Or screen explicit resources; flags override values loaded from an SDL
+akt console screen deploy.yaml --gpu 1 --gpu-model a100
 ```
+
+Console `uact` escrow amounts are micro-USD and display as dollars. Bid prices
+reported in `uact` per block also show an estimated 30-day dollar cost using
+six-second blocks; other denoms stay explicit. `akt store export` is a local
+inspection and backup format, not a deployable SDL source. There is no separate
+`store list`: use `akt store status` for counts and freshness, or export when
+individual locally tracked records are needed.
 
 ## Roadmap
 

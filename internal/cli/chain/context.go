@@ -20,13 +20,18 @@ const (
 type ContextType string
 
 const (
-	ContextTypeClient         = ContextType("context-client")
-	ContextTypeQueryClient    = ContextType("context-query-client")
-	ContextTypeAddressCodec   = ContextType("address-codec")
-	ContextTypeValidatorCodec = ContextType("validator-codec")
-	ContextTypeRPCURI         = ContextType("rpc-uri")
-	ContextTypeRPCClient      = ContextType("rpc-client")
+	ContextTypeClient               = ContextType("context-client")
+	ContextTypeQueryClient          = ContextType("context-query-client")
+	ContextTypeAddressCodec         = ContextType("address-codec")
+	ContextTypeValidatorCodec       = ContextType("validator-codec")
+	ContextTypeRPCURI               = ContextType("rpc-uri")
+	ContextTypeRPCClient            = ContextType("rpc-client")
+	ContextTypeDefaultOwnerResolver = ContextType("default-owner-resolver")
 )
+
+// DefaultOwnerResolver lazily supplies an account address for query filters
+// when the active transport owns the wallet instead of a local keyring.
+type DefaultOwnerResolver func(context.Context) (string, error)
 
 var ErrContextValueNotSet = errors.New("context does not have value set")
 

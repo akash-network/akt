@@ -306,13 +306,15 @@ func TestCloseValidation400RecordedAsFailed(t *testing.T) {
 func TestNewMutationsRecordedInActionLog(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/42":
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"},"state":"active"}}}`))
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/wallet-settings":
 			_, _ = w.Write([]byte(`{"data":{"autoReloadEnabled":true}}`))
 		case r.Method == http.MethodPatch && r.URL.Path == "/v2/deployment-settings/42":
 			_, _ = w.Write([]byte(`{"data":{"dseq":"42","autoTopUpEnabled":true}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/api-keys":
 			_, _ = w.Write([]byte(`{"data":{"id":"k1","name":"n","apiKey":"secret"}}`))
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1/api-keys/k1":
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/api-keys/11111111-1111-4111-8111-111111111111":
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -334,7 +336,7 @@ func TestNewMutationsRecordedInActionLog(t *testing.T) {
 	if _, err := c.CreateAPIKey(ctx, "n", ""); err != nil {
 		t.Fatalf("CreateAPIKey: %v", err)
 	}
-	if err := c.DeleteAPIKey(ctx, "k1"); err != nil {
+	if err := c.DeleteAPIKey(ctx, "11111111-1111-4111-8111-111111111111"); err != nil {
 		t.Fatalf("DeleteAPIKey: %v", err)
 	}
 
@@ -380,7 +382,7 @@ func TestConsoleValidationFailuresOccurBeforeNetworkAndAreLogged(t *testing.T) {
 	if _, err := client.UpdateDeployment(context.Background(), "42", "not-valid-sdl: ["); err == nil || !strings.Contains(err.Error(), "prepare deployment SDL") {
 		t.Fatalf("invalid deployment SDL error = %v", err)
 	}
-	if err := client.Deposit(context.Background(), "42", 0); err == nil || !strings.Contains(err.Error(), "prepare deployment deposit") {
+	if err := client.Deposit(context.Background(), "42", 0); err == nil || !strings.Contains(err.Error(), "at least $0.50") {
 		t.Fatalf("invalid deployment deposit error = %v", err)
 	}
 	if requests.Load() != 0 {
