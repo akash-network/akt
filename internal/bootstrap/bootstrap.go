@@ -48,8 +48,8 @@ type metaJSON struct {
 	Status      string `json:"status"`
 	Fees        struct {
 		FeeTokens []struct {
-			Denom           string  `json:"denom"`
-			AverageGasPrice float64 `json:"average_gas_price"`
+			Denom        string  `json:"denom"`
+			HighGasPrice float64 `json:"high_gas_price"`
 		} `json:"fee_tokens"`
 	} `json:"fees"`
 	APIs struct {
@@ -840,8 +840,8 @@ func metaToNetwork(dirName string, meta *metaJSON) aktctx.Network {
 
 	if len(meta.Fees.FeeTokens) > 0 {
 		ft := meta.Fees.FeeTokens[0]
-		if ft.AverageGasPrice > 0 && ft.Denom != "" {
-			n.GasPrices = fmt.Sprintf("%g%s", ft.AverageGasPrice, ft.Denom)
+		if ft.HighGasPrice > 0 && ft.Denom != "" {
+			n.GasPrices = fmt.Sprintf("%g%s", ft.HighGasPrice, ft.Denom)
 		}
 	}
 
