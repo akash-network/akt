@@ -2,6 +2,7 @@ package console_test
 
 import (
 	"context"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -114,4 +115,92 @@ func TestConsoleDeploymentMutationsRejectClosedState(t *testing.T) {
 			assert.Equal(t, int32(1), requests.Load(), "closed mutation must stop after state preflight")
 		})
 	}
+}
+
+func TestDeploymentStateListAndMutationValidationEdges(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+	}))
+	defer srv.Close()
+	client := console.New(srv.URL, "test-key")
+
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{name: "state skip", call: func() error {
+			_, err := client.ListDeploymentsByState(context.Background(), "active", -1, 1)
+			return err
+		}},
+		{name: "state limit", call: func() error {
+			_, err := client.ListDeploymentsByState(context.Background(), "active", 0, 0)
+			return err
+		}},
+		{name: "state value", call: func() error {
+			_, err := client.ListDeploymentsByState(context.Background(), "pending", 0, 1)
+			return err
+		}},
+		{name: "update dseq", call: func() error {
+			_, err := client.UpdateDeployment(context.Background(), "bad", validUpdateSDL)
+			return err
+		}},
+		{name: "close dseq", call: func() error {
+			return client.CloseDeployment(context.Background(), "bad")
+		}},
+		{name: "deposit dseq", call: func() error {
+			return client.Deposit(context.Background(), "bad", 1)
+		}},
+		{name: "deposit nan", call: func() error {
+			return client.Deposit(context.Background(), "1", math.NaN())
+		}},
+		{name: "deposit sub-micro precision", call: func() error {
+			return client.Deposit(context.Background(), "1", 0.5000001)
+		}},
+		{name: "get settings dseq", call: func() error {
+			_, err := client.GetDeploymentSettings(context.Background(), "bad")
+			return err
+		}},
+		{name: "set settings dseq", call: func() error {
+			_, err := client.SetDeploymentAutoTopUp(context.Background(), "bad", true)
+			return err
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			require.Error(t, test.call())
+		})
+	}
+	assert.Zero(t, requests.Load(), "validation failures must not reach Console")
+}
+
+func TestDeploymentStateListBoundsAndRequestFailure(t *testing.T) {
+	t.Run("page bounds", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = w.Write([]byte(`{"data":{"deployments":[{"deployment":{"id":{"dseq":"1"},"state":"active"}}],"pagination":{"hasMore":false}}}`))
+		}))
+		defer srv.Close()
+		result, err := console.New(srv.URL, "test-key").ListDeploymentsByState(context.Background(), " ACTIVE ", 10, 5)
+		require.NoError(t, err)
+		assert.Empty(t, result.Deployments)
+		assert.Equal(t, 1, result.Pagination.Total)
+	})
+
+	t.Run("collection request", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "offline", http.StatusBadGateway)
+		}))
+		defer srv.Close()
+		_, err := console.New(srv.URL, "test-key").ListDeploymentsByState(context.Background(), "active", 0, 1)
+		require.Error(t, err)
+	})
+
+	t.Run("mutable preflight request", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "offline", http.StatusBadGateway)
+		}))
+		defer srv.Close()
+		_, err := console.New(srv.URL, "test-key").SetDeploymentAutoTopUp(context.Background(), "42", true)
+		require.ErrorContains(t, err, "preflight deployment settings")
+	})
 }

@@ -3,6 +3,7 @@ package console
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -19,6 +20,12 @@ import (
 	aktctx "pkg.akt.dev/akt/internal/context"
 	flagdefs "pkg.akt.dev/akt/internal/flags"
 )
+
+type failingPrettyMarshaler struct{}
+
+func (failingPrettyMarshaler) MarshalJSON() ([]byte, error) {
+	return nil, errors.New("marshal failed")
+}
 
 // newAuthedManager returns a manager whose "prod" context already carries a
 // Console API key, for the authenticated command surface.
@@ -131,6 +138,70 @@ func TestConsolePrettyRendererUsesHumanMoneySemantics(t *testing.T) {
 	}
 	if strings.Contains(rendered, "{") {
 		t.Fatalf("pretty output fell back to raw JSON: %q", rendered)
+	}
+}
+
+func TestConsolePrettyRendererCoversSemanticShapesAndFailures(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().String(flagdefs.FlagOutput, "pretty", "")
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	if err := printConsolePretty(cmd, failingPrettyMarshaler{}); err == nil {
+		t.Fatal("unsupported JSON value did not fail")
+	}
+	if _, err := decodeConsoleSemantic([]byte(`{`)); err == nil {
+		t.Fatal("invalid semantic JSON did not fail")
+	}
+	if err := printConsolePrettyWithDecoder(cmd, map[string]any{"ok": true}, func([]byte) (any, error) {
+		return nil, errors.New("decode failed")
+	}); err == nil || !strings.Contains(err.Error(), "decode pretty output") {
+		t.Fatalf("decoder failure = %v", err)
+	}
+
+	if err := printConsolePretty(cmd, map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); got != "No data.\n" {
+		t.Fatalf("empty pretty output = %q", got)
+	}
+
+	out.Reset()
+	if err := printConsolePretty(cmd, "value"); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); got != "value\n" {
+		t.Fatalf("scalar pretty output = %q", got)
+	}
+
+	var rendered strings.Builder
+	renderConsoleValue(&rendered, map[string]any{
+		"boolValue": true,
+		"emptyList": []any{},
+		"items": []any{
+			"text",
+			map[string]any{"denom": "uakt", "amount": "25"},
+			map[string]any{"nested": nil},
+		},
+		"malformedCoin": map[string]any{"denom": "uact", "amount": "not-a-number"},
+		"missingAmount": map[string]any{"denom": "uact"},
+		"nothing":       nil,
+		"snake_key":     "",
+	}, 0, "")
+	text := rendered.String()
+	for _, want := range []string{"Bool Value: true", "none", "25 uakt", "not-a-number uact", "Snake key: none"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("semantic render %q missing %q", text, want)
+		}
+	}
+
+	rendered.Reset()
+	renderConsoleValue(&rendered, map[string]any{"denom": "uact", "amount": "1000000"}, 0, "")
+	if got := rendered.String(); got != "$1.00" {
+		t.Fatalf("root coin = %q", got)
+	}
+	if got := humanConsoleLabel(""); got != "" {
+		t.Fatalf("empty label = %q", got)
 	}
 }
 

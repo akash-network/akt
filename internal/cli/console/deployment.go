@@ -162,6 +162,13 @@ func deploymentGetCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 }
 
 func deploymentCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
+	return deploymentCreateCmdWithTerminal(mgrFn, term.IsTerminal)
+}
+
+func deploymentCreateCmdWithTerminal(
+	mgrFn func() *aktctx.Manager,
+	isTerminal func(int) bool,
+) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create <sdl-file> [deposit-usd]",
 		Short: "Create a deployment (managed wallet signs server-side)",
@@ -195,7 +202,7 @@ func deploymentCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			}
 			skipConfirmation, _ := cmd.Flags().GetBool(flagdefs.FlagSkipConfirmation)
 			if err := confirmDeploymentCreate(cmd,
-				!skipConfirmation && term.IsTerminal(int(os.Stdin.Fd())), args[0], deposit); err != nil {
+				!skipConfirmation && isTerminal(int(os.Stdin.Fd())), args[0], deposit); err != nil {
 				return err
 			}
 

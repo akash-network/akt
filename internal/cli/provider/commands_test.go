@@ -565,6 +565,23 @@ func TestStatusRejectsAuthenticationFlag(t *testing.T) {
 	}
 }
 
+func TestStatusFailureIncludesExactChainFallback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "offline", http.StatusBadGateway)
+	}))
+	defer srv.Close()
+
+	const provider = "akash1errud3wyc0pvrs9lh67mewa6hxut0d44pfj6vh"
+	root := Commands()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"status", provider, "--provider-url", srv.URL})
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "akt query provider "+provider) {
+		t.Fatalf("provider status error = %v", err)
+	}
+}
+
 func TestAuthenticatedGatewayRequiresDefaultAccountBeforeRequest(t *testing.T) {
 	requests := 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {

@@ -52,6 +52,28 @@ func TestDefaultOwnerResolutionUsesTransportResolverLazily(t *testing.T) {
 	require.ErrorIs(t, err, resolverErr)
 }
 
+func TestTransportDefaultOwnerResolverBoundaryFailures(t *testing.T) {
+	t.Run("missing resolver", func(t *testing.T) {
+		owner, err := resolveTransportDefaultOwner(
+			sdkclient.Context{}.WithCmdContext(context.Background()),
+		)
+		require.NoError(t, err)
+		require.Empty(t, owner)
+	})
+
+	t.Run("invalid resolver address", func(t *testing.T) {
+		ctx := context.WithValue(
+			context.Background(),
+			ContextTypeDefaultOwnerResolver,
+			DefaultOwnerResolver(func(context.Context) (string, error) {
+				return "not-a-wallet", nil
+			}),
+		)
+		_, err := resolveTransportDefaultOwner(sdkclient.Context{}.WithCmdContext(ctx))
+		require.ErrorContains(t, err, "invalid wallet address")
+	})
+}
+
 func (k *keyLookupCounter) Key(uid string) (*sdkkeyring.Record, error) {
 	k.lookups++
 	return k.Keyring.Key(uid)

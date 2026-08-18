@@ -2,10 +2,12 @@ package mcp
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
+	chainclient "pkg.akt.dev/go/node/client/v1beta3"
 
 	aktconsole "pkg.akt.dev/akt/internal/console"
 )
@@ -106,5 +108,21 @@ func TestNewWithConsoleOnlySucceeds(t *testing.T) {
 	}
 	if s == nil {
 		t.Fatal("expected a server")
+	}
+}
+
+func TestRegisterChainToolsReturnsLightClientFailure(t *testing.T) {
+	sentinel := errors.New("light client failed")
+	err := (&Server{}).registerChainToolsWithLightClient(
+		context.Background(),
+		sdkclient.Context{}.WithNodeURI("https://rpc.example.test"),
+		"jwt",
+		false,
+		func(sdkclient.Context) (chainclient.LightClient, error) {
+			return nil, sentinel
+		},
+	)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("light client error = %v", err)
 	}
 }

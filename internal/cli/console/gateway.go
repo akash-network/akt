@@ -294,27 +294,51 @@ func eventsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			events, err := gw.LeaseEvents(ctx, lid, "", follow)
-			if err != nil {
-				return aktprovider.GatewayError("stream lease events", err)
-			}
-
-			count := 0
-			if err := aktprovider.ConsumeStream(ctx, "event", events.Stream, events.OnClose, follow,
-				func(event rest.LeaseEvent) error {
-					count++
-					return printLeaseEvent(cmd, event)
-				}); err != nil {
-				return err
-			}
-
-			return printEmptyEvents(cmd, count, follow)
+			return streamLeaseEvents(ctx, cmd, gw, lid, follow)
 		},
 	}
 
 	cmd.Flags().BoolP(flagdefs.FlagFollow, "f", false, "Follow event output")
 
 	return cmd
+}
+
+type leaseEventsClient interface {
+	LeaseEvents(context.Context, mtypes.LeaseID, string, bool) (*rest.LeaseKubeEvents, error)
+}
+
+func streamLeaseEvents(
+	ctx context.Context,
+	cmd *cobra.Command,
+	client leaseEventsClient,
+	lid mtypes.LeaseID,
+	follow bool,
+) error {
+	events, err := client.LeaseEvents(ctx, lid, "", follow)
+	if err != nil {
+		return aktprovider.GatewayError("stream lease events", err)
+	}
+
+	return consumeLeaseEvents(ctx, cmd, events.Stream, events.OnClose, follow)
+}
+
+func consumeLeaseEvents(
+	ctx context.Context,
+	cmd *cobra.Command,
+	stream <-chan rest.LeaseEvent,
+	onClose <-chan string,
+	follow bool,
+) error {
+	count := 0
+	if err := aktprovider.ConsumeStream(ctx, "event", stream, onClose, follow,
+		func(event rest.LeaseEvent) error {
+			count++
+			return printLeaseEvent(cmd, event)
+		}); err != nil {
+		return err
+	}
+
+	return printEmptyEvents(cmd, count, follow)
 }
 
 func statusCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
@@ -631,9 +655,13 @@ func screeningRequestFromCmd(cmd *cobra.Command, args []string) (*console.BidScr
 		raw = json.RawMessage(`[{
 			"resource":{"id":1,"cpu":{"units":{"val":"1000"}},"memory":{"quantity":{"val":"536870912"}},"gpu":{"units":{"val":"0"}},"storage":[{"name":"default","quantity":{"val":"1073741824"}}],"endpoints":[]},
 			"count":1,"price":{"denom":"uact","amount":"0"}
-		}]`)
+			}]`)
 	}
 
+	return screeningRequestFromResources(cmd, args, raw)
+}
+
+func screeningRequestFromResources(cmd *cobra.Command, args []string, raw json.RawMessage) (*console.BidScreeningRequest, error) {
 	var units []map[string]any
 	if err := json.Unmarshal(raw, &units); err != nil {
 		return nil, fmt.Errorf("decode screening resources: %w", err)
@@ -687,10 +715,9 @@ func screeningRequestFromCmd(cmd *cobra.Command, args []string) (*console.BidScr
 			unit["count"] = count
 		}
 	}
-	raw, err = json.Marshal(units)
-	if err != nil {
-		return nil, fmt.Errorf("encode screening resources: %w", err)
-	}
+	// The tree above contains only JSON maps, slices, strings, and integers.
+	// Those values cannot fail JSON encoding after the successful decode.
+	raw, _ = json.Marshal(units)
 
 	attributes, _ := cmd.Flags().GetStringArray("attribute")
 	requirements := console.BidScreeningRequirements{}

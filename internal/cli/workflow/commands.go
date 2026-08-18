@@ -118,14 +118,7 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 				if rc == nil || rc.AuthMethod == aktctx.AuthMethodConsoleAPI || depositFlag == nil {
 					return nil
 				}
-				parsed, parseErr := transport.ParseDeposit(depositFlag.Value.String())
-				if parseErr != nil {
-					// RunE owns the user-facing deposit validation. PreRunE only
-					// decides whether an otherwise-valid auto value needs a query
-					// client before planning.
-					return nil //nolint:nilerr // the parsing error is returned by RunE
-				}
-				if !parsed.Auto {
+				if !chainDryRunNeedsDepositQuery(depositFlag.Value.String()) {
 					return nil
 				}
 
@@ -295,6 +288,11 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 	return cmd
 }
 
+func chainDryRunNeedsDepositQuery(raw string) bool {
+	parsed, err := transport.ParseDeposit(raw)
+	return err == nil && parsed.Auto
+}
+
 func resolveDryRunParams(
 	cmd *cobra.Command,
 	params map[string]any,
@@ -462,11 +460,7 @@ func executeWorkflow(
 	engine := wf.NewEngine(registry, logger)
 
 	state, runErr := engine.Run(cmd.Context(), rtDef, account, params)
-	if runErr == nil {
-		if readinessErr := enrichDeployCompletion(cmd.Context(), state, rc, consoleClient, providerCl); readinessErr != nil {
-			runErr = readinessErr
-		}
-	}
+	runErr = enrichSuccessfulDeploy(cmd.Context(), state, rc, consoleClient, providerCl, runErr)
 	recovery := deployRecoveryAdvice(state, runErr)
 
 	// Record the outcome locally before reporting it (SPEC §6.6). A one-shot
@@ -491,6 +485,21 @@ func executeWorkflow(
 	}
 
 	return renderErr
+}
+
+func enrichSuccessfulDeploy(
+	ctx context.Context,
+	state *wf.RunState,
+	rc *aktctx.Context,
+	cc *console.Client,
+	provider steps.ProviderClient,
+	runErr error,
+) error {
+	if runErr != nil {
+		return runErr
+	}
+
+	return enrichDeployCompletion(ctx, state, rc, cc, provider)
 }
 
 type deploymentServiceStatus struct {

@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	aktctx "pkg.akt.dev/akt/internal/context"
+	flagdefs "pkg.akt.dev/akt/internal/flags"
 	sstore "pkg.akt.dev/akt/internal/store"
 	"pkg.akt.dev/akt/internal/store/bbolt"
 )
@@ -34,6 +35,96 @@ func TestConfirmDeploymentCreateDefaultsToNo(t *testing.T) {
 	cmd.SetIn(strings.NewReader("yes\n"))
 	require.NoError(t, confirmDeploymentCreate(cmd, true, "deploy.yaml", 5))
 	require.NoError(t, confirmDeploymentCreate(cmd, false, "deploy.yaml", 5))
+}
+
+func TestConfirmDeploymentCreateReportsPromptAndReadFailures(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.SetErr(consoleOutputErrorWriter{err: assert.AnError})
+	cmd.SetIn(strings.NewReader("yes\n"))
+	require.ErrorIs(t, confirmDeploymentCreate(cmd, true, "deploy.yaml", 5), assert.AnError)
+
+	cmd.SetErr(io.Discard)
+	cmd.SetIn(strings.NewReader(""))
+	require.ErrorContains(t, confirmDeploymentCreate(cmd, true, "deploy.yaml", 5), "read deployment confirmation")
+}
+
+func TestDeploymentCreateReturnsInteractiveCancellation(t *testing.T) {
+	cmd := deploymentCreateCmdWithTerminal(func() *aktctx.Manager { return nil }, func(int) bool { return true })
+	cmd.Flags().String(flagdefs.FlagConsoleAPIKey, "sekrit", "")
+	cmd.SetIn(strings.NewReader("no\n"))
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"deploy.yaml", "5"})
+
+	require.ErrorContains(t, cmd.Execute(), "deployment creation cancelled")
+}
+
+func TestNegativePositionalHintCoversMatchingAndOrdinaryFlagErrors(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		arg  string
+		want string
+	}{
+		{name: "negative shorthand", arg: "-1", want: "place `--` before"},
+		{name: "ordinary flag", arg: "--unknown", want: "unknown flag"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cmd := &cobra.Command{Use: "deposit [amount]", RunE: func(*cobra.Command, []string) error { return nil }}
+			addNegativePositionalHint(cmd, "amount")
+			cmd.SetArgs([]string{test.arg})
+			_, err := cmd.ExecuteC()
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
+func TestDeploymentListStateCommandValidationAndFiltering(t *testing.T) {
+	m := newAuthedManager(t)
+	if _, err := execConsole(t, m, "", "deployment", "list", "pending"); err == nil {
+		t.Fatal("invalid deployment state did not fail")
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, `{"data":{"deployments":[{"deployment":{"id":{"dseq":"42"},"state":"active"}}],"pagination":{"hasMore":false}}}`)
+	}))
+	defer srv.Close()
+
+	out, err := execConsole(t, m, srv.URL, "deployment", "list", "active", "--limit", "1")
+	require.NoError(t, err)
+	assert.Contains(t, out, "42")
+}
+
+func TestDeploymentSettingsReadPreflightsDeployment(t *testing.T) {
+	m := newAuthedManager(t)
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/v1/deployments/42":
+			writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"42"},"state":"active"}}}`)
+		case "/v2/deployment-settings/42":
+			writeJSON(t, w, `{"data":{"dseq":"42","autoTopUpEnabled":true}}`)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	_, err := execConsole(t, m, srv.URL, "deployment", "settings", "42")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/v1/deployments/42", "/v2/deployment-settings/42"}, paths)
+}
+
+func TestDeploymentSettingsReadReturnsDeploymentPreflightFailure(t *testing.T) {
+	m := newAuthedManager(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/deployments/404", r.URL.Path)
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	_, err := execConsole(t, m, srv.URL, "deployment", "settings", "404")
+	require.ErrorContains(t, err, "deployment 404")
 }
 
 const validConsoleDeploymentSDL = `version: "2.0"

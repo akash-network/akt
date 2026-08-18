@@ -304,14 +304,20 @@ func printJSON(cmd *cobra.Command, v interface{}) error {
 }
 
 func printConsolePretty(cmd *cobra.Command, value any) error {
+	return printConsolePrettyWithDecoder(cmd, value, decodeConsoleSemantic)
+}
+
+func printConsolePrettyWithDecoder(
+	cmd *cobra.Command,
+	value any,
+	decode func([]byte) (any, error),
+) error {
 	payload, err := json.Marshal(value)
 	if err != nil {
 		return fmt.Errorf("marshal pretty output: %w", err)
 	}
-	decoder := json.NewDecoder(strings.NewReader(string(payload)))
-	decoder.UseNumber()
-	var semantic any
-	if err := decoder.Decode(&semantic); err != nil {
+	semantic, err := decode(payload)
+	if err != nil {
 		return fmt.Errorf("decode pretty output: %w", err)
 	}
 
@@ -324,6 +330,17 @@ func printConsolePretty(cmd *cobra.Command, value any) error {
 	}
 
 	return printConsoleText(cmd, rendered.String())
+}
+
+func decodeConsoleSemantic(payload []byte) (any, error) {
+	decoder := json.NewDecoder(strings.NewReader(string(payload)))
+	decoder.UseNumber()
+	var semantic any
+	if err := decoder.Decode(&semantic); err != nil {
+		return nil, err
+	}
+
+	return semantic, nil
 }
 
 func renderConsoleValue(out *strings.Builder, value any, indent int, parent string) {
@@ -350,12 +367,6 @@ func renderConsoleValue(out *strings.Builder, value any, indent int, parent stri
 				out.WriteByte('\n')
 				continue
 			}
-			if display, ok := consoleCoinDisplay(item, key); ok {
-				out.WriteByte(' ')
-				out.WriteString(display)
-				out.WriteByte('\n')
-				continue
-			}
 			out.WriteByte('\n')
 			renderConsoleValue(out, item, indent+2, key)
 		}
@@ -370,11 +381,6 @@ func renderConsoleValue(out *strings.Builder, value any, indent int, parent stri
 			out.WriteString("- ")
 			if isConsoleScalar(item) {
 				renderConsoleValue(out, item, indent+2, parent)
-				out.WriteByte('\n')
-				continue
-			}
-			if display, ok := consoleCoinDisplay(item, parent); ok {
-				out.WriteString(display)
 				out.WriteByte('\n')
 				continue
 			}

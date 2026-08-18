@@ -368,3 +368,14 @@ func TestGatewayErrorForProviderIncludesExactChainFallback(t *testing.T) {
 		t.Fatalf("fallback error = %q, want %q", err, want)
 	}
 }
+
+func TestGatewayErrorForProviderHandlesNilAndBlankProvider(t *testing.T) {
+	if err := GatewayErrorForProvider("query status", "akash1provider", nil); err != nil {
+		t.Fatalf("nil gateway error = %v", err)
+	}
+	sentinel := errors.New("offline")
+	err := GatewayErrorForProvider("query status", "   ", sentinel)
+	if !errors.Is(err, sentinel) || strings.Contains(err.Error(), "akt query provider") {
+		t.Fatalf("blank-provider error = %v", err)
+	}
+}
