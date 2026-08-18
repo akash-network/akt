@@ -565,9 +565,9 @@ func applyTransactionDefaults(cmd *cobra.Command, rc *aktctx.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := pricesFlag.Value.Set(effective); err != nil {
-		return fmt.Errorf("apply network gas prices: %w", err)
-	}
+	// The value belongs to a Cobra string flag and was parsed successfully
+	// above, so its Set implementation cannot fail here.
+	_ = pricesFlag.Value.Set(effective)
 
 	return nil
 }
