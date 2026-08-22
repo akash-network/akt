@@ -583,8 +583,8 @@ func TestResolveDepositDistinguishesExplicitAndChainDefault(t *testing.T) {
 		c := newFakeWorkflowBoundaryClient(nil, deployment)
 
 		_, err := c.resolveDeposit(context.Background(), depositAuto)
-		if err == nil || !strings.Contains(err.Error(), "default deposit") {
-			t.Fatalf("resolve auto error = %v, want missing default deposit", err)
+		if err == nil || !strings.Contains(err.Error(), "no uact minimum deposit") {
+			t.Fatalf("resolve auto error = %v, want missing uact minimum", err)
 		}
 	})
 }

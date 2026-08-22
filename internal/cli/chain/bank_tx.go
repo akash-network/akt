@@ -45,7 +45,6 @@ Note, this command has two way of being executed:
        send [from_key_or_address] [to_address] [amount]
      - sender address|key is taken from --from flag. In this case command takes 2 arguments.
        send [to_address] [amount] --from=address|key"
-When using '--dry-run' a key name cannot be used, only a bech32 address.
 `,
 		Args: cobra.RangeArgs(2, 3),
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
@@ -108,7 +107,7 @@ By default, sends the [amount] to each address of the list.
 Using the '--split' flag, the [amount] is split equally between the addresses.
 Note, the '--from' flag is ignored as it is implied from [from_key_or_address] and
 separate addresses with space.
-When using '--dry-run' a key name cannot be used, only a bech32 address.`,
+Key names and bech32 addresses are both accepted for --dry-run.`,
 		Example: fmt.Sprintf("%s tx bank multi-send akash1... akash1... akash1... akash1... 10stake", version.AppName),
 		Args:    cobra.MinimumNArgs(4),
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {

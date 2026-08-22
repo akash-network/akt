@@ -52,20 +52,44 @@ func TestParseDeposit(t *testing.T) {
 
 func TestParseDepositErrors(t *testing.T) {
 	for _, in := range []string{
-		"abc",     // not a USD, bare, or coin form
-		"$",       // missing USD amount
-		"$abc",    // non-numeric USD amount
-		"$-5",     // negative USD
-		"-5usd",   // negative USD
-		"usd",     // missing USD amount
-		"-5",      // negative bare amount
-		"$5usd",   // mixed USD forms
-		"AUTO",    // auto is lowercase only (historical chain behavior)
-		"-5uakt",  // negative coin
-		"5milusd", // usd suffix always wins; "5mil" is not a USD amount
+		"abc",      // not a USD, bare, or coin form
+		"$",        // missing USD amount
+		"$abc",     // non-numeric USD amount
+		"$-5",      // negative USD
+		"-5usd",    // negative USD
+		"usd",      // missing USD amount
+		"-5",       // negative bare amount
+		"0.005",    // sub-cent bare amount
+		"0.505usd", // sub-cent USD amount
+		"$1.001",   // sub-cent dollar form
+		"1e0",      // scientific notation is not plain decimal syntax
+		"1E2usd",   // scientific notation with a USD suffix
+		"1_000",    // Go numeric separators are not CLI currency syntax
+		"$5usd",    // mixed USD forms
+		"AUTO",     // auto is lowercase only (historical chain behavior)
+		"-5uakt",   // negative coin
+		"5milusd",  // usd suffix always wins; "5mil" is not a USD amount
 	} {
 		if _, err := ParseDeposit(in); err == nil {
 			t.Errorf("ParseDeposit(%q): expected error, got nil", in)
+		}
+	}
+}
+
+func TestParseDepositUSDGrammarErrorsAreSpecific(t *testing.T) {
+	tests := []struct {
+		in   string
+		want string
+	}{
+		{in: "-1", want: "must not be negative"},
+		{in: "0.005", want: "at most two fractional digits"},
+		{in: "1e0", want: "plain decimal notation"},
+	}
+
+	for _, tt := range tests {
+		_, err := ParseDeposit(tt.in)
+		if err == nil || !strings.Contains(err.Error(), tt.want) {
+			t.Errorf("ParseDeposit(%q) error = %v, want %q", tt.in, err, tt.want)
 		}
 	}
 }

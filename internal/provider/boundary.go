@@ -67,7 +67,7 @@ func wrapGatewayClient(
 	providerURL string,
 	authorization gatewayAuthorization,
 	redactionSecrets ...string,
-) (rest.Client, error) {
+) (*gatewayClient, error) {
 	host, err := url.Parse(providerURL)
 	if err != nil {
 		return nil, err

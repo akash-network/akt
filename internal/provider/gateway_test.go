@@ -355,3 +355,27 @@ func TestGatewayErrorPreservesOrdinaryErrors(t *testing.T) {
 		t.Fatalf("GatewayError = %q, want action context", err)
 	}
 }
+
+func TestGatewayErrorForProviderIncludesExactChainFallback(t *testing.T) {
+	sentinel := errors.New("connection refused")
+	const provider = "akash1providerfulladdress"
+	err := GatewayErrorForProvider("query provider status", provider, sentinel)
+	if !errors.Is(err, sentinel) {
+		t.Fatalf("fallback error lost cause: %v", err)
+	}
+	want := "`akt query provider " + provider + "`"
+	if !strings.Contains(err.Error(), want) {
+		t.Fatalf("fallback error = %q, want %q", err, want)
+	}
+}
+
+func TestGatewayErrorForProviderHandlesNilAndBlankProvider(t *testing.T) {
+	if err := GatewayErrorForProvider("query status", "akash1provider", nil); err != nil {
+		t.Fatalf("nil gateway error = %v", err)
+	}
+	sentinel := errors.New("offline")
+	err := GatewayErrorForProvider("query status", "   ", sentinel)
+	if !errors.Is(err, sentinel) || strings.Contains(err.Error(), "akt query provider") {
+		t.Fatalf("blank-provider error = %v", err)
+	}
+}

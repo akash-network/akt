@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math"
 	"math/big"
 	"net/http"
 	"net/url"
@@ -23,6 +24,11 @@ import (
 //
 // Wire: POST /v1/deployments, body {"data":{"sdl":..., "deposit":...}}.
 func (c *Client) CreateDeployment(ctx context.Context, sdl string, depositUSD float64) (*CreateDeploymentResult, error) {
+	if err := validateDepositUSD(depositUSD); err != nil {
+		c.record("create-deployment", "", err)
+		return nil, err
+	}
+
 	versionHash, manifest, err := deploymentArtifacts(sdl)
 	if err != nil {
 		wrapped := fmt.Errorf("prepare deployment SDL: %w", err)
@@ -220,25 +226,18 @@ func deploymentPaginationLimitError() error {
 	)
 }
 
-// ListDeployments lists deployments with pagination. Out-of-range values are
-// omitted from the query instead of being sent — the API requires skip >= 0
-// and limit >= 1, so a negative skip falls back to 0 and a non-positive limit
-// falls back to the server default page size.
+// ListDeployments lists deployments with validated pagination.
 //
 // Wire: GET /v1/deployments?skip=&limit=, data-enveloped response.
 func (c *Client) ListDeployments(ctx context.Context, skip, limit int) (*DeploymentList, error) {
-	var params []string
-	if skip >= 0 {
-		params = append(params, "skip="+strconv.Itoa(skip))
+	if skip < 0 {
+		return nil, fmt.Errorf("console: deployment pagination skip must be non-negative, got %d", skip)
 	}
-	if limit >= 1 {
-		params = append(params, "limit="+strconv.Itoa(limit))
+	if limit < 1 {
+		return nil, fmt.Errorf("console: deployment pagination limit must be greater than zero, got %d", limit)
 	}
 
-	path := "/v1/deployments"
-	if len(params) > 0 {
-		path += "?" + strings.Join(params, "&")
-	}
+	path := "/v1/deployments?skip=" + strconv.Itoa(skip) + "&limit=" + strconv.Itoa(limit)
 
 	var out DeploymentList
 	if err := c.doData(ctx, http.MethodGet, path, nil, &out); err != nil {
@@ -248,6 +247,52 @@ func (c *Client) ListDeployments(ctx context.Context, skip, limit int) (*Deploym
 	regroupLeases(out.Deployments)
 
 	return &out, nil
+}
+
+// ListDeploymentsByState traverses the bounded deployment collection, applies
+// the state filter, and only then applies the requested page window.
+func (c *Client) ListDeploymentsByState(ctx context.Context, state string, skip, limit int) (*DeploymentList, error) {
+	if skip < 0 {
+		return nil, fmt.Errorf("console: deployment pagination skip must be non-negative, got %d", skip)
+	}
+	if limit < 1 {
+		return nil, fmt.Errorf("console: deployment pagination limit must be greater than zero, got %d", limit)
+	}
+	state = strings.ToLower(strings.TrimSpace(state))
+	if state != "active" && state != "closed" {
+		return nil, fmt.Errorf("console: deployment state must be active or closed, got %q", state)
+	}
+
+	all, err := c.listAllDeployments(ctx)
+	if err != nil {
+		return nil, err
+	}
+	filtered := make([]DeploymentListItem, 0, len(all))
+	for _, item := range all {
+		if strings.EqualFold(item.Deployment.State, state) {
+			filtered = append(filtered, item)
+		}
+	}
+
+	total := len(filtered)
+	start := skip
+	if start > total {
+		start = total
+	}
+	end := start + limit
+	if end > total {
+		end = total
+	}
+
+	return &DeploymentList{
+		Deployments: filtered[start:end],
+		Pagination: Pagination{
+			Total:   total,
+			Skip:    skip,
+			Limit:   limit,
+			HasMore: end < total,
+		},
+	}, nil
 }
 
 // regroupLeases re-files each lease under the deployment its own ID names.
@@ -296,6 +341,10 @@ func regroupLeases(items []DeploymentListItem) {
 //
 // Wire: GET /v1/deployments/{dseq}, data-enveloped response.
 func (c *Client) GetDeployment(ctx context.Context, dseq string) (*DeploymentDetail, error) {
+	if err := validateDSeq(dseq); err != nil {
+		return nil, err
+	}
+
 	var out DeploymentDetail
 	if err := c.doData(ctx, http.MethodGet, "/v1/deployments/"+url.PathEscape(dseq), nil, &out); err != nil {
 		return nil, err
@@ -309,9 +358,19 @@ func (c *Client) GetDeployment(ctx context.Context, dseq string) (*DeploymentDet
 // Wire: PUT /v1/deployments/{dseq}, body {"data":{"sdl":...}}, data-enveloped
 // response.
 func (c *Client) UpdateDeployment(ctx context.Context, dseq, sdl string) (*DeploymentDetail, error) {
+	if err := validateDSeq(dseq); err != nil {
+		c.record("update-deployment", dseq, err)
+		return nil, err
+	}
+
 	expectedHash, _, err := deploymentArtifacts(sdl)
 	if err != nil {
 		wrapped := fmt.Errorf("prepare deployment SDL: %w", err)
+		c.record("update-deployment", dseq, wrapped)
+		return nil, wrapped
+	}
+	if _, err := c.requireMutableDeployment(ctx, dseq); err != nil {
+		wrapped := fmt.Errorf("preflight deployment update: %w", err)
 		c.record("update-deployment", dseq, wrapped)
 		return nil, wrapped
 	}
@@ -378,17 +437,37 @@ func isTransientManifestVersionError(err error) bool {
 		strings.Contains(strings.ToLower(httpErr.Body), "manifest version validation failed")
 }
 
-// CloseDeployment closes a deployment. If the deployment is already closed
-// (the API answers 404, or 400 with an already-closed message) it returns
-// ErrAlreadyClosed, which callers may treat as success for idempotent
-// behavior. Any other 400 is a genuine failure and is returned as-is.
+// CloseDeployment closes an active deployment. It first reads the deployment
+// so an absent or already-closed target is reported as ErrAlreadyClosed and no
+// DELETE is sent. The command therefore never reports a mutation it did not
+// perform.
 //
 // Wire: DELETE /v1/deployments/{dseq}.
 func (c *Client) CloseDeployment(ctx context.Context, dseq string) error {
+	if err := validateDSeq(dseq); err != nil {
+		c.record("close-deployment", dseq, err)
+		return err
+	}
+	detail, err := c.GetDeployment(ctx, dseq)
+	if err != nil {
+		if errors.Is(err, ErrNotFound) {
+			err = fmt.Errorf("%w (dseq %s)", ErrAlreadyClosed, dseq)
+		} else {
+			err = fmt.Errorf("preflight close deployment: %w", err)
+		}
+		c.record("close-deployment", dseq, err)
+		return err
+	}
+	if strings.EqualFold(strings.TrimSpace(detail.Deployment.State), "closed") {
+		err = fmt.Errorf("%w (dseq %s)", ErrAlreadyClosed, dseq)
+		c.record("close-deployment", dseq, err)
+		return err
+	}
+
 	var out struct {
 		Success *bool `json:"success"`
 	}
-	err := c.doData(ctx, http.MethodDelete, "/v1/deployments/"+url.PathEscape(dseq), nil, &out)
+	err = c.doData(ctx, http.MethodDelete, "/v1/deployments/"+url.PathEscape(dseq), nil, &out)
 	if err == nil && (out.Success == nil || !*out.Success) {
 		err = errors.New("console: close deployment response did not acknowledge success: true")
 	}
@@ -399,9 +478,9 @@ func (c *Client) CloseDeployment(ctx context.Context, dseq string) error {
 		return nil
 
 	case isAlreadyClosed(err):
-		// Desired end state reached; log as success but surface the sentinel.
-		c.record("close-deployment", dseq, nil)
-		return fmt.Errorf("%w (dseq %s)", ErrAlreadyClosed, dseq)
+		err = fmt.Errorf("%w (dseq %s)", ErrAlreadyClosed, dseq)
+		c.record("close-deployment", dseq, err)
+		return err
 
 	default:
 		c.record("close-deployment", dseq, err)
@@ -437,6 +516,15 @@ func isAlreadyClosed(err error) bool {
 //
 // Wire: POST /v1/deposit-deployment, body {"data":{"dseq":..., "deposit":...}}.
 func (c *Client) Deposit(ctx context.Context, dseq string, amountUSD float64) error {
+	if err := validateDSeq(dseq); err != nil {
+		c.record("deposit", dseq, err)
+		return err
+	}
+	if err := validateDepositUSD(amountUSD); err != nil {
+		c.record("deposit", dseq, err)
+		return err
+	}
+
 	expectedMicros, err := consoleDepositMicros(amountUSD)
 	if err != nil {
 		wrapped := fmt.Errorf("prepare deployment deposit: %w", err)
@@ -449,6 +537,10 @@ func (c *Client) Deposit(ctx context.Context, dseq string, amountUSD float64) er
 		wrapped := fmt.Errorf("snapshot deployment escrow before deposit: %w", err)
 		c.record("deposit", dseq, wrapped)
 		return wrapped
+	}
+	if err := requireMutableState(before, dseq); err != nil {
+		c.record("deposit", dseq, err)
+		return err
 	}
 	if before.Deployment.ID.DSeq.String() != dseq {
 		wrapped := fmt.Errorf("console: deployment pre-state returned dseq %q, want %q", before.Deployment.ID.DSeq.String(), dseq)
@@ -512,6 +604,25 @@ func consoleDepositMicros(amountUSD float64) (*big.Int, error) {
 	}
 
 	return new(big.Int).Set(amount.Num()), nil
+}
+
+func validateDepositUSD(amountUSD float64) error {
+	if math.IsNaN(amountUSD) || math.IsInf(amountUSD, 0) {
+		return fmt.Errorf("console: deployment deposit must be a finite USD amount")
+	}
+	if amountUSD < 0 {
+		return fmt.Errorf("console: deployment deposit must not be negative")
+	}
+
+	text := strconv.FormatFloat(amountUSD, 'f', -1, 64)
+	if _, fraction, ok := strings.Cut(text, "."); ok && len(fraction) > 2 {
+		return fmt.Errorf("console: deployment deposit must have at most two fractional digits")
+	}
+	if amountUSD < MinDepositUSD {
+		return fmt.Errorf("console: deployment deposit must be at least $%.2f, got %v", MinDepositUSD, amountUSD)
+	}
+
+	return nil
 }
 
 func deploymentEscrowTotals(detail *DeploymentDetail) (map[string]*big.Rat, error) {
@@ -678,6 +789,10 @@ func depositTotalDeltaMatches(before, after map[string]*big.Rat, expected *big.I
 //
 // Wire: GET /v1/bids?dseq=, response {"data":[{"bid":{...}}]}.
 func (c *Client) FetchBids(ctx context.Context, dseq string) ([]Bid, error) {
+	if err := validateDSeq(dseq); err != nil {
+		return nil, err
+	}
+
 	path := "/v1/bids?dseq=" + url.QueryEscape(dseq)
 
 	var wrapped []struct {
@@ -702,6 +817,12 @@ func (c *Client) FetchBids(ctx context.Context, dseq string) ([]Bid, error) {
 // data-enveloped: {"manifest":..., "leases":[{dseq,gseq,oseq,provider}]}.
 // The response is data-enveloped.
 func (c *Client) CreateLease(ctx context.Context, manifest string, leases []LeaseRequest) (*DeploymentDetail, error) {
+	for _, lease := range leases {
+		if err := validateDSeq(lease.DSeq); err != nil {
+			return nil, err
+		}
+	}
+
 	body := map[string]any{
 		"manifest": manifest,
 		"leases":   leases,
@@ -794,6 +915,10 @@ func requestedLeasesActive(actual []Lease, requested []LeaseRequest) bool {
 //
 // Wire: GET /v2/deployment-settings/{dseq}, data-enveloped response.
 func (c *Client) GetDeploymentSettings(ctx context.Context, dseq string) (*DeploymentSettings, error) {
+	if err := validateDSeq(dseq); err != nil {
+		return nil, err
+	}
+
 	var out DeploymentSettings
 	if err := c.doData(ctx, http.MethodGet, "/v2/deployment-settings/"+url.PathEscape(dseq), nil, &out); err != nil {
 		return nil, err
@@ -810,6 +935,16 @@ func (c *Client) GetDeploymentSettings(ctx context.Context, dseq string) (*Deplo
 // {"data":{"autoTopUpEnabled":...}}; on 404, POST /v2/deployment-settings,
 // body {"data":{"dseq":..., "autoTopUpEnabled":...}}.
 func (c *Client) SetDeploymentAutoTopUp(ctx context.Context, dseq string, enabled bool) (*DeploymentSettings, error) {
+	if err := validateDSeq(dseq); err != nil {
+		c.record("update-deployment-settings", dseq, err)
+		return nil, err
+	}
+	if _, err := c.requireMutableDeployment(ctx, dseq); err != nil {
+		wrapped := fmt.Errorf("preflight deployment settings: %w", err)
+		c.record("update-deployment-settings", dseq, wrapped)
+		return nil, wrapped
+	}
+
 	var out struct {
 		DSeq                 *FlexString `json:"dseq"`
 		AutoTopUpEnabled     *bool       `json:"autoTopUpEnabled"`
@@ -838,4 +973,28 @@ func (c *Client) SetDeploymentAutoTopUp(ctx context.Context, dseq string, enable
 		EstimatedTopUpAmount: out.EstimatedTopUpAmount,
 		TopUpFrequencyMs:     out.TopUpFrequencyMs,
 	}, nil
+}
+
+func (c *Client) requireMutableDeployment(ctx context.Context, dseq string) (*DeploymentDetail, error) {
+	detail, err := c.GetDeployment(ctx, dseq)
+	if err != nil {
+		return nil, err
+	}
+	if err := requireMutableState(detail, dseq); err != nil {
+		return nil, err
+	}
+
+	return detail, nil
+}
+
+func requireMutableState(detail *DeploymentDetail, dseq string) error {
+	state := "unknown"
+	if detail != nil && strings.TrimSpace(detail.Deployment.State) != "" {
+		state = strings.ToLower(strings.TrimSpace(detail.Deployment.State))
+	}
+	if state == "closed" {
+		return fmt.Errorf("console: deployment %s is closed and cannot be modified", dseq)
+	}
+
+	return nil
 }

@@ -28,6 +28,9 @@ import (
 // DefaultBaseURL is the production Console API endpoint.
 const DefaultBaseURL = "https://console-api.akash.network"
 
+// DefaultUIBaseURL is the production Console browser origin.
+const DefaultUIBaseURL = "https://console.akash.network"
+
 // MinDepositUSD is the minimum deployment deposit the Console API accepts.
 // It lives here — the leaf package every Console caller already imports —
 // so the CLI, the workflow transport, and the client itself cannot drift
@@ -54,11 +57,9 @@ var (
 	ErrNotFound = errors.New("console: resource not found")
 
 	// ErrAlreadyClosed is returned by CloseDeployment when the deployment is
-	// already closed (the API answers 404, or 400 with an already-closed
-	// message). Callers that want idempotent close semantics should treat it
-	// as success:
-	//
-	//	if err := c.CloseDeployment(ctx, dseq); err != nil && !errors.Is(err, console.ErrAlreadyClosed) { ... }
+	// already closed or absent (the preflight answers 404 or reports a closed
+	// state, or the DELETE reports unambiguous already-closed semantics).
+	// Callers must preserve this as a failed mutation.
 	ErrAlreadyClosed = errors.New("console: deployment already closed")
 )
 
@@ -100,6 +101,17 @@ func New(baseURL, apiKey string) *Client {
 			},
 		},
 	}
+}
+
+// DeploymentURL returns a production Console deep link for dseq. Custom API
+// origins intentionally return an empty string: they may have no matching UI,
+// and linking them to production would point at a different account.
+func (c *Client) DeploymentURL(dseq string) string {
+	if validateDSeq(dseq) != nil || strings.TrimRight(c.baseURL, "/") != DefaultBaseURL {
+		return ""
+	}
+
+	return DefaultUIBaseURL + "/deployments/" + dseq
 }
 
 // WithActionLog attaches a per-context action logger; state-changing Console

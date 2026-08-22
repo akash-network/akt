@@ -321,6 +321,35 @@ func TestListDeployments(t *testing.T) {
 	assert.True(t, resp.Pagination.HasMore)
 }
 
+func TestListDeploymentsByStateFiltersBeforeApplyingPageWindow(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("skip") {
+		case "0":
+			_, _ = w.Write([]byte(`{"data":{"deployments":[
+				{"deployment":{"id":{"dseq":"1"},"state":"active"}},
+				{"deployment":{"id":{"dseq":"2"},"state":"closed"}}
+			],"pagination":{"skip":0,"limit":2,"hasMore":true}}}`))
+		case "2":
+			_, _ = w.Write([]byte(`{"data":{"deployments":[
+				{"deployment":{"id":{"dseq":"3"},"state":"active"}},
+				{"deployment":{"id":{"dseq":"4"},"state":"active"}}
+			],"pagination":{"skip":2,"limit":2,"hasMore":false}}}`))
+		default:
+			t.Fatalf("unexpected pagination request %s", r.URL.RawQuery)
+		}
+	}))
+	defer srv.Close()
+
+	result, err := console.New(srv.URL, "test-key").ListDeploymentsByState(
+		context.Background(), "active", 1, 1,
+	)
+	require.NoError(t, err)
+	require.Len(t, result.Deployments, 1)
+	assert.Equal(t, "3", result.Deployments[0].Deployment.ID.DSeq.String())
+	assert.Equal(t, 3, result.Pagination.Total)
+	assert.True(t, result.Pagination.HasMore)
+}
+
 func TestGetDeployment(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
@@ -358,6 +387,11 @@ func TestGetDeployment(t *testing.T) {
 func TestUpdateDeployment(t *testing.T) {
 	expectedHash := versionHash(t, validUpdateSDL)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			assert.Equal(t, "/v1/deployments/555", r.URL.Path)
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"555"},"state":"active"}}}`))
+			return
+		}
 		assert.Equal(t, http.MethodPut, r.Method)
 		assert.Equal(t, "/v1/deployments/555", r.URL.Path)
 
@@ -471,10 +505,15 @@ func TestUpdateDeploymentRetriesTransientManifestValidation(t *testing.T) {
 
 func TestCloseDeployment(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodDelete, r.Method)
 		assert.Equal(t, "/v1/deployments/99999", r.URL.Path)
-
-		_, _ = w.Write([]byte(`{"data":{"success":true}}`))
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"99999"},"state":"active"}}}`))
+		case http.MethodDelete:
+			_, _ = w.Write([]byte(`{"data":{"success":true}}`))
+		default:
+			t.Fatalf("unexpected request method %s", r.Method)
+		}
 	}))
 	defer srv.Close()
 
@@ -488,7 +527,12 @@ func TestCloseDeploymentRejectsMissingOrFalseSuccess(t *testing.T) {
 		`{"data":{"success":false}}`,
 	} {
 		t.Run(body, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet {
+					_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"1"},"state":"active"}}}`))
+					return
+				}
+				assert.Equal(t, http.MethodDelete, r.Method)
 				_, _ = w.Write([]byte(body))
 			}))
 			defer srv.Close()
@@ -505,7 +549,7 @@ func TestCloseDeploymentAlreadyClosedSentinel(t *testing.T) {
 		status int
 		body   string
 	}{
-		// 404 = resource gone = desired end state, regardless of body.
+		// 404 during preflight = resource absent, regardless of body.
 		{"404", http.StatusNotFound, `{"error":"no such deployment"}`},
 		// 400 maps to the sentinel only when the body says so.
 		{"400 already closed", http.StatusBadRequest, `{"error":"deployment already closed"}`},
@@ -515,7 +559,11 @@ func TestCloseDeploymentAlreadyClosedSentinel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if tt.status != http.StatusNotFound && r.Method == http.MethodGet {
+					_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"1"},"state":"active"}}}`))
+					return
+				}
 				w.WriteHeader(tt.status)
 				_, _ = w.Write([]byte(tt.body))
 			}))
@@ -525,9 +573,33 @@ func TestCloseDeploymentAlreadyClosedSentinel(t *testing.T) {
 			err := c.CloseDeployment(context.Background(), "1")
 			require.Error(t, err)
 			assert.ErrorIs(t, err, console.ErrAlreadyClosed,
-				"HTTP %d %q must map to ErrAlreadyClosed for idempotent close", tt.status, tt.body)
+				"HTTP %d %q must map to ErrAlreadyClosed", tt.status, tt.body)
 		})
 	}
+}
+
+func TestCloseDeploymentRejectsClosedPreflightBeforeDelete(t *testing.T) {
+	var gets atomic.Int32
+	var deletes atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			gets.Add(1)
+			assert.Equal(t, "/v1/deployments/1", r.URL.Path)
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"1"},"state":"closed"}}}`))
+		case http.MethodDelete:
+			deletes.Add(1)
+			w.WriteHeader(http.StatusInternalServerError)
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	err := console.New(srv.URL, "test-key").CloseDeployment(context.Background(), "1")
+	require.ErrorIs(t, err, console.ErrAlreadyClosed)
+	assert.Equal(t, int32(1), gets.Load())
+	assert.Equal(t, int32(0), deletes.Load(), "closed preflight must prevent a false mutation")
 }
 
 func TestCloseDeploymentBadRequestValidationIsRealError(t *testing.T) {
@@ -606,8 +678,13 @@ func TestDepositRejectsInvalidAmountBeforeNetwork(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	err := console.New(srv.URL, "test-key").Deposit(context.Background(), "321", 0)
-	require.ErrorContains(t, err, "prepare deployment deposit")
+	client := console.New(srv.URL, "test-key")
+	err := client.Deposit(context.Background(), "321", 0)
+	require.ErrorContains(t, err, "at least $0.50")
+	err = client.Deposit(context.Background(), "321", -1)
+	require.ErrorContains(t, err, "must not be negative")
+	err = client.Deposit(context.Background(), "321", 0.505)
+	require.ErrorContains(t, err, "at most two fractional digits")
 	assert.Equal(t, int32(0), requests.Load(), "invalid amount must not read or mutate remote state")
 }
 
@@ -981,6 +1058,11 @@ func TestGetDeploymentSettingsNotFound(t *testing.T) {
 
 func TestSetDeploymentAutoTopUpPatch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			assert.Equal(t, "/v1/deployments/321", r.URL.Path)
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"321"},"state":"active"}}}`))
+			return
+		}
 		assert.Equal(t, http.MethodPatch, r.Method)
 		assert.Equal(t, "/v2/deployment-settings/321", r.URL.Path)
 
@@ -1002,6 +1084,9 @@ func TestSetDeploymentAutoTopUpFallsBackToPost(t *testing.T) {
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
+		case http.MethodGet:
+			assert.Equal(t, "/v1/deployments/654", r.URL.Path)
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"654"},"state":"active"}}}`))
 		case http.MethodPatch:
 			patchCalled = true
 			assert.Equal(t, "/v2/deployment-settings/654", r.URL.Path)

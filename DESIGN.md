@@ -460,21 +460,32 @@ Each context has an `auth-method` that determines how transactions are signed an
   response is surfaced rather than followed to an intermediary-selected URL.
   Neither a redirect target nor any other transport diagnostic may reach the
   returned error or action log without exact API-key redaction.
-- Console accepts a 2xx close only when the response acknowledges
-  `success: true`. Console may return that same acknowledgement when its
-  server-side idempotency check finds the deployment already closed. A
-  non-2xx response is converted to idempotent success only when it
-  unambiguously states that the deployment is already closed or absent; a
-  rejection that merely contains the word `closed` (for example, "cannot be
-  closed while leases are active") remains a failed mutation and a failed
-  action-log entry. `already_closed: false` means only that the response did
-  not explicitly report prior terminal state; callers prove the idempotent
-  outcome by observing that the deployment remains closed or absent.
+- Console close first reads the deployment and rejects a terminal or absent
+  deployment as an already-closed error. That error remains non-zero through
+  both the direct Console command and the shared `akt close` workflow, because
+  reaching the desired state before this invocation is not evidence that this
+  invocation changed it. An active deployment is then deleted, and a 2xx close
+  is accepted only when the response acknowledges `success: true`. A later
+  non-2xx response that unambiguously reports already closed or absent retains
+  the same typed failure. A rejection that merely contains the word `closed`
+  (for example, "cannot be closed while leases are active") remains its
+  original failed mutation. Already-closed attempts are failed action-log
+  entries and never produce a green workflow step or mutation acknowledgement.
 - A process-level Console key is sufficient for read-only MCP without creating
   configuration or running the first-run wizard. `--enable-writes` still
   requires an explicitly selected context because every mutation must have a
   durable per-context action-log destination; contextless writes fail before
   any tool is registered.
+- Console request construction is a validation boundary shared by direct CLI,
+  workflows, and MCP. Numeric identities, pagination, fixed-point USD deposit
+  syntax and minimums, UUIDs, key names, mutation state, and JWT lifetime are
+  rejected there before transport work. API-key deletion first lists the
+  account's keys and requires the requested UUID to be present before issuing
+  DELETE. An absent UUID is a failed cleanup attempt with no DELETE, even when
+  the Console API would otherwise acknowledge an idempotent delete; only a
+  present key followed by a successful DELETE may produce `deleted: true`.
+  This prevents each surface from acquiring its own partial version of the
+  same rules.
 
 A context uses **one** auth method. Users who need both can create separate contexts (e.g., `prod` with keyring auth and `console` with console-api auth), potentially sharing the same network definition.
 
@@ -482,7 +493,11 @@ Provider authentication is selected by operation, not merely by command
 group. Provider `/status` is a public read: CLI and MCP callers construct it
 through `internal/provider.NewPublicGatewayClient`, which attaches neither a
 wallet JWT nor an mTLS certificate and therefore works without a default
-account or keyring. Lease-, service-, manifest-, migration-, log-, event-, and
+account or keyring. The CLI exposes its positive one-shot deadline as
+`--timeout`, defaulting to 30 seconds, and passes that value into the gateway
+boundary itself so it can both shorten and extend the request rather than
+nesting an ineffective outer timeout around a fixed inner deadline. Lease-,
+service-, manifest-, migration-, log-, event-, and
 shell-scoped chain-backed operations construct clients through
 `internal/provider.NewGatewayClient`. That boundary validates the resolved
 auth enum, account, keyring, and signing-key presence before installing the
@@ -526,6 +541,12 @@ that provider, deployment identity, and required scope (`status` or
 `send-manifest`). They never send the provider client's broad full-access JWT,
 so a registered provider cannot replay an observed MCP credential against a
 different provider, deployment, or operation.
+
+MCP startup assembles read and write capabilities independently. A usable
+query client always registers its read tools. Requesting writes does not make
+query availability depend on a signer: when signing cannot be initialized,
+only signing-dependent tools are omitted and the server remains useful for
+queries.
 
 MCP tool schemas are executable boundaries. Unknown fields, blank required
 strings, invalid enums, and numeric identifiers that cannot be represented
@@ -795,6 +816,13 @@ JSONL renderers return writer and short-write failures to the Cobra boundary;
 a successful engine run cannot exit zero after its promised stdout payload was
 lost.
 
+Step outputs are first-class workflow data. JSONL carries the values produced
+by each step instead of reducing a successful action to its status. Deployment
+completion therefore exposes its DSEQ, full provider address, selected price,
+service URIs, readiness, and rail-appropriate deep link. The Console and chain
+adapters both feed a bounded readiness observation through this shared result
+rather than adding rail-specific command output.
+
 Console mutation responses are not trusted as the only evidence of resulting
 state. Before creating a deployment, the client derives the SDL's deterministic
 version hash and snapshots every existing deployment DSEQ. It submits the POST
@@ -843,9 +871,9 @@ merely the first HTTP response.
 
 | Form | Examples | Meaning |
 |---|---|---|
-| USD | `5usd`, `$5`, `5.50usd` | A USD amount. The `usd` unit is case-insensitive and always wins over coin parsing, so a value ending in `usd` is never read as a chain denomination. |
+| USD | `5usd`, `$5`, `5.50usd` | A plain decimal USD amount with at most two fractional digits. The `usd` unit is case-insensitive and always wins over coin parsing, so a value ending in `usd` is never read as a chain denomination. Scientific notation, non-finite values, and sub-cent precision are rejected. |
 | Coin | an explicit `<amount><denom>` | A chain coin amount, parsed as a decimal coin. The denomination must match the active network's deployment deposit parameter. |
-| Bare number | `5`, `5.50` | Unit-less: USD on the console rail, rejected on the chain rail (coins have always required a denomination). |
+| Bare number | `5`, `5.50` | Unit-less plain decimal: USD on the console rail, rejected on the chain rail (coins have always required a denomination). |
 | `auto` / empty | `auto` | Defer to the rail default: the chain-minimum deployment deposit on the chain rail; the console rail has no default and asks for an explicit USD amount. |
 
 Every form parses on every rail; only the *interpretation* is rail-specific,
@@ -1224,6 +1252,26 @@ For Console API values, the public JSON representation is canonical. YAML is
 generated from that JSON semantic tree rather than by reflecting the Go
 transport type, so JSON field names, raw embedded objects, byte/string
 representations, and integer precision remain identical across formats.
+
+Human Console output walks the canonical JSON semantic model through a
+field-aware renderer. It applies USD conversion for micro-ACT escrow values,
+monthly estimates for `uact` per-block prices, full identifiers, and empty-state
+text without changing JSON/YAML wire semantics. Workflow completion has its own
+summary renderer for readiness and next actions. Pretty mode never obtains its
+layout by colorizing or indenting raw API JSON.
+
+Every successful Console leaf also emits at least one actionable `Next:`
+suggestion through the informational stderr channel. Keeping guidance off
+stdout preserves canonical JSON/YAML, raw template SDL, and stream payloads;
+`--quiet` suppresses it. Bounded streams and shell commands emit the suggestion
+only after successful completion. A structural command-tree test requires this
+metadata on every Console action leaf so new commands cannot silently omit it.
+
+`akt context keys add` accepts the familiar `--yes`/`-y` spelling for scripted
+Cosmos CLI compatibility even though add has no confirmation prompt. It never
+authorizes overwriting an existing key and cannot bypass mnemonic, Ledger, or
+keyring-passphrase input; `--no-backup` remains the separate control that keeps
+a newly generated mnemonic out of command output.
 
 The output flag is an enum at the parsing boundary. A misspelling such as
 `-o josn` is a usage error; it must never fall through to pretty output. The

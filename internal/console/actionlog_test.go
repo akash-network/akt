@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -205,7 +206,7 @@ func TestRedactResponseSecretWithoutCredentialPreservesDiagnostic(t *testing.T) 
 	}
 }
 
-func TestCloseAlreadyClosedRecordedAsSuccess(t *testing.T) {
+func TestCloseAlreadyClosedRecordedAsFailed(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
@@ -226,33 +227,47 @@ func TestCloseAlreadyClosedRecordedAsSuccess(t *testing.T) {
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(entries))
 	}
-	// Desired end state was reached, so the idempotent close logs as success.
-	if entries[0].Action != "close-deployment" || entries[0].Status != "success" || entries[0].DSeq != 555 {
+	if entries[0].Action != "close-deployment" || entries[0].Status != "failed" || entries[0].DSeq != 555 {
 		t.Errorf("already-closed entry wrong: %+v", entries[0])
+	}
+	if !strings.Contains(entries[0].Error, "already closed") {
+		t.Errorf("already-closed entry error = %q", entries[0].Error)
 	}
 }
 
-func TestRepeatedSuccessfulCloseRecordsEveryAttempt(t *testing.T) {
+func TestRepeatedCloseRecordsTruthfulOutcomes(t *testing.T) {
 	var deletes atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete || r.URL.Path != "/v1/deployments/555" {
+		if r.URL.Path != "/v1/deployments/555" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		deletes.Add(1)
-		_, _ = w.Write([]byte(`{"data":{"success":true}}`))
+		switch r.Method {
+		case http.MethodGet:
+			state := "active"
+			if deletes.Load() > 0 {
+				state = "closed"
+			}
+			_, _ = fmt.Fprintf(w, `{"data":{"deployment":{"id":{"dseq":"555"},"state":%q}}}`, state)
+		case http.MethodDelete:
+			deletes.Add(1)
+			_, _ = w.Write([]byte(`{"data":{"success":true}}`))
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
 	}))
 	defer srv.Close()
 
 	l := openTestLog(t)
 	c := New(srv.URL, "test-key").WithActionLog(l)
-	for attempt := 1; attempt <= 2; attempt++ {
-		if err := c.CloseDeployment(context.Background(), "555"); err != nil {
-			t.Fatalf("CloseDeployment() attempt %d: %v", attempt, err)
-		}
+	if err := c.CloseDeployment(context.Background(), "555"); err != nil {
+		t.Fatalf("first CloseDeployment(): %v", err)
+	}
+	if err := c.CloseDeployment(context.Background(), "555"); !errors.Is(err, ErrAlreadyClosed) {
+		t.Fatalf("second CloseDeployment() = %v, want ErrAlreadyClosed", err)
 	}
 
-	if got := deletes.Load(); got != 2 {
-		t.Fatalf("DELETE requests = %d, want 2", got)
+	if got := deletes.Load(); got != 1 {
+		t.Fatalf("DELETE requests = %d, want 1", got)
 	}
 	entries, err := l.Read(actionlog.Filter{Type: actionlog.TypeConsole})
 	if err != nil {
@@ -261,17 +276,22 @@ func TestRepeatedSuccessfulCloseRecordsEveryAttempt(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("close action entries = %d, want 2: %+v", len(entries), entries)
 	}
-	for i, entry := range entries {
-		if entry.Action != "close-deployment" || entry.Status != "success" || entry.DSeq != 555 || entry.Error != "" {
-			t.Errorf("close action entry %d = %+v", i, entry)
-		}
+	if entries[0].Action != "close-deployment" || entries[0].Status != "failed" || entries[0].DSeq != 555 || !strings.Contains(entries[0].Error, "already closed") {
+		t.Errorf("second close action entry = %+v", entries[0])
+	}
+	if entries[1].Action != "close-deployment" || entries[1].Status != "success" || entries[1].DSeq != 555 || entries[1].Error != "" {
+		t.Errorf("first close action entry = %+v", entries[1])
 	}
 }
 
 func TestCloseValidation400RecordedAsFailed(t *testing.T) {
 	// A 400 without already-closed semantics is a genuine failure: it must
 	// not be logged as a successful close.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"777"},"state":"active"}}}`))
+			return
+		}
 		w.WriteHeader(http.StatusBadRequest)
 		_, _ = w.Write([]byte(`{"error":"deployment cannot be closed while active leases exist"}`))
 	}))
@@ -306,13 +326,17 @@ func TestCloseValidation400RecordedAsFailed(t *testing.T) {
 func TestNewMutationsRecordedInActionLog(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/42":
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"},"state":"active"}}}`))
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/wallet-settings":
 			_, _ = w.Write([]byte(`{"data":{"autoReloadEnabled":true}}`))
 		case r.Method == http.MethodPatch && r.URL.Path == "/v2/deployment-settings/42":
 			_, _ = w.Write([]byte(`{"data":{"dseq":"42","autoTopUpEnabled":true}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/api-keys":
 			_, _ = w.Write([]byte(`{"data":{"id":"k1","name":"n","apiKey":"secret"}}`))
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1/api-keys/k1":
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/api-keys":
+			_, _ = w.Write([]byte(`{"data":[{"id":"11111111-1111-4111-8111-111111111111","name":"n"}]}`))
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/api-keys/11111111-1111-4111-8111-111111111111":
 			w.WriteHeader(http.StatusNoContent)
 		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -334,7 +358,7 @@ func TestNewMutationsRecordedInActionLog(t *testing.T) {
 	if _, err := c.CreateAPIKey(ctx, "n", ""); err != nil {
 		t.Fatalf("CreateAPIKey: %v", err)
 	}
-	if err := c.DeleteAPIKey(ctx, "k1"); err != nil {
+	if err := c.DeleteAPIKey(ctx, "11111111-1111-4111-8111-111111111111"); err != nil {
 		t.Fatalf("DeleteAPIKey: %v", err)
 	}
 
@@ -380,7 +404,7 @@ func TestConsoleValidationFailuresOccurBeforeNetworkAndAreLogged(t *testing.T) {
 	if _, err := client.UpdateDeployment(context.Background(), "42", "not-valid-sdl: ["); err == nil || !strings.Contains(err.Error(), "prepare deployment SDL") {
 		t.Fatalf("invalid deployment SDL error = %v", err)
 	}
-	if err := client.Deposit(context.Background(), "42", 0); err == nil || !strings.Contains(err.Error(), "prepare deployment deposit") {
+	if err := client.Deposit(context.Background(), "42", 0); err == nil || !strings.Contains(err.Error(), "at least $0.50") {
 		t.Fatalf("invalid deployment deposit error = %v", err)
 	}
 	if requests.Load() != 0 {

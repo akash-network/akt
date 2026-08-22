@@ -4,6 +4,7 @@
 package workflow
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,6 +28,7 @@ import (
 	"pkg.akt.dev/akt/internal/output"
 	"pkg.akt.dev/akt/internal/transport"
 	wf "pkg.akt.dev/akt/internal/workflow"
+	"pkg.akt.dev/akt/internal/workflow/adapters"
 	"pkg.akt.dev/akt/internal/workflow/builtin"
 	"pkg.akt.dev/akt/internal/workflow/steps"
 )
@@ -108,9 +110,19 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 			capability.AnnotationKey: string(capability.ChainTx) + "|" + string(capability.Console),
 		},
 		PreRunE: func(cmd *cobra.Command, args []string) error {
-			// Dry runs never need clients.
+			// Dry runs only discover a read client when the chain rail must
+			// resolve an auto deposit from live deployment parameters.
 			if dryRun, _ := cmd.Flags().GetBool(flagdefs.FlagDryRun); dryRun {
-				return nil
+				rc := resolveContext(mgrFn, ctxNameFn)
+				depositFlag := cmd.Flags().Lookup(flagdefs.FlagDeposit)
+				if rc == nil || rc.AuthMethod == aktctx.AuthMethodConsoleAPI || depositFlag == nil {
+					return nil
+				}
+				if !chainDryRunNeedsDepositQuery(depositFlag.Value.String()) {
+					return nil
+				}
+
+				return chaincli.QueryPersistentPreRunE(cmd, args)
 			}
 
 			// Chain client discovery only applies when running under the
@@ -207,11 +219,15 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 			jsonl := outputFormat(cmd) == outputJSONL
 
 			if dryRun {
+				params, err = resolveDryRunParams(cmd, params, mgrFn, ctxNameFn)
+				if err != nil {
+					return err
+				}
 				if jsonl {
-					return emitDryRunJSONL(out, rtDef)
+					return emitDryRunJSONL(out, rtDef, params)
 				}
 
-				if err := printPlan(out, rtDef, params); err != nil {
+				if err := printPlan(out, rtDef, params, workflowRail(mgrFn, ctxNameFn)); err != nil {
 					return err
 				}
 				return writeWorkflowReport(out, "\nDry run — no transactions broadcast.\n", "dry-run")
@@ -220,7 +236,7 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 			// During execution, keep stdout pure in JSONL mode; other modes
 			// retain the human plan before step results.
 			if !jsonl {
-				if err := printPlan(out, rtDef, params); err != nil {
+				if err := printPlan(out, rtDef, params, workflowRail(mgrFn, ctxNameFn)); err != nil {
 					return err
 				}
 			}
@@ -272,6 +288,64 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 	return cmd
 }
 
+func chainDryRunNeedsDepositQuery(raw string) bool {
+	parsed, err := transport.ParseDeposit(raw)
+	return err == nil && parsed.Auto
+}
+
+func resolveDryRunParams(
+	cmd *cobra.Command,
+	params map[string]any,
+	mgrFn func() *aktctx.Manager,
+	ctxNameFn func() string,
+) (map[string]any, error) {
+	raw, ok := params[flagdefs.FlagDeposit].(string)
+	if !ok {
+		return params, nil
+	}
+	rc := resolveContext(mgrFn, ctxNameFn)
+	if rc == nil {
+		// Preserve the deprecated standalone Commands API, which intentionally
+		// has no rail. Production commands always have a resolved manager.
+		return params, nil
+	}
+
+	parsed, err := transport.ParseDeposit(raw)
+	if err != nil {
+		return nil, err
+	}
+	resolved := ""
+	if rc.AuthMethod == aktctx.AuthMethodConsoleAPI {
+		resolved, err = parsed.RailValue(transport.KindConsole)
+		if err == nil && parsed.Auto {
+			err = fmt.Errorf("deposit %q: console-api deployments require an explicit USD amount of at least $%.2f", raw, transport.MinConsoleDepositUSD)
+		}
+		if err == nil && parsed.USD < transport.MinConsoleDepositUSD {
+			err = fmt.Errorf("deposit must be at least $%.2f on the Console rail (got $%.2f)", transport.MinConsoleDepositUSD, parsed.USD)
+		}
+	} else {
+		resolved, err = parsed.RailValue(transport.KindChain)
+		if err == nil && parsed.Auto {
+			cl, clientErr := chaincli.LightClientFromContext(cmd.Context())
+			if clientErr != nil {
+				return nil, fmt.Errorf("resolve chain auto deposit: %w", clientErr)
+			}
+			resolved, err = adapters.ResolveChainDepositValue(cmd.Context(), cl, resolved)
+		}
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	copyParams := make(map[string]any, len(params))
+	for key, value := range params {
+		copyParams[key] = value
+	}
+	copyParams[flagdefs.FlagDeposit] = resolved
+
+	return copyParams, nil
+}
+
 func sortedParamNames(params map[string]wf.ParamDef) []string {
 	names := make([]string, 0, len(params))
 	for name := range params {
@@ -308,8 +382,9 @@ func executeWorkflow(
 	}
 
 	var (
-		chainCl    steps.ChainClient
-		providerCl steps.ProviderClient
+		chainCl       steps.ChainClient
+		providerCl    steps.ProviderClient
+		consoleClient *console.Client
 	)
 
 	account := rc.DefaultAccount
@@ -325,6 +400,7 @@ func executeWorkflow(
 
 		cc := console.New(rc.ConsoleAPIURL, rc.ConsoleAPIKey).
 			WithActionLog(cliutil.ActionLogFromContext(cmd.Context()))
+		consoleClient = cc
 
 		// Chain queries still go directly to the chain when a client is
 		// available (SPEC §7.4); otherwise the console transport falls back
@@ -384,6 +460,7 @@ func executeWorkflow(
 	engine := wf.NewEngine(registry, logger)
 
 	state, runErr := engine.Run(cmd.Context(), rtDef, account, params)
+	runErr = enrichSuccessfulDeploy(cmd.Context(), state, rc, consoleClient, providerCl, runErr)
 	recovery := deployRecoveryAdvice(state, runErr)
 
 	// Record the outcome locally before reporting it (SPEC §6.6). A one-shot
@@ -408,6 +485,237 @@ func executeWorkflow(
 	}
 
 	return renderErr
+}
+
+func enrichSuccessfulDeploy(
+	ctx context.Context,
+	state *wf.RunState,
+	rc *aktctx.Context,
+	cc *console.Client,
+	provider steps.ProviderClient,
+	runErr error,
+) error {
+	if runErr != nil {
+		return runErr
+	}
+
+	return enrichDeployCompletion(ctx, state, rc, cc, provider)
+}
+
+type deploymentServiceStatus struct {
+	Available int      `json:"available"`
+	Total     int      `json:"total"`
+	URIs      []string `json:"uris"`
+}
+
+type deploymentRuntimeStatus struct {
+	Services map[string]deploymentServiceStatus `json:"services"`
+}
+
+type readinessFetcher func(context.Context) (json.RawMessage, error)
+
+func enrichDeployCompletion(
+	ctx context.Context,
+	state *wf.RunState,
+	rc *aktctx.Context,
+	cc *console.Client,
+	provider steps.ProviderClient,
+) error {
+	if state == nil || state.Workflow != "deploy" || rc == nil {
+		return nil
+	}
+	readyTimeoutValue, hasReadiness := state.Params["ready-timeout"]
+	if !hasReadiness {
+		// A user workflow named deploy is allowed to define another lifecycle.
+		return nil
+	}
+	created := state.Steps["create-deployment"]
+	if created == nil {
+		return errors.New("prepare deployment readiness: create-deployment result is missing")
+	}
+	dseq, err := workflowOutputUint64(created.Output, "dseq")
+	if err != nil {
+		return fmt.Errorf("prepare deployment readiness: %w", err)
+	}
+	providerAddress := workflowOutputString(state.Steps["create-lease"], "provider")
+	if providerAddress == "" {
+		providerAddress = workflowOutputString(state.Steps["select-bid"], "provider")
+	}
+
+	completion := map[string]any{
+		"dseq":     strconv.FormatUint(dseq, 10),
+		"provider": providerAddress,
+		"ready":    false,
+	}
+	if price := state.StepOutput("select-bid", "price"); price != nil {
+		completion["price"] = price
+	}
+	if rc.AuthMethod == aktctx.AuthMethodConsoleAPI {
+		completion["auto_top_up"] = "daily"
+		if cc != nil {
+			if link := cc.DeploymentURL(strconv.FormatUint(dseq, 10)); link != "" {
+				completion["console_url"] = link
+			}
+		}
+	}
+
+	noWait, _ := state.Params["no-wait-active"].(bool)
+	if noWait {
+		completion["readiness"] = "not-waited"
+		mergeCompletionOutput(state, completion)
+		state.SetStepResult("wait-for-ready", &wf.StepResult{
+			Name:   "wait-for-ready",
+			Type:   wf.StepWait,
+			Status: "skipped",
+			Output: completion,
+		})
+		return nil
+	}
+
+	timeoutText, ok := readyTimeoutValue.(string)
+	if !ok {
+		return fmt.Errorf("invalid ready-timeout %v", readyTimeoutValue)
+	}
+	timeout, err := time.ParseDuration(timeoutText)
+	if err != nil || timeout <= 0 {
+		return fmt.Errorf("invalid ready-timeout %q", timeoutText)
+	}
+
+	var fetch readinessFetcher
+	if rc.AuthMethod == aktctx.AuthMethodConsoleAPI {
+		if cc == nil {
+			return errors.New("console readiness client is unavailable")
+		}
+		fetch = func(callCtx context.Context) (json.RawMessage, error) {
+			detail, getErr := cc.GetDeployment(callCtx, strconv.FormatUint(dseq, 10))
+			if getErr != nil {
+				return nil, getErr
+			}
+
+			return consoleRuntimeStatus(detail)
+		}
+	} else {
+		if provider == nil || providerAddress == "" {
+			return errors.New("provider readiness client or selected provider is unavailable")
+		}
+		fetch = func(callCtx context.Context) (json.RawMessage, error) {
+			return provider.LeaseStatus(callCtx, providerAddress, dseq)
+		}
+	}
+
+	uris, raw, readinessErr := waitForDeploymentReadiness(ctx, timeout, fetch)
+	completion["uris"] = uris
+	completion["ready"] = readinessErr == nil
+	mergeCompletionOutput(state, completion)
+	result := &wf.StepResult{
+		Name:      "wait-for-ready",
+		Type:      wf.StepWait,
+		Output:    completion,
+		RawResult: raw,
+		Status:    "success",
+	}
+	if readinessErr != nil {
+		result.Status = "failed"
+		result.Error = readinessErr.Error()
+	}
+	state.SetStepResult(result.Name, result)
+
+	return readinessErr
+}
+
+func mergeCompletionOutput(state *wf.RunState, completion map[string]any) {
+	result := state.Steps["display-result"]
+	if result == nil {
+		return
+	}
+	if result.Output == nil {
+		result.Output = make(map[string]any)
+	}
+	for key, value := range completion {
+		result.Output[key] = value
+	}
+}
+
+func consoleRuntimeStatus(detail *console.DeploymentDetail) (json.RawMessage, error) {
+	if detail == nil {
+		return nil, errors.New("console deployment status is empty")
+	}
+	services := make(map[string]json.RawMessage)
+	for _, lease := range detail.Leases {
+		if lease.Status == nil || len(lease.Status.Services) == 0 {
+			continue
+		}
+		var current map[string]json.RawMessage
+		if err := json.Unmarshal(lease.Status.Services, &current); err != nil {
+			return nil, fmt.Errorf("decode Console lease services: %w", err)
+		}
+		for name, status := range current {
+			services[name] = status
+		}
+	}
+
+	return json.Marshal(map[string]any{"services": services})
+}
+
+func waitForDeploymentReadiness(
+	ctx context.Context,
+	timeout time.Duration,
+	fetch readinessFetcher,
+) (map[string][]string, json.RawMessage, error) {
+	deadlineCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	var (
+		lastRaw json.RawMessage
+		lastErr error
+	)
+	for {
+		raw, err := fetch(deadlineCtx)
+		if err == nil {
+			lastRaw = raw
+			ready, uris, decodeErr := deploymentReady(raw)
+			if decodeErr == nil && ready {
+				return uris, raw, nil
+			}
+			lastErr = decodeErr
+		} else {
+			lastErr = err
+		}
+
+		timer := time.NewTimer(2 * time.Second)
+		select {
+		case <-deadlineCtx.Done():
+			timer.Stop()
+			if lastErr != nil {
+				return nil, lastRaw, fmt.Errorf("deployment did not become ready within %s: %w", timeout, lastErr)
+			}
+			return nil, lastRaw, fmt.Errorf("deployment did not become ready within %s", timeout)
+		case <-timer.C:
+		}
+	}
+}
+
+func deploymentReady(raw json.RawMessage) (bool, map[string][]string, error) {
+	var status deploymentRuntimeStatus
+	if err := json.Unmarshal(raw, &status); err != nil {
+		return false, nil, fmt.Errorf("decode deployment service status: %w", err)
+	}
+	if len(status.Services) == 0 {
+		return false, nil, nil
+	}
+
+	uris := make(map[string][]string)
+	for name, service := range status.Services {
+		if service.Total <= 0 || service.Available < service.Total {
+			return false, nil, nil
+		}
+		if len(service.URIs) > 0 {
+			uris[name] = append([]string(nil), service.URIs...)
+		}
+
+	}
+
+	return true, uris, nil
 }
 
 func newBidWaitProgressReporter(report func(string)) steps.WaitProgressReporter {
@@ -464,6 +772,18 @@ func resolveContext(mgrFn func() *aktctx.Manager, ctxNameFn func() string) *aktc
 	return rc
 }
 
+func workflowRail(mgrFn func() *aktctx.Manager, ctxNameFn func() string) transport.Kind {
+	rc := resolveContext(mgrFn, ctxNameFn)
+	if rc == nil {
+		return ""
+	}
+	if rc.AuthMethod == aktctx.AuthMethodConsoleAPI {
+		return transport.KindConsole
+	}
+
+	return transport.KindChain
+}
+
 // filterProviderSteps returns a copy of def without provider-type steps,
 // noting each skipped step on w. Used for console-api auth, where manifest
 // submission is handled by the Console API (SPEC §7.4).
@@ -494,11 +814,14 @@ func filterProviderSteps(def *wf.WorkflowDef, w io.Writer) (*wf.WorkflowDef, err
 }
 
 // printPlan renders the workflow execution plan (name, params, steps).
-func printPlan(out io.Writer, rtDef *wf.WorkflowDef, params map[string]any) error {
+func printPlan(out io.Writer, rtDef *wf.WorkflowDef, params map[string]any, rail transport.Kind) error {
 	var rendered strings.Builder
 
 	fmt.Fprintf(&rendered, "Workflow: %s (v%d)\n", rtDef.Name, rtDef.Version)
 	fmt.Fprintf(&rendered, "  %s\n\n", rtDef.Description)
+	if rail != "" {
+		fmt.Fprintf(&rendered, "Rail: %s\n\n", rail)
+	}
 
 	fmt.Fprintln(&rendered, "Parameters:")
 	for k, v := range params {
@@ -509,10 +832,14 @@ func printPlan(out io.Writer, rtDef *wf.WorkflowDef, params map[string]any) erro
 	fmt.Fprintf(&rendered, "Steps (%d):\n", len(rtDef.Steps))
 	for i, step := range rtDef.Steps {
 		fmt.Fprintf(&rendered, "  %d. [%s] %s", i+1, step.Type, step.Name)
-		if step.Msg != "" {
+		if rail == transport.KindConsole && step.Msg != "" {
+			fmt.Fprintf(&rendered, " -> %s", consolePlanAction(step.Msg))
+		} else if rail == transport.KindConsole && step.Type == wf.StepProvider {
+			fmt.Fprint(&rendered, " -> handled by Console during lease creation")
+		} else if step.Msg != "" {
 			fmt.Fprintf(&rendered, " -> %s", step.Msg)
 		}
-		if step.Action != "" {
+		if step.Action != "" && (rail != transport.KindConsole || step.Type != wf.StepProvider) {
 			fmt.Fprintf(&rendered, " -> %s", step.Action)
 		}
 		if step.OnError != "" {
@@ -525,6 +852,21 @@ func printPlan(out io.Writer, rtDef *wf.WorkflowDef, params map[string]any) erro
 	}
 
 	return writeWorkflowReport(out, rendered.String(), "plan")
+}
+
+func consolePlanAction(msg string) string {
+	switch msg {
+	case "deployment.MsgCreateDeployment":
+		return "Console API create deployment"
+	case "deployment.MsgUpdateDeployment":
+		return "Console API update deployment"
+	case "deployment.MsgCloseDeployment":
+		return "Console API close deployment"
+	case "market.MsgCreateLease":
+		return "Console API create lease"
+	default:
+		return "unsupported Console action " + msg
+	}
 }
 
 // printResults renders per-step outcomes and the overall workflow status in
@@ -552,6 +894,7 @@ func printResults(out io.Writer, state *wf.RunState, runErr error, recovery *wor
 
 	if runErr == nil {
 		fmt.Fprintf(&rendered, "\nWorkflow %q completed successfully.\n", state.Workflow)
+		renderDeployNext(&rendered, state)
 	} else if recovery != nil {
 		fmt.Fprintln(&rendered, "\nPartial deployment state:")
 		fmt.Fprintf(&rendered, "  DSEQ: %d\n", recovery.DSeq)
@@ -566,6 +909,63 @@ func printResults(out io.Writer, state *wf.RunState, runErr error, recovery *wor
 	}
 
 	return writeWorkflowReport(out, rendered.String(), "pretty")
+}
+
+func renderDeployNext(rendered *strings.Builder, state *wf.RunState) {
+	if state == nil || state.Workflow != "deploy" {
+		return
+	}
+	result := state.Steps["display-result"]
+	if result == nil || result.Output == nil {
+		return
+	}
+	dseq := strings.TrimSpace(fmt.Sprint(result.Output["dseq"]))
+	if dseq == "" || dseq == "<nil>" {
+		return
+	}
+
+	fmt.Fprintln(rendered, "\nDeployment:")
+	fmt.Fprintf(rendered, "  DSEQ: %s\n", dseq)
+	if provider := strings.TrimSpace(fmt.Sprint(result.Output["provider"])); provider != "" && provider != "<nil>" {
+		fmt.Fprintf(rendered, "  Provider: %s\n", provider)
+	}
+	if ready, ok := result.Output["ready"].(bool); ok {
+		if ready {
+			fmt.Fprintln(rendered, "  Ready: yes")
+		} else if result.Output["readiness"] == "not-waited" {
+			fmt.Fprintln(rendered, "  Ready: not checked")
+		}
+	}
+	if uris, ok := result.Output["uris"].(map[string][]string); ok {
+		services := make([]string, 0, len(uris))
+		for service := range uris {
+			services = append(services, service)
+		}
+		sort.Strings(services)
+		for _, service := range services {
+			for _, uri := range uris[service] {
+				fmt.Fprintf(rendered, "  URI (%s): %s\n", service, uri)
+			}
+		}
+	}
+	if link := strings.TrimSpace(fmt.Sprint(result.Output["console_url"])); link != "" && link != "<nil>" {
+		fmt.Fprintf(rendered, "  Console: %s\n", link)
+	}
+
+	fmt.Fprintln(rendered, "\nNext:")
+	if _, consoleRail := result.Output["auto_top_up"]; consoleRail {
+		fmt.Fprintf(rendered, "  Status:  akt console status %s\n", dseq)
+		fmt.Fprintf(rendered, "  Logs:    akt console logs %s\n", dseq)
+		fmt.Fprintln(rendered, "  Auto top-up: enabled daily")
+		fmt.Fprintf(rendered, "  Disable: akt console deployment settings %s false\n", dseq)
+	} else {
+		provider := strings.TrimSpace(fmt.Sprint(result.Output["provider"]))
+		if provider != "" && provider != "<nil>" {
+			fmt.Fprintf(rendered, "  Status:  akt provider lease-status %s --provider %s\n", dseq, provider)
+			fmt.Fprintf(rendered, "  Logs:    akt provider lease-logs %s --provider %s\n", dseq, provider)
+		}
+	}
+	fmt.Fprintf(rendered, "  Close:   akt close %s\n", dseq)
 }
 
 type workflowRecovery struct {
@@ -600,7 +1000,8 @@ func deployRecoveryAdvice(state *wf.RunState, runErr error) *workflowRecovery {
 		Provider: provider,
 		Cleanup:  fmt.Sprintf("akt close %d", dseq),
 	}
-	if provider != "" {
+	manifest := state.Steps["send-manifest"]
+	if provider != "" && manifest != nil && manifest.Status == "failed" {
 		if sdlPath, ok := state.Params["sdl-file"].(string); ok && strings.TrimSpace(sdlPath) != "" {
 			recovery.Recovery = fmt.Sprintf(
 				"akt provider send-manifest %s --dseq %d --provider %s",
@@ -674,16 +1075,17 @@ type jsonlTx struct {
 
 // jsonlLine is one JSONL step line (SPEC §2.3.8).
 type jsonlLine struct {
-	Workflow string    `json:"workflow"`
-	ID       string    `json:"id"`
-	Step     string    `json:"step"`
-	Result   string    `json:"result"`
-	Errors   []string  `json:"errors"`
-	Txs      []jsonlTx `json:"txs"`
-	DSeq     uint64    `json:"dseq,omitempty"`
-	Provider string    `json:"provider,omitempty"`
-	Recovery string    `json:"recovery,omitempty"`
-	Cleanup  string    `json:"cleanup,omitempty"`
+	Workflow string         `json:"workflow"`
+	ID       string         `json:"id"`
+	Step     string         `json:"step"`
+	Result   string         `json:"result"`
+	Errors   []string       `json:"errors"`
+	Txs      []jsonlTx      `json:"txs"`
+	Outputs  map[string]any `json:"outputs,omitempty"`
+	DSeq     uint64         `json:"dseq,omitempty"`
+	Provider string         `json:"provider,omitempty"`
+	Recovery string         `json:"recovery,omitempty"`
+	Cleanup  string         `json:"cleanup,omitempty"`
 }
 
 // emitJSONL writes one JSONL line per completed step (SPEC §2.3.8).
@@ -702,6 +1104,7 @@ func emitJSONL(out io.Writer, state *wf.RunState, recovery *workflowRecovery) er
 			Step:     sr.Name,
 			Errors:   []string{},
 			Txs:      []jsonlTx{},
+			Outputs:  sr.Output,
 		}
 
 		switch sr.Status {
@@ -765,7 +1168,7 @@ func (w completeWriter) Write(data []byte) (int, error) {
 // emitDryRunJSONL renders the validated plan without executing or discovering
 // clients. Every line shares one run ID so consumers can treat it like an
 // execution stream, while "planned" distinguishes it from completed work.
-func emitDryRunJSONL(out io.Writer, def *wf.WorkflowDef) error {
+func emitDryRunJSONL(out io.Writer, def *wf.WorkflowDef, params map[string]any) error {
 	enc := json.NewEncoder(completeWriter{writer: out})
 	runID := wf.GenerateWorkflowID()
 
@@ -777,6 +1180,11 @@ func emitDryRunJSONL(out io.Writer, def *wf.WorkflowDef) error {
 			Result:   "planned",
 			Errors:   []string{},
 			Txs:      []jsonlTx{},
+		}
+		if step.Name == "create-deployment" {
+			if deposit, ok := params[flagdefs.FlagDeposit]; ok {
+				line.Outputs = map[string]any{flagdefs.FlagDeposit: deposit}
+			}
 		}
 		if err := enc.Encode(line); err != nil {
 			return fmt.Errorf("render workflow dry-run JSONL: %w", err)

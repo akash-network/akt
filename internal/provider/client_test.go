@@ -157,6 +157,28 @@ func TestPublicGatewayClientDoesNotSendWalletAuthentication(t *testing.T) {
 	}
 }
 
+func TestPublicGatewayClientRejectsNonPositiveOneShotTimeout(t *testing.T) {
+	for _, timeout := range []time.Duration{0, -time.Second} {
+		_, err := NewPublicGatewayClient(
+			context.Background(),
+			nil,
+			"https://provider.example.com:8443",
+			WithOneShotTimeout(timeout),
+		)
+		if err == nil || !strings.Contains(err.Error(), "timeout must be greater than zero") {
+			t.Fatalf("timeout %s error = %v", timeout, err)
+		}
+	}
+}
+
+func TestConfigurePublicGatewayClientPreservesWrapFailure(t *testing.T) {
+	wantErr := errors.New("wrap public gateway")
+	client, err := configurePublicGatewayClient(nil, wantErr)
+	if client != nil || !errors.Is(err, wantErr) {
+		t.Fatalf("configure public gateway = %T, %v; want nil and wrap failure", client, err)
+	}
+}
+
 func TestGatewayAuthenticationRejectsInvalidBoundary(t *testing.T) {
 	kr, _, owner := newProviderTestIdentity(t)
 	tests := []struct {

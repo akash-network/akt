@@ -37,6 +37,14 @@ params:
     type: duration
     default: "5m"
     description: Maximum time to wait for bids
+  ready-timeout:
+    type: duration
+    default: "2m"
+    description: Maximum time to wait for deployed services to become ready
+  no-wait-active:
+    type: bool
+    default: "false"
+    description: Return after manifest submission without polling service readiness
   bid-select:
     type: bid-selection
     default: "interactive"
@@ -95,9 +103,5 @@ steps:
   - name: display-result
     type: output
     template: |
-      Deployment active!
+      Deployment created!
         DSEQ: {{ (index .Steps "create-deployment").dseq }}
-      {{ if eq (index (index .Steps "create-deployment") "rail") "console" }}
-        Auto top-up: enabled ({{ (index .Steps "create-deployment").auto_top_up }})
-        Disable with: akt console deployment settings {{ (index .Steps "create-deployment").dseq }} false
-      {{ end }}

@@ -144,6 +144,41 @@ func TestKeysAddLedgerUsesConfiguredAccountPrefix(t *testing.T) {
 	}
 }
 
+func TestKeysAddRejectsBlankNameBeforeOpeningKeyring(t *testing.T) {
+	opened := false
+	cmd := Commands(func() (sdkkeyring.Keyring, error) {
+		opened = true
+		return nil, errors.New("keyring must not open")
+	}, nil)
+	cmd.SetArgs([]string{"add", "   "})
+
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "name must not be blank") {
+		t.Fatalf("blank-name error = %v", err)
+	}
+	if opened {
+		t.Fatal("blank name opened the keyring")
+	}
+}
+
+func TestKeysAddAcceptsYesCompatibilityFlag(t *testing.T) {
+	for _, flag := range []string{"--yes", "-y"} {
+		t.Run(flag, func(t *testing.T) {
+			kr := aktkeyring.NewInMemory(aktcodec.MakeEncodingConfig().Codec)
+			out, err := runKeysCommand(t, kr, "add", "scripted", flag, "--no-backup")
+			if err != nil {
+				t.Fatalf("keys add %s: %v", flag, err)
+			}
+			if strings.Contains(out, "mnemonic") {
+				t.Fatalf("keys add %s repeated backup material: %q", flag, out)
+			}
+			if _, err := kr.Key("scripted"); err != nil {
+				t.Fatalf("keys add %s did not create the key: %v", flag, err)
+			}
+		})
+	}
+}
+
 func TestKeysAddReadsCanonicalMultisigThreshold(t *testing.T) {
 	kr := testKeyring(t)
 	if _, _, err := kr.NewMnemonic(

@@ -7,7 +7,12 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+
+	"github.com/google/uuid"
 )
+
+// MaxJWTTTLSeconds bounds Console-issued provider credentials.
+const MaxJWTTTLSeconds = 3600
 
 // ListAPIKeys lists the account's API keys. Secrets are never included.
 //
@@ -58,16 +63,42 @@ func (c *Client) CreateAPIKey(ctx context.Context, name, expiresAt string) (*Cre
 	return nil, unknown
 }
 
-// DeleteAPIKey deletes an API key by ID. A missing key (404) is treated as a
-// no-op and returns nil.
+// DeleteAPIKey deletes an API key by ID. Console's DELETE endpoint is
+// idempotent, so the client first proves the key is present in the account's
+// key list. A missing key is returned as ErrNotFound without sending DELETE,
+// ensuring callers never report a deletion the API did not perform.
 //
 // Wire: DELETE /v1/api-keys/{id} → 204.
 func (c *Client) DeleteAPIKey(ctx context.Context, id string) error {
-	err := c.doJSON(ctx, http.MethodDelete, "/v1/api-keys/"+url.PathEscape(id), nil, nil)
-	if errors.Is(err, ErrNotFound) {
-		err = nil
+	parsedID, parseErr := uuid.Parse(id)
+	if parseErr != nil {
+		err := fmt.Errorf("console: API key ID must be a valid UUID: %w", parseErr)
+		c.record("delete-api-key", "", err)
+		return err
 	}
 
+	keys, err := c.ListAPIKeys(ctx)
+	if err != nil {
+		err = fmt.Errorf("console: preflight API key deletion: %w", err)
+		c.record("delete-api-key", "", err)
+		return err
+	}
+
+	found := false
+	for _, key := range keys {
+		keyID, keyErr := uuid.Parse(key.ID)
+		if keyErr == nil && keyID == parsedID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		err = fmt.Errorf("%w: API key %s", ErrNotFound, parsedID.String())
+		c.record("delete-api-key", "", err)
+		return err
+	}
+
+	err = c.doJSON(ctx, http.MethodDelete, "/v1/api-keys/"+url.PathEscape(parsedID.String()), nil, nil)
 	c.record("delete-api-key", "", err)
 
 	return err
@@ -80,6 +111,10 @@ func (c *Client) DeleteAPIKey(ctx context.Context, id string) error {
 // {"data":{"ttl":..., "leases":{"access":"scoped","scope":[...]}}},
 // response {"data":{"token":...}}.
 func (c *Client) CreateJWTToken(ctx context.Context, ttl int, scope []string) (string, error) {
+	if ttl < 1 || ttl > MaxJWTTTLSeconds {
+		return "", fmt.Errorf("console: JWT TTL must be between 1 and %d seconds, got %d", MaxJWTTTLSeconds, ttl)
+	}
+
 	body := envelope(map[string]any{
 		"ttl": ttl,
 		"leases": map[string]any{

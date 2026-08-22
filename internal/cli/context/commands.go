@@ -91,6 +91,10 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
   # Create a testnet context with a specific keyring
   akt context create staging --network testnet --keyring test-keyring --default-account testaccount`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if cmd.Flags().Changed(flagdefs.FlagKeyringBackend) {
+				return fmt.Errorf("--keyring-backend applies only to this invocation and cannot be persisted by context create; use `akt context keyring set <keyring> <backend>`")
+			}
+
 			m := mgr()
 			name := args[0]
 
@@ -154,7 +158,34 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 				})
 			}
 
-			return nil
+			effectiveAuth := authMethod
+			if effectiveAuth == "" {
+				effectiveAuth = aktctx.AuthMethodKeyring
+			}
+			effectiveNetwork := network
+			if effectiveNetwork == "" {
+				effectiveNetwork = "none"
+			}
+			result := struct {
+				Name       string `json:"name" yaml:"name"`
+				Network    string `json:"network" yaml:"network"`
+				AuthMethod string `json:"auth_method" yaml:"auth-method"`
+				Current    bool   `json:"current" yaml:"current"`
+			}{name, effectiveNetwork, effectiveAuth, setCurrent}
+			if format := output.FormatFromCmd(cmd); format != output.FormatTable {
+				return output.Fprint(cmd.OutOrStdout(), format, result)
+			}
+
+			checked := output.NewCheckedWriter(cmd.OutOrStdout())
+			_, err := fmt.Fprintf(
+				checked,
+				"Context %q created (network: %s, auth-method: %s, current: %t).\n",
+				name,
+				effectiveNetwork,
+				effectiveAuth,
+				setCurrent,
+			)
+			return checked.Complete(err)
 		},
 	}
 

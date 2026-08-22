@@ -25,6 +25,7 @@ import (
 
 	"pkg.akt.dev/akt/internal/actionlog"
 	"pkg.akt.dev/akt/internal/cliutil"
+	aktconsole "pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
 	"pkg.akt.dev/akt/internal/output"
 	aktprovider "pkg.akt.dev/akt/internal/provider"
@@ -608,6 +609,99 @@ func TestPrintLeaseEventStructured(t *testing.T) {
 	}
 }
 
+func TestPrintEmptyEventsOnlyInBoundedPrettyMode(t *testing.T) {
+	cmd, buf := streamOutputCommand(t, "pretty")
+	if err := printEmptyEvents(cmd, 0, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); got != "No recent events\n" {
+		t.Fatalf("empty events = %q", got)
+	}
+
+	for _, test := range []struct {
+		format string
+		count  int
+		follow bool
+	}{
+		{format: "json"},
+		{format: "yaml"},
+		{format: "pretty", count: 1},
+		{format: "pretty", follow: true},
+	} {
+		cmd, buf := streamOutputCommand(t, test.format)
+		if err := printEmptyEvents(cmd, test.count, test.follow); err != nil {
+			t.Fatal(err)
+		}
+		if got := buf.String(); got != "" {
+			t.Fatalf("unexpected empty-event output = %q", got)
+		}
+	}
+}
+
+func TestConsumeLeaseEventsCountsAndPrintsRecords(t *testing.T) {
+	cmd, buf := streamOutputCommand(t, "pretty")
+	stream := make(chan rest.LeaseEvent, 1)
+	closed := make(chan string)
+	stream <- rest.LeaseEvent{Type: "Normal", Reason: "Started", Note: "ready"}
+	close(stream)
+	close(closed)
+
+	if err := consumeLeaseEvents(context.Background(), cmd, stream, closed, false); err != nil {
+		t.Fatal(err)
+	}
+	if got := buf.String(); !strings.Contains(got, "Started: ready") || strings.Contains(got, "No recent events") {
+		t.Fatalf("event output = %q", got)
+	}
+}
+
+func TestConsumeLeaseEventsReturnsOutputFailure(t *testing.T) {
+	cmd, _ := streamOutputCommand(t, "pretty")
+	cmd.SetOut(consoleOutputErrorWriter{err: errors.New("write failed")})
+	stream := make(chan rest.LeaseEvent, 1)
+	closed := make(chan string)
+	stream <- rest.LeaseEvent{Type: "Normal", Reason: "Started", Note: "ready"}
+	close(stream)
+	close(closed)
+
+	if err := consumeLeaseEvents(context.Background(), cmd, stream, closed, false); err == nil {
+		t.Fatal("event output failure was not returned")
+	}
+}
+
+type staticLeaseEventsClient struct {
+	result *rest.LeaseKubeEvents
+	err    error
+}
+
+func (client staticLeaseEventsClient) LeaseEvents(
+	context.Context,
+	mtypes.LeaseID,
+	string,
+	bool,
+) (*rest.LeaseKubeEvents, error) {
+	return client.result, client.err
+}
+
+func TestStreamLeaseEventsConsumesProviderResult(t *testing.T) {
+	cmd, buf := streamOutputCommand(t, "pretty")
+	stream := make(chan rest.LeaseEvent, 1)
+	closed := make(chan string)
+	stream <- rest.LeaseEvent{Type: "Normal", Reason: "Started", Note: "ready"}
+	close(stream)
+	close(closed)
+	client := staticLeaseEventsClient{result: &rest.LeaseKubeEvents{Stream: stream, OnClose: closed}}
+
+	if err := streamLeaseEvents(context.Background(), cmd, client, mtypes.LeaseID{DSeq: 42}, false); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(buf.String(), "Started: ready") {
+		t.Fatalf("event output = %q", buf.String())
+	}
+	if err := streamLeaseEvents(context.Background(), cmd, staticLeaseEventsClient{err: errors.New("open failed")}, mtypes.LeaseID{}, false); err == nil {
+		t.Fatal("event stream setup failure was not returned")
+	}
+}
+
 func streamOutputCommand(t *testing.T, format string) (*cobra.Command, *bytes.Buffer) {
 	t.Helper()
 
@@ -634,6 +728,177 @@ func TestShellRejectsStructuredInteractiveModeBeforeContextResolution(t *testing
 	}
 	if resolved {
 		t.Fatal("structured interactive shell resolved context before refusal")
+	}
+}
+
+func TestShellWithoutCommandRejectsNonTerminalBeforeContextResolution(t *testing.T) {
+	resolved := false
+	cmd := shellCmd(func() *aktctx.Manager {
+		resolved = true
+		return nil
+	})
+	cmd.Flags().String(flagdefs.FlagOutput, "pretty", "")
+	cmd.SetArgs([]string{"12345"})
+
+	err := cmd.Execute()
+	if err == nil || !strings.Contains(err.Error(), "non-interactive stdin") {
+		t.Fatalf("shell error = %v", err)
+	}
+	if resolved {
+		t.Fatal("non-terminal shell resolved context before refusal")
+	}
+}
+
+func TestShellWithoutServiceReturnsManifestSelectionFailure(t *testing.T) {
+	m := newAuthedManager(t)
+	_, err := execConsole(t, m, "", "shell", "777", "--", "echo", "ok")
+	if err == nil || !strings.Contains(err.Error(), "load manifest") {
+		t.Fatalf("shell error = %v, want manifest load guidance", err)
+	}
+}
+
+func TestManifestServiceNames(t *testing.T) {
+	names, err := manifestServiceNames(`[{"name":"group","services":[{"name":"worker"},{"name":"web"}]}]`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Join(names, ","); got != "web,worker" {
+		t.Fatalf("services = %q", got)
+	}
+}
+
+func TestDefaultShellServiceCoversManifestBoundaries(t *testing.T) {
+	if _, err := defaultShellService(nil, "1"); err == nil {
+		t.Fatal("nil context did not fail")
+	}
+
+	rc := &aktctx.Context{Root: t.TempDir(), Name: "prod"}
+	if _, err := defaultShellService(rc, "1"); err == nil {
+		t.Fatal("missing manifest did not fail")
+	}
+
+	for dseq, manifest := range map[string]string{
+		"2": `{`,
+		"3": `[{"services":[]}]`,
+		"4": `[{"services":[{"name":"web"}]}]`,
+		"5": `[{"services":[{"name":"web"},{"name":"worker"}]}]`,
+	} {
+		if err := aktconsole.SaveManifest(rc.Root, rc.Name, dseq, manifest); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := defaultShellService(rc, "2"); err == nil {
+		t.Fatal("malformed manifest did not fail")
+	}
+	if _, err := defaultShellService(rc, "3"); err == nil {
+		t.Fatal("empty manifest did not fail")
+	}
+	if got, err := defaultShellService(rc, "4"); err != nil || got != "web" {
+		t.Fatalf("single service = %q, %v", got, err)
+	}
+	if _, err := defaultShellService(rc, "5"); err == nil || !strings.Contains(err.Error(), "web, worker") {
+		t.Fatalf("multiple-service error = %v", err)
+	}
+
+	if _, err := manifestServiceNames(`{`); err == nil {
+		t.Fatal("malformed manifest service list did not fail")
+	}
+}
+
+func TestScreeningRequestSupportsResourceFlagsWithoutSDL(t *testing.T) {
+	cmd := screenCmd(func() *aktctx.Manager { return nil })
+	for flag, value := range map[string]string{
+		"cpu": "250m", "memory": "2Gi", "storage": "10Gi", "gpu": "1",
+		"gpu-model": "a100", "count": "2", "attribute": "region=us-west",
+		"signed-by": "akash1auditor", "reclamation-window": "600",
+	} {
+		if err := cmd.Flags().Set(flag, value); err != nil {
+			t.Fatalf("set --%s: %v", flag, err)
+		}
+	}
+
+	req, err := screeningRequestFromCmd(cmd, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var units []map[string]any
+	if err := json.Unmarshal(req.Resources, &units); err != nil {
+		t.Fatal(err)
+	}
+	if len(units) != 1 || units[0]["count"] != float64(2) {
+		t.Fatalf("screening units = %#v", units)
+	}
+	resource := units[0]["resource"].(map[string]any)
+	cpu := resource["cpu"].(map[string]any)["units"].(map[string]any)["val"]
+	if cpu != "250" {
+		t.Fatalf("cpu = %#v, want 250 millicpu", cpu)
+	}
+	if len(req.Requirements.Attributes) != 1 || req.Requirements.Attributes[0].Key != "region" {
+		t.Fatalf("requirements = %#v", req.Requirements)
+	}
+	if strings.Join(req.Requirements.SignedBy.AnyOf, ",") != "akash1auditor" {
+		t.Fatalf("signed by = %#v", req.Requirements.SignedBy)
+	}
+	if string(req.ReclamationWindow) != "600" {
+		t.Fatalf("reclamation window = %s", req.ReclamationWindow)
+	}
+}
+
+func TestScreeningRequestValidationEdges(t *testing.T) {
+	newCmd := func() *cobra.Command { return screenCmd(func() *aktctx.Manager { return nil }) }
+
+	if _, err := screeningRequestFromCmd(newCmd(), nil); err == nil {
+		t.Fatal("missing SDL and resource flags did not fail")
+	}
+	if _, err := screeningRequestFromCmd(newCmd(), []string{filepath.Join(t.TempDir(), "missing.yaml")}); err == nil {
+		t.Fatal("missing SDL did not fail")
+	}
+	if _, err := screeningRequestFromResources(newCmd(), nil, json.RawMessage(`{`)); err == nil {
+		t.Fatal("malformed resource JSON did not fail")
+	}
+	if _, err := screeningRequestFromResources(newCmd(), nil, json.RawMessage(`[{"resource":null}]`)); err == nil {
+		t.Fatal("missing resource object did not fail")
+	}
+
+	tests := []struct {
+		name  string
+		flag  string
+		value string
+		want  string
+	}{
+		{name: "cpu", flag: "cpu", value: "0", want: "greater than zero"},
+		{name: "memory", flag: "memory", value: "bad", want: "--memory"},
+		{name: "storage", flag: "storage", value: "0", want: "greater than zero"},
+		{name: "count", flag: "count", value: "0", want: "greater than zero"},
+		{name: "attribute", flag: "attribute", value: "missing-separator", want: "key=value"},
+		{name: "reclamation", flag: "reclamation-window", value: "-1", want: "non-negative"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			cmd := newCmd()
+			if err := cmd.Flags().Set("cpu", "1"); err != nil {
+				t.Fatal(err)
+			}
+			if err := cmd.Flags().Set(test.flag, test.value); err != nil {
+				t.Fatal(err)
+			}
+			_, err := screeningRequestFromCmd(cmd, nil)
+			if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("screening error = %v, want %q", err, test.want)
+			}
+		})
+	}
+
+	cmd := newCmd()
+	if err := cmd.Flags().Set("gpu-model", "a100"); err != nil {
+		t.Fatal(err)
+	}
+	req, err := screeningRequestFromCmd(cmd, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(req.Resources), `"val":"1"`) {
+		t.Fatalf("GPU model did not imply one GPU: %s", req.Resources)
 	}
 }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 	"gopkg.in/yaml.v3"
+	consoleapi "pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
 	"pkg.akt.dev/akt/internal/output"
 )
@@ -54,12 +55,21 @@ func newTestManager(t *testing.T) *aktctx.Manager {
 }
 
 // execConsole runs `akt console <args...>` against the given manager,
-// pointing the client at srvURL when non-empty, and returns combined output.
+// pointing the client at srvURL when non-empty, and returns stdout.
 func execConsole(t *testing.T, m *aktctx.Manager, srvURL string, args ...string) (string, error) {
 	return execConsoleContext(context.Background(), t, m, srvURL, args...)
 }
 
 func execConsoleContext(ctx context.Context, t *testing.T, m *aktctx.Manager, srvURL string, args ...string) (string, error) {
+	stdout, stderr, err := execConsoleContextStreams(ctx, t, m, srvURL, args...)
+	if err != nil {
+		return stdout + stderr, err
+	}
+
+	return stdout, err
+}
+
+func execConsoleContextStreams(ctx context.Context, t *testing.T, m *aktctx.Manager, srvURL string, args ...string) (string, string, error) {
 	t.Helper()
 
 	// Neutralize any ambient key so tests only see what they configure.
@@ -70,18 +80,30 @@ func execConsoleContext(ctx context.Context, t *testing.T, m *aktctx.Manager, sr
 	cmd.PersistentFlags().String(flagdefs.FlagContext, "", "Active context name")
 	cmd.SetContext(ctx)
 
-	var buf bytes.Buffer
-	cmd.SetOut(&buf)
-	cmd.SetErr(&buf)
+	var stdout, stderr bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetErr(&stderr)
 
+	prefix := make([]string, 0, 4)
 	if srvURL != "" {
-		args = append(args, "--console-api-url", srvURL)
+		prefix = append(prefix, "--console-api-url", srvURL)
 	}
+	hasOutput := false
+	for _, arg := range args {
+		if arg == "--output" || arg == "-o" || strings.HasPrefix(arg, "--output=") {
+			hasOutput = true
+			break
+		}
+	}
+	if !hasOutput {
+		prefix = append(prefix, "--output", "json")
+	}
+	args = append(prefix, args...)
 	cmd.SetArgs(args)
 
 	err := cmd.Execute()
 
-	return buf.String(), err
+	return stdout.String(), stderr.String(), err
 }
 
 func decodeStructuredOutput(t *testing.T, format, raw string) any {
@@ -123,6 +145,124 @@ func decodeStructuredMap(t *testing.T, format, raw string) map[string]any {
 	}
 
 	return object
+}
+
+func TestEveryConsoleActionDeclaresNextStep(t *testing.T) {
+	const annotation = "akt.console.next"
+	root := Commands(func() *aktctx.Manager { return nil })
+
+	var missing []string
+	var walk func(*cobra.Command)
+	walk = func(cmd *cobra.Command) {
+		children := cmd.Commands()
+		if len(children) == 0 {
+			if (cmd.RunE != nil || cmd.Run != nil) && strings.TrimSpace(cmd.Annotations[annotation]) == "" {
+				missing = append(missing, cmd.CommandPath())
+			}
+			return
+		}
+		for _, child := range children {
+			walk(child)
+		}
+	}
+	walk(root)
+
+	if len(missing) != 0 {
+		t.Fatalf("Console action leaves without next-step guidance: %s", strings.Join(missing, ", "))
+	}
+}
+
+func TestConsoleNextSuggestionHasSafeFallback(t *testing.T) {
+	if got := consoleNextSuggestion(&cobra.Command{Use: "future-action"}); got != "akt console --help" {
+		t.Fatalf("fallback next step = %q", got)
+	}
+}
+
+func TestConsoleNextStepUsesInformationalChannel(t *testing.T) {
+	m := newTestManager(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/user/me" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		writeJSON(t, w, `{"data":{"username":"alice"}}`)
+	}))
+	defer srv.Close()
+
+	run := func(quiet bool) (string, string, error) {
+		cmd := Commands(func() *aktctx.Manager { return m })
+		cmd.PersistentPostRunE = func(executed *cobra.Command, _ []string) error {
+			return PrintNextStep(executed)
+		}
+		cmd.PersistentFlags().VarP(output.NewFormatFlag("pretty"), flagdefs.FlagOutput, "o", "Output format: pretty, json, yaml")
+		cmd.PersistentFlags().Bool(flagdefs.FlagQuiet, false, "Suppress informational output")
+		var stdout, stderr bytes.Buffer
+		cmd.SetOut(&stdout)
+		cmd.SetErr(&stderr)
+		args := []string{"--console-api-url", srv.URL, "--output", "json"}
+		if quiet {
+			args = append(args, "--quiet")
+		}
+		args = append(args, "login", "sekrit")
+		cmd.SetArgs(args)
+		err := cmd.Execute()
+		return stdout.String(), stderr.String(), err
+	}
+
+	stdout, stderr, err := run(false)
+	if err != nil {
+		t.Fatalf("console login: %v", err)
+	}
+	if !json.Valid([]byte(stdout)) {
+		t.Fatalf("structured stdout was contaminated: %q", stdout)
+	}
+	if !strings.Contains(stderr, "Next:\n") || !strings.Contains(stderr, "akt console whoami") {
+		t.Fatalf("next-step stderr = %q", stderr)
+	}
+
+	_, stderr, err = run(true)
+	if err != nil {
+		t.Fatalf("quiet console login: %v", err)
+	}
+	if stderr != "" {
+		t.Fatalf("quiet console login stderr = %q, want empty", stderr)
+	}
+}
+
+func TestConsoleTreeLeavesPostRunOwnershipToAncestor(t *testing.T) {
+	previous := cobra.EnableTraverseRunHooks
+	cobra.EnableTraverseRunHooks = true
+	t.Cleanup(func() { cobra.EnableTraverseRunHooks = previous })
+
+	m := newTestManager(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/user/me" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		writeJSON(t, w, `{"data":{"username":"alice"}}`)
+	}))
+	defer srv.Close()
+
+	ancestorRuns := 0
+	root := &cobra.Command{
+		Use: "akt",
+		PersistentPostRunE: func(executed *cobra.Command, _ []string) error {
+			ancestorRuns++
+			return PrintNextStep(executed)
+		},
+	}
+	root.PersistentFlags().VarP(output.NewFormatFlag("pretty"), flagdefs.FlagOutput, "o", "Output format")
+	root.PersistentFlags().Bool(flagdefs.FlagQuiet, false, "Suppress informational output")
+	root.AddCommand(Commands(func() *aktctx.Manager { return m }))
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"console", "--console-api-url", srv.URL, "login", "sekrit"})
+
+	if err := root.Execute(); err != nil {
+		t.Fatalf("console login: %v", err)
+	}
+	if ancestorRuns != 1 {
+		t.Fatalf("ancestor persistent post-run calls = %d, want 1", ancestorRuns)
+	}
 }
 
 func writeJSON(t *testing.T, w http.ResponseWriter, body string) {
@@ -293,7 +433,7 @@ func executeConsoleWithOutput(
 	cmd.SetOut(out)
 	cmd.SetErr(io.Discard)
 	if srvURL != "" {
-		args = append(args, "--console-api-url", srvURL)
+		args = append([]string{"--console-api-url", srvURL}, args...)
 	}
 	cmd.SetArgs(args)
 
@@ -566,7 +706,7 @@ func TestDeploymentGetYAMLPreservesJSONSemantics(t *testing.T) {
 	}
 }
 
-func TestDeploymentCloseAlreadyClosedExitsClean(t *testing.T) {
+func TestDeploymentCloseAlreadyClosedExitsNonZero(t *testing.T) {
 	m := newTestManager(t)
 	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
 		t.Fatalf("SetConsoleAPIKey: %v", err)
@@ -574,20 +714,19 @@ func TestDeploymentCloseAlreadyClosedExitsClean(t *testing.T) {
 
 	// The Console API answers 404 for an already-closed deployment.
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete || r.URL.Path != "/v1/deployments/42" {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/deployments/42" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
 
-	out, err := execConsole(t, m, srv.URL, "deployment", "close", "42")
-	if err != nil {
-		t.Fatalf("close of an already-closed deployment must succeed, got %v", err)
+	stdout, _, err := execConsoleContextStreams(context.Background(), t, m, srv.URL, "--output", "pretty", "deployment", "close", "42")
+	if !errors.Is(err, consoleapi.ErrAlreadyClosed) {
+		t.Fatalf("close of an already-closed deployment error = %v, want ErrAlreadyClosed", err)
 	}
-
-	if !strings.Contains(out, "already closed") {
-		t.Errorf("output should report the no-op, got %q", out)
+	if strings.Contains(stdout, "Deployment 42 closed") || strings.Contains(stdout, `"state":"closed"`) {
+		t.Errorf("already-closed close emitted a success acknowledgement %q", stdout)
 	}
 }
 
@@ -629,7 +768,7 @@ func TestTemplateSDLPrintsRawSDL(t *testing.T) {
 	defer srv.Close()
 
 	// Public endpoint: no key configured anywhere.
-	out, err := execConsole(t, m, srv.URL, "template", "sdl", "tpl-1")
+	out, err := execConsole(t, m, srv.URL, "--output", "pretty", "template", "sdl", "tpl-1")
 	if err != nil {
 		t.Fatalf("template sdl: %v", err)
 	}
@@ -661,10 +800,14 @@ func TestPlainConsoleCommandsPropagateOutputFailures(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requests[r.Method+" "+r.URL.Path]++
 		switch {
-		case r.Method == http.MethodDelete && r.URL.Path == "/v1/api-keys/key-1":
-			w.WriteHeader(http.StatusNotFound)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/api-keys":
+			writeJSON(t, w, `{"data":[{"id":"11111111-1111-1111-1111-111111111111","name":"ci"}]}`)
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/api-keys/11111111-1111-1111-1111-111111111111":
+			w.WriteHeader(http.StatusNoContent)
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/777":
+			writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"777"},"state":"active"}}}`)
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/deployments/777":
-			w.WriteHeader(http.StatusNotFound)
+			writeJSON(t, w, `{"data":{"success":true}}`)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/templates/tpl-1":
 			writeJSON(t, w, `{"data":{"id":"tpl-1","name":"web","deploy":"services: {}\\n"}}`)
 		case r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/bids"):
@@ -689,11 +832,11 @@ func TestPlainConsoleCommandsPropagateOutputFailures(t *testing.T) {
 		name string
 		args []string
 	}{
-		{name: "API key delete result", args: []string{"apikey", "delete", "key-1"}},
+		{name: "API key delete result", args: []string{"apikey", "delete", "11111111-1111-1111-1111-111111111111"}},
 		{name: "raw template SDL", args: []string{"template", "sdl", "tpl-1"}},
 		{name: "empty bid result", args: []string{"bid", "list", "12345"}},
 		{name: "empty bid screening result", args: []string{"screen", sdlPath}},
-		{name: "already closed deployment result", args: []string{"deployment", "close", "777"}},
+		{name: "deployment close result", args: []string{"deployment", "close", "777"}},
 	}
 
 	failures := []struct {
@@ -719,7 +862,7 @@ func TestPlainConsoleCommandsPropagateOutputFailures(t *testing.T) {
 	}
 
 	for _, request := range []string{
-		http.MethodDelete + " /v1/api-keys/key-1",
+		http.MethodDelete + " /v1/api-keys/11111111-1111-1111-1111-111111111111",
 		http.MethodDelete + " /v1/deployments/777",
 	} {
 		if requests[request] != len(failures) {
@@ -754,8 +897,8 @@ func TestJWTCreatePrintsToken(t *testing.T) {
 		if body.Data.TTL != 300 {
 			t.Errorf("default ttl = %d, want 300", body.Data.TTL)
 		}
-		if len(body.Data.Leases.Scope) != len(defaultJWTScope) {
-			t.Errorf("default scope = %v, want %v", body.Data.Leases.Scope, defaultJWTScope)
+		if len(body.Data.Leases.Scope) != len(defaultJWTScope()) {
+			t.Errorf("default scope = %v, want %v", body.Data.Leases.Scope, defaultJWTScope())
 		}
 
 		writeJSON(t, w, `{"data":{"token":"tok-abc123"}}`)

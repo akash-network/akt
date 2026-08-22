@@ -40,6 +40,18 @@ func TestNewDefaultsToProductionBaseURL(t *testing.T) {
 	}
 }
 
+func TestDeploymentURLOnlyLinksProductionConsole(t *testing.T) {
+	if got := console.New("", "key").DeploymentURL("4242"); got != "https://console.akash.network/deployments/4242" {
+		t.Fatalf("production deployment URL = %q", got)
+	}
+	if got := console.New("https://console-api.example.test", "key").DeploymentURL("4242"); got != "" {
+		t.Fatalf("custom API deployment URL = %q, want empty", got)
+	}
+	if got := console.New("", "key").DeploymentURL("0"); got != "" {
+		t.Fatalf("invalid deployment URL = %q, want empty", got)
+	}
+}
+
 type consoleRoundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn consoleRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {

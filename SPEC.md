@@ -532,6 +532,20 @@ vote-list, or tally query first checks that the proposal exists, a failed
 preflight wraps the underlying dependency error so it remains discoverable
 with `errors.Is`.
 
+Console request identifiers and paging values follow the same boundary rule.
+Every DSEQ is parsed as a positive base-10 integer before an HTTP request is
+built. Deployment-list pagination rejects `skip < 0` and `limit < 1` instead
+of silently omitting those values. API-key deletion requires a non-empty UUID,
+lists the account's keys before mutation, and reports an absent UUID as an
+error without sending DELETE; key creation rejects a blank name, and local key
+creation rejects a name that is blank after trimming. USD deposit inputs use
+plain fixed-point decimal syntax with at most two fractional digits; exponent
+notation, non-finite values, and sub-cent precision are rejected before any
+request.
+Commands that require a terminal session, including an interactive Console
+shell with no explicit command, reject non-terminal stdin before any identity
+or network lookup can block.
+
 Every accepted flag must affect the operation it describes. If a leaf cannot
 apply an inherited transport, snapshot, pagination, or output flag, it rejects
 that flag before configuration or network work rather than accepting and
@@ -574,11 +588,23 @@ valid dry-run emits one JSON object per planned step with `result:"planned"`,
 empty `errors` and `txs` arrays, and one generated run ID shared by every line;
 it emits no human plan text.
 
+Deployment dry-runs also resolve the effective deposit. The Console rail
+prints the validated USD amount and enforces the $0.50 minimum. The chain rail
+prints an explicit coin unchanged, while `auto` queries the active network's
+deployment minimum; if that value cannot be resolved, planning fails rather
+than displaying an amount that execution would not use. Signer names are
+resolved to addresses before transaction simulation on every dry-run path.
+
 ### 2.0 Root Command Behavior (`akt` with no subcommand)
 
 When `akt` is invoked with no subcommand, the following flow determines what happens:
 
 1. **No config exists** (first run): The bootstrap wizard runs (`internal/bootstrap/`; glyphs per §1.11, prompt rendering per §3.9). The wizard runs only when stdin is a terminal: in headless environments it declines to bootstrap (no network fetch, no config written) and prints guidance to create a config via `akt context network create` / `akt context create`; the root command then continues to step 2 without a config. After bootstrap completes, the root command continues to step 2.
+
+Commands whose purpose is to create the missing configuration, including
+`context create` and `context network create`, suppress the generic no-config
+warning when they succeed. A successful remedy must not be followed by the
+warning it just resolved.
 
 In a terminal the wizard performs the following steps, in order. All of its output — announcements, prompts, progress, and the closing summary — goes to stderr (§3.9.2, §10.1.1); the wizard writes nothing to stdout.
 
@@ -952,6 +978,15 @@ contract; they never print group help at exit 0 or reach gas simulation.
 
 Create a new named context. A context references a network and keyring by name.
 
+The inherited per-invocation `--keyring-backend` flag is not a persistence
+setting and is rejected on `context create`. The diagnostic points to
+`akt context keyring set <keyring> <backend>`; context creation never silently
+changes a shared keyring's backend.
+
+Success prints a one-line confirmation containing the full context name,
+network (or `none`), effective auth method, and whether it became current.
+JSON and YAML expose the same fields as structured data.
+
 | Flag                  | Type   | Default     | Description                                                      |
 | --------------------- | ------ | ----------- | ---------------------------------------------------------------- |
 | `--network`           | string | `""`        | Network name to use (required; must exist)                       |
@@ -1286,6 +1321,14 @@ unless `--no-backup` was selected. Recovered keys never repeat their input
 mnemonic. The selected output format applies equally to local, Ledger, and
 multisig keys.
 
+The command is non-interactive except when it must read secret material or a
+keyring passphrase. It accepts `--yes` / `-y` for Cosmos CLI script
+compatibility even though it currently has no confirmation prompt. The flag
+does not authorize overwriting an existing key and cannot bypass mnemonic,
+Ledger, or keyring-passphrase input. `--no-backup` suppresses mnemonic output
+for unattended creation. A name that is empty or whitespace-only is rejected
+before the keyring is opened.
+
 When `--ledger` is selected, the command MUST pass the current Cosmos SDK
 Bech32 account-address prefix to `SaveLedgerKey`. It MUST NOT hardcode either
 `cosmos` or `akash`: the SDK configuration is authoritative for the active
@@ -1387,6 +1430,14 @@ params:
     type: duration
     default: "5m"
     description: Maximum time to wait for bids
+  ready-timeout:
+    type: duration
+    default: "2m"
+    description: Maximum time to wait for deployed services to become ready
+  no-wait-active:
+    type: bool
+    default: "false"
+    description: Return after manifest submission without polling service readiness
   bid-select:
     type: bid-selection
     default: "interactive"
@@ -1600,7 +1651,7 @@ Workflows support two execution modes:
 {"workflow":"deploy","id":"wf_abc123","step":"select-bid","result":"completed","errors":[],"txs":[]}
 {"workflow":"deploy","id":"wf_abc123","step":"create-lease","result":"completed","errors":[],"txs":[{"hash":"EFGH5678...","height":12350,"gas_used":120000,"code":0}]}
 {"workflow":"deploy","id":"wf_abc123","step":"send-manifest","result":"completed","errors":[],"txs":[]}
-{"workflow":"deploy","id":"wf_abc123","step":"display-result","result":"completed","errors":[],"txs":[]}
+{"workflow":"deploy","id":"wf_abc123","step":"display-result","result":"completed","errors":[],"txs":[],"outputs":{"dseq":"12345","provider":"akash1provider...","price":"1 uact","uris":{"web":["https://example.test"]},"ready":true}}
 ```
 
 On error:
@@ -1618,6 +1669,15 @@ On error:
 | `result`   | string   | `planned` (dry-run), `completed`, `error`, or `skipped` (step skipped by its on-error policy) |
 | `errors`   | []string | Array of error messages (empty when `result` is `completed`)    |
 | `txs`      | []object | Array of raw transaction results (empty for non-tx steps)       |
+| `outputs`  | object   | Stable values produced by the step; omitted when the step produced none. Deployment completion includes the DSEQ, full provider address, selected price, service URI map, readiness state, and a Console deep link when applicable. |
+
+The final deployment step waits within a bounded interval for the selected
+lease's services to become ready. Readiness timeout preserves the deployment
+identity and recovery commands in the failed result. A successful Console
+deployment includes a browser deep link only when the configured API origin is
+the production Console service; custom origins do not receive a misleading
+production link. Pretty workflow output ends with a concise `Next` section,
+while JSON, YAML, and JSONL contain only their structured fields.
 
 **Transaction object schema (within `txs`):**
 
@@ -1773,11 +1833,12 @@ opt-out command. The chain rail does not display a Console setting.
 | `--from`           | string   | context default | Account to deploy from                                      |
 | `--deposit`        | string   | `auto`          | Initial deposit, unified syntax on both rails (see §7.4): `auto` (recommended for keyring), `5usd`/`$5` (Console), or an explicit network deposit coin |
 | `--bid-timeout`    | duration | `5m`            | Maximum time to wait for bids                               |
+| `--ready-timeout`  | duration | `2m`            | Maximum time to wait for service readiness                  |
 | `--min-bids`       | int      | `1`             | Minimum bids before selection                               |
 | `--bid-select`     | string   | `"interactive"` | Bid selection: `interactive`, `cheapest`, `provider=<addr>` |
 | `--no-wait-bids`   | bool     | `false`         | Exit after creating deployment (don't wait for bids)        |
 | `--no-wait-lease`  | bool     | `false`         | Exit after creating lease (don't send manifest)             |
-| `--no-wait-active` | bool     | `false`         | Exit after sending manifest (don't wait for active)         |
+| `--no-wait-active` | bool     | `false`         | Exit after sending manifest (don't poll service readiness)  |
 | `--label`          | string   | `""`            | User label for local store metadata                         |
 | `--note`           | string   | `""`            | User note for local store metadata                          |
 | `--yes`            | bool     | `false`         | Skip all confirmations                                      |
@@ -1969,6 +2030,14 @@ Query provider status. Supply the provider address positionally or with
 private gateways. A provider with no on-chain host URI is refused before a
 gateway request is attempted.
 
+When a protected provider operation cannot reach the gateway, its diagnostic
+includes the exact fallback `akt query provider <full-provider-address>` so the
+user can inspect current on-chain endpoint registration. Provider status has a
+positive `--timeout` duration whose default is 30 seconds. The selected value
+configures the gateway's one-shot boundary itself, so values above and below 30
+seconds both take effect; fallback guidance does not extend or mask that
+failure.
+
 Provider `/status` is a public gateway endpoint. This command MUST NOT load a
 default account, open a keyring, mint a JWT, or load an mTLS certificate. It is
 valid from a monitoring-only context with chain-query access and no wallet.
@@ -1981,6 +2050,7 @@ endpoint; explicitly passing it is refused instead of being silently ignored.
 | ---------------- | ------ | --------------- | ------------------------------------------------ |
 | `--provider`     | string | `""`            | Provider address; alternative to positional form |
 | `--provider-url` | string | on-chain record | Explicit provider gateway URL override           |
+| `--timeout`      | duration | `30s`          | Positive overall timeout for the status request  |
 
 All lease-, manifest-, migration-, log-, event-, and shell-scoped provider
 commands remain authenticated. Before constructing their gateway client they
@@ -2212,6 +2282,10 @@ discoverable.
 #### `akt store export`
 
 Export the local store to YAML or JSON.
+
+This is a local inspection and backup envelope for `akt store import`. It is
+not SDL and is not accepted by `akt deploy`; use `akt query deployment` for a
+fresh chain view and an SDL source file for deployment creation.
 
 | Flag             | Type   | Default  | Description                                |
 | ---------------- | ------ | -------- | ------------------------------------------ |
@@ -2599,6 +2673,13 @@ returns 27 read-only tools. `--enable-writes` adds four chain/provider writes
 and two Console writes, for 33 tools total. A server with only one rail exposes
 only that rail's subset.
 
+Tool registration is also capability-isolated within a rail. Query tools are
+registered as soon as their read client is available. When `--enable-writes`
+is requested but no signing identity can be resolved, startup still exposes
+the read tools; signing-dependent tools are omitted and the write-capability
+diagnostic is retained for attempted write discovery. A missing optional write
+client must never make an otherwise usable read-only MCP server fail startup.
+
 **Read-only tools (up to 27 tools):**
 
 | Tool Name                      | Description                                                                |
@@ -2736,13 +2817,13 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 
 | Command                                             | Flags                                          | Description                                                                                   |
 | --------------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `akt console deployment list`                       | `--skip` (0), `--limit` (20)                   | List deployments with pagination.                                                              |
+| `akt console deployment list [active\|closed]`       | `--skip` (0), `--limit` (20)                   | List deployments with validated pagination and an optional state filter. Filtering traverses bounded pages before applying the requested page window. |
 | `akt console deployment get <dseq>`                 |                                                | Deployment with leases and escrow account.                                                     |
 | `akt console deployment create <sdl-file> [deposit-usd]` | `--deposit <usd>` (alternative to positional; min 0.5) — **disabled pending feedback** (positional only, 2026-07) | Create a deployment; prints `dseq` + tx hash, the Console default `autoTopUp: {enabled: true, frequency: daily}`, and the exact command that disables it. It does not invent a deployment `state`; `deployment get` is authoritative for the later open/active transition. The deposit uses the unified cross-rail syntax (§7.4): `5`, `5usd`, or `$5` (min $0.50); coin forms like `5000000uakt` fail with the cross-rail error. The returned manifest is cached at `contexts/<name>/manifests/<dseq>.json` for `lease create`. |
-| `akt console deployment update <dseq> <sdl-file>`   |                                                | Update the deployment's SDL.                                                                   |
-| `akt console deployment close <dseq>`               |                                                | Close a deployment. A 2xx must acknowledge `success: true`; a non-2xx is idempotent success only when it unambiguously reports already closed/absent. A rejection that merely contains `closed` remains an error. |
-| `akt console deployment deposit <dseq> [amount-usd]` | `--amount <usd>` (alternative to positional; > 0) — **disabled pending feedback** (positional only, 2026-07) | Add funds to the deployment's escrow. The amount uses the unified cross-rail syntax (§7.4): `10`, `10usd`, or `$10`; coin forms fail with the cross-rail error. |
-| `akt console deployment settings <dseq> [true\|false]` | `--auto-top-up true\|false` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Show settings when no value is given; set auto-top-up when a positional or flag value is present. |
+| `akt console deployment update <dseq> <sdl-file>`   |                                                | Update a deployment's SDL; closed deployments are rejected before mutation.                     |
+| `akt console deployment close <dseq>`               |                                                | Close an active deployment. A preflight rejects an already-closed or absent deployment with a clear non-zero error; the shared `akt close` workflow preserves that failure. A 2xx delete must acknowledge `success: true`. |
+| `akt console deployment deposit <dseq> [amount-usd]` | `--amount <usd>` (alternative to positional; min 0.50) — **disabled pending feedback** (positional only, 2026-07) | Add funds to a non-closed deployment's escrow. The amount uses the unified cross-rail syntax (§7.4): `10`, `10usd`, or `$10`; coin forms fail with the cross-rail error. Values below $0.50 are rejected before the API call. |
+| `akt console deployment settings <dseq> [true\|false]` | `--auto-top-up true\|false` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Show settings when no value is given; reject settings mutations for a closed deployment. |
 | `akt console bid list <dseq>`                       |                                                | List bids for the deployment's open orders.                                                    |
 | `akt console lease create <dseq> [provider]`        | `--gseq` (1), `--oseq` (1), `--provider` (alternative to positional) — **disabled pending feedback** (positional only, 2026-07), `--manifest <file>` | Accept a bid; the manifest defaults to the one cached by `deployment create`. |
 
@@ -2775,8 +2856,8 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | -------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------- |
 | `akt console apikey list`        |                                                | List API keys (secrets are never shown).                         |
 | `akt console apikey create <name> [expires-at]` | `--name`, `--expires-at` (RFC 3339, alternatives) — **disabled pending feedback** (positional only, 2026-07) | Create a key; the secret is printed exactly once with a warning. |
-| `akt console apikey delete <id>` |                                                | Delete a key; a missing key (404) is a no-op. Pretty output acknowledges the full ID; JSON/YAML return `{id, deleted:true}`. |
-| `akt console jwt create`         | `--ttl` (300), `--scope` (csv, default `status,logs,events,shell,send-manifest,get-manifest`) | Mint a short-lived provider-scoped JWT. |
+| `akt console apikey delete <id>` |                                                | Delete a key. The client first requires the UUID to appear in the account's key list, then sends DELETE. An absent key is non-zero with no DELETE or acknowledgement, even when the API's delete endpoint is idempotent. Pretty output acknowledges the full ID; JSON/YAML return `{id, deleted:true}` only after a present key's successful deletion. |
+| `akt console jwt create`         | `--ttl` (300, maximum 3600), `--scope` (csv, default `status,logs,events,shell,send-manifest,get-manifest`) | Mint a short-lived provider-scoped JWT. |
 
 **Provider gateway (live lease operations):**
 
@@ -2802,10 +2883,25 @@ one-shot read.
 | `akt console logs <dseq> [service]`                | `--follow`, `--tail N`, `--service` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Stream container logs from the lease's provider (JWT scopes `logs,status`).                    |
 | `akt console events <dseq>`                        | `--follow`                                  | Stream Kubernetes events from the lease's provider (JWT scopes `events,status`).                     |
 | `akt console status <dseq>`                        | `--watch`, `--interval` (5s)                | Live lease status from the provider gateway (JWT scope `status`); with `--watch`, snapshots are re-printed each interval until interrupted. `deployment get` remains the Console-API view. |
-| `akt console shell <dseq> <service> [-- command...]` | `--stdin`                                 | Interactive shell in a lease container, default `/bin/sh`; exec is the same operation with an explicit command (JWT scopes `shell,status`). TTY auto-detected; terminal stdin is detached from explicit commands unless `--stdin` is supplied. |
-| `akt console screen <sdl-file>`                    |                                             | Client-side bid screening: derive resources from the SDL and list the providers able to run it (public endpoint, no key needed). |
+| `akt console shell <dseq> [service] [-- command...]` | `--stdin`                                | Interactive shell in a lease container, default `/bin/sh`; when exactly one SDL service exists it is selected automatically. Multiple services require an explicit name and list the choices. Exec is the same operation with an explicit command (JWT scopes `shell,status`). |
+| `akt console screen [sdl-file]`                    | `--cpu`, `--memory`, `--storage`, `--gpu`, `--gpu-model`, `--count`, `--attribute`, `--signed-by`, `--reclamation-window` | Client-side bid screening from an SDL, resource flags, or both. Explicit flags override SDL-derived fields (public endpoint, no key needed). |
 
 Per the positional-primary convention (§3.8), every console command takes its primary value(s) positionally; the equivalent flags remain as overrides and a positional value wins when both are given. (2026-07: the flag twins marked *disabled pending feedback* above are commented out in code for the positional-only UX trial — the positional form is the only way while the trial runs; the original flag definitions are preserved in `FEEDBACK(2026-07)` comments for restoration.) Default structured reads are indented JSON, while human acknowledgements and streams use the command-specific pretty forms described below. USD values at or above one cent render with two decimals. A nonzero sub-cent value renders with up to six decimals and trailing zeros stripped; a magnitude below one millionth of a dollar renders as `$<0.000001` (or `-$<0.000001`) rather than the false `$0.00`. Zero remains `$0.00`. State-changing calls are recorded in the context's action log as `type=console` entries (§5.6). No command ever prints a Console API key, except the one-time secret from `apikey create`.
+
+Console escrow `uact` values are micro-USD: amounts render as dollars and
+per-block prices render as an estimated monthly dollar cost using six-second
+blocks (432,000 blocks per 30-day month). Other denoms remain explicit and are
+never relabeled as dollars. Empty event streams say `No recent events` in
+pretty mode. Every non-streaming Console command uses the shared field-aware
+semantic renderer; pretty mode must not fall back to raw JSON. JSON and YAML
+retain the canonical wire semantics described below.
+
+After every successful Console action leaf, akt emits a `Next:` block with at
+least one runnable follow-up command on stderr. The informational channel keeps
+JSON, YAML, raw template SDL, log/event records, and shell bytes unchanged;
+`--quiet` suppresses the block. Bounded streams and shell commands emit it only
+after successful completion. Each Console leaf declares its guidance metadata,
+and command-tree verification fails when a new leaf omits it.
 
 **Console output contract:** the API's JSON field names and value types are the
 canonical structured representation. `--output json` emits that representation;
@@ -2829,14 +2925,13 @@ input. If both the remote command and
 structured-output rendering fail, the returned error preserves both causes so
 callers can classify either failure with `errors.Is`.
 
-Mutation acknowledgements are structured in JSON/YAML mode. Deployment close
-emits `{dseq, state, already_closed}`. `already_closed` is true only when the
-API explicitly reports the deployment already closed or absent. The API may
-return the same success envelope for an initial close and an already-closed
-no-op; in that case the field is false and does not claim that a new close
-transaction occurred. Deposit emits `{dseq, amount_usd, status}`. Template SDL
-is byte-for-byte deployable YAML in default/pretty mode; JSON/YAML mode wraps
-the exact source text as `{sdl: ...}` so comments and ordering are not lost.
+Mutation acknowledgements are structured in JSON/YAML mode. A successful
+deployment close emits `{dseq, state}` only after an active deployment's delete
+acknowledges `success: true`; an already-closed or absent deployment emits no
+success document and exits non-zero. Deposit emits
+`{dseq, amount_usd, status}`. Template SDL is byte-for-byte deployable YAML in
+default/pretty mode; JSON/YAML mode wraps the exact source text as `{sdl: ...}`
+so comments and ordering are not lost.
 
 ---
 
@@ -3052,7 +3147,7 @@ Two flags control confirmation and safety bypass behavior across the CLI. They s
 | `--yes` | `-y` | Skip interactive confirmation prompts. The operation proceeds as if the user answered "yes" to all prompts. The operation itself is unchanged. | `akt tx deployment close 12345 --yes` |
 | `--force` | | Override a safety guard that would otherwise prevent the operation. The operation may behave differently or bypass a check. | `akt context network delete mainnet --force` (deletes even if contexts reference it) |
 
-`--yes` / `-y` is **not a global flag**. It is added individually to commands that have confirmation prompts: all `tx` commands (via `AddTxFlagsToCmd()`, §3.2), workflow commands (`deploy`, `update`, `close`), and destructive context/store management commands (`context delete`, `store import --replace`). `--force` is used sparingly on specific commands where a structural safety check exists (e.g., deleting a network that is referenced by contexts). Commands should never use `--force` as a synonym for `--yes`.
+`--yes` / `-y` is **not a global flag**. It is added individually to commands that have confirmation prompts: all `tx` commands (via `AddTxFlagsToCmd()`, §3.2), workflow commands (`deploy`, `update`, `close`), and destructive context/store management commands (`context delete`, `store import --replace`). `context keys add` also accepts it as an explicit Cosmos CLI compatibility exception; because add refuses overwrites and has no confirmation prompt, the flag cannot bypass secret input or change key replacement behavior. `--force` is used sparingly on specific commands where a structural safety check exists (e.g., deleting a network that is referenced by contexts). Commands should never use `--force` as a synonym for `--yes`.
 
 ### 3.2 Transaction Flags
 
@@ -3364,6 +3459,12 @@ leading address from the active context before sending a request. If the
 context has no default account, the command refuses locally and explains that
 an owner address or `default-account` is required. An empty owner is never sent
 to the chain query service because it means network-wide scope.
+
+In a Console context, omitted owner and numeric-DSEQ shorthand resolve the
+managed wallet owner lazily from authenticated Console identity and wallet
+metadata. An explicit full owner remains authoritative and triggers no owner
+lookup. The resolved full address is then used by the same deployment and
+market query filters as a keyring context.
 
 #### 3.8.5 Per-Command Filter Scope
 
@@ -4324,6 +4425,15 @@ in depth.
 
 All requests include `Content-Type: application/json` and `x-api-key` headers.
 
+The client validates reusable request boundaries before constructing a URL or
+issuing HTTP: DSEQs are positive integers, pagination is non-negative with a
+positive limit, deletion IDs are UUIDs, API-key names are non-blank, deposits
+use at most cent precision and are at least $0.50, and JWT TTL is between 1 and
+3600 seconds. API-key deletion first lists keys and rejects an absent target
+without sending DELETE. Deployment update, deposit, settings writes, and close
+first read the deployment and reject a closed state. Close also rejects an
+absent deployment; neither terminal case is reported as a successful mutation.
+
 The endpoints below cover the deployment lifecycle used by command and workflow routing (§7.4-§7.5). The client's full surface — user info, wallets, usage, provider/GPU/template catalogs, API keys, and provider-scoped JWTs — is documented per command in §2.9 and contract-tested against the vendored OpenAPI spec (`internal/console/testdata/openapi.json`).
 
 Provider-gateway calls made after Console or keyring authentication enforce a
@@ -4430,6 +4540,13 @@ When a workflow runs in a context with `auth-method: console-api`, the workflow 
 | Bare number | `5`, `5.50` | Error (coins require a denomination — the historical chain behavior, with cross-rail guidance) | Interpreted as USD, same as `5usd` |
 | `auto` / empty | `auto` | Chain-minimum deployment deposit, queried on chain | Error: an explicit USD deposit is required |
 
+USD and bare-number forms use the exact grammar
+`[0-9]+(\.[0-9]{1,2})?` after removing an optional leading `$` or trailing
+case-insensitive `usd`. Scientific notation (`1e0`), non-finite values,
+underscores, signs, and more than two fractional digits are invalid. Negative
+input retains a specific non-negative-amount diagnostic. Syntax and cent
+precision are validated before the rail minimum and before any API request.
+
 **Manifest handling**: The Console API's `POST /v1/deployments` returns a `manifest` field in the response. The workflow engine stores this value and passes it to `POST /v1/leases` when creating leases, instead of calling the provider's `send-manifest` endpoint directly.
 
 ### 7.5 Workflow and Command Routing
@@ -4518,7 +4635,7 @@ Status of `akt` coverage for every Akash Console capability. "Covered" means the
 | Authenticate with API key | `akt console login/logout/whoami`; per-context credential (`akt context edit --console-api-key`) | Resolution: flag > `AKT_CONSOLE_API_KEY` > per-context file (§7.1). Switching context switches Console identity. |
 | Create deployment (managed wallet) | `akt console deployment create <sdl> [deposit-usd]`; `akt deploy` in a `console-api` context | Deposit in USD (minimum $0.50), unified deposit syntax per §7.4. The manifest is cached per context for the follow-up lease. |
 | List / inspect deployments | `akt console deployment list/get` | Pagination via `--skip`/`--limit`. |
-| Update / close deployment | `akt console deployment update/close`; `akt update`, `akt close` | Close is idempotent: an already-closed deployment reports success. |
+| Update / close deployment | `akt console deployment update/close`; `akt update`, `akt close` | Update and close reject an already-closed deployment with a non-zero result; close never turns an earlier terminal state into current-command success. |
 | Escrow deposit | `akt console deployment deposit <dseq> [amount-usd]` | |
 | Auto top-up settings | `akt console deployment settings <dseq> [true\|false]` | `/v2/deployment-settings`, PATCH with POST fallback. |
 | View bids / create lease | `akt console bid list <dseq>`, `akt console lease create <dseq> [provider]` | The `akt deploy` workflow automates the bid wait and selection. |
@@ -7570,15 +7687,13 @@ auto-top-up disablement and close, and retains the final 20 seconds for
 terminal-state, exact transferred-spend, and account-total reconciliation
 observations.
 
-**Current implementation boundary (2026-08-14):** the opt-in live suite covers
-create, bid, lease, provider status, deposit, settings, update, and idempotent
-close. The repeated close runs only after the raw observer establishes terminal
-state. It must succeed through the public binary, emit the exact DSEQ, closed
-state, and an `already_closed` boolean, append one successful close action, and
-leave the deployment independently observable as closed or absent with no
-active lease. The boolean's value is not an idempotency oracle because the API
-may use the same successful response for the initial transition and the
-already-closed no-op. Its independent raw observer, exact owned escrow
+**Current implementation boundary (2026-08-18):** the opt-in live suite covers
+create, bid, lease, provider status, deposit, settings, update, and close. A
+repeated close runs only after the raw observer establishes terminal state. It
+must fail through the public binary with a clear already-closed error, emit no
+success document, append one failed close action, and leave the deployment
+independently observable as closed or absent with no active lease. Its
+independent raw observer, exact owned escrow
 `transferred` value, and signed account-total reconciliation are Console-side
 proof only. It also requires a provider-reported workload URI to
 serve a bounded non-empty 2xx response through an independent standard HTTP

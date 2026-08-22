@@ -113,11 +113,18 @@ func TestRootActionLogUsesSelectedContext(t *testing.T) {
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete || r.URL.Path != "/v1/deployments/42" {
+		if r.URL.Path != "/v1/deployments/42" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("x-api-key"); got != "staging-key" {
 			t.Errorf("x-api-key = %q, want staging-key", got)
+		}
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"},"state":"active"}}}`))
+			return
+		}
+		if r.Method != http.MethodDelete {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
 		_, _ = w.Write([]byte(`{"data":{"success":true}}`))
 	}))

@@ -245,6 +245,7 @@ const (
 	FlagTail                        = "tail"
 	FlagTemplate                    = "template"
 	FlagTestnetRootDir              = "testnet-rootdir"
+	FlagTimeout                     = "timeout"
 	FlagTimeoutDuration             = "timeout-duration"
 	FlagTimeoutHeight               = "timeout-height"
 	FlagTip                         = "tip"

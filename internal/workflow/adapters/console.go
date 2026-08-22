@@ -3,7 +3,6 @@ package adapters
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"os"
 	"strconv"
@@ -155,15 +154,14 @@ func (c *consoleChainClient) updateDeployment(ctx context.Context, params map[st
 }
 
 // closeDeployment maps deployment.MsgCloseDeployment to
-// DELETE /v1/deployments/{dseq}. An already-closed deployment is treated as
-// success for idempotent behavior.
+// DELETE /v1/deployments/{dseq}.
 func (c *consoleChainClient) closeDeployment(ctx context.Context, params map[string]string) (*steps.TxResult, error) {
 	dseq, err := requiredDSeqParam(params, msgCloseDeployment)
 	if err != nil {
 		return nil, err
 	}
 
-	if err := c.cc.CloseDeployment(ctx, dseq); err != nil && !errors.Is(err, console.ErrAlreadyClosed) {
+	if err := c.cc.CloseDeployment(ctx, dseq); err != nil {
 		return nil, err
 	}
 

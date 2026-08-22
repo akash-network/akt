@@ -6,10 +6,13 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -548,6 +551,61 @@ func TestStatusUsesPublicGatewayWithoutWallet(t *testing.T) {
 	}
 }
 
+func TestStatusTimeoutConfiguresGatewayBoundary(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	root := Commands()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{
+		"status", testProviderAddr,
+		"--provider-url", srv.URL,
+		"--timeout", "40ms",
+	})
+
+	started := time.Now()
+	err := root.Execute()
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("provider status timeout error = %v, want deadline exceeded", err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("provider status timeout took %s, want the configured deadline", elapsed)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("provider status requests = %d, want 1", got)
+	}
+}
+
+func TestStatusRejectsNonPositiveTimeoutBeforeNetwork(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+	}))
+	defer srv.Close()
+
+	root := Commands()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{
+		"status", testProviderAddr,
+		"--provider-url", srv.URL,
+		"--timeout", "0s",
+	})
+
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "--timeout must be greater than zero") {
+		t.Fatalf("provider status timeout error = %v", err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("invalid timeout made %d requests, want 0", got)
+	}
+}
+
 func TestStatusRejectsAuthenticationFlag(t *testing.T) {
 	root := Commands()
 	root.SetOut(&bytes.Buffer{})
@@ -562,6 +620,23 @@ func TestStatusRejectsAuthenticationFlag(t *testing.T) {
 		t.Fatal("--auth-type on public provider status must be rejected")
 	} else if !strings.Contains(err.Error(), "does not apply") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestStatusFailureIncludesExactChainFallback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "offline", http.StatusBadGateway)
+	}))
+	defer srv.Close()
+
+	const provider = "akash1errud3wyc0pvrs9lh67mewa6hxut0d44pfj6vh"
+	root := Commands()
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"status", provider, "--provider-url", srv.URL})
+	err := root.Execute()
+	if err == nil || !strings.Contains(err.Error(), "akt query provider "+provider) {
+		t.Fatalf("provider status error = %v", err)
 	}
 }
 

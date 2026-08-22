@@ -8,9 +8,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"math/big"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	flagdefs "pkg.akt.dev/akt/internal/flags"
 
@@ -24,6 +27,8 @@ import (
 	aktctx "pkg.akt.dev/akt/internal/context"
 	"pkg.akt.dev/akt/internal/output"
 )
+
+const consoleNextAnnotation = "akt.console.next"
 
 func Commands(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
@@ -64,8 +69,79 @@ func Commands(mgrFn func() *aktctx.Manager) *cobra.Command {
 		requireConsole(statusCmd(mgrFn)),
 		requireConsole(shellCmd(mgrFn)),
 	)
+	annotateConsoleNextSteps(cmd)
 
 	return cmd
+}
+
+func annotateConsoleNextSteps(cmd *cobra.Command) {
+	children := cmd.Commands()
+	if len(children) == 0 {
+		if cmd.Run != nil || cmd.RunE != nil {
+			if cmd.Annotations == nil {
+				cmd.Annotations = map[string]string{}
+			}
+			cmd.Annotations[consoleNextAnnotation] = consoleNextSuggestion(cmd)
+		}
+		return
+	}
+
+	for _, child := range children {
+		annotateConsoleNextSteps(child)
+	}
+}
+
+func consoleNextSuggestion(cmd *cobra.Command) string {
+	path := cmd.CommandPath()
+	switch {
+	case path == "console login":
+		return "akt console whoami"
+	case path == "console logout":
+		return "akt console login"
+	case path == "console whoami":
+		return "akt console deployment list active"
+	case strings.HasPrefix(path, "console deployment "),
+		strings.HasPrefix(path, "console bid "),
+		strings.HasPrefix(path, "console lease "),
+		path == "console logs",
+		path == "console events",
+		path == "console status",
+		path == "console shell":
+		return "akt console deployment list active"
+	case strings.HasPrefix(path, "console wallet "):
+		return "akt console usage"
+	case path == "console usage":
+		return "akt console wallet balance"
+	case strings.HasPrefix(path, "console apikey "):
+		return "akt console apikey list"
+	case strings.HasPrefix(path, "console jwt "):
+		return "akt console whoami"
+	case strings.HasPrefix(path, "console template "):
+		return "akt console template list"
+	case strings.HasPrefix(path, "console provider "), path == "console gpu", path == "console screen":
+		return "akt console provider list"
+	default:
+		return "akt console --help"
+	}
+}
+
+// PrintNextStep writes a successful Console leaf's follow-up guidance to the
+// informational channel. The application root calls it after closing the
+// action log; commands outside the Console subtree have no annotation and are
+// unchanged.
+func PrintNextStep(cmd *cobra.Command) error {
+	if cliutil.IsQuiet(cmd) {
+		return nil
+	}
+	next := strings.TrimSpace(cmd.Annotations[consoleNextAnnotation])
+	if next == "" {
+		return nil
+	}
+
+	checked := output.NewCheckedWriter(cmd.ErrOrStderr())
+	_, err := fmt.Fprintf(checked, "Next:\n  %s\n", next)
+
+	return checked.Complete(err)
 }
 
 // requireConsole tags a command as needing the console capability so the
@@ -281,15 +357,14 @@ func resolveContextFromCmd(cmd *cobra.Command, m *aktctx.Manager) (*aktctx.Conte
 	return m.Resolve(cliutil.SelectedContextName(cmd, m))
 }
 
-// printJSON renders v in the format --output asks for and writes it to the
-// command's output.
-//
-// It used to marshal JSON unconditionally, so `-o yaml` returned JSON with
-// exit 0 on every command in this group and a YAML consumer silently parsed
-// the wrong format. Table stays JSON: the console payloads are nested API
-// objects rather than rows, and there is no column layout to render them as.
+// printJSON preserves Console's JSON semantics for structured formats and
+// renders the same semantic tree as readable key/value sections in pretty
+// mode.
 func printJSON(cmd *cobra.Command, v interface{}) error {
 	format := output.FormatFromCmd(cmd)
+	if format == output.FormatTable {
+		return printConsolePretty(cmd, v)
+	}
 	if format != output.FormatYAML {
 		format = output.FormatJSON
 	}
@@ -299,6 +374,177 @@ func printJSON(cmd *cobra.Command, v interface{}) error {
 	}
 
 	return nil
+}
+
+func printConsolePretty(cmd *cobra.Command, value any) error {
+	return printConsolePrettyWithDecoder(cmd, value, decodeConsoleSemantic)
+}
+
+func printConsolePrettyWithDecoder(
+	cmd *cobra.Command,
+	value any,
+	decode func([]byte) (any, error),
+) error {
+	payload, err := json.Marshal(value)
+	if err != nil {
+		return fmt.Errorf("marshal pretty output: %w", err)
+	}
+	semantic, err := decode(payload)
+	if err != nil {
+		return fmt.Errorf("decode pretty output: %w", err)
+	}
+
+	var rendered strings.Builder
+	renderConsoleValue(&rendered, semantic, 0, "")
+	if rendered.Len() == 0 {
+		rendered.WriteString("No data.\n")
+	} else if !strings.HasSuffix(rendered.String(), "\n") {
+		rendered.WriteByte('\n')
+	}
+
+	return printConsoleText(cmd, rendered.String())
+}
+
+func decodeConsoleSemantic(payload []byte) (any, error) {
+	decoder := json.NewDecoder(strings.NewReader(string(payload)))
+	decoder.UseNumber()
+	var semantic any
+	if err := decoder.Decode(&semantic); err != nil {
+		return nil, err
+	}
+
+	return semantic, nil
+}
+
+func renderConsoleValue(out *strings.Builder, value any, indent int, parent string) {
+	if display, ok := consoleCoinDisplay(value, parent); ok {
+		out.WriteString(display)
+		return
+	}
+
+	switch value := value.(type) {
+	case map[string]any:
+		keys := make([]string, 0, len(value))
+		for key := range value {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+		for _, key := range keys {
+			item := value[key]
+			writeConsoleIndent(out, indent)
+			out.WriteString(humanConsoleLabel(key))
+			out.WriteString(":")
+			if isConsoleScalar(item) {
+				out.WriteByte(' ')
+				renderConsoleValue(out, item, indent, key)
+				out.WriteByte('\n')
+				continue
+			}
+			out.WriteByte('\n')
+			renderConsoleValue(out, item, indent+2, key)
+		}
+	case []any:
+		if len(value) == 0 {
+			writeConsoleIndent(out, indent)
+			out.WriteString("none\n")
+			return
+		}
+		for _, item := range value {
+			writeConsoleIndent(out, indent)
+			out.WriteString("- ")
+			if isConsoleScalar(item) {
+				renderConsoleValue(out, item, indent+2, parent)
+				out.WriteByte('\n')
+				continue
+			}
+			out.WriteByte('\n')
+			renderConsoleValue(out, item, indent+2, parent)
+		}
+	case nil:
+		out.WriteString("none")
+	case string:
+		if value == "" {
+			out.WriteString("none")
+		} else {
+			out.WriteString(value)
+		}
+	case json.Number:
+		out.WriteString(value.String())
+	default:
+		fmt.Fprint(out, value)
+	}
+}
+
+func consoleCoinDisplay(value any, parent string) (string, bool) {
+	coin, ok := value.(map[string]any)
+	if !ok {
+		return "", false
+	}
+	denom, denomOK := coin["denom"].(string)
+	amountValue, amountOK := coin["amount"]
+	if !denomOK || !amountOK {
+		return "", false
+	}
+	amount := fmt.Sprint(amountValue)
+	if !strings.EqualFold(denom, "uact") {
+		return amount + " " + denom, true
+	}
+	rat, ok := new(big.Rat).SetString(amount)
+	if !ok {
+		return amount + " " + denom, true
+	}
+	rat.Quo(rat, big.NewRat(1_000_000, 1))
+	if strings.EqualFold(parent, "price") {
+		rat.Mul(rat, big.NewRat(432_000, 1))
+	}
+	usd, _ := rat.Float64()
+	display := formatUSD(usd)
+	if strings.EqualFold(parent, "price") {
+		display += "/month"
+	}
+
+	return display, true
+}
+
+func isConsoleScalar(value any) bool {
+	if _, ok := consoleCoinDisplay(value, ""); ok {
+		return true
+	}
+	switch value.(type) {
+	case nil, string, json.Number, bool, float64:
+		return true
+	default:
+		return false
+	}
+}
+
+func writeConsoleIndent(out *strings.Builder, spaces int) {
+	out.WriteString(strings.Repeat(" ", spaces))
+}
+
+func humanConsoleLabel(key string) string {
+	var label strings.Builder
+	var previous rune
+	for i, current := range key {
+		switch {
+		case current == '_' || current == '-':
+			label.WriteByte(' ')
+		case i > 0 && unicode.IsUpper(current) && unicode.IsLower(previous):
+			label.WriteByte(' ')
+			label.WriteRune(current)
+		default:
+			label.WriteRune(current)
+		}
+		previous = current
+	}
+	text := label.String()
+	if text == "" {
+		return text
+	}
+	runes := []rune(text)
+	runes[0] = unicode.ToUpper(runes[0])
+
+	return string(runes)
 }
 
 // printRawJSON re-indents a raw JSON document and writes it to the command's

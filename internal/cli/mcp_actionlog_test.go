@@ -23,12 +23,14 @@ func TestConsoleClientForCarriesMCPActionLog(t *testing.T) {
 			_, _ = w.Write([]byte(`{"data":{"deployments":[],"pagination":{"skip":0,"limit":10,"hasMore":false}}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/42":
 			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"1000000"}],"transferred":[]}}}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/41":
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"41"},"state":"active"}}}`))
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/44":
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"44"},"state":"active"}}}`))
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/deployments/41":
 			_, _ = w.Write([]byte(`{"data":{"success":true}}`))
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/deployments/44":
 			_, _ = w.Write([]byte(`{"data":{"success":true}}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/42":
-			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"1000000"}],"transferred":[]}}}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/deposit-deployment":
 			w.WriteHeader(http.StatusConflict)
 			_, _ = w.Write([]byte(`{"error":"deployment is settling"}`))

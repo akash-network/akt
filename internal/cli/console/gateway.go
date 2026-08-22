@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +16,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
+	"k8s.io/apimachinery/pkg/api/resource"
 
 	mtypes "pkg.akt.dev/go/node/market/v1"
 	attrv1 "pkg.akt.dev/go/node/types/attributes/v1"
@@ -292,21 +294,51 @@ func eventsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			events, err := gw.LeaseEvents(ctx, lid, "", follow)
-			if err != nil {
-				return aktprovider.GatewayError("stream lease events", err)
-			}
-
-			return aktprovider.ConsumeStream(ctx, "event", events.Stream, events.OnClose, follow,
-				func(event rest.LeaseEvent) error {
-					return printLeaseEvent(cmd, event)
-				})
+			return streamLeaseEvents(ctx, cmd, gw, lid, follow)
 		},
 	}
 
 	cmd.Flags().BoolP(flagdefs.FlagFollow, "f", false, "Follow event output")
 
 	return cmd
+}
+
+type leaseEventsClient interface {
+	LeaseEvents(context.Context, mtypes.LeaseID, string, bool) (*rest.LeaseKubeEvents, error)
+}
+
+func streamLeaseEvents(
+	ctx context.Context,
+	cmd *cobra.Command,
+	client leaseEventsClient,
+	lid mtypes.LeaseID,
+	follow bool,
+) error {
+	events, err := client.LeaseEvents(ctx, lid, "", follow)
+	if err != nil {
+		return aktprovider.GatewayError("stream lease events", err)
+	}
+
+	return consumeLeaseEvents(ctx, cmd, events.Stream, events.OnClose, follow)
+}
+
+func consumeLeaseEvents(
+	ctx context.Context,
+	cmd *cobra.Command,
+	stream <-chan rest.LeaseEvent,
+	onClose <-chan string,
+	follow bool,
+) error {
+	count := 0
+	if err := aktprovider.ConsumeStream(ctx, "event", stream, onClose, follow,
+		func(event rest.LeaseEvent) error {
+			count++
+			return printLeaseEvent(cmd, event)
+		}); err != nil {
+		return err
+	}
+
+	return printEmptyEvents(cmd, count, follow)
 }
 
 func statusCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
@@ -420,14 +452,14 @@ func shellCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 func shellCmdWithRunner(mgrFn func() *aktctx.Manager, run consoleLeaseShellRunner) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "shell <dseq> <service> [-- command...]",
+		Use:   "shell <dseq> [service] [-- command...]",
 		Short: "Open a shell or run a command in a lease container",
 		Long: "Open an interactive shell (default command /bin/sh) or run an explicit command in a " +
 			"container of a Console-managed deployment, connecting to the provider gateway with a " +
 			"short-lived Console-minted JWT — no wallet involved. exec is the same operation as " +
 			"shell with an explicit command: `akt console shell <dseq> <svc> -- <cmd>`. A TTY is " +
 			"allocated automatically when stdin is a terminal.",
-		Args: cobra.MinimumNArgs(2),
+		Args: cobra.MinimumNArgs(1),
 		Example: `  # Interactive shell (defaults to /bin/sh)
   akt console shell 12345 web
 
@@ -439,19 +471,40 @@ func shellCmdWithRunner(mgrFn func() *aktctx.Manager, run consoleLeaseShellRunne
 		RunE: func(cmd *cobra.Command, args []string) error {
 			shellCtx, cancelShell := context.WithCancel(cmd.Context())
 			defer cancelShell()
-			interactive := len(args) == 2
+			dash := cmd.ArgsLenAtDash()
+			service := ""
+			var command []string
+			switch {
+			case dash >= 0:
+				if dash > 1 {
+					service = args[1]
+				}
+				command = args[dash:]
+			case len(args) > 1:
+				service = args[1]
+				command = args[2:]
+			}
+
+			interactive := len(command) == 0
 			if err := output.ValidateShellOutput(cmd, interactive); err != nil {
 				return err
 			}
+			if interactive && !term.IsTerminal(int(os.Stdin.Fd())) {
+				return fmt.Errorf("interactive shell requires a terminal; non-interactive stdin must provide an explicit command after `--`")
+			}
 
-			cl, _, err := clientFromCmd(cmd, mgrFn, true)
+			cl, rc, err := clientFromCmd(cmd, mgrFn, true)
 			if err != nil {
 				return err
 			}
 
-			dseq, service := args[0], args[1]
-
-			command := args[2:]
+			dseq := args[0]
+			if service == "" {
+				service, err = defaultShellService(rc, dseq)
+				if err != nil {
+					return err
+				}
+			}
 			if len(command) == 0 {
 				command = []string{"/bin/sh"}
 			}
@@ -485,32 +538,78 @@ func shellCmdWithRunner(mgrFn func() *aktctx.Manager, run consoleLeaseShellRunne
 	return cmd
 }
 
+func defaultShellService(rc *aktctx.Context, dseq string) (string, error) {
+	if rc == nil {
+		return "", fmt.Errorf("service is required without an active context")
+	}
+	raw, err := console.LoadManifest(rc.Root, rc.Name, dseq)
+	if err != nil {
+		return "", fmt.Errorf("resolve shell service for deployment %s: %w; pass the service explicitly", dseq, err)
+	}
+	names, err := manifestServiceNames(raw)
+	if err != nil {
+		return "", fmt.Errorf("resolve shell service for deployment %s: %w", dseq, err)
+	}
+	switch len(names) {
+	case 0:
+		return "", fmt.Errorf("deployment %s manifest contains no services", dseq)
+	case 1:
+		return names[0], nil
+	default:
+		return "", fmt.Errorf("deployment %s has multiple services (%s); pass one explicitly", dseq, strings.Join(names, ", "))
+	}
+}
+
+func manifestServiceNames(raw string) ([]string, error) {
+	var groups []struct {
+		Services []struct {
+			Name string `json:"name"`
+		} `json:"services"`
+	}
+	if err := json.Unmarshal([]byte(raw), &groups); err != nil {
+		return nil, fmt.Errorf("decode cached manifest: %w", err)
+	}
+	unique := make(map[string]struct{})
+	for _, group := range groups {
+		for _, service := range group.Services {
+			if name := strings.TrimSpace(service.Name); name != "" {
+				unique[name] = struct{}{}
+			}
+		}
+	}
+	names := make([]string, 0, len(unique))
+	for name := range unique {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
+	return names, nil
+}
+
 // --- bid screening ------------------------------------------------------------
 
 func screenCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
-	return &cobra.Command{
-		Use:   "screen <sdl-file>",
+	cmd := &cobra.Command{
+		Use:   "screen [sdl-file]",
 		Short: "List providers able to run an SDL (bid screening)",
-		Long: "Ask the Console API which providers can satisfy an SDL's resource requirements " +
-			"before creating a deployment. Resources are derived from the SDL client-side; the " +
-			"endpoint is public, so no API key is needed.",
-		Args:    cobra.ExactArgs(1),
-		Example: `  akt console screen deploy.yaml`,
+		Long: "Ask the Console API which providers can satisfy resource requirements before " +
+			"creating a deployment. Start from an SDL, resource flags, or both; explicit flags " +
+			"override SDL-derived values. The endpoint is public, so no API key is needed.",
+		Args: cobra.MaximumNArgs(1),
+		Example: `  akt console screen deploy.yaml
+  akt console screen --cpu 2 --memory 4Gi --gpu 1 --gpu-model a100`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, _, err := clientFromCmd(cmd, mgrFn, false)
 			if err != nil {
 				return err
 			}
 
-			resources, err := screeningResourcesFromSDL(args[0])
+			req, err := screeningRequestFromCmd(cmd, args)
 			if err != nil {
 				return err
 			}
 
-			providers, err := cl.ScreenBids(cmd.Context(), &console.BidScreeningRequest{
-				Resources: resources,
-				Timezone:  screeningTimezone(),
-			})
+			providers, err := cl.ScreenBids(cmd.Context(), req)
 			if err != nil {
 				return fmt.Errorf("screen providers: %w", err)
 			}
@@ -522,6 +621,145 @@ func screenCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			return printJSON(cmd, providers)
 		},
 	}
+
+	cmd.Flags().String("cpu", "1", "CPU quantity (for example 500m or 2)")
+	cmd.Flags().String("memory", "512Mi", "Memory quantity")
+	cmd.Flags().String("storage", "1Gi", "Ephemeral storage quantity")
+	cmd.Flags().Uint32("gpu", 0, "GPU count")
+	cmd.Flags().String("gpu-model", "", "Required GPU model attribute")
+	cmd.Flags().Int("count", 1, "Number of identical resource units")
+	cmd.Flags().StringArray("attribute", nil, "Required provider attribute key=value (repeatable)")
+	cmd.Flags().StringSlice("signed-by", nil, "Accept providers audited by any listed address")
+	cmd.Flags().Int64("reclamation-window", 0, "Minimum provider reclamation window in seconds")
+
+	return cmd
+}
+
+func screeningRequestFromCmd(cmd *cobra.Command, args []string) (*console.BidScreeningRequest, error) {
+	resourceFlags := []string{"cpu", "memory", "storage", "gpu", "gpu-model", "count"}
+	hasResourceFlag := false
+	for _, name := range resourceFlags {
+		hasResourceFlag = hasResourceFlag || cmd.Flags().Changed(name)
+	}
+
+	var raw json.RawMessage
+	var err error
+	if len(args) == 1 {
+		raw, err = screeningResourcesFromSDL(args[0])
+		if err != nil {
+			return nil, err
+		}
+	} else if !hasResourceFlag {
+		return nil, fmt.Errorf("provide an SDL file or at least one resource flag (--cpu, --memory, --storage, --gpu, --gpu-model, --count)")
+	} else {
+		raw = json.RawMessage(`[{
+			"resource":{"id":1,"cpu":{"units":{"val":"1000"}},"memory":{"quantity":{"val":"536870912"}},"gpu":{"units":{"val":"0"}},"storage":[{"name":"default","quantity":{"val":"1073741824"}}],"endpoints":[]},
+			"count":1,"price":{"denom":"uact","amount":"0"}
+			}]`)
+	}
+
+	return screeningRequestFromResources(cmd, args, raw)
+}
+
+func screeningRequestFromResources(cmd *cobra.Command, args []string, raw json.RawMessage) (*console.BidScreeningRequest, error) {
+	var units []map[string]any
+	if err := json.Unmarshal(raw, &units); err != nil {
+		return nil, fmt.Errorf("decode screening resources: %w", err)
+	}
+	for _, unit := range units {
+		resourceValue, ok := unit["resource"].(map[string]any)
+		if !ok {
+			return nil, fmt.Errorf("screening resource omitted its resource object")
+		}
+		if cmd.Flags().Changed("cpu") || len(args) == 0 {
+			value, _ := cmd.Flags().GetString("cpu")
+			parsed, err := screeningQuantity(value, true)
+			if err != nil {
+				return nil, fmt.Errorf("--cpu: %w", err)
+			}
+			resourceValue["cpu"] = map[string]any{"units": map[string]any{"val": parsed}}
+		}
+		if cmd.Flags().Changed("memory") || len(args) == 0 {
+			value, _ := cmd.Flags().GetString("memory")
+			parsed, err := screeningQuantity(value, false)
+			if err != nil {
+				return nil, fmt.Errorf("--memory: %w", err)
+			}
+			resourceValue["memory"] = map[string]any{"quantity": map[string]any{"val": parsed}}
+		}
+		if cmd.Flags().Changed("storage") || len(args) == 0 {
+			value, _ := cmd.Flags().GetString("storage")
+			parsed, err := screeningQuantity(value, false)
+			if err != nil {
+				return nil, fmt.Errorf("--storage: %w", err)
+			}
+			resourceValue["storage"] = []any{map[string]any{"name": "default", "quantity": map[string]any{"val": parsed}}}
+		}
+		if cmd.Flags().Changed("gpu") || cmd.Flags().Changed("gpu-model") || len(args) == 0 {
+			gpu, _ := cmd.Flags().GetUint32("gpu")
+			model, _ := cmd.Flags().GetString("gpu-model")
+			if model != "" && gpu == 0 {
+				gpu = 1
+			}
+			gpuValue := map[string]any{"units": map[string]any{"val": strconv.FormatUint(uint64(gpu), 10)}}
+			if model != "" {
+				gpuValue["attributes"] = []any{map[string]any{"key": "vendor/nvidia/model", "value": model}}
+			}
+			resourceValue["gpu"] = gpuValue
+		}
+		if cmd.Flags().Changed("count") || len(args) == 0 {
+			count, _ := cmd.Flags().GetInt("count")
+			if count < 1 {
+				return nil, fmt.Errorf("--count must be greater than zero")
+			}
+			unit["count"] = count
+		}
+	}
+	// The tree above contains only JSON maps, slices, strings, and integers.
+	// Those values cannot fail JSON encoding after the successful decode.
+	raw, _ = json.Marshal(units)
+
+	attributes, _ := cmd.Flags().GetStringArray("attribute")
+	requirements := console.BidScreeningRequirements{}
+	for _, item := range attributes {
+		key, value, ok := strings.Cut(item, "=")
+		if !ok || strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+			return nil, fmt.Errorf("--attribute must use key=value, got %q", item)
+		}
+		requirements.Attributes = append(requirements.Attributes, console.Attribute{Key: strings.TrimSpace(key), Value: strings.TrimSpace(value)})
+	}
+	requirements.SignedBy.AnyOf, _ = cmd.Flags().GetStringSlice("signed-by")
+
+	reclamation, _ := cmd.Flags().GetInt64("reclamation-window")
+	if reclamation < 0 {
+		return nil, fmt.Errorf("--reclamation-window must be non-negative")
+	}
+	var reclamationRaw json.RawMessage
+	if cmd.Flags().Changed("reclamation-window") {
+		reclamationRaw = json.RawMessage(strconv.FormatInt(reclamation, 10))
+	}
+
+	return &console.BidScreeningRequest{
+		Requirements:      requirements,
+		Resources:         raw,
+		Timezone:          screeningTimezone(),
+		ReclamationWindow: reclamationRaw,
+	}, nil
+}
+
+func screeningQuantity(value string, cpu bool) (string, error) {
+	quantity, err := resource.ParseQuantity(value)
+	if err != nil {
+		return "", err
+	}
+	if quantity.Sign() <= 0 {
+		return "", fmt.Errorf("quantity must be greater than zero")
+	}
+	if cpu {
+		return strconv.FormatInt(quantity.MilliValue(), 10), nil
+	}
+
+	return strconv.FormatInt(quantity.Value(), 10), nil
 }
 
 // screeningTimezone returns the local IANA zone name for bid screening. The
@@ -665,4 +903,12 @@ func printLeaseEvent(cmd *cobra.Command, event rest.LeaseEvent) error {
 		event.Type, event.Object.Kind, event.Object.Name, event.Reason, event.Note)
 
 	return output.PrintStreamRecord(cmd, event, pretty)
+}
+
+func printEmptyEvents(cmd *cobra.Command, count int, follow bool) error {
+	if count == 0 && !follow && output.FormatFromCmd(cmd) == output.FormatTable {
+		return printConsoleText(cmd, "No recent events\n")
+	}
+
+	return nil
 }

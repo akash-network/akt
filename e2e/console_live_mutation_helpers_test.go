@@ -2144,16 +2144,18 @@ func (tracker *consoleResourceTracker) cleanup() {
 			}
 		}
 
-		closeDeadline, ok := consoleBoundedDeadline(mutationCtx, time.Now().Add(10*time.Second))
-		if !ok {
-			tracker.t.Errorf("Console cleanup had no time left to close %s", dseq)
-			continue
-		}
-		closeCtx, cancelClose := context.WithDeadline(mutationCtx, closeDeadline)
-		result := runConsoleAkt(closeCtx, tracker.t, tracker.home, "console", "deployment", "close", dseq)
-		cancelClose()
-		if result.Exit != 0 || result.Err != nil || result.CredentialLeak || result.StdoutTruncated || result.StderrTruncated {
-			tracker.t.Errorf("Console cleanup close %s failed (%s)", dseq, consoleCommandDiagnostic(result))
+		if !terminal {
+			closeDeadline, ok := consoleBoundedDeadline(mutationCtx, time.Now().Add(10*time.Second))
+			if !ok {
+				tracker.t.Errorf("Console cleanup had no time left to close %s", dseq)
+				continue
+			}
+			closeCtx, cancelClose := context.WithDeadline(mutationCtx, closeDeadline)
+			result := runConsoleAkt(closeCtx, tracker.t, tracker.home, "console", "deployment", "close", dseq)
+			cancelClose()
+			if result.Exit != 0 || result.Err != nil || result.CredentialLeak || result.StdoutTruncated || result.StderrTruncated {
+				tracker.t.Errorf("Console cleanup close %s failed (%s)", dseq, consoleCommandDiagnostic(result))
+			}
 		}
 	}
 

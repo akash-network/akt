@@ -104,7 +104,7 @@ func resolveDefaultAccountAddress(cctx sdkclient.Context) (string, error) {
 
 	from := strings.TrimSpace(cctx.From)
 	if from == "" {
-		return "", nil
+		return resolveTransportDefaultOwner(cctx)
 	}
 
 	if addr, err := sdk.AccAddressFromBech32(from); err == nil {
@@ -121,6 +121,27 @@ func resolveDefaultAccountAddress(cctx sdkclient.Context) (string, error) {
 	}
 
 	return addr.String(), nil
+}
+
+func resolveTransportDefaultOwner(cctx sdkclient.Context) (string, error) {
+	if cctx.CmdContext == nil {
+		return "", nil
+	}
+	resolver, ok := cctx.CmdContext.Value(ContextTypeDefaultOwnerResolver).(DefaultOwnerResolver)
+	if !ok || resolver == nil {
+		return "", nil
+	}
+
+	address, err := resolver(cctx.CmdContext)
+	if err != nil {
+		return "", err
+	}
+	parsed, err := sdk.AccAddressFromBech32(strings.TrimSpace(address))
+	if err != nil {
+		return "", fmt.Errorf("resolve transport default owner: invalid wallet address %q: %w", address, err)
+	}
+
+	return parsed.String(), nil
 }
 
 // defaultOwnerForQueryArg resolves the default account only for numeric
@@ -390,7 +411,14 @@ func ReadTxCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet, diagnost
 		if flagSet.Changed(flagdefs.FlagFrom) || from == "" {
 			from, _ = flagSet.GetString(flagdefs.FlagFrom)
 		}
-		fromAddr, fromName, keyType, err := sdkclient.GetFromFields(cctx, cctx.Keyring, from)
+		lookupContext := cctx
+		if cctx.Simulate {
+			// The Cosmos helper intentionally refuses key names once simulation
+			// is set. Resolve the name at this boundary first, then retain the
+			// original simulation context for transaction execution.
+			lookupContext = cctx.WithSimulation(false)
+		}
+		fromAddr, fromName, keyType, err := sdkclient.GetFromFields(lookupContext, cctx.Keyring, from)
 		if err != nil {
 			return cctx, err
 		}

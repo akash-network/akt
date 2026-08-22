@@ -1,7 +1,10 @@
 package console
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -12,10 +15,120 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	consoleapi "pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
+	flagdefs "pkg.akt.dev/akt/internal/flags"
 	sstore "pkg.akt.dev/akt/internal/store"
 	"pkg.akt.dev/akt/internal/store/bbolt"
 )
+
+func TestConfirmDeploymentCreateDefaultsToNo(t *testing.T) {
+	cmd := &cobra.Command{}
+	var diagnostics bytes.Buffer
+	cmd.SetErr(&diagnostics)
+
+	cmd.SetIn(strings.NewReader("\n"))
+	require.ErrorContains(t, confirmDeploymentCreate(cmd, true, "deploy.yaml", 5), "cancelled")
+	assert.Contains(t, diagnostics.String(), "Create deployment")
+
+	cmd.SetIn(strings.NewReader("yes\n"))
+	require.NoError(t, confirmDeploymentCreate(cmd, true, "deploy.yaml", 5))
+	require.NoError(t, confirmDeploymentCreate(cmd, false, "deploy.yaml", 5))
+}
+
+func TestConfirmDeploymentCreateReportsPromptAndReadFailures(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.SetErr(consoleOutputErrorWriter{err: assert.AnError})
+	cmd.SetIn(strings.NewReader("yes\n"))
+	require.ErrorIs(t, confirmDeploymentCreate(cmd, true, "deploy.yaml", 5), assert.AnError)
+
+	cmd.SetErr(io.Discard)
+	cmd.SetIn(strings.NewReader(""))
+	require.ErrorContains(t, confirmDeploymentCreate(cmd, true, "deploy.yaml", 5), "read deployment confirmation")
+}
+
+func TestDeploymentCreateReturnsInteractiveCancellation(t *testing.T) {
+	cmd := deploymentCreateCmdWithTerminal(func() *aktctx.Manager { return nil }, func(int) bool { return true })
+	cmd.Flags().String(flagdefs.FlagConsoleAPIKey, "sekrit", "")
+	cmd.SetIn(strings.NewReader("no\n"))
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"deploy.yaml", "5"})
+
+	require.ErrorContains(t, cmd.Execute(), "deployment creation cancelled")
+}
+
+func TestNegativePositionalHintCoversMatchingAndOrdinaryFlagErrors(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		arg  string
+		want string
+	}{
+		{name: "negative shorthand", arg: "-1", want: "place `--` before"},
+		{name: "ordinary flag", arg: "--unknown", want: "unknown flag"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cmd := &cobra.Command{Use: "deposit [amount]", RunE: func(*cobra.Command, []string) error { return nil }}
+			addNegativePositionalHint(cmd, "amount")
+			cmd.SetArgs([]string{test.arg})
+			_, err := cmd.ExecuteC()
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
+func TestDeploymentListStateCommandValidationAndFiltering(t *testing.T) {
+	m := newAuthedManager(t)
+	if _, err := execConsole(t, m, "", "deployment", "list", "pending"); err == nil {
+		t.Fatal("invalid deployment state did not fail")
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, `{"data":{"deployments":[{"deployment":{"id":{"dseq":"42"},"state":"active"}}],"pagination":{"hasMore":false}}}`)
+	}))
+	defer srv.Close()
+
+	out, err := execConsole(t, m, srv.URL, "deployment", "list", "active", "--limit", "1")
+	require.NoError(t, err)
+	assert.Contains(t, out, "42")
+}
+
+func TestDeploymentSettingsReadPreflightsDeployment(t *testing.T) {
+	m := newAuthedManager(t)
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/v1/deployments/42":
+			writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"42"},"state":"active"}}}`)
+		case "/v2/deployment-settings/42":
+			writeJSON(t, w, `{"data":{"dseq":"42","autoTopUpEnabled":true}}`)
+		default:
+			t.Fatalf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	_, err := execConsole(t, m, srv.URL, "deployment", "settings", "42")
+	require.NoError(t, err)
+	assert.Equal(t, []string{"/v1/deployments/42", "/v2/deployment-settings/42"}, paths)
+}
+
+func TestDeploymentSettingsReadReturnsDeploymentPreflightFailure(t *testing.T) {
+	m := newAuthedManager(t)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/deployments/404", r.URL.Path)
+		http.NotFound(w, r)
+	}))
+	defer srv.Close()
+
+	_, err := execConsole(t, m, srv.URL, "deployment", "settings", "404")
+	require.ErrorContains(t, err, "deployment 404")
+}
 
 const validConsoleDeploymentSDL = `version: "2.0"
 services:
@@ -231,50 +344,42 @@ func TestDeploymentDepositStructuredAcknowledgement(t *testing.T) {
 }
 
 func TestDeploymentCloseStructuredAcknowledgement(t *testing.T) {
-	for _, tc := range []struct {
-		name          string
-		status        int
-		alreadyClosed bool
-	}{
-		{name: "closed", status: http.StatusOK},
-		{name: "already closed", status: http.StatusNotFound, alreadyClosed: true},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			m := newTestManager(t)
-			if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
-				t.Fatalf("SetConsoleAPIKey: %v", err)
+	m := newTestManager(t)
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
+		t.Fatalf("SetConsoleAPIKey: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/deployments/42" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if r.Method == http.MethodGet {
+			writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"42"},"state":"active"}}}`)
+			return
+		}
+		if r.Method != http.MethodDelete {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		writeJSON(t, w, `{"data":{"success":true}}`)
+	}))
+	defer srv.Close()
+
+	for _, format := range []string{"json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			out, err := execConsole(t, m, srv.URL, "deployment", "close", "42", "-o", format)
+			if err != nil {
+				t.Fatalf("close -o %s: %v", format, err)
 			}
 
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != http.MethodDelete || r.URL.Path != "/v1/deployments/42" {
-					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
-				}
-				if tc.status == http.StatusOK {
-					writeJSON(t, w, `{"data":{"success":true}}`)
-					return
-				}
-				w.WriteHeader(tc.status)
-			}))
-			defer srv.Close()
-
-			for _, format := range []string{"json", "yaml"} {
-				t.Run(format, func(t *testing.T) {
-					out, err := execConsole(t, m, srv.URL, "deployment", "close", "42", "-o", format)
-					if err != nil {
-						t.Fatalf("close -o %s: %v", format, err)
-					}
-
-					got := decodeStructuredMap(t, format, out)
-					if got["dseq"] != "42" || got["state"] != "closed" || got["already_closed"] != tc.alreadyClosed {
-						t.Errorf("close acknowledgement = %#v, want dseq=42 state=closed already_closed=%v", got, tc.alreadyClosed)
-					}
-				})
+			got := decodeStructuredMap(t, format, out)
+			if len(got) != 2 || got["dseq"] != "42" || got["state"] != "closed" {
+				t.Errorf("close acknowledgement = %#v, want dseq=42 state=closed", got)
 			}
 		})
 	}
 }
 
-func TestDeploymentCloseRepeatedSuccessDoesNotInventPriorState(t *testing.T) {
+func TestDeploymentCloseRepeatedAttemptFailsWithoutSecondDelete(t *testing.T) {
 	m := newTestManager(t)
 	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
 		t.Fatalf("SetConsoleAPIKey: %v", err)
@@ -282,29 +387,36 @@ func TestDeploymentCloseRepeatedSuccessDoesNotInventPriorState(t *testing.T) {
 
 	var deletes atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete || r.URL.Path != "/v1/deployments/42" {
+		if r.URL.Path != "/v1/deployments/42" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if r.Method == http.MethodGet {
+			state := "active"
+			if deletes.Load() > 0 {
+				state = "closed"
+			}
+			fmt.Fprintf(w, `{"data":{"deployment":{"id":{"dseq":"42"},"state":%q}}}`, state)
+			return
 		}
 		deletes.Add(1)
 		writeJSON(t, w, `{"data":{"success":true}}`)
 	}))
 	defer srv.Close()
 
-	for attempt := 1; attempt <= 2; attempt++ {
-		out, err := execConsole(t, m, srv.URL, "deployment", "close", "42", "-o", "json")
-		if err != nil {
-			t.Fatalf("close attempt %d: %v", attempt, err)
-		}
-
-		got := decodeStructuredMap(t, "json", out)
-		alreadyClosed, isBool := got["already_closed"].(bool)
-		if len(got) != 3 || got["dseq"] != "42" || got["state"] != "closed" || !isBool || alreadyClosed {
-			t.Errorf("close attempt %d acknowledgement = %#v, want dseq=42 state=closed already_closed=false", attempt, got)
-		}
+	out, err := execConsole(t, m, srv.URL, "deployment", "close", "42", "-o", "json")
+	if err != nil {
+		t.Fatalf("first close: %v", err)
+	}
+	got := decodeStructuredMap(t, "json", out)
+	if len(got) != 2 || got["dseq"] != "42" || got["state"] != "closed" {
+		t.Errorf("first close acknowledgement = %#v", got)
+	}
+	if _, err := execConsole(t, m, srv.URL, "deployment", "close", "42", "-o", "json"); !errors.Is(err, consoleapi.ErrAlreadyClosed) {
+		t.Fatalf("second close = %v, want ErrAlreadyClosed", err)
 	}
 
-	if got := deletes.Load(); got != 2 {
-		t.Fatalf("DELETE requests = %d, want 2", got)
+	if got := deletes.Load(); got != 1 {
+		t.Fatalf("DELETE requests = %d, want 1", got)
 	}
 }
 
@@ -332,6 +444,10 @@ func TestDeploymentCloseConvergesUniqueLocalDeploymentAndLeases(t *testing.T) {
 	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/42" {
+			writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"42"},"state":"active"}}}`)
+			return
+		}
 		if r.Method != http.MethodDelete || r.URL.Path != "/v1/deployments/42" {
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
@@ -382,17 +498,21 @@ func TestDeploymentCloseDoesNotGuessBetweenLocalOwners(t *testing.T) {
 		t.Fatalf("close seed store: %v", err)
 	}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"42"},"state":"active"}}}`)
+			return
+		}
 		writeJSON(t, w, `{"data":{"success":true}}`)
 	}))
 	defer srv.Close()
 
-	out, err := execConsole(t, m, srv.URL, "deployment", "close", "42")
+	_, stderr, err := execConsoleContextStreams(context.Background(), t, m, srv.URL, "deployment", "close", "42")
 	if err != nil {
 		t.Fatalf("deployment close: %v", err)
 	}
-	if !strings.Contains(out, "multiple local owners") {
-		t.Errorf("ambiguous local close did not warn:\n%s", out)
+	if !strings.Contains(stderr, "multiple local owners") {
+		t.Errorf("ambiguous local close did not warn:\n%s", stderr)
 	}
 
 	s, err = bbolt.OpenContext(ctx, m.Root(), "prod")
@@ -408,9 +528,49 @@ func TestDeploymentCloseDoesNotGuessBetweenLocalOwners(t *testing.T) {
 	}
 }
 
-// TestDeploymentListZeroFlagValues pins that legitimately-zero flag values
-// are not mis-reported as errors: --skip 0 is forwarded and --limit 0 falls
-// back to the server default page size (the API requires limit >= 1).
+func TestDeploymentCloseAlreadyClosedWarnsWhenLocalStateIsAmbiguous(t *testing.T) {
+	m := newTestManager(t)
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
+		t.Fatalf("SetConsoleAPIKey: %v", err)
+	}
+
+	ctx := context.Background()
+	s, err := bbolt.OpenContext(ctx, m.Root(), "prod")
+	if err != nil {
+		t.Fatalf("OpenContext: %v", err)
+	}
+	for _, owner := range []string{
+		"akash1zn43lmk4dmvcjmfhtaqk4wa9zpuru3xy0kzupu",
+		"akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx",
+	} {
+		if err := s.PutDeployment(ctx, &sstore.DeploymentRecord{Owner: owner, DSeq: 42, State: "active"}); err != nil {
+			t.Fatalf("PutDeployment: %v", err)
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatalf("close seed store: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/deployments/42" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+
+	_, stderr, err := execConsoleContextStreams(ctx, t, m, srv.URL, "deployment", "close", "42")
+	if !errors.Is(err, consoleapi.ErrAlreadyClosed) {
+		t.Fatalf("deployment close error = %v, want ErrAlreadyClosed", err)
+	}
+	if !strings.Contains(stderr, "multiple local owners") {
+		t.Fatalf("already-closed local convergence warning = %q", stderr)
+	}
+}
+
+// TestDeploymentListZeroFlagValues pins that skip may be zero but the API's
+// one-based page size may not. Both are rejected before a malformed request
+// can reach Console.
 func TestDeploymentListZeroFlagValues(t *testing.T) {
 	m := newTestManager(t)
 	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
@@ -424,15 +584,12 @@ func TestDeploymentListZeroFlagValues(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	if _, err := execConsole(t, m, srv.URL, "deployment", "list", "--skip", "0", "--limit", "0"); err != nil {
-		t.Fatalf("deployment list with zero flag values must succeed, got %v", err)
+	if _, err := execConsole(t, m, srv.URL, "deployment", "list", "--skip", "0", "--limit", "0"); err == nil {
+		t.Fatal("deployment list with a zero limit must fail")
 	}
 
-	if gotQuery.Get("skip") != "0" {
-		t.Errorf("skip=0 must be forwarded, got query %v", gotQuery)
-	}
-	if _, present := gotQuery["limit"]; present {
-		t.Errorf("limit=0 must be omitted so the server default applies, got query %v", gotQuery)
+	if gotQuery != nil {
+		t.Errorf("invalid pagination reached Console with query %v", gotQuery)
 	}
 }
 

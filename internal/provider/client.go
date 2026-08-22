@@ -18,6 +18,22 @@ import (
 	atls "pkg.akt.dev/go/util/tls"
 )
 
+// GatewayClientOption configures akt's provider gateway boundary.
+type GatewayClientOption func(*gatewayClient) error
+
+// WithOneShotTimeout sets the deadline applied to finite provider gateway
+// requests. Established streaming requests retain the caller's lifetime.
+func WithOneShotTimeout(timeout time.Duration) GatewayClientOption {
+	return func(client *gatewayClient) error {
+		if timeout <= 0 {
+			return fmt.Errorf("provider gateway timeout must be greater than zero")
+		}
+		client.oneShotTimeout = timeout
+
+		return nil
+	}
+}
+
 // NewPublicGatewayClient creates a provider gateway REST client without
 // attaching wallet authentication. It is only suitable for public endpoints
 // such as provider status.
@@ -25,12 +41,31 @@ func NewPublicGatewayClient(
 	ctx context.Context,
 	addr sdk.AccAddress,
 	providerURL string,
+	options ...GatewayClientOption,
 ) (rest.Client, error) {
 	client, err := rest.NewClient(ctx, addr, rest.WithProviderURL(providerURL))
 	if err != nil {
 		return nil, err
 	}
-	return wrapGatewayClient(gatewayStreamBoundaryClient{Client: client}, providerURL, nil)
+	gateway, err := wrapGatewayClient(gatewayStreamBoundaryClient{Client: client}, providerURL, nil)
+	return configurePublicGatewayClient(gateway, err, options...)
+}
+
+func configurePublicGatewayClient(
+	gateway *gatewayClient,
+	gatewayErr error,
+	options ...GatewayClientOption,
+) (rest.Client, error) {
+	if gatewayErr != nil {
+		return nil, gatewayErr
+	}
+	for _, option := range options {
+		if err := option(gateway); err != nil {
+			return nil, err
+		}
+	}
+
+	return gateway, nil
 }
 
 // NewTokenGatewayClient creates a provider client authenticated by an existing

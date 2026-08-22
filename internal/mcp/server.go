@@ -113,6 +113,22 @@ func (s *Server) registerChainTools(
 	providerAuthType string,
 	enableWrites bool,
 ) error {
+	return s.registerChainToolsWithLightClient(
+		ctx,
+		cctx,
+		providerAuthType,
+		enableWrites,
+		client.NewLightClient,
+	)
+}
+
+func (s *Server) registerChainToolsWithLightClient(
+	ctx context.Context,
+	cctx sdkclient.Context,
+	providerAuthType string,
+	enableWrites bool,
+	newLightClient func(sdkclient.Context) (client.LightClient, error),
+) error {
 	// Checked before building a client, because the constructors accept an
 	// empty context happily and hand back something that fails on every call.
 	// Registering those tools would advertise a chain rail that cannot work,
@@ -121,24 +137,24 @@ func (s *Server) registerChainTools(
 		return errors.New("no chain RPC endpoint configured for the active context")
 	}
 
-	if enableWrites {
-		cl, err := client.NewClient(ctx, cctx)
-		if err != nil {
-			return err
-		}
-
-		s.registerQueryTools(cl, providerAuthType)
-		s.registerWriteTools(ctx, cl, providerAuthType)
-
-		return nil
-	}
-
-	cl, err := client.NewLightClient(cctx)
+	light, err := newLightClient(cctx)
 	if err != nil {
 		return err
 	}
+	s.registerQueryTools(light, providerAuthType)
 
-	s.registerQueryTools(cl, providerAuthType)
+	if !enableWrites {
+		return nil
+	}
+
+	// A signing client resolves the account against chain state. A new or
+	// unfunded key can legitimately have no account yet; that must only remove
+	// the write rail, never the already-healthy public query rail.
+	cl, err := client.NewClient(ctx, cctx)
+	if err != nil {
+		return nil //nolint:nilerr // signer discovery is optional after query registration
+	}
+	s.registerWriteTools(ctx, cl, providerAuthType)
 
 	return nil
 }

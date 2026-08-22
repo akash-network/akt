@@ -9,6 +9,7 @@ import (
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
+	consoleapi "pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
 )
 
@@ -110,7 +111,7 @@ func apikeyCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 func apikeyDeleteCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	return &cobra.Command{
 		Use:     "delete <id>",
-		Short:   "Delete an API key by ID (already-absent is a no-op)",
+		Short:   "Delete an API key by ID",
 		Args:    cobra.ExactArgs(1),
 		Example: `  akt console apikey delete 0b8052e2-...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -119,7 +120,6 @@ func apikeyDeleteCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			// DeleteAPIKey treats 404 as a no-op.
 			if err := cl.DeleteAPIKey(cmd.Context(), args[0]); err != nil {
 				return fmt.Errorf("delete API key %s: %w", args[0], err)
 			}
@@ -132,8 +132,9 @@ func apikeyDeleteCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	}
 }
 
-// defaultJWTScope mirrors the Console reference CLI's default lease scopes.
-var defaultJWTScope = []string{"status", "logs", "events", "shell", "send-manifest", "get-manifest"}
+func defaultJWTScope() []string {
+	return []string{"status", "logs", "events", "shell", "send-manifest", "get-manifest"}
+}
 
 func jwtCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
@@ -154,13 +155,13 @@ func jwtCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 			}
 
 			ttl, _ := cmd.Flags().GetInt(flagdefs.FlagTTL)
-			if ttl <= 0 {
-				return fmt.Errorf("--ttl must be a positive number of seconds, got %d", ttl)
+			if ttl < 1 || ttl > consoleapi.MaxJWTTTLSeconds {
+				return fmt.Errorf("--ttl must be between 1 and %d seconds, got %d", consoleapi.MaxJWTTTLSeconds, ttl)
 			}
 
 			scopeCSV, _ := cmd.Flags().GetString(flagdefs.FlagScope)
 
-			scope := defaultJWTScope
+			scope := defaultJWTScope()
 			if scopeCSV != "" {
 				scope = nil
 				for _, s := range strings.Split(scopeCSV, ",") {
@@ -186,8 +187,8 @@ func jwtCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	create.Flags().Int(flagdefs.FlagTTL, 300, "Token lifetime in seconds")
-	create.Flags().String(flagdefs.FlagScope, "", "Comma-separated scopes (default: "+strings.Join(defaultJWTScope, ",")+")")
+	create.Flags().Int(flagdefs.FlagTTL, 300, fmt.Sprintf("Token lifetime in seconds (maximum %d)", consoleapi.MaxJWTTTLSeconds))
+	create.Flags().String(flagdefs.FlagScope, "", "Comma-separated scopes (default: "+strings.Join(defaultJWTScope(), ",")+")")
 
 	cmd.AddCommand(create)
 

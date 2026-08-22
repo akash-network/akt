@@ -1,10 +1,13 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"testing"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"
 
 	aktcodec "pkg.akt.dev/akt/internal/codec"
@@ -14,6 +17,61 @@ import (
 type keyLookupCounter struct {
 	sdkkeyring.Keyring
 	lookups int
+}
+
+func TestDefaultOwnerResolutionUsesTransportResolverLazily(t *testing.T) {
+	want := sdk.AccAddress([]byte("01234567890123456789")).String()
+	calls := 0
+	ctx := context.WithValue(
+		context.Background(),
+		ContextTypeDefaultOwnerResolver,
+		DefaultOwnerResolver(func(context.Context) (string, error) {
+			calls++
+			return want, nil
+		}),
+	)
+	cctx := sdkclient.Context{}.WithCmdContext(ctx)
+
+	owner, err := resolveDefaultAccountAddress(cctx)
+	require.NoError(t, err)
+	require.Equal(t, want, owner)
+	require.Equal(t, 1, calls)
+
+	owner, err = defaultOwnerForQueryArg(cctx, []string{want})
+	require.NoError(t, err)
+	require.Empty(t, owner)
+	require.Equal(t, 1, calls, "an explicit owner must bypass the transport resolver")
+
+	resolverErr := errors.New("wallet unavailable")
+	cctx = cctx.WithCmdContext(context.WithValue(
+		context.Background(),
+		ContextTypeDefaultOwnerResolver,
+		DefaultOwnerResolver(func(context.Context) (string, error) { return "", resolverErr }),
+	))
+	_, err = resolveDefaultAccountAddress(cctx)
+	require.ErrorIs(t, err, resolverErr)
+}
+
+func TestTransportDefaultOwnerResolverBoundaryFailures(t *testing.T) {
+	t.Run("missing resolver", func(t *testing.T) {
+		owner, err := resolveTransportDefaultOwner(
+			sdkclient.Context{}.WithCmdContext(context.Background()),
+		)
+		require.NoError(t, err)
+		require.Empty(t, owner)
+	})
+
+	t.Run("invalid resolver address", func(t *testing.T) {
+		ctx := context.WithValue(
+			context.Background(),
+			ContextTypeDefaultOwnerResolver,
+			DefaultOwnerResolver(func(context.Context) (string, error) {
+				return "not-a-wallet", nil
+			}),
+		)
+		_, err := resolveTransportDefaultOwner(sdkclient.Context{}.WithCmdContext(ctx))
+		require.ErrorContains(t, err, "invalid wallet address")
+	})
 }
 
 func (k *keyLookupCounter) Key(uid string) (*sdkkeyring.Record, error) {

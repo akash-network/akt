@@ -17,8 +17,9 @@ import (
 // — "../..", absolute paths, empty strings — must never reach
 // filepath.Join.
 func validateDSeq(dseq string) error {
-	if _, err := strconv.ParseUint(dseq, 10, 64); err != nil {
-		return fmt.Errorf("console: invalid dseq %q: must be a plain numeric sequence", dseq)
+	parsed, err := strconv.ParseUint(dseq, 10, 64)
+	if err != nil || parsed == 0 {
+		return fmt.Errorf("console: invalid dseq %q: must be a positive numeric sequence", dseq)
 	}
 
 	return nil

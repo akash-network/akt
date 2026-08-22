@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -36,6 +37,7 @@ import (
 	aktclient "pkg.akt.dev/akt/internal/client"
 	"pkg.akt.dev/akt/internal/cliutil"
 	aktcodec "pkg.akt.dev/akt/internal/codec"
+	aktconsole "pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
 	"pkg.akt.dev/akt/internal/glyphs"
 	aktkeyring "pkg.akt.dev/akt/internal/keyring"
@@ -285,6 +287,9 @@ the deployment is created.`,
 				if err := applyProviderDefaults(cmd, rc); err != nil {
 					return err
 				}
+				if rc.AuthMethod == aktctx.AuthMethodConsoleAPI && rc.ConsoleAPIKey != "" {
+					cmd.SetContext(withConsoleDefaultOwnerResolver(cmd.Context(), rc))
+				}
 			}
 			if resolved && cmd.Flags().Lookup(flagdefs.FlagOffline) != nil {
 				if err := chaincli.ValidateTxInvocation(cmd); err != nil {
@@ -376,9 +381,11 @@ the deployment is created.`,
 		PersistentPostRunE: func(cmd *cobra.Command, _ []string) error {
 			// Close the action logger opened in PersistentPreRunE (SPEC §5.6).
 			if l := cliutil.ActionLogFromContext(cmd.Context()); l != nil {
-				return l.Close()
+				if err := l.Close(); err != nil {
+					return err
+				}
 			}
-			return nil
+			return cliconsole.PrintNextStep(cmd)
 		},
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -683,6 +690,10 @@ func requiresConfig(cmd *cobra.Command) bool {
 	// a network fetch before linting a local file would be backwards.
 	case strings.HasPrefix(path, "akt sdl"):
 		return false
+	// These are the explicit remedies for missing configuration. Running a
+	// bootstrap warning before them makes a successful creation look failed.
+	case path == "akt context create", path == "akt context network create":
+		return false
 	}
 
 	return true
@@ -745,13 +756,10 @@ func localIdentityMode(cmd *cobra.Command) aktclient.LocalIdentityMode {
 			return aktclient.LocalIdentityOnDemand
 		}
 		return aktclient.LocalIdentityRequired
-	// MCP reads defer identity until an owner-defaulting tool is invoked.
-	// Explicitly enabling writes opts a keyring context into eager resolution;
-	// MustResolveAndInit keeps Console-only contexts keyring-free.
+	// MCP reads defer identity until an owner-defaulting tool is invoked. Write
+	// registration is additive: an account that does not exist on-chain yet
+	// must not prevent the server from exposing healthy read-only tools.
 	case strings.HasPrefix(path, "akt mcp"):
-		if boolFlag(cmd, "enable-writes") {
-			return aktclient.LocalIdentityRequired
-		}
 		return aktclient.LocalIdentityOnDemand
 	// Unsigned construction and simulation accept a bech32 signer without a
 	// local key. A signer name resolves through the deferred keyring later.
@@ -767,6 +775,32 @@ func localIdentityMode(cmd *cobra.Command) aktclient.LocalIdentityMode {
 	}
 
 	return aktclient.LocalIdentityRequired
+}
+
+func withConsoleDefaultOwnerResolver(ctx context.Context, rc *aktctx.Context) context.Context {
+	resolver := chaincli.DefaultOwnerResolver(func(callCtx context.Context) (string, error) {
+		cl := aktconsole.New(rc.ConsoleAPIURL, rc.ConsoleAPIKey)
+		user, err := cl.GetUser(callCtx)
+		if err != nil {
+			return "", fmt.Errorf("resolve Console managed wallet user: %w", err)
+		}
+		if strings.TrimSpace(user.ID) == "" {
+			return "", errors.New("resolve Console managed wallet user: response omitted user ID")
+		}
+		wallets, err := cl.ListWallets(callCtx, user.ID)
+		if err != nil {
+			return "", fmt.Errorf("resolve Console managed wallets: %w", err)
+		}
+		for _, wallet := range wallets {
+			if address := strings.TrimSpace(wallet.Address); address != "" {
+				return address, nil
+			}
+		}
+
+		return "", errors.New("console account has no managed wallet address")
+	})
+
+	return context.WithValue(ctx, chaincli.ContextTypeDefaultOwnerResolver, resolver)
 }
 
 // rawTxAuthError is the execution boundary between raw Cosmos/Akash

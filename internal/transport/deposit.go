@@ -55,7 +55,9 @@ type Deposit struct {
 //
 //	""/"auto"               -> rail default (chain: chain-minimum deposit;
 //	                           console: error, explicit USD required)
-//	"5usd", "$5", "5.50usd" -> USD amount (console rail only)
+//	"5usd", "$5", "5.50usd" -> USD amount (console rail only; plain
+//	                              decimal notation with at most two
+//	                              fractional digits)
 //	"5000000uakt", "5akt"   -> coin amount (chain rail only)
 //	"5", "5.50"             -> bare number: USD on the console rail;
 //	                           rejected on the chain rail (coins need a
@@ -91,9 +93,12 @@ func ParseDeposit(s string) (Deposit, error) {
 		return Deposit{Raw: t, IsUSD: true, USD: usd}, nil
 	}
 
-	// Bare number: valid syntax on both rails, interpreted per rail.
-	if usd, err := strconv.ParseFloat(t, 64); err == nil {
-		if err := validUSDAmount(usd); err != nil {
+	// Bare number: valid syntax on both rails, interpreted per rail. Values
+	// that look numeric stay on the USD parsing path so syntax such as an
+	// exponent or a Go numeric separator cannot fall through to coin parsing.
+	if looksLikeBareUSD(t) {
+		usd, err := parseUSDAmount(t)
+		if err != nil {
 			return Deposit{}, fmt.Errorf("invalid deposit %q: %w", s, err)
 		}
 
@@ -157,6 +162,17 @@ func parseUSDAmount(s string) (float64, error) {
 	if s == "" {
 		return 0, fmt.Errorf("missing USD amount")
 	}
+	if strings.HasPrefix(s, "-") {
+		return 0, fmt.Errorf("USD amount must not be negative")
+	}
+
+	integer, fraction, hasPoint := strings.Cut(s, ".")
+	if integer == "" || !decimalDigits(integer) || (hasPoint && (fraction == "" || !decimalDigits(fraction))) {
+		return 0, fmt.Errorf("invalid USD amount %q: use plain decimal notation", s)
+	}
+	if hasPoint && len(fraction) > 2 {
+		return 0, fmt.Errorf("USD amount must have at most two fractional digits")
+	}
 
 	v, err := strconv.ParseFloat(s, 64)
 	if err != nil {
@@ -168,6 +184,29 @@ func parseUSDAmount(s string) (float64, error) {
 	}
 
 	return v, nil
+}
+
+func decimalDigits(s string) bool {
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+
+	return s != ""
+}
+
+func looksLikeBareUSD(s string) bool {
+	for _, r := range s {
+		switch {
+		case r >= '0' && r <= '9':
+		case r == '.', r == '+', r == '-', r == 'e', r == 'E', r == '_':
+		default:
+			return false
+		}
+	}
+
+	return s != ""
 }
 
 // validUSDAmount rejects negative and non-finite USD amounts. Zero is left

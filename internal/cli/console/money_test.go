@@ -1,7 +1,9 @@
 package console
 
 import (
+	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,10 +13,19 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	"pkg.akt.dev/akt/internal/capability"
 	"pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
+	flagdefs "pkg.akt.dev/akt/internal/flags"
 )
+
+type failingPrettyMarshaler struct{}
+
+func (failingPrettyMarshaler) MarshalJSON() ([]byte, error) {
+	return nil, errors.New("marshal failed")
+}
 
 // newAuthedManager returns a manager whose "prod" context already carries a
 // Console API key, for the authenticated command surface.
@@ -99,6 +110,98 @@ func TestFormatUSDPreservesSubCentValues(t *testing.T) {
 		if got := formatUSD(tt.value); got != tt.want {
 			t.Errorf("formatUSD(%g) = %q, want %q", tt.value, got, tt.want)
 		}
+	}
+}
+
+func TestConsolePrettyRendererUsesHumanMoneySemantics(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().String(flagdefs.FlagOutput, "pretty", "")
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	detail := console.DeploymentDetail{
+		Deployment: console.Deployment{ID: console.DeploymentID{Owner: "akash1owner", DSeq: "42"}, State: "active"},
+		Leases: []console.Lease{{
+			ID:    console.LeaseID{Provider: "akash1provider", DSeq: "42"},
+			Price: &console.Price{Denom: "uact", Amount: "1"},
+		}},
+		EscrowAccount: json.RawMessage(`{"state":{"funds":{"denom":"uact","amount":"500000"}}}`),
+	}
+	if err := printJSON(cmd, detail); err != nil {
+		t.Fatal(err)
+	}
+	rendered := out.String()
+	for _, want := range []string{"akash1owner", "akash1provider", "$0.50", "$0.43/month"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("pretty output %q missing %q", rendered, want)
+		}
+	}
+	if strings.Contains(rendered, "{") {
+		t.Fatalf("pretty output fell back to raw JSON: %q", rendered)
+	}
+}
+
+func TestConsolePrettyRendererCoversSemanticShapesAndFailures(t *testing.T) {
+	cmd := &cobra.Command{}
+	cmd.Flags().String(flagdefs.FlagOutput, "pretty", "")
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+
+	if err := printConsolePretty(cmd, failingPrettyMarshaler{}); err == nil {
+		t.Fatal("unsupported JSON value did not fail")
+	}
+	if _, err := decodeConsoleSemantic([]byte(`{`)); err == nil {
+		t.Fatal("invalid semantic JSON did not fail")
+	}
+	if err := printConsolePrettyWithDecoder(cmd, map[string]any{"ok": true}, func([]byte) (any, error) {
+		return nil, errors.New("decode failed")
+	}); err == nil || !strings.Contains(err.Error(), "decode pretty output") {
+		t.Fatalf("decoder failure = %v", err)
+	}
+
+	if err := printConsolePretty(cmd, map[string]any{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); got != "No data.\n" {
+		t.Fatalf("empty pretty output = %q", got)
+	}
+
+	out.Reset()
+	if err := printConsolePretty(cmd, "value"); err != nil {
+		t.Fatal(err)
+	}
+	if got := out.String(); got != "value\n" {
+		t.Fatalf("scalar pretty output = %q", got)
+	}
+
+	var rendered strings.Builder
+	renderConsoleValue(&rendered, map[string]any{
+		"boolValue": true,
+		"emptyList": []any{},
+		"items": []any{
+			"text",
+			map[string]any{"denom": "uakt", "amount": "25"},
+			map[string]any{"nested": nil},
+		},
+		"malformedCoin": map[string]any{"denom": "uact", "amount": "not-a-number"},
+		"missingAmount": map[string]any{"denom": "uact"},
+		"nothing":       nil,
+		"snake_key":     "",
+	}, 0, "")
+	text := rendered.String()
+	for _, want := range []string{"Bool Value: true", "none", "25 uakt", "not-a-number uact", "Snake key: none"} {
+		if !strings.Contains(text, want) {
+			t.Errorf("semantic render %q missing %q", text, want)
+		}
+	}
+
+	rendered.Reset()
+	renderConsoleValue(&rendered, map[string]any{"denom": "uact", "amount": "1000000"}, 0, "")
+	if got := rendered.String(); got != "$1.00" {
+		t.Fatalf("root coin = %q", got)
+	}
+	if got := humanConsoleLabel(""); got != "" {
+		t.Fatalf("empty label = %q", got)
 	}
 }
 
@@ -309,7 +412,7 @@ func TestDepositRejectsNonPositiveAmount(t *testing.T) {
 			t.Errorf("%v must be rejected", arg)
 			continue
 		}
-		if !strings.Contains(err.Error(), "positive USD amount") {
+		if !strings.Contains(err.Error(), "at least $0.50") {
 			t.Errorf("%v: unexpected error %v", arg, err)
 		}
 	}
@@ -611,47 +714,52 @@ func TestAPIKeyCreateShowsSecretOnceWithWarning(t *testing.T) {
 	}
 }
 
-// TestAPIKeyDeleteIsIdempotent covers the delete no-op: the client maps 404 to
-// success, so re-running a delete script must not fail.
-func TestAPIKeyDeleteIsIdempotent(t *testing.T) {
+func TestAPIKeyDeleteMissingResourceDoesNotReportSuccess(t *testing.T) {
 	m := newAuthedManager(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete {
-			t.Errorf("unexpected method %s", r.Method)
+		if r.Method != http.MethodGet || r.URL.Path != "/v1/api-keys" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		w.WriteHeader(http.StatusNotFound)
+		writeJSON(t, w, `{"data":[]}`)
 	}))
 	defer srv.Close()
 
-	out, err := execConsole(t, m, srv.URL, "apikey", "delete", "key-1")
-	if err != nil {
-		t.Fatalf("deleting an absent key must be a no-op, got %v", err)
+	const id = "11111111-1111-1111-1111-111111111111"
+	out, err := execConsole(t, m, srv.URL, "--output", "pretty", "apikey", "delete", id)
+	if !errors.Is(err, console.ErrNotFound) {
+		t.Fatalf("deleting an absent key error = %v, want ErrNotFound", err)
 	}
-	if !strings.Contains(out, "key-1 deleted") {
-		t.Errorf("unexpected output %q", out)
+	if strings.Contains(out, "deleted") {
+		t.Errorf("absent API key emitted false success output %q", out)
 	}
 }
 
-func TestAPIKeyDeleteStructuredAcknowledgement(t *testing.T) {
+func TestAPIKeyDeleteStructuredAcknowledgementRequiresDeletion(t *testing.T) {
 	m := newAuthedManager(t)
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodDelete || r.URL.Path != "/v1/api-keys/key-1" {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/api-keys":
+			writeJSON(t, w, `{"data":[{"id":"11111111-1111-1111-1111-111111111111","name":"ci"}]}`)
+		case r.Method == http.MethodDelete && r.URL.Path == "/v1/api-keys/11111111-1111-1111-1111-111111111111":
+			w.WriteHeader(http.StatusNoContent)
+		default:
 			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
 		}
-		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer srv.Close()
 
 	for _, format := range []string{"json", "yaml"} {
 		t.Run(format, func(t *testing.T) {
-			out, err := execConsole(t, m, srv.URL, "--output", format, "apikey", "delete", "key-1")
+			const id = "11111111-1111-1111-1111-111111111111"
+			out, err := execConsole(t, m, srv.URL, "--output", format, "apikey", "delete", id)
 			if err != nil {
-				t.Fatalf("delete absent API key: %v", err)
+				t.Fatalf("delete API key: %v", err)
 			}
 			got := decodeStructuredOutput(t, format, out)
-			want := map[string]any{"id": "key-1", "deleted": true}
+			want := map[string]any{"id": id, "deleted": true}
 			if !reflect.DeepEqual(got, want) {
 				t.Fatalf("structured delete output = %#v, want %#v", got, want)
 			}

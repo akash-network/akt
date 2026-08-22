@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -306,6 +307,10 @@ func TestConsoleUpdateDeployment(t *testing.T) {
 
 	c, _ := newConsoleClient(t, func(w http.ResponseWriter, r *http.Request) {
 		gotMethod, gotPath = r.Method, r.URL.Path
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"777"},"state":"active"},"leases":[]}}`))
+			return
+		}
 		gotData = decodeEnvelope(t, r)
 		_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"777"},"state":"active","hash":"` + expectedHash + `"},"leases":[]}}`))
 	})
@@ -362,14 +367,11 @@ func TestConsoleCloseDeploymentAlreadyClosed(t *testing.T) {
 	})
 
 	res, err := c.BroadcastTx(context.Background(), msgCloseDeployment, map[string]string{"dseq": "999"})
-	if err != nil {
-		t.Fatalf("already-closed must be treated as success, got: %v", err)
+	if !errors.Is(err, console.ErrAlreadyClosed) {
+		t.Fatalf("already-closed error = %v, want ErrAlreadyClosed", err)
 	}
-
-	var data map[string]string
-	_ = json.Unmarshal(res.Data, &data)
-	if data["dseq"] != "999" {
-		t.Errorf("data dseq = %q, want \"999\"", data["dseq"])
+	if res != nil {
+		t.Fatalf("already-closed result = %+v, want no completed transaction", res)
 	}
 }
 

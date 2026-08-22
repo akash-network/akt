@@ -97,6 +97,38 @@ func TestCreateRequiresNetworkUnlessConsole(t *testing.T) {
 	}
 }
 
+func TestCreatePrintsEffectiveContextConfirmation(t *testing.T) {
+	m := newTestManager(t)
+	cmd := createCmd(func() *aktctx.Manager { return m })
+	out := runOutput(t, cmd, "prod", "--network", "mainnet", "--set-current")
+	for _, want := range []string{`Context "prod" created`, "network: mainnet", "auth-method: keyring", "current: true"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("create confirmation %q missing %q", out, want)
+		}
+	}
+}
+
+func TestCreateRejectsInvocationKeyringBackendOverride(t *testing.T) {
+	m := newTestManager(t)
+	root := Commands(func() *aktctx.Manager { return m }, func() (sdkkeyring.Keyring, error) {
+		return nil, errors.New("keyring must not open")
+	})
+	root.PersistentFlags().String(flagdefs.FlagKeyringBackend, "", "")
+
+	err := runErr(t, root,
+		"--"+flagdefs.FlagKeyringBackend, "file",
+		"create", "prod", "--network", "mainnet",
+	)
+	for _, want := range []string{"--keyring-backend", "akt context keyring set"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("create override error = %q, want %q", err, want)
+		}
+	}
+	if m.GetContext("prod") != nil {
+		t.Fatal("rejected context create mutated configuration")
+	}
+}
+
 // TestCreateStoresConsoleKeyOutsideConfig pins SPEC §7.1: the key passed to
 // `context create --console-api-key` lands in the per-context credential file
 // with 0600, and never in config.yaml or the action log.

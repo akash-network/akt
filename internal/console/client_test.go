@@ -220,21 +220,27 @@ func TestPostNotRetriedOn429(t *testing.T) {
 
 func TestDeleteRetriedOn5xx(t *testing.T) {
 	// DELETE is idempotent by HTTP semantics: replaying it on 5xx is safe.
-	var calls atomic.Int32
+	var deletes atomic.Int32
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, http.MethodDelete, r.Method)
-		if calls.Add(1) < 3 {
-			w.WriteHeader(http.StatusInternalServerError)
-			return
+		switch r.Method {
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"1"},"state":"active"}}}`))
+		case http.MethodDelete:
+			if deletes.Add(1) < 3 {
+				w.WriteHeader(http.StatusInternalServerError)
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":{"success":true}}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
-		_, _ = w.Write([]byte(`{"data":{"success":true}}`))
 	}))
 	defer srv.Close()
 
 	c := console.New(srv.URL, "key")
 	require.NoError(t, c.CloseDeployment(context.Background(), "1"))
-	assert.Equal(t, int32(3), calls.Load(), "DELETE + 5xx must retry")
+	assert.Equal(t, int32(3), deletes.Load(), "DELETE + 5xx must retry")
 }
 
 func TestDataEnvelopeUnwrapping(t *testing.T) {
@@ -324,15 +330,20 @@ func TestEmptyBodyIsAnErrorWhenResultExpected(t *testing.T) {
 	}
 }
 
-func TestEmptyBodyIsFineWhenNoResultExpected(t *testing.T) {
+func TestEmptyDeleteBodyIsFineWhenNoResultExpected(t *testing.T) {
 	// Endpoints that return no payload (e.g. DELETE) pass a nil result and
 	// must keep succeeding on an empty body.
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	const id = "11111111-1111-4111-8111-111111111111"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"data":[{"id":"` + id + `","name":"ci"}]}`))
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	defer srv.Close()
 
-	if err := console.New(srv.URL, "k").DeleteAPIKey(context.Background(), "k1"); err != nil {
+	if err := console.New(srv.URL, "k").DeleteAPIKey(context.Background(), id); err != nil {
 		t.Fatalf("empty body with no expected result must succeed: %v", err)
 	}
 }
