@@ -24,7 +24,7 @@ import (
 //
 // Wire: POST /v1/deployments, body {"data":{"sdl":..., "deposit":...}}.
 func (c *Client) CreateDeployment(ctx context.Context, sdl string, depositUSD float64) (*CreateDeploymentResult, error) {
-	if err := validateDepositUSD(depositUSD); err != nil {
+	if _, err := normalizeDepositUSD(depositUSD); err != nil {
 		c.record("create-deployment", "", err)
 		return nil, err
 	}
@@ -520,16 +520,10 @@ func (c *Client) Deposit(ctx context.Context, dseq string, amountUSD float64) er
 		c.record("deposit", dseq, err)
 		return err
 	}
-	if err := validateDepositUSD(amountUSD); err != nil {
+	expectedMicros, err := normalizeDepositUSD(amountUSD)
+	if err != nil {
 		c.record("deposit", dseq, err)
 		return err
-	}
-
-	expectedMicros, err := consoleDepositMicros(amountUSD)
-	if err != nil {
-		wrapped := fmt.Errorf("prepare deployment deposit: %w", err)
-		c.record("deposit", dseq, wrapped)
-		return wrapped
 	}
 
 	before, err := c.GetDeployment(ctx, dseq)
@@ -592,37 +586,33 @@ func (c *Client) Deposit(ctx context.Context, dseq string, amountUSD float64) er
 	return unknown
 }
 
-func consoleDepositMicros(amountUSD float64) (*big.Int, error) {
-	amount, ok := new(big.Rat).SetString(strconv.FormatFloat(amountUSD, 'f', -1, 64))
-	if !ok || amount.Sign() <= 0 {
-		return nil, fmt.Errorf("deposit must be a positive finite USD amount, got %v", amountUSD)
-	}
-
-	amount.Mul(amount, big.NewRat(1_000_000, 1))
-	if !amount.IsInt() {
-		return nil, fmt.Errorf("deposit %v USD has precision below one micro-ACT", amountUSD)
-	}
-
-	return new(big.Int).Set(amount.Num()), nil
-}
-
-func validateDepositUSD(amountUSD float64) error {
+func normalizeDepositUSD(amountUSD float64) (*big.Int, error) {
 	if math.IsNaN(amountUSD) || math.IsInf(amountUSD, 0) {
-		return fmt.Errorf("console: deployment deposit must be a finite USD amount")
+		return nil, fmt.Errorf("console: deployment deposit must be a finite USD amount")
 	}
 	if amountUSD < 0 {
-		return fmt.Errorf("console: deployment deposit must not be negative")
+		return nil, fmt.Errorf("console: deployment deposit must not be negative")
 	}
 
 	text := strconv.FormatFloat(amountUSD, 'f', -1, 64)
-	if _, fraction, ok := strings.Cut(text, "."); ok && len(fraction) > 2 {
-		return fmt.Errorf("console: deployment deposit must have at most two fractional digits")
+	whole, fraction, _ := strings.Cut(text, ".")
+	if len(fraction) > 2 {
+		return nil, fmt.Errorf("console: deployment deposit must have at most two fractional digits")
 	}
 	if amountUSD < MinDepositUSD {
-		return fmt.Errorf("console: deployment deposit must be at least $%.2f, got %v", MinDepositUSD, amountUSD)
+		return nil, fmt.Errorf("console: deployment deposit must be at least $%.2f, got %v", MinDepositUSD, amountUSD)
 	}
 
-	return nil
+	microDigits := whole + fraction + strings.Repeat("0", 6-len(fraction))
+	micros := new(big.Int)
+	ten := big.NewInt(10)
+	digitValue := new(big.Int)
+	for _, digit := range microDigits {
+		micros.Mul(micros, ten)
+		micros.Add(micros, digitValue.SetInt64(int64(digit-'0')))
+	}
+
+	return micros, nil
 }
 
 func deploymentEscrowTotals(detail *DeploymentDetail) (map[string]*big.Rat, error) {

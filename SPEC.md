@@ -541,7 +541,10 @@ error without sending DELETE; key creation rejects a blank name, and local key
 creation rejects a name that is blank after trimming. USD deposit inputs use
 plain fixed-point decimal syntax with at most two fractional digits; exponent
 notation, non-finite values, and sub-cent precision are rejected before any
-request.
+request. The Console boundary validates the USD value and derives the exact
+whole-micro-ACT reconciliation delta in one operation. Mutation code consumes
+that normalized result directly; it does not perform a second fallible
+conversion after validation has succeeded.
 Commands that require a terminal session, including an interactive Console
 shell with no explicit command, reject non-terminal stdin before any identity
 or network lookup can block.
