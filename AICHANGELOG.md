@@ -4,6 +4,15 @@
 
 ### Fixed
 
+- **Release-range coverage no longer fails on an impossible Console deposit
+  branch**: Console USD validation now returns the exact micro-ACT value used
+  for escrow reconciliation. Deployment creation and deposit mutations share
+  that single boundary instead of validating first and then retaining a second
+  conversion error path that valid input could never reach. Exact conversion
+  tests cover whole-dollar, one-decimal, and two-decimal deposits while the
+  existing request-boundary tests continue to reject invalid amounts before
+  HTTP work.
+
 - **Six partially addressed backlog issues now have complete boundary
   contracts**: every successful Console leaf prints an action-specific `Next:`
   hint on stderr without contaminating structured stdout, while quiet mode

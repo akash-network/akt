@@ -98,13 +98,20 @@ func TestValidateDeploymentUpdateResultRejectsHashMismatch(t *testing.T) {
 }
 
 func TestDepositContractHelpers(t *testing.T) {
-	micros, err := consoleDepositMicros(1.25)
-	if err != nil || micros.Cmp(big.NewInt(1_250_000)) != 0 {
-		t.Fatalf("consoleDepositMicros(1.25) = %v, %v", micros, err)
+	for amount, want := range map[float64]int64{
+		0.5:  500_000,
+		1:    1_000_000,
+		1.25: 1_250_000,
+		12.5: 12_500_000,
+	} {
+		micros, err := normalizeDepositUSD(amount)
+		if err != nil || micros.Cmp(big.NewInt(want)) != 0 {
+			t.Errorf("normalizeDepositUSD(%v) = %v, %v, want %d", amount, micros, err, want)
+		}
 	}
 	for _, amount := range []float64{0, -1, 0.0000001} {
-		if _, err := consoleDepositMicros(amount); err == nil {
-			t.Errorf("consoleDepositMicros(%v) unexpectedly succeeded", amount)
+		if _, err := normalizeDepositUSD(amount); err == nil {
+			t.Errorf("normalizeDepositUSD(%v) unexpectedly succeeded", amount)
 		}
 	}
 
