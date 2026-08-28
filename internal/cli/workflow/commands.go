@@ -16,6 +16,7 @@ import (
 
 	flagdefs "pkg.akt.dev/akt/internal/flags"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 
@@ -31,6 +32,7 @@ import (
 	"pkg.akt.dev/akt/internal/workflow/adapters"
 	"pkg.akt.dev/akt/internal/workflow/builtin"
 	"pkg.akt.dev/akt/internal/workflow/steps"
+	gosdl "pkg.akt.dev/go/sdl"
 )
 
 // outputJSONL is the --output value selecting JSONL step output (SPEC §2.3.8).
@@ -47,7 +49,7 @@ func Commands(homeFn func() string, ctxNameFn func() string) []*cobra.Command {
 }
 
 // CommandsWithManager is Commands plus the context manager the generated
-// commands need to resolve credentials (keyring wallet vs Console API key)
+// commands need to resolve credentials (local keyring and Console API key)
 // when executing workflows.
 func CommandsWithManager(homeFn func() string, ctxNameFn func() string, mgrFn func() *aktctx.Manager) []*cobra.Command {
 	loader := wf.NewLoader(homeFn(), ctxNameFn(), builtin.Workflows())
@@ -104,8 +106,8 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 		Long:    def.Long,
 		Example: def.Example,
 		// Workflow commands run on either rail (internal/transport): chain
-		// tx broadcasting on keyring contexts or Console API calls on
-		// console-api contexts. Either capability satisfies the gate.
+		// tx broadcasting or Console API calls according to the context's
+		// workflow preference. Either capability satisfies the gate.
 		Annotations: map[string]string{
 			capability.AnnotationKey: string(capability.ChainTx) + "|" + string(capability.Console),
 		},
@@ -126,9 +128,9 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 			}
 
 			// Chain client discovery only applies when running under the
-			// real root command (which seeds the SDK client context) with a
-			// keyring-auth context. console-api contexts do not need a
-			// wallet or an RPC connection to execute.
+			// real root command (which seeds the SDK client context) with the
+			// chain workflow rail selected. Console workflows do not need a
+			// local wallet or an RPC connection to execute.
 			if cmd.Context() == nil || cmd.Context().Value(chaincli.ClientContextKey) == nil {
 				return nil
 			}
@@ -218,11 +220,12 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 			out := cmd.OutOrStdout()
 			jsonl := outputFormat(cmd) == outputJSONL
 
+			params, err = resolveWorkflowParams(cmd, params, mgrFn, ctxNameFn)
+			if err != nil {
+				return err
+			}
+
 			if dryRun {
-				params, err = resolveDryRunParams(cmd, params, mgrFn, ctxNameFn)
-				if err != nil {
-					return err
-				}
 				if jsonl {
 					return emitDryRunJSONL(out, rtDef, params)
 				}
@@ -272,7 +275,7 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 	cmd.Flags().Bool(flagdefs.FlagDryRun, false, "Show execution plan without broadcasting transactions")
 	cmd.Flags().VarP(output.NewFormatFlag(cflags.OutputPretty, outputJSONL), flagdefs.FlagOutput, "o", "Output format (pretty|json|yaml|jsonl)")
 
-	// Standard chain tx flags (--from, --gas, --node, ...) so keyring-auth
+	// Standard chain tx flags (--from, --gas, --node, ...) so chain-rail
 	// execution can discover a chain client; flags already defined above
 	// (e.g. --yes, --dry-run, workflow params) keep their workflow meaning.
 	addMissingTxFlags(cmd)
@@ -293,7 +296,7 @@ func chainDryRunNeedsDepositQuery(raw string) bool {
 	return err == nil && parsed.Auto
 }
 
-func resolveDryRunParams(
+func resolveWorkflowParams(
 	cmd *cobra.Command,
 	params map[string]any,
 	mgrFn func() *aktctx.Manager,
@@ -342,8 +345,59 @@ func resolveDryRunParams(
 		copyParams[key] = value
 	}
 	copyParams[flagdefs.FlagDeposit] = resolved
+	if err := validateDeploymentDenominations(copyParams, rc); err != nil {
+		return nil, err
+	}
 
 	return copyParams, nil
+}
+
+func validateDeploymentDenominations(params map[string]any, rc *aktctx.Context) error {
+	sdlPath, hasSDL := params["sdl-file"].(string)
+	resolvedDeposit, hasDeposit := params[flagdefs.FlagDeposit].(string)
+	if !hasSDL || !hasDeposit || strings.TrimSpace(sdlPath) == "" || strings.TrimSpace(resolvedDeposit) == "" {
+		return nil
+	}
+
+	depositDenom := "uact"
+	if rc.AuthMethod != aktctx.AuthMethodConsoleAPI {
+		coin, err := sdk.ParseDecCoin(resolvedDeposit)
+		if err != nil {
+			return fmt.Errorf("resolve deployment deposit denomination from %q: %w", resolvedDeposit, err)
+		}
+		depositDenom = coin.Denom
+	}
+
+	doc, err := gosdl.ReadFile(sdlPath)
+	if err != nil {
+		return fmt.Errorf("read SDL %q for deployment denomination preflight: %w", sdlPath, err)
+	}
+	groups, err := doc.DeploymentGroups()
+	if err != nil {
+		return fmt.Errorf("derive SDL %q deployment groups for denomination preflight: %w", sdlPath, err)
+	}
+
+	for _, group := range groups {
+		sdlDenom := group.Price().Denom
+		if sdlDenom == depositDenom {
+			continue
+		}
+
+		remedy := fmt.Sprintf("set the SDL pricing denomination to %s", depositDenom)
+		if rc.AuthMethod != aktctx.AuthMethodConsoleAPI {
+			remedy = fmt.Sprintf("set the SDL pricing denomination to %s or pass --deposit with a %s coin", depositDenom, sdlDenom)
+		}
+
+		return fmt.Errorf(
+			"SDL price denomination %q does not match the effective deposit denomination %q for deployment group %q; the chain would reject deployment creation: %s",
+			sdlDenom,
+			depositDenom,
+			group.Name,
+			remedy,
+		)
+	}
+
+	return nil
 }
 
 func sortedParamNames(params map[string]wf.ParamDef) []string {
@@ -356,11 +410,9 @@ func sortedParamNames(params map[string]wf.ParamDef) []string {
 	return names
 }
 
-// executeWorkflow resolves credentials for the active context, picks the
-// transport for its rail (internal/transport: chain for keyring auth,
-// console for console-api auth — abstracted away from the user; the command
-// arguments are identical on both), runs the engine, and renders per-step
-// results.
+// executeWorkflow resolves credentials for the active context, picks its
+// preferred workflow transport (internal/transport: chain for keyring,
+// Console for console-api), runs the engine, and renders per-step results.
 func executeWorkflow(
 	cmd *cobra.Command,
 	rtDef *wf.WorkflowDef,
@@ -412,7 +464,7 @@ func executeWorkflow(
 
 		chainCl = transport.NewConsole(cc, chainQueries, rc.Root, rc.Name)
 
-		// Provider gateway steps are not supported with console-api auth:
+		// Provider gateway steps are not supported on the Console rail:
 		// the Console API submits the manifest internally during lease
 		// creation (SPEC §7.4), so drop them instead of failing the run.
 		rtDef, err = filterProviderSteps(rtDef, cmd.ErrOrStderr())
@@ -428,9 +480,9 @@ func executeWorkflow(
 			}
 
 			return fmt.Errorf(
-				"no wallet/chain client available for context %q (keyring auth): %v.\n"+
-					"Keyring execution needs a reachable RPC node and a configured key; check the context's network endpoints and keyring, or switch to a console-api context with an API key",
-				rc.Name, detail,
+				"no wallet/chain client available for context %q (chain workflow rail): %v.\n"+
+					"Chain execution needs a reachable RPC node and a configured key; check the context's network endpoints and keyring, or run akt context edit %q --deploy-via console",
+				rc.Name, detail, rc.Name,
 			)
 		}
 

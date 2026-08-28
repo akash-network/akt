@@ -78,11 +78,10 @@ func New(
 	// start without a wallet and an RPC endpoint would deny that user a
 	// server they can fully use. The failure is only fatal when it leaves the
 	// server with nothing at all.
-	// Consent and capability are separate. A Console-auth context can have an
-	// RPC endpoint for direct chain reads while deliberately carrying no local
-	// keyring. In that state --enable-writes enables Console mutations only;
-	// trying to build a signing client would drop the otherwise healthy chain
-	// read rail and advertise mutations that cannot execute.
+	// Consent and capability are separate. A Console-preferred context with an
+	// RPC endpoint and local keyring can expose both write rails. A network-less
+	// Console-only context still skips chain tools without opening the deferred
+	// keyring.
 	chainWritesEnabled := enableWrites && cctx.Keyring != nil
 	chainErr := s.registerChainTools(ctx, cctx, providerAuthType, chainWritesEnabled)
 

@@ -124,6 +124,14 @@ the user restarts `akt monitor`. The initial signing-history sample uses the
 validator set from the sampled commit height, not the latest set, so an epoch
 change cannot attribute the previous block's signature to a new validator.
 
+Upgrade behavior is proved against a throwaway three-validator chain, not only
+mock events. The validators hold 60%, 25%, and 15% of voting power and halt at
+one height. Restarting only the RPC validator gives the monitor a live endpoint
+and 60% participation but cannot produce the next block. Restarting the 25%
+validator crosses the two-thirds threshold and resumes the chain. The monitor
+must reconnect, retain the complete denominator, clear halted-round votes at
+the new height, and continue monotonically when the final validator rejoins.
+
 Provider monitoring is a continuously running pipeline, not a view that is
 populated only after navigation. Startup loads the persisted provider cache,
 immediately reconciles it with the on-chain provider set, and starts the health
@@ -306,7 +314,9 @@ graph TB
 - Wallet storage. Contains private keys, mnemonics, hardware wallet references.
 - Can be shared between multiple contexts. Adding a key to a keyring makes it available to all contexts that reference it.
 - Each context selects a default account from its keyring.
-- Not used when the context's `auth-method` is `console-api`.
+- Used by explicit local transactions and authenticated provider operations.
+  A Console-preferred workflow does not open it unless that invocation reaches
+  one of those local operations.
 
 **State Store** (unique per context):
 - Deployment, lease, and bid records (bbolt database).
@@ -373,11 +383,13 @@ form. A named default account resolves only when an omitted owner, tracked
 account, or protected gateway call needs it, so network-wide and explicitly
 scoped reads never open a key store. Address-based transaction generation and
 simulation also stay deferred; the SDK can build or simulate from the bech32
-address without proving that the key is local. Signing transactions, executing
-workflows, and protected provider calls remain eager. `mcp --enable-writes`
-promotes a keyring context to eager so its advertised chain writes are usable,
-but a Console-only context remains keyring-free. Purely local commands and
-workflow dry-runs receive no keyring.
+address without proving that the key is local. Signing transactions and
+protected provider calls remain eager. Cross-rail workflows and
+`mcp --enable-writes` stay deferred until the selected workflow or advertised
+tool actually needs the local signer. A Console-preferred context with chain
+access can therefore expose both MCP write rails, while a network-less
+Console-only context never opens the keyring. Purely local commands receive no
+keyring.
 
 Keyring records are persistent boundary data. Account resolution validates
 that a returned record and its encoded public key are present before calling
@@ -431,7 +443,10 @@ command failed.
 
 #### 3.1.4 Authentication Methods
 
-Each context has an `auth-method` that determines how transactions are signed and submitted:
+Each context has an `auth-method` that selects the preferred rail for the
+shared `deploy`, `update`, and `close` workflows. It does not disable another
+configured credential. A context may carry both a local keyring and a Console
+API key, and explicit command groups keep their own transport boundaries.
 
 **`keyring`** (default):
 - Local key management via Cosmos SDK keyrings.
@@ -446,7 +461,8 @@ Each context has an `auth-method` that determines how transactions are signed an
 - The API key is resolved as flag > env > per-context credential: `--console-api-key` (session only), then `AKT_CONSOLE_API_KEY`, then a per-context credential file at `contexts/<name>/console-api-key` (mode 0600, managed via `akt context create/edit --console-api-key`). It is never written to config.yaml, never printed, and never logged — each context carries its own key, so switching context switches Console identity.
 - Deposits are denominated in USD (not uakt) -- the Console handles the conversion.
 - Raw `akt tx` commands never route through the Console API: that tree constructs
-  and signs arbitrary chain messages and therefore requires `keyring` auth. The
+  and signs arbitrary chain messages with the context's referenced local
+  keyring even when Console is the preferred workflow rail. The
   shared `akt deploy`, `akt update`, and `akt close` workflows route their
   abstract deployment-lifecycle steps through the Console rail, and the
   step-by-step managed-wallet surface lives under `akt console`. Chain query
@@ -454,7 +470,10 @@ Each context has an `auth-method` that determines how transactions are signed an
 - Successful Console deployment acknowledgements and the shared `akt deploy`
   result expose the Console's default daily auto top-up plus its exact disable
   command. Chain workflow output omits that Console-only setting.
-- No keyring, default-account, or provider-defaults are used. The context only needs a network (for query commands) and the API key.
+- A Console-only context needs only the API key. Adding a network enables chain
+  queries, and adding a local account to the referenced keyring enables
+  explicit chain transactions and authenticated provider operations without
+  changing the preferred workflow rail.
 - Console HTTP redirects are rejected. The configured origin is the only
   destination that receives the API key or a managed-wallet mutation; a 3xx
   response is surfaced rather than followed to an intermediary-selected URL.
@@ -487,7 +506,17 @@ Each context has an `auth-method` that determines how transactions are signed an
   This prevents each surface from acquiring its own partial version of the
   same rules.
 
-A context uses **one** auth method. Users who need both can create separate contexts (e.g., `prod` with keyring auth and `console` with console-api auth), potentially sharing the same network definition.
+A context may use both credentials. `auth-method` remains the on-disk name for
+compatibility and records only which credential `akt deploy`, `akt update`,
+and `akt close` prefer. `akt context create/edit --deploy-via chain|console`
+is the user-facing alias for changing it; `--auth-method` remains accepted.
+
+The Console client owns managed-wallet address resolution: authenticate with
+`/v1/user/me`, list `/v1/wallets` for that internal user ID, and return the
+first nonblank full address. `akt console wallet address` exposes that value.
+The same resolver supplies an omitted chain-query owner whenever the active
+context has a Console credential and no explicit owner or local default
+account. This fallback is independent of the preferred workflow rail.
 
 Provider authentication is selected by operation, not merely by command
 group. Provider `/status` is a public read: CLI and MCP callers construct it
@@ -769,8 +798,8 @@ An **action** (`deploy`, `update`, `close`, and every action added later) is def
 ```mermaid
 graph LR
   WF["Action definition\n(deploy.yaml)\n\nAbstract steps:\n- tx\n- query / wait\n- prompt\n- provider"] --> T{"Transport\nrail chosen per context\nat execution time"}
-  T -->|"KindChain\nauth-method: keyring"| CH["Chain adapter\n\n- build + sign + broadcast\n- chain RPC/gRPC queries"]
-  T -->|"KindConsole\nauth-method: console-api"| CO["Console adapter\n\n- msg type maps to REST endpoint\n- manifest cache: create then lease\n- chain queries when available"]
+  T -->|"KindChain\npreferred rail: keyring"| CH["Chain adapter\n\n- build + sign + broadcast\n- chain RPC/gRPC queries"]
+  T -->|"KindConsole\npreferred rail: console-api"| CO["Console adapter\n\n- msg type maps to REST endpoint\n- manifest cache: create then lease\n- chain queries when available"]
   CH --> PG["Provider gateway\n(JWT / mTLS)"]
   CO --> API["Console API\n(managed wallet)"]
 ```
@@ -865,7 +894,7 @@ merely the first HTTP response.
 
 **Why a translation layer and not per-rail commands**: the alternative — a `deploy` that knows about keyrings and a separate Console `deploy` — means every new action is designed twice, and the two surfaces drift on flag names, defaults, argument order, and error text. Here, adding an action is a workflow definition plus (at most) a message mapping in the console adapter. Neither rail's command handler changes, and no rail-specific redesign is required.
 
-**One argument surface**: the CLI's argument surface is *generated* from the workflow definition (`internal/cli/workflow`). Positional arguments come from the definition's required file param and its optional `dseq` param, and every non-file param also gets a flag carrying the definition's type, default, and description. Because the definition is shared, `akt deploy`, `akt update`, and `akt close` take **identical arguments on both rails** — the rail is a property of the active context (`auth-method`), not of the command line. A user switching from a keyring context to a console-api one types the same command.
+**One argument surface**: the CLI's argument surface is *generated* from the workflow definition (`internal/cli/workflow`). Positional arguments come from the definition's required file param and its optional `dseq` param, and every non-file param also gets a flag carrying the definition's type, default, and description. Because the definition is shared, `akt deploy`, `akt update`, and `akt close` take **identical arguments on both rails**. The preferred rail is a property of the active context (`auth-method`, edited more clearly through `--deploy-via`), not of the workflow command line. Switching the preferred rail does not hide `akt tx` or `akt console` when their credentials remain configured.
 
 **Cross-rail normalization**: rail-independent argument syntax is translated inside `Transport.BroadcastTx` before delegating to the adapter, so a cross-rail mistake fails at the transport boundary with a clear message rather than deep inside a rail's client — or, worse, on the wire. The concrete case is the deployment deposit, parsed in one place (`transport.ParseDeposit`) and rendered per rail by `Deposit.RailValue`:
 
@@ -885,13 +914,20 @@ single exported constant (`transport.MinConsoleDepositUSD`, aliasing
 `console.MinDepositUSD`) so every surface that enforces it — CLI commands and
 workflow adapters alike — shares one value.
 
+The resolved deposit and the SDL placement prices form one pre-broadcast
+invariant. Dry-run and execution both resolve `auto` through the selected rail,
+then require every group price denomination to match the effective deposit
+denomination. Explicit matching legacy `uakt` remains valid; an automatic
+`uact` deposit paired with `uakt` pricing fails before a plan can claim the
+deployment is executable.
+
 ### 3.6 Capability Gating
 
 Not every context can run every command. A context with a Console API key and no network genuinely cannot execute a chain query; a monitoring-only context with an RPC endpoint and no Console credential genuinely cannot call the Console API. Discovering that at the transport boundary — after the user has found the command in help, typed it, and waited — is poor UX. `internal/capability` derives a **feature set** from the resolved context up front, and `internal/cli/gating.go` applies it to the command tree.
 
 ```mermaid
 graph LR
-  RC["Resolved context\n\n- auth method\n- network endpoints\n- console-api-key"] --> RES["capability.Resolve\n\nRPC yields query/provider\n\nRPC + keyring auth yields chain-tx\n\nAPI key yields console"]
+  RC["Resolved context\n\n- preferred rail\n- network endpoints\n- keyring reference\n- console-api-key"] --> RES["capability.Resolve\n\nRPC yields query/provider\n\nRPC + keyring yields chain-tx\n\nAPI key yields console"]
   OV["Per-invocation overrides\n\n--node\n--console-api-key\nAKT_CONSOLE_API_KEY\nakt monitor [endpoint]"] --> INV["invocationCapabilities\n(grant, never revoke)"]
   RES --> INV
   INV --> GATE["Command tree walk\n\nakt.requires annotation\nvs. feature set"]
@@ -904,16 +940,16 @@ Capabilities are deliberately coarse — they describe what the *configuration* 
 | Capability | Derived from | Declared by |
 |---|---|---|
 | `chain-query` | network has at least one RPC endpoint | `akt query`, `akt monitor` |
-| `chain-tx` | `auth-method: keyring` and network has at least one RPC endpoint | `akt tx` |
+| `chain-tx` | a keyring reference and network with at least one RPC endpoint | `akt tx` |
 | `provider` | network has at least one RPC endpoint (gateway discovery; protected operations validate wallet auth at execution) | `akt provider` |
 | `console` | a Console API key is resolvable (§3.1.4) | `akt console` subcommands |
 
-`chain-tx` deliberately checks the configured identity mode but does not open
+`chain-tx` deliberately checks the configured keyring reference but does not open
 the keyring or probe for a funded key: opening an OS keyring can prompt for a
 password, and a help listing must never do that. Missing keys and balance
-problems remain execution-time failures. A second authentication boundary
-rejects raw `akt tx` execution under `console-api` auth even when presentation
-gating is `off`; a connection override cannot manufacture a local signer.
+problems remain execution-time failures. Raw `akt tx` always selects this local
+identity path and never the Console adapter, regardless of the preferred
+workflow rail. A connection override cannot manufacture a local signer.
 `akt sdl` declares nothing at all — SDL scaffolding, validation, and linting
 run entirely locally, so gating them would be wrong.
 
@@ -922,8 +958,8 @@ run entirely locally, so gating them would be wrong.
 **Overrides grant connection capabilities, never signing identities**: gating
 describes the configuration, so an invocation that carries its own connection
 details must be able to use them. `--node` grants `chain-query` and `provider`;
-it grants `chain-tx` only when the resolved auth method is `keyring`, and never
-turns a Console context into a local signer. `--console-api-key` (or
+it grants `chain-tx` when the context has a referenced keyring, but never
+manufactures a key or local signer. `--console-api-key` (or
 `AKT_CONSOLE_API_KEY` in the environment) grants `console`, and a positional
 endpoint on `akt monitor` grants chain access — `akt monitor <rpc-endpoint>`
 works with no context at all, consistent with the standalone-operation goal in
@@ -1132,7 +1168,7 @@ change that public behavior.
 - **Lipgloss v2** provides CSS-like styling for terminal output in both modes -- table formatting in CLI, full layout composition in TUI.
 - **Bubbles v2** provides battle-tested components: table, viewport, text input, spinner, help, key bindings, list, progress bar, paginator.
 
-**Current status of the TUI shell**: the root TUI application (the resource browser reached by bare `akt`) is **disabled** while UX feedback is collected. Bare `akt` prints help, and `--interactive` reports that the TUI is disabled rather than launching it. The code path is kept compiled and reachable behind `AKT_EXPERIMENTAL_TUI=1` so it stays exercisable — and honest — while the decision is open; re-enabling is removing one gate in the root command's `RunE`. This is a shipping decision, not an architectural one: the design above stands, and `akt monitor` (which is a separate bubbletea application, not the shell) is unaffected and fully available.
+**Current status of the TUI shell**: the root TUI application (the resource browser reached by bare `akt`) is **disabled** while UX feedback is collected. Bare `akt` prints help, and `--interactive` reports that the TUI is disabled rather than launching it. A successful first-run wizard is the exception: its closing setup summary is the complete response, so that invocation exits without appending root help. The code path is kept compiled and reachable behind `AKT_EXPERIMENTAL_TUI=1` so it stays exercisable — and honest — while the decision is open; re-enabling is removing one gate in the root command's `RunE`. This is a shipping decision, not an architectural one: the design above stands, and `akt monitor` (which is a separate bubbletea application, not the shell) is unaffected and fully available.
 
 The compiled shell still follows release output invariants. Lease selection uses
 the complete owner/DSEQ/GSEQ/OSEQ/provider identity, all provider addresses are

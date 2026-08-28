@@ -16,8 +16,11 @@ func TestResolve(t *testing.T) {
 	}{
 		{"nil context", nil, capability.Set{}},
 		{
-			"rpc only",
-			&aktctx.Context{Network: aktctx.Network{Endpoints: aktctx.Endpoints{RPC: []string{"https://rpc"}}}},
+			"keyring with rpc",
+			&aktctx.Context{
+				Network: aktctx.Network{Endpoints: aktctx.Endpoints{RPC: []string{"https://rpc"}}},
+				Keyring: aktctx.Keyring{Name: "default"},
+			},
 			capability.Set{ChainQuery: true, ChainTx: true, Provider: true},
 		},
 		{
@@ -26,18 +29,27 @@ func TestResolve(t *testing.T) {
 			capability.Set{Console: true},
 		},
 		{
-			"console auth with rpc",
+			"console-preferred context with rpc",
 			&aktctx.Context{
 				Network:       aktctx.Network{Endpoints: aktctx.Endpoints{RPC: []string{"https://rpc"}}},
+				Keyring:       aktctx.Keyring{Name: "default"},
 				AuthMethod:    aktctx.AuthMethodConsoleAPI,
 				ConsoleAPIKey: "sk-x",
 			},
-			capability.Set{ChainQuery: true, Provider: true, Console: true},
+			capability.Set{ChainQuery: true, ChainTx: true, Provider: true, Console: true},
+		},
+		{
+			"rpc without keyring reference",
+			&aktctx.Context{
+				Network: aktctx.Network{Endpoints: aktctx.Endpoints{RPC: []string{"https://rpc"}}},
+			},
+			capability.Set{ChainQuery: true, Provider: true},
 		},
 		{
 			"keyring auth with console credential",
 			&aktctx.Context{
 				Network:       aktctx.Network{Endpoints: aktctx.Endpoints{RPC: []string{"https://rpc"}}},
+				Keyring:       aktctx.Keyring{Name: "default"},
 				AuthMethod:    aktctx.AuthMethodKeyring,
 				ConsoleAPIKey: "sk-x",
 			},

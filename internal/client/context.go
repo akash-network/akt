@@ -251,13 +251,6 @@ func MustResolveAndInit(
 		return false, err
 	}
 
-	// Console contexts never use a local wallet. Even a command that can write
-	// selects the managed rail and must not turn that capability into a local
-	// keyring requirement.
-	if rc.AuthMethod == aktctx.AuthMethodConsoleAPI {
-		identityMode = LocalIdentityNone
-	}
-
 	// A nil keyring is a deliberate, complete answer for commands that declare
 	// no local identity. On-demand commands receive a proxy that opens the
 	// backend only when a key operation is actually requested.

@@ -121,7 +121,7 @@ keyrings:
 contexts:
   - name: prod
     network: mainnet                    # references a network definition
-    auth-method: keyring                # keyring (default) or console-api
+    auth-method: keyring                # preferred workflow rail: keyring (chain) or console-api
     keyring: default                    # references a keyring definition
     default-account: "alice"            # account name or address; empty = prompt
     tracked-accounts: []                # accounts to sync; empty = [default-account]; ["*"] = all keyring accounts
@@ -150,9 +150,9 @@ contexts:
 
   - name: console                      # Console API context (managed wallet)
     network: mainnet                    # network used for query commands
-    auth-method: console-api            # use Console managed wallet instead of keyring
+    auth-method: console-api            # route deploy/update/close through Console
+    keyring: default                    # explicit akt tx remains available through this keyring
     console-api-url: ""                 # empty = default (https://console-api.akash.network)
-    # keyring, default-account, and provider-defaults are not used with console-api auth
     # API key: --console-api-key flag > AKT_CONSOLE_API_KEY env var > per-context
     # credential file (contexts/<name>/console-api-key, see §7.1); never stored here
 
@@ -208,15 +208,15 @@ Contexts compose a network, keyring, and context-specific settings. The state st
 | Field                         | Type   | Required | Default                                | Description                                                                  |
 | ----------------------------- | ------ | -------- | -------------------------------------- | ---------------------------------------------------------------------------- |
 | `name`                        | string | yes      | --                                     | Unique context identifier                                                    |
-| `network`                     | string | see note | --                                     | Name of network definition to use. Required for `keyring` auth; optional for `console-api` auth (a network-less context operates through the Console API alone and chain commands are capability-gated until a network is attached, §2.10). |
-| `auth-method`                 | string | no       | `"keyring"`                            | Authentication method: `keyring` or `console-api`                            |
-| `console-api-url`             | string | no       | `"https://console-api.akash.network"` | Console API base URL (only with `console-api` auth)                          |
-| `keyring`                     | string | no       | `"default"`                            | Keyring name for signing keys (only with `keyring` auth)                     |
-| `default-account`             | string | no       | `""`                                   | Default `--from` value (only with `keyring` auth)                            |
+| `network`                     | string | see note | --                                     | Name of network definition to use. Required for the chain rail; optional when `console-api` is preferred (a network-less context operates through Console alone and chain commands are capability-gated until a network is attached, §2.10). |
+| `auth-method`                 | string | no       | `"keyring"`                            | Preferred `deploy`/`update`/`close` rail: `keyring` (chain) or `console-api`; it does not disable another configured credential |
+| `console-api-url`             | string | no       | `"https://console-api.akash.network"` | Console API base URL                                                         |
+| `keyring`                     | string | no       | `"default"`                            | Keyring name for explicit chain transactions                                |
+| `default-account`             | string | no       | `""`                                   | Default local account name or address                                       |
 | `tracked-accounts`            | []string | no     | `[]`                                   | Accounts to sync (empty = `[default-account]`; `["*"]` = all keyring accounts). See §6.7. |
-| `gas`                         | string | no       | `"auto"`                               | Gas limit or `"auto"` (only with `keyring` auth)                             |
-| `fees`                        | string | no       | `""`                                   | Fixed fees (only with `keyring` auth)                                        |
-| `provider-defaults.auth-type` | string | no       | `"jwt"`                                | Provider gateway auth: `jwt` or `mtls` (only with `keyring` auth)            |
+| `gas`                         | string | no       | `"auto"`                               | Gas limit or `"auto"` for local transactions                                |
+| `fees`                        | string | no       | `""`                                   | Fixed fees for local transactions                                            |
+| `provider-defaults.auth-type` | string | no       | `"jwt"`                                | Provider gateway auth: `jwt` or `mtls`                                      |
 
 **Console API key**: the per-context Console API key is deliberately **not** a config.yaml field. It is stored as a separate credential file at `<config-root>/contexts/<name>/console-api-key` with `0600` permissions and is managed via `akt context create/edit --console-api-key`. See §7.1 for the full resolution order and handling rules.
 
@@ -293,14 +293,16 @@ three modes, selected at the command boundary:
 
 - **none** — the command never receives a keyring. SDL authoring (§2.11),
   monitoring (§2.6), version, completion, local store inspection/import/export,
-  context management, the Console rail, and workflow dry-runs use this mode.
+  context management, Console commands, and workflow dry-runs use this mode.
 - **on demand** — the client context receives a deferred keyring that does not
   open its configured backend until an operation actually asks for a key. Chain
   queries, `store sync`, read-only MCP startup, public provider status, and
   address-based transaction construction or simulation use this mode.
 - **required** — startup opens the keyring and resolves a named account before
-  execution. Transactions that sign, workflow execution, and authenticated
-  provider operations use this mode.
+  execution. Explicit transactions that sign and authenticated provider
+  operations use this mode. Workflow execution starts on demand because the
+  selected rail may use either the local keyring or the Console credential;
+  the chain pre-run opens the deferred keyring before signing.
 
 Opening a file or OS keyring can itself prompt, fail on a headless host, or ask
 the desktop to unlock. An on-demand command therefore MUST NOT open the backend
@@ -602,7 +604,7 @@ resolved to addresses before transaction simulation on every dry-run path.
 
 When `akt` is invoked with no subcommand, the following flow determines what happens:
 
-1. **No config exists** (first run): The bootstrap wizard runs (`internal/bootstrap/`; glyphs per §1.11, prompt rendering per §3.9). The wizard runs only when stdin is a terminal: in headless environments it declines to bootstrap (no network fetch, no config written) and prints guidance to create a config via `akt context network create` / `akt context create`; the root command then continues to step 2 without a config. After bootstrap completes, the root command continues to step 2.
+1. **No config exists** (first run): The bootstrap wizard runs (`internal/bootstrap/`; glyphs per §1.11, prompt rendering per §3.9). The wizard runs only when stdin is a terminal: in headless environments it declines to bootstrap (no network fetch, no config written) and prints guidance to create a config via `akt context network create` / `akt context create`; the root command then continues to step 2 without a config. After an interactive bootstrap writes the config and its closing summary, that invocation exits successfully. It does not append root help to the setup transcript. A later bare `akt` invocation follows steps 2–4 normally.
 
 Commands whose purpose is to create the missing configuration, including
 `context create` and `context network create`, suppress the generic no-config
@@ -987,21 +989,28 @@ setting and is rejected on `context create`. The diagnostic points to
 changes a shared keyring's backend.
 
 Success prints a one-line confirmation containing the full context name,
-network (or `none`), effective auth method, and whether it became current.
-JSON and YAML expose the same fields as structured data.
+network (or `none`), preferred deployment rail (`chain` or `console`), and
+whether it became current. JSON and YAML retain the compatible `auth_method`
+field with its stored `keyring` or `console-api` value.
 
 | Flag                  | Type   | Default     | Description                                                      |
 | --------------------- | ------ | ----------- | ---------------------------------------------------------------- |
 | `--network`           | string | `""`        | Network name to use (required; must exist)                       |
-| `--auth-method`       | string | `"keyring"` | Authentication method: `keyring` or `console-api`                |
+| `--auth-method`       | string | `"keyring"` | Preferred workflow rail: `keyring` or `console-api`              |
+| `--deploy-via`        | string | `""`        | Clear alias for `--auth-method`: `chain` or `console`            |
 | `--console-api-url`   | string | `""`        | Console API base URL (empty = default; only with `console-api`)  |
 | `--console-api-key`   | string | `""`        | Console API key stored as a per-context credential (§7.1; never written to config.yaml) |
-| `--keyring`           | string | `"default"` | Keyring name (only with `keyring` auth)                          |
-| `--default-account`   | string | `""`        | Default account name (only with `keyring` auth)                  |
-| `--gas`               | string | `"auto"`    | Gas limit override (only with `keyring` auth)                    |
-| `--fees`              | string | `""`        | Fixed fees override (only with `keyring` auth)                   |
+| `--keyring`           | string | `"default"` | Keyring used by explicit local chain operations                  |
+| `--default-account`   | string | `""`        | Default local account name or address                            |
+| `--gas`               | string | `"auto"`    | Gas limit override for local transactions                        |
+| `--fees`              | string | `""`        | Fixed fees override for local transactions                       |
 | `--provider-auth-type`| string | `"jwt"`     | Provider gateway auth default: `jwt` or `mtls`                   |
 | `--set-current`       | bool   | `false`     | Set as current context after creation                            |
+
+`--deploy-via` and `--auth-method` are mutually exclusive aliases for the same
+stored setting. `chain` maps to `keyring`; `console` maps to `console-api`.
+Neither option removes the other credential or changes the command trees that
+use it explicitly.
 
 **Examples:**
 ```bash
@@ -1018,6 +1027,9 @@ akt context create staging --network testnet --keyring test-keyring --default-ac
 # Store the API key as the context credential with --console-api-key,
 # or later via `akt console login` (see §7.1)
 akt context create console --network mainnet --auth-method console-api --set-current
+
+# Equivalent, with the preferred deployment rail stated directly
+akt context create console --network mainnet --deploy-via console --set-current
 ```
 
 #### `akt context use <name>`
@@ -1049,7 +1061,9 @@ settings, capability booleans, `store_path`, and `action_log_path`; it never
 includes the Console API key. Pretty output renders the resolved network in one
 `Network` subsection. It does not repeat the shared network object's name as a
 separate `Network: <name>` row; structured output retains that name in the
-resolved network object.
+resolved network object. Pretty output labels `auth-method` by what it controls,
+`Deploy Via`, and maps its stored values to `chain` or `console`. A configured
+Console credential is shown regardless of which workflow rail is preferred.
 
 The keyring line reports the *configured* backend. When that backend is an
 alias for a platform store — `os` (§1.5) — the concrete store that serves it is
@@ -1071,7 +1085,7 @@ Context
     Gas Prices:      0.025uakt
     Gas Adj:         1.5
 
-  Auth Method:      keyring
+  Deploy Via:       chain
   Keyring:          default (backend: os)
     Effective:      keychain
   Default Account:  alice
@@ -1096,7 +1110,8 @@ Edit context-level settings. For network-level changes (endpoints, gas-prices), 
 | `--gas`             | string | `""`    | Change gas setting                     |
 | `--fees`            | string | `""`    | Change fees setting                    |
 | `--provider-auth-type` | string | unchanged | Change provider gateway auth default: `jwt` or `mtls` |
-| `--auth-method`     | string | `""`    | Change authentication method: `keyring` or `console-api` |
+| `--auth-method`     | string | `""`    | Change preferred workflow rail: `keyring` or `console-api` |
+| `--deploy-via`      | string | `""`    | Change preferred deployment rail: `chain` or `console` |
 | `--console-api-url` | string | `""`    | Change Console API base URL (empty = default) |
 | `--console-api-key` | string | `""`    | Set the per-context Console API key (empty string removes it; §7.1) |
 | `--fork-network`    | bool   | `false` | Force fork when editing network fields |
@@ -1107,9 +1122,16 @@ Edit context-level settings. For network-level changes (endpoints, gas-prices), 
 | `--gas-adjustment`  | string | unchanged | Change the selected network's gas adjustment |
 | `--yes`             | bool   | `false` | Edit a shared parent network without prompting |
 
+`--deploy-via` and `--auth-method` are mutually exclusive. Editing the
+preferred rail does not delete the context's keyring, default account, or
+stored Console API key.
+
 ```bash
 # Change default account
 akt context edit prod --default-account bob
+
+# Keep both credentials configured, but send shared deployment workflows through Console
+akt context edit prod --deploy-via console
 
 # Switch to a different network
 akt context edit staging --network sandbox
@@ -2743,10 +2765,11 @@ observing these process signals.
 Starting the MCP server is an on-demand identity operation (§1.7). Listing
 tools and invoking public or explicitly scoped read tools MUST NOT open the
 configured keyring. A read tool that omits its owner resolves a named
-`default-account` when that call is handled. On a keyring context,
-`--enable-writes` explicitly opts into resolving the signer during startup so
-every advertised chain/provider write tool is usable. Enabling writes on a
-Console-only context does not make that context require a local keyring.
+`default-account` when that call is handled. With `--enable-writes`, a context
+that has both chain access and a local keyring may advertise chain/provider
+writes regardless of its preferred workflow rail; a Console credential adds
+Console writes to the same inventory. A network-less Console-only context
+remains prompt-free and advertises only the Console mutations.
 
 **Numeric argument contract:** Sequence identifiers (`dseq`, `gseq`, and
 `oseq`) are positive whole numbers. Pagination values (`skip` and `limit`) are
@@ -2835,6 +2858,7 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | Command                       | Flags                        | Description                                                     |
 | ----------------------------- | ---------------------------- | ---------------------------------------------------------------- |
 | `akt console wallet list`     |                              | List managed wallets. `creditAmount` is dollar-scale per the `/v1/wallets` contract (shown as `$X.XX`, no µ scaling), with the wallet's `denom` when the API reports one. |
+| `akt console wallet address`  |                              | Print the first nonblank managed-wallet blockchain address in full. JSON/YAML return `{address}`. The command resolves `GET /v1/user/me` followed by `GET /v1/wallets?userId=...`, the same boundary used by omitted query-owner fallback. |
 | `akt console wallet balance`  |                              | Available / in-deployment / total balance in USD. `total` is authoritative; the allocation fields carry `allocationStatus: provisional` and a note that they can lag recent creates/closes. |
 | `akt console wallet settings [true\|false]` | `--auto-reload true\|false` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Show settings when no value is given; set auto-reload otherwise. Reports `{ autoReloadEnabled, configured }` on every path — after a write, after a read, and for an account that has never configured auto-reload (the API's 404, which reports `configured: false` plus a `note` naming the command that enables it). The raw API record is never printed: like `deployment settings`, the command reshapes it so one command has one output shape. |
 | `akt console wallet cost`     |                              | Estimated weekly cost in USD.                                    |
@@ -2945,18 +2969,18 @@ The active context's configuration determines a **feature set**: which transport
 | Capability | Derived from | Gates |
 |---|---|---|
 | `chain-query` | network has ≥1 RPC endpoint | `query`, `monitor` |
-| `chain-tx` | `auth-method: keyring` and network has ≥1 RPC endpoint | `tx` |
+| `chain-tx` | network has ≥1 RPC endpoint and the context references a keyring | `tx` |
 | `provider` | network has ≥1 RPC endpoint | `provider` |
 | `console` | Console API key resolvable (§7.1) | Console-backed command groups |
 
 Commands declare requirements via a cobra annotation (`akt.requires`, package `internal/capability`); alternatives are separated by `|` (e.g. workflow commands require `chain-tx|console`). A command whose requirement the context cannot satisfy fails fast with the missing capability and its remedy instead of erroring mid-transport.
 
-`chain-tx` checks identity mode without opening the keyring; key existence and
-funding remain execution-time checks. Raw `akt tx` execution has an independent
-auth boundary and is rejected under `console-api` even when command gating is
-`off` or `--node` supplies an RPC endpoint. Managed-wallet writes use
-`akt deploy/update/close` or `akt console`; a network override supplies a
-connection, never a local signing identity.
+`chain-tx` checks configuration without opening the keyring; key existence and
+funding remain execution-time checks. Raw `akt tx` always opens the referenced
+local keyring and broadcasts to the configured chain. It never routes through
+Console, including when `auth-method: console-api` selects Console for the
+shared deployment workflows. A network override supplies a connection, never
+a local signing identity.
 
 Presentation is configurable while UX feedback is collected (`defaults.command-gating`):
 
@@ -3463,11 +3487,13 @@ context has no default account, the command refuses locally and explains that
 an owner address or `default-account` is required. An empty owner is never sent
 to the chain query service because it means network-wide scope.
 
-In a Console context, omitted owner and numeric-DSEQ shorthand resolve the
-managed wallet owner lazily from authenticated Console identity and wallet
-metadata. An explicit full owner remains authoritative and triggers no owner
-lookup. The resolved full address is then used by the same deployment and
-market query filters as a keyring context.
+In any context with a resolvable Console credential, omitted owner and
+numeric-DSEQ shorthand may resolve the managed wallet owner lazily from
+authenticated Console identity and wallet metadata. An explicit full owner
+remains authoritative and triggers no owner lookup. A configured local
+`default-account` also remains authoritative; Console is the fallback only
+when no local default exists. The resolved full address is then used by the
+same deployment and market query filters as any other context.
 
 #### 3.8.5 Per-Command Filter Scope
 
@@ -4378,7 +4404,12 @@ The `tracked-accounts` field is context-specific (not shared via keyring or netw
 
 ## 7. Console API Specification
 
-When a context's `auth-method` is `console-api`, deployment operations are routed through the [Akash Console Managed Wallet API](https://akash.network/docs/api-documentation/console-api/api-reference/) instead of signing and broadcasting transactions locally.
+When a context's `auth-method` is `console-api`, shared deployment workflows
+are routed through the [Akash Console Managed Wallet API](https://akash.network/docs/api-documentation/console-api/api-reference/)
+instead of signing and broadcasting those workflow transactions locally. The
+context may still carry a local keyring for explicit `akt tx` and provider
+commands. A `keyring`-preferred context may likewise carry a Console API key
+for `akt console` and managed-wallet query-owner fallback.
 
 ### 7.1 Authentication
 
@@ -4521,7 +4552,7 @@ Returns auto top-up configuration for a deployment. Settings are auto-created wi
 
 ### 7.4 Workflow Engine Integration
 
-When a workflow runs in a context with `auth-method: console-api`, the workflow engine automatically routes `type: tx` steps through the Console API instead of building and broadcasting chain transactions locally.
+When a workflow runs in a context with `auth-method: console-api`, the workflow engine automatically routes `type: tx` steps through the Console API instead of building and broadcasting chain transactions locally. This selection applies only to shared workflow commands; it does not change explicit command groups.
 
 **Routing rules for workflow steps:**
 
@@ -4550,6 +4581,15 @@ underscores, signs, and more than two fractional digits are invalid. Negative
 input retains a specific non-negative-amount diagnostic. Syntax and cent
 precision are validated before the rail minimum and before any API request.
 
+Before a deploy dry-run prints a plan or an execution broadcasts its first
+transaction, the workflow resolves the effective deposit and compares its
+denomination with every SDL placement price. On the chain rail, an explicit
+coin uses that coin's denomination and `auto` uses the live minimum deposit
+denomination. On the Console rail, USD deposits require `uact` placement
+prices. A mismatch fails locally and names both denominations. This preserves
+the valid explicit `uakt` escape hatch while preventing a dry-run from
+approving a message that `MsgCreateDeployment.ValidateBasic` will reject.
+
 **Manifest handling**: The Console API's `POST /v1/deployments` returns a `manifest` field in the response. The workflow engine stores this value and passes it to `POST /v1/leases` when creating leases, instead of calling the provider's `send-manifest` endpoint directly.
 
 ### 7.5 Workflow and Command Routing
@@ -4567,15 +4607,11 @@ The Console adapter maps abstract workflow actions, not raw `akt tx` commands:
 | deployment list/get               | `GET /v1/deployments`                | Paginated via `--skip`/`--limit`         |
 
 The mappings are reached through `akt deploy/update/close` and the dedicated
-`akt console` group. Every raw `akt tx` command requires `keyring` auth,
-including deployment, market, and escrow commands. Chain queries continue to
-use RPC directly when a Console context has a network. Running a raw tx with
-`console-api` auth produces an error before any tx child initializes:
-
-```
-Error: raw chain transactions require keyring auth; the active context uses console-api.
-Use `akt deploy`, `akt update`, `akt close`, or `akt console` for managed-wallet operations, or switch to a keyring context.
-```
+`akt console` group. Every raw `akt tx` command uses the context's local
+keyring, including deployment, market, and escrow commands. It never maps a
+raw message to Console. Chain queries continue to use RPC directly whenever
+the context has a network. A missing keyring account fails at the normal local
+identity boundary regardless of the preferred workflow rail.
 
 ### 7.6 Error Handling
 
@@ -4915,6 +4951,15 @@ set; the connection cycle ends and retries without caching that error. An
 initial connection, subscription, or validator failure MUST update the visible
 error and schedule a bounded reconnect rather than leaving the monitor dead
 until process restart.
+
+The upgrade regression scenario runs three real validators with voting-power
+shares of 60%, 25%, and 15%. All three halt at the same configured height. The
+RPC validator restarts first and proves that the monitor reconnects, reloads a
+100% total-power set, and reports 60% participation while the next height stays
+stalled. Restarting the 25% validator crosses the two-thirds threshold and
+must resume block production; the monitor must advance to the new height
+without retaining votes from the halted round. The final validator may then
+rejoin without changing the total-power denominator or rewinding height.
 
 **Refresh interval**: Configurable, default 1s. Supports fast mode (250ms).
 
@@ -7385,7 +7430,7 @@ a declared maximum spend.
 | `monitor` | Real CometBFT HTTP and WebSocket endpoints plus a pseudo-terminal. Covers dashboards, input, rendering parity, cancellation, cache, and reconnect | Smoke tests every pull request; full duration and reconnect tests nightly and release |
 | `fault` | Controlled node, Console, provider, database, signer, and network interruption. Covers retry, ambiguous outcomes, SIGINT, restart, concurrent store access, and recovery | Nightly and release; path-triggered pull requests |
 
-**Current implementation status (2026-08-12):** pull requests currently block
+**Current implementation status (2026-08-27):** pull requests currently block
 on cross-package unit, offline instrumented-binary E2E, and a deterministic
 single-validator fresh-chain lane. Harness-owned mutation scenarios bind
 native-node receipts and post-state to the public command and action log. The
@@ -7399,8 +7444,13 @@ mutation suites require explicit external credentials and block eligible
 same-repository pull requests behind the protected sandbox environment; they
 never replace or contribute counters to the hermetic active union. The
 provider/Kubernetes,
-dual-chain, `testnetify`, full monitor/PTY, fault, multi-validator/multi-actor,
-and mutation-testing lanes in this table remain normative implementation work.
+dual-chain, `testnetify`, full monitor/PTY, fault, general
+multi-validator/multi-actor, and mutation-testing lanes in this table remain
+normative implementation work. The gated three-validator coordinated-halt
+scenario from §8.3.8 covers the monitor's upgrade-critical reconnect and
+voting-power behavior; it does not satisfy the broader multi-validator or full
+monitor/PTY lanes. It is enabled explicitly with
+`AKT_E2E_MONITOR_UPGRADE=1` and otherwise self-skips.
 Only two native fuzz targets exist and CI does not yet run a bounded fuzz
 campaign, so the fuzz boundary set in §12.9 is also incomplete.
 Hermetic unit tests attach the first-run wizard to a real pseudo-terminal and

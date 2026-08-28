@@ -90,8 +90,8 @@ func (s *capturingMarketQuery) Leases(_ context.Context, req *mvbeta.QueryLeases
 }
 
 // execQueryCmdFrom is execQueryCmd with a default account configured. Passing
-// an empty from leaves the context accountless, which is the state a
-// console-api context is always in.
+// an empty from leaves the context accountless, as a Console-only or
+// monitoring context commonly is.
 func execQueryCmdFrom(t *testing.T, cmd *cobra.Command, q cv1beta3.QueryClient, from string, args ...string) (string, error) {
 	t.Helper()
 

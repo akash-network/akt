@@ -450,10 +450,9 @@ func TestMCPToolInventory(t *testing.T) {
 	}
 	assertToolMetadata(t, allTools, writeSet)
 
-	// A Console-auth context can still have a chain RPC for public reads, but
-	// it intentionally owns no local wallet. --enable-writes must therefore
-	// expose Console mutations without advertising unusable chain/provider
-	// mutations or dropping the healthy chain read rail.
+	// A Console-preferred context keeps its local keyring and chain RPC.
+	// --enable-writes therefore exposes both write rails instead of treating
+	// the workflow preference as a capability restriction.
 	consoleHome := t.TempDir()
 	initHome(t, consoleHome)
 	mustRunAkt(t, consoleHome, "context", "network", "create", "net", "--chain-id", "akashnet-2", "--rpc", unreachableNode)
@@ -462,11 +461,10 @@ func TestMCPToolInventory(t *testing.T) {
 		"--auth-method", "console-api",
 		"--console-api-key", "test-key",
 		"--set-current")
-	consoleWrites := []string{"console_close_deployment", "console_deposit"}
 	consoleAuthTools := mcpToolsList(t, consoleHome, "--enable-writes")
-	assertToolNames(t, consoleAuthTools, append(append([]string(nil), readNames...), consoleWrites...))
-	consoleWriteSet := make(map[string]bool, len(consoleWrites))
-	for _, name := range consoleWrites {
+	assertToolNames(t, consoleAuthTools, append(append([]string(nil), readNames...), writes...))
+	consoleWriteSet := make(map[string]bool, len(writes))
+	for _, name := range writes {
 		consoleWriteSet[name] = true
 	}
 	assertToolMetadata(t, consoleAuthTools, consoleWriteSet)

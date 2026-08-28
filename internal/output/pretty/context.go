@@ -75,9 +75,13 @@ func RenderContextShow(rc aktctx.Context, effectiveKeyringBackend string) string
 	if authMethod == "" {
 		authMethod = aktctx.AuthMethodKeyring
 	}
-	ctxKV(w, "Auth Method", authMethod)
-
+	deployVia := "chain"
 	if authMethod == aktctx.AuthMethodConsoleAPI {
+		deployVia = "console"
+	}
+	ctxKV(w, "Deploy Via", deployVia)
+
+	if authMethod == aktctx.AuthMethodConsoleAPI || rc.ConsoleAPIKey != "" {
 		KVHeader(w, "  Console API")
 		ctxSubKV(w, "URL", rc.ConsoleAPIURL)
 
@@ -143,7 +147,7 @@ func RenderContextShow(rc aktctx.Context, effectiveKeyringBackend string) string
 	Newline(w)
 	KVHeader(w, "  Capabilities")
 	renderCapability(w, "Chain queries", set.ChainQuery, "add an RPC endpoint to the network")
-	renderCapability(w, "Chain transactions", set.ChainTx, "use a keyring-auth context with an RPC endpoint")
+	renderCapability(w, "Chain transactions", set.ChainTx, "add an RPC endpoint; transactions use the context keyring")
 	renderCapability(w, "Provider gateway", set.Provider, "add an RPC endpoint to the network")
 	renderCapability(w, "Console API", set.Console, "run akt console login")
 

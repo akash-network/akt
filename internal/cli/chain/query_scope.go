@@ -15,9 +15,9 @@ import (
 // rather than "no results", so sending it anyway returns every matching
 // resource on the network under a heading the caller reads as their own.
 //
-// A context legitimately has no default account -- console-api contexts never
-// set one, and the monitoring context in SPEC §5 omits it deliberately -- so
-// this is a normal state to hit, not a misconfiguration.
+// A context legitimately has no default account -- Console-only and monitoring
+// contexts commonly omit one -- so this is a normal state to hit, not a
+// misconfiguration.
 func requireOwnerScope(resource string) error {
 	return fmt.Errorf("%s: no default account set; provide an owner address or configure default-account", resource)
 }

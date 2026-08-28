@@ -101,10 +101,45 @@ func TestCreatePrintsEffectiveContextConfirmation(t *testing.T) {
 	m := newTestManager(t)
 	cmd := createCmd(func() *aktctx.Manager { return m })
 	out := runOutput(t, cmd, "prod", "--network", "mainnet", "--set-current")
-	for _, want := range []string{`Context "prod" created`, "network: mainnet", "auth-method: keyring", "current: true"} {
+	for _, want := range []string{`Context "prod" created`, "network: mainnet", "deploy-via: chain", "current: true"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("create confirmation %q missing %q", out, want)
 		}
+	}
+}
+
+func TestCreateDeployViaSelectsPreferredWorkflowRail(t *testing.T) {
+	m := newTestManager(t)
+	mgrFn := func() *aktctx.Manager { return m }
+
+	runOK(t, createCmd(mgrFn),
+		"managed", "--network", "mainnet", "--deploy-via", "console",
+	)
+	if got := m.GetContext("managed").AuthMethod; got != aktctx.AuthMethodConsoleAPI {
+		t.Fatalf("console deploy preference stored auth method %q", got)
+	}
+
+	runOK(t, createCmd(mgrFn),
+		"local", "--network", "mainnet", "--deploy-via", "chain",
+	)
+	if got := m.GetContext("local").AuthMethod; got != aktctx.AuthMethodKeyring {
+		t.Fatalf("chain deploy preference stored auth method %q", got)
+	}
+}
+
+func TestCreateRejectsConflictingDeployRailFlags(t *testing.T) {
+	m := newTestManager(t)
+	err := runErr(t, createCmd(func() *aktctx.Manager { return m }),
+		"ambiguous", "--network", "mainnet",
+		"--deploy-via", "console",
+		"--auth-method", aktctx.AuthMethodKeyring,
+	)
+
+	if !strings.Contains(err.Error(), "none of the others") {
+		t.Fatalf("conflicting rail error = %v", err)
+	}
+	if m.GetContext("ambiguous") != nil {
+		t.Fatal("rejected create persisted an ambiguous context")
 	}
 }
 
@@ -223,6 +258,35 @@ func TestEditRejectsInvalidAuthMethod(t *testing.T) {
 
 	if got := m.GetContext("prod").AuthMethod; got == "carrier-pigeon" {
 		t.Error("a rejected auth-method must not be persisted")
+	}
+}
+
+func TestEditDeployViaChangesOnlyPreferredWorkflowRail(t *testing.T) {
+	m := newTestManager(t)
+	mgrFn := func() *aktctx.Manager { return m }
+	runOK(t, createCmd(mgrFn),
+		"prod", "--network", "mainnet", "--default-account", "alice",
+		"--console-api-key", "secret",
+	)
+
+	runOK(t, editCmd(mgrFn), "prod", "--deploy-via", "console")
+	rc, resolveErr := m.Resolve("prod")
+	if resolveErr != nil {
+		t.Fatalf("resolve edited context: %v", resolveErr)
+	}
+	if got := rc.AuthMethod; got != aktctx.AuthMethodConsoleAPI {
+		t.Fatalf("edited deploy preference = %q, want console-api", got)
+	}
+	if rc.Network.Name != "mainnet" || rc.Keyring.Name != "default" || rc.DefaultAccount != "alice" || rc.ConsoleAPIKey != "secret" {
+		t.Fatal("editing deploy preference changed another credential or context field")
+	}
+
+	err := runErr(t, editCmd(mgrFn), "prod", "--deploy-via", "carrier-pigeon")
+	if !strings.Contains(err.Error(), "invalid deploy rail") {
+		t.Fatalf("invalid deploy preference error = %v", err)
+	}
+	if got := m.GetContext("prod").AuthMethod; got != aktctx.AuthMethodConsoleAPI {
+		t.Fatalf("rejected edit persisted auth method %q", got)
 	}
 }
 

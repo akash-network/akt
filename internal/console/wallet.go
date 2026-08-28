@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -48,6 +49,30 @@ func (c *Client) ListWallets(ctx context.Context, userID string) ([]Wallet, erro
 	}
 
 	return out, nil
+}
+
+// ManagedWalletAddress resolves the authenticated user's first managed wallet
+// with a nonblank on-chain address.
+func (c *Client) ManagedWalletAddress(ctx context.Context) (string, error) {
+	user, err := c.GetUser(ctx)
+	if err != nil {
+		return "", fmt.Errorf("resolve Console managed wallet user: %w", err)
+	}
+	if strings.TrimSpace(user.ID) == "" {
+		return "", errors.New("resolve Console managed wallet user: response omitted user ID")
+	}
+
+	wallets, err := c.ListWallets(ctx, user.ID)
+	if err != nil {
+		return "", fmt.Errorf("resolve Console managed wallets: %w", err)
+	}
+	for _, wallet := range wallets {
+		if address := strings.TrimSpace(wallet.Address); address != "" {
+			return address, nil
+		}
+	}
+
+	return "", errors.New("console account has no managed wallet address")
 }
 
 // GetWalletSettings fetches account-level wallet settings.

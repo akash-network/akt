@@ -503,6 +503,85 @@ func TestConsoleDryRunResolvesAndValidatesDeposit(t *testing.T) {
 	}
 }
 
+func TestDeployPreflightRejectsDepositSDLDenominationMismatch(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		authMethod string
+		deposit    string
+		sdlDenom   string
+	}{
+		{name: "chain", authMethod: aktctx.AuthMethodKeyring, deposit: "5000000uact", sdlDenom: "uakt"},
+		{name: "console", authMethod: aktctx.AuthMethodConsoleAPI, deposit: "5", sdlDenom: "uakt"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			m := newTestManager(t, home, test.name, test.authMethod)
+			cmd := findCommand(CommandsWithManager(
+				func() string { return home },
+				func() string { return test.name },
+				func() *aktctx.Manager { return m },
+			), "deploy")
+
+			out, err := executeCommand(t, cmd,
+				writeWorkflowSDLWithDenom(t, test.sdlDenom),
+				"--deposit", test.deposit,
+				"--dry-run",
+			)
+			if err == nil {
+				t.Fatalf("mismatched deployment unexpectedly passed:\n%s", out)
+			}
+			for _, want := range []string{"SDL price denomination", "deposit denomination", "uakt", "uact"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("preflight error %q missing %q", err, want)
+				}
+			}
+			if strings.Contains(out, "Workflow:") {
+				t.Fatalf("mismatched deployment printed a plan:\n%s", out)
+			}
+		})
+	}
+}
+
+func TestDeployPreflightAcceptsMatchingExplicitChainDenomination(t *testing.T) {
+	home := t.TempDir()
+	m := newTestManager(t, home, "chain", aktctx.AuthMethodKeyring)
+	cmd := findCommand(CommandsWithManager(
+		func() string { return home },
+		func() string { return "chain" },
+		func() *aktctx.Manager { return m },
+	), "deploy")
+
+	out, err := executeCommand(t, cmd,
+		writeWorkflowSDLWithDenom(t, "uakt"),
+		"--deposit", "5000000uakt",
+		"--dry-run",
+	)
+	if err != nil {
+		t.Fatalf("matching explicit denomination: %v\n%s", err, out)
+	}
+}
+
+func TestDeployExecutionChecksDenominationsBeforeTransport(t *testing.T) {
+	home := t.TempDir()
+	m := newTestManager(t, home, "chain", aktctx.AuthMethodKeyring)
+	cmd := findCommand(CommandsWithManager(
+		func() string { return home },
+		func() string { return "chain" },
+		func() *aktctx.Manager { return m },
+	), "deploy")
+
+	_, err := executeCommand(t, cmd,
+		writeWorkflowSDLWithDenom(t, "uakt"),
+		"--deposit", "5000000uact",
+	)
+	if err == nil || !strings.Contains(err.Error(), "SDL price denomination") {
+		t.Fatalf("execution preflight error = %v", err)
+	}
+	if strings.Contains(err.Error(), "no wallet/chain client") {
+		t.Fatalf("transport was selected before denomination preflight: %v", err)
+	}
+}
+
 // TestExecuteKeyringContextWithoutChainClient verifies the clear
 // wallet/chain-client error when a keyring context has no chain client in
 // the command context (the "neither credential" case).
@@ -1162,6 +1241,10 @@ func workflowSDLVersionHash(t *testing.T, path string) string {
 }
 
 func writeValidWorkflowSDL(t *testing.T) string {
+	return writeWorkflowSDLWithDenom(t, "uact")
+}
+
+func writeWorkflowSDLWithDenom(t *testing.T, denom string) string {
 	t.Helper()
 
 	path := filepath.Join(t.TempDir(), "deploy.yaml")
@@ -1188,7 +1271,7 @@ profiles:
     westcoast:
       pricing:
         web:
-          denom: uakt
+          denom: ` + denom + `
           amount: 50
 deployment:
   web:

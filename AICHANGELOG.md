@@ -4,6 +4,19 @@
 
 ### Fixed
 
+- **Dual-rail contexts now keep chain and Console operations available at the
+  same time**: The context's existing `auth-method` selects only the preferred
+  `deploy`/`update`/`close` rail, with `--deploy-via chain|console` as the clear
+  editing form. Explicit transactions and opt-in MCP writes continue through
+  the local keyring, while any stored Console credential can print its
+  managed-wallet address and supply an omitted chain-query owner. Deployment
+  planning now resolves the real deposit before checking every SDL price
+  denomination, so dry-run cannot approve a transaction the chain will reject.
+  Successful first-run setup
+  stops after its summary instead of dumping root help. A gated three-validator
+  halt/restart scenario covers monitor reconnect, voting-power thresholds, and
+  block resumption during upgrade-like coordination. (#90)
+
 - **Release-range coverage no longer fails on an impossible Console deposit
   branch**: Console USD validation now returns the exact micro-ACT value used
   for escrow reconciliation. Deployment creation and deposit mutations share

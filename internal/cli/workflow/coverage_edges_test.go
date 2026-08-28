@@ -118,12 +118,12 @@ func TestResolveDryRunParamsAcrossRails(t *testing.T) {
 		cmd := &cobra.Command{}
 
 		for _, raw := range []string{"bad", "auto", "$0.10"} {
-			_, err := resolveDryRunParams(cmd, map[string]any{flagdefs.FlagDeposit: raw}, managerFn, func() string { return "console" })
+			_, err := resolveWorkflowParams(cmd, map[string]any{flagdefs.FlagDeposit: raw}, managerFn, func() string { return "console" })
 			if err == nil {
 				t.Fatalf("Console deposit %q did not fail", raw)
 			}
 		}
-		resolved, err := resolveDryRunParams(cmd, map[string]any{flagdefs.FlagDeposit: "$0.50"}, managerFn, func() string { return "console" })
+		resolved, err := resolveWorkflowParams(cmd, map[string]any{flagdefs.FlagDeposit: "$0.50"}, managerFn, func() string { return "console" })
 		if err != nil || resolved[flagdefs.FlagDeposit] != "0.5" {
 			t.Fatalf("resolved Console deposit = %#v, %v", resolved, err)
 		}
@@ -134,12 +134,12 @@ func TestResolveDryRunParamsAcrossRails(t *testing.T) {
 		managerFn := func() *aktctx.Manager { return manager }
 		cmd := &cobra.Command{}
 		cmd.SetContext(context.Background())
-		explicit, err := resolveDryRunParams(cmd, map[string]any{flagdefs.FlagDeposit: "5uact"}, managerFn, func() string { return "chain" })
+		explicit, err := resolveWorkflowParams(cmd, map[string]any{flagdefs.FlagDeposit: "5uact"}, managerFn, func() string { return "chain" })
 		if err != nil || explicit[flagdefs.FlagDeposit] != "5uact" {
 			t.Fatalf("explicit chain deposit = %#v, %v", explicit, err)
 		}
 
-		if _, err := resolveDryRunParams(cmd, map[string]any{flagdefs.FlagDeposit: "auto"}, managerFn, func() string { return "chain" }); err == nil {
+		if _, err := resolveWorkflowParams(cmd, map[string]any{flagdefs.FlagDeposit: "auto"}, managerFn, func() string { return "chain" }); err == nil {
 			t.Fatal("chain auto deposit without a query client did not fail")
 		}
 
@@ -148,7 +148,7 @@ func TestResolveDryRunParamsAcrossRails(t *testing.T) {
 		}}}
 		light := coverageLightClient{query: query}
 		cmd.SetContext(context.WithValue(context.Background(), chaincli.ContextTypeQueryClient, light))
-		resolved, err := resolveDryRunParams(cmd, map[string]any{flagdefs.FlagDeposit: "auto"}, managerFn, func() string { return "chain" })
+		resolved, err := resolveWorkflowParams(cmd, map[string]any{flagdefs.FlagDeposit: "auto"}, managerFn, func() string { return "chain" })
 		if err != nil || resolved[flagdefs.FlagDeposit] != "5000000uact" {
 			t.Fatalf("resolved chain deposit = %#v, %v", resolved, err)
 		}

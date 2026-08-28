@@ -158,7 +158,7 @@ func TestOnDemandIdentityOpensOnlyWhenAKeyIsUsed(t *testing.T) {
 	require.Positive(t, input.reads, "the first key operation must open the keyring")
 }
 
-func TestConsoleContextNeverOpensLocalIdentity(t *testing.T) {
+func TestConsolePreferredContextHonorsLocalIdentityMode(t *testing.T) {
 	mgr, keyringConfig, root := lockedContext(t)
 	require.NoError(t, mgr.UpdateContext("locked", func(ctx *aktctx.Context) error {
 		ctx.AuthMethod = aktctx.AuthMethodConsoleAPI
@@ -170,7 +170,7 @@ func TestConsoleContextNeverOpensLocalIdentity(t *testing.T) {
 	keyrings := aktkeyring.NewManager(root, keyringConfig, enc.Codec)
 	keyrings.SetInput(input)
 
-	leaf := commandTree("mcp")
+	leaf := commandTree("query", "deployment", "list")
 	resolved, err := MustResolveAndInit(
 		leaf,
 		mgr,
@@ -178,12 +178,17 @@ func TestConsoleContextNeverOpensLocalIdentity(t *testing.T) {
 		enc,
 		"",
 		"",
-		LocalIdentityRequired,
+		LocalIdentityOnDemand,
 	)
 	require.NoError(t, err)
 	require.True(t, resolved)
 	require.Zero(t, input.reads)
-	require.Nil(t, sdkclient.GetClientContextFromCmd(leaf).Keyring)
+
+	cctx := sdkclient.GetClientContextFromCmd(leaf)
+	require.NotNil(t, cctx.Keyring)
+	_, err = cctx.Keyring.Key("alice")
+	require.NoError(t, err)
+	require.Positive(t, input.reads)
 }
 
 func commandTree(path ...string) *cobra.Command {

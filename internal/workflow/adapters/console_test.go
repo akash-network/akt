@@ -386,7 +386,7 @@ func TestConsoleUnsupportedMsg(t *testing.T) {
 		t.Fatal("expected unsupported-command error")
 	}
 	// SPEC §7.5 wording.
-	for _, want := range []string{`"gov.MsgVote"`, "is not supported with console-api auth", "auth-method: keyring"} {
+	for _, want := range []string{`"gov.MsgVote"`, "is not supported on the Console workflow rail", "--deploy-via chain"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error %q does not contain %q", err.Error(), want)
 		}
@@ -524,7 +524,7 @@ func TestConsoleQueryUnsupportedPathWithoutChain(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for unsupported query path without chain access")
 	}
-	if !strings.Contains(err.Error(), "not supported with console-api auth") {
+	if !strings.Contains(err.Error(), "not supported on the Console workflow rail without chain access") {
 		t.Errorf("error %q lacks the unsupported-query wording", err.Error())
 	}
 }
