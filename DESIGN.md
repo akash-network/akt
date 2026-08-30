@@ -894,7 +894,7 @@ merely the first HTTP response.
 
 **Why a translation layer and not per-rail commands**: the alternative — a `deploy` that knows about keyrings and a separate Console `deploy` — means every new action is designed twice, and the two surfaces drift on flag names, defaults, argument order, and error text. Here, adding an action is a workflow definition plus (at most) a message mapping in the console adapter. Neither rail's command handler changes, and no rail-specific redesign is required.
 
-**One argument surface**: the CLI's argument surface is *generated* from the workflow definition (`internal/cli/workflow`). Positional arguments come from the definition's required file param and its optional `dseq` param, and every non-file param also gets a flag carrying the definition's type, default, and description. Because the definition is shared, `akt deploy`, `akt update`, and `akt close` take **identical arguments on both rails**. The preferred rail is a property of the active context (`auth-method`, edited more clearly through `--deploy-via`), not of the workflow command line. Switching the preferred rail does not hide `akt tx` or `akt console` when their credentials remain configured.
+**One argument surface**: the CLI's argument surface is *generated* from the workflow definition (`internal/cli/workflow`). Positional arguments come from the definition's required file param, the built-in deploy workflow's optional `deposit` param, and workflow definitions' optional `dseq` param. Every non-file param also gets a flag carrying the definition's type, default, and description. `akt deploy <sdl-file> [deposit]` therefore preserves the proven `akt console deployment create <sdl-file> [deposit]` order while retaining `--deposit` as an optional alternative; supplying both forms is an error. Because the definition is shared, `akt deploy`, `akt update`, and `akt close` take **identical arguments on both rails**. The preferred rail is a property of the active context (`auth-method`, edited more clearly through `--deploy-via`), not of the workflow command line. Switching the preferred rail does not hide `akt tx` or `akt console` when their credentials remain configured.
 
 **Cross-rail normalization**: rail-independent argument syntax is translated inside `Transport.BroadcastTx` before delegating to the adapter, so a cross-rail mistake fails at the transport boundary with a clear message rather than deep inside a rail's client — or, worse, on the wire. The concrete case is the deployment deposit, parsed in one place (`transport.ParseDeposit`) and rendered per rail by `Deposit.RailValue`:
 
@@ -920,6 +920,14 @@ then require every group price denomination to match the effective deposit
 denomination. Explicit matching legacy `uakt` remains valid; an automatic
 `uact` deposit paired with `uakt` pricing fails before a plan can claim the
 deployment is executable.
+
+A selected chain workflow must also resolve a full signer address before the
+engine starts. A keyring reference makes chain transactions possible, but it
+does not choose a key. If neither the context's `default-account` nor the
+invocation's `--from` selects a signer, `akt` fails before message construction
+and points to all valid remedies: configure `default-account`, pass `--from`,
+or change the preferred workflow rail with `--deploy-via console`. An empty
+owner must never reach an Akash SDK message validator.
 
 ### 3.6 Capability Gating
 

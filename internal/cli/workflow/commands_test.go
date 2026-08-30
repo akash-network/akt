@@ -213,15 +213,15 @@ func TestCommandFromDefClose(t *testing.T) {
 }
 
 // TestCommandFromDefDeploy verifies the generated deploy command: the
-// required file param is positional in Use (not a flag), the remaining
-// params become flags, and the common --yes/--dry-run flags exist.
+// required file and optional deposit params are positional in Use, the SDL
+// remains positional-only, and the common --yes/--dry-run flags exist.
 func TestCommandFromDefDeploy(t *testing.T) {
 	homeFn, ctxNameFn := staticFns(t.TempDir())
 
 	cmd := commandFromDef(loadBuiltin(t, "deploy"), homeFn, ctxNameFn, nil)
 
-	if cmd.Use != "deploy <sdl-file>" {
-		t.Fatalf("deploy Use = %q, want %q", cmd.Use, "deploy <sdl-file>")
+	if cmd.Use != "deploy <sdl-file> [deposit]" {
+		t.Fatalf("deploy Use = %q, want %q", cmd.Use, "deploy <sdl-file> [deposit]")
 	}
 	if cmd.Flags().Lookup("sdl-file") != nil {
 		t.Fatal("deploy command has --sdl-file flag; file param must be positional only")
@@ -1127,6 +1127,58 @@ func TestArgumentSurfaceAuthIndependent(t *testing.T) {
 					name, variants[0].name, v.name, variants[0].name, want, v.name, got)
 			}
 		}
+	}
+}
+
+func TestDeployAcceptsPositionalDepositAcrossRails(t *testing.T) {
+	tests := []struct {
+		name       string
+		authMethod string
+		deposit    string
+	}{
+		{name: "chain coin", authMethod: aktctx.AuthMethodKeyring, deposit: "5000000uact"},
+		{name: "Console USD", authMethod: aktctx.AuthMethodConsoleAPI, deposit: "5"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			manager := newTestManager(t, home, "deploy", test.authMethod)
+			cmd := findCommand(CommandsWithManager(
+				func() string { return home },
+				func() string { return "deploy" },
+				func() *aktctx.Manager { return manager },
+			), "deploy")
+			if cmd == nil {
+				t.Fatal("deploy command not found")
+			}
+
+			out, err := executeCommand(t, cmd, writeValidWorkflowSDL(t), test.deposit, "--dry-run")
+			if err != nil {
+				t.Fatalf("positional deposit dry run: %v\n%s", err, out)
+			}
+			if !strings.Contains(out, "deposit:") || !strings.Contains(out, test.deposit) {
+				t.Fatalf("plan does not contain positional deposit %q:\n%s", test.deposit, out)
+			}
+		})
+	}
+}
+
+func TestDeployRejectsPositionalAndFlagDepositsTogether(t *testing.T) {
+	home := t.TempDir()
+	manager := newTestManager(t, home, "chain", aktctx.AuthMethodKeyring)
+	cmd := findCommand(CommandsWithManager(
+		func() string { return home },
+		func() string { return "chain" },
+		func() *aktctx.Manager { return manager },
+	), "deploy")
+	if cmd == nil {
+		t.Fatal("deploy command not found")
+	}
+
+	_, err := executeCommand(t, cmd, writeValidWorkflowSDL(t), "5", "--deposit", "6", "--dry-run")
+	if err == nil || !strings.Contains(err.Error(), "deposit supplied both positionally and with --deposit") {
+		t.Fatalf("deposit conflict error = %v", err)
 	}
 }
 

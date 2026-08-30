@@ -870,7 +870,7 @@ akt
 │   ├── tx <hash>
 │   ├── txs [events]                     # event list expr; --events override — **disabled pending feedback** (positional only, 2026-07)
 │   └── module-name-to-address <module>
-├── deploy <sdl-file>                    # Workflow: full deployment lifecycle
+├── deploy <sdl-file> [deposit]          # Workflow: full deployment lifecycle
 ├── update <sdl-file> [dseq]             # Workflow: update deployment + send manifest
 ├── close [dseq]                         # Workflow: close deployment
 ├── console                              # Akash Console managed-wallet API (§2.9)
@@ -1422,7 +1422,7 @@ the credential (§7.1). Addresses are recorded in full.
 
 Workflow commands (`akt deploy`, `akt update`, `akt close`) are driven by a **declarative workflow engine**. Instead of hardcoded command logic, each workflow is a YAML definition that the engine interprets step by step. Users can override built-in workflows or create custom ones.
 
-**Transports**: actions are defined once — as workflow definitions — and translated per transport by `internal/transport`. Each transport carries the same abstract steps onto its backing rail: the **chain** transport (keyring auth) signs and broadcasts transactions locally plus provider-gateway calls, while the **console** transport (console-api auth) maps the same steps onto Console API REST calls (§7.4–§7.5). Because the command surface (positionals and flags) is generated from the workflow definition and the transport is chosen per context at execution time, `akt deploy/update/close` accept identical arguments on both rails, and adding a new action never requires per-rail redesign. Cross-rail argument syntax (notably `--deposit`, §7.4) is normalized in the transport layer. A successful Console `akt deploy` result also reports that the Console enabled its default daily auto top-up and prints the exact deployment-settings command that disables it; chain results omit this Console-only state.
+**Transports**: actions are defined once — as workflow definitions — and translated per transport by `internal/transport`. Each transport carries the same abstract steps onto its backing rail: the **chain** transport (keyring auth) signs and broadcasts transactions locally plus provider-gateway calls, while the **console** transport (console-api auth) maps the same steps onto Console API REST calls (§7.4–§7.5). Because the command surface (positionals and flags) is generated from the workflow definition and the transport is chosen per context at execution time, `akt deploy/update/close` accept identical arguments on both rails, and adding a new action never requires per-rail redesign. The deploy deposit is positional-first (`akt deploy <sdl-file> [deposit]`) with `--deposit` as an alternative; both forms use the same cross-rail grammar and cannot be supplied together. Cross-rail deposit syntax (§7.4) is normalized in the transport layer. A successful Console `akt deploy` result also reports that the Console enabled its default daily auto top-up and prints the exact deployment-settings command that disables it; chain results omit this Console-only state.
 
 #### 2.3.1 Workflow Definition Location
 
@@ -1648,7 +1648,7 @@ When a workflow aborts due to a step failure, the user may be left with partial 
 | `duration`      | Positive Go duration                 | `--name 5m`    |
 | `file`          | Readable file path (positional first)| positional arg |
 | `sdl`           | Parsed SDL file (positional first)   | positional arg |
-| `deposit`       | Unified §7.4 deposit                 | `--deposit 5usd` |
+| `deposit`       | Unified §7.4 deposit (positional first for deploy) | `[5]` or `--deposit 5` |
 | `bid-selection` | Interactive/cheapest/provider mode   | `--bid-select cheapest` |
 
 #### 2.3.8 Execution Modes
@@ -1837,7 +1837,7 @@ steps:
         DSEQ: {{ .Params.dseq }}
 ```
 
-#### `akt deploy <sdl-file>`
+#### `akt deploy <sdl-file> [deposit]`
 
 The flagship workflow command. Orchestrates the full deployment lifecycle:
 
@@ -1852,6 +1852,15 @@ The flagship workflow command. Orchestrates the full deployment lifecycle:
 On the Console rail, the final display also identifies the default daily auto
 top-up and prints `akt console deployment settings <dseq> false` as the exact
 opt-out command. The chain rail does not display a Console setting.
+
+The optional positional `deposit` matches `akt console deployment create`:
+bare decimal, `usd`, and dollar-prefixed values select a Console USD deposit,
+while `auto` and explicit coin values select chain forms. `--deposit` remains
+a flag-based alternative for scripts; supplying both forms is a usage
+error. Before a chain execution begins, `--from` or the selected context's
+`default-account` must resolve to a full signer address. A missing signer fails
+before workflow steps or message validation and names these remedies plus
+`akt context edit <context> --deploy-via console`.
 
 | Flag               | Type     | Default         | Description                                                 |
 | ------------------ | -------- | --------------- | ----------------------------------------------------------- |

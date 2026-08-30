@@ -1,15 +1,18 @@
 package workflow
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
 
+	tmrpc "github.com/cometbft/cometbft/rpc/core/types"
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
@@ -46,6 +49,23 @@ type coverageDeploymentQuery struct {
 	err      error
 }
 
+type noSignerWorkflowClient struct {
+	aclient.Client
+	node          cv1beta3.NodeClient
+	clientContext sdkclient.Context
+}
+
+func (c noSignerWorkflowClient) ClientContext() sdkclient.Context { return c.clientContext }
+func (c noSignerWorkflowClient) Node() cv1beta3.NodeClient        { return c.node }
+
+type noSignerWorkflowNode struct {
+	cv1beta3.NodeClient
+}
+
+func (noSignerWorkflowNode) SyncInfo(context.Context) (*tmrpc.SyncInfo, error) {
+	return &tmrpc.SyncInfo{LatestBlockHeight: 72}, nil
+}
+
 func (q coverageDeploymentQuery) Params(
 	context.Context,
 	*dv1beta.QueryParamsRequest,
@@ -77,6 +97,78 @@ func TestChainDryRunDepositDiscoveryDecision(t *testing.T) {
 	}
 	if chainDryRunNeedsDepositQuery("5uact") || chainDryRunNeedsDepositQuery("not-a-deposit") {
 		t.Fatal("explicit or invalid deposits must defer to RunE without discovery")
+	}
+}
+
+func TestChainWorkflowRejectsMissingSignerBeforeExecution(t *testing.T) {
+	home := t.TempDir()
+	manager := newTestManager(t, home, "chain", aktctx.AuthMethodKeyring)
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetContext(context.WithValue(
+		context.Background(),
+		chaincli.ContextTypeClient,
+		noSignerWorkflowClient{node: noSignerWorkflowNode{}},
+	))
+
+	err := executeWorkflow(
+		cmd,
+		loadBuiltin(t, "deploy"),
+		map[string]any{
+			"sdl-file":      writeValidWorkflowSDL(t),
+			"deposit":       "5000000uact",
+			"bid-select":    "cheapest",
+			"bid-timeout":   "5m",
+			"ready-timeout": "2m",
+		},
+		func() *aktctx.Manager { return manager },
+		func() string { return "chain" },
+		false,
+		nil,
+	)
+	if err == nil {
+		t.Fatal("missing chain signer did not fail")
+	}
+	for _, want := range []string{"before workflow execution", "default-account", "--from", "--deploy-via console"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("missing signer error %q does not contain %q", err, want)
+		}
+	}
+}
+
+func TestChainWorkflowUsesSelectedSigner(t *testing.T) {
+	home := t.TempDir()
+	manager := newTestManager(t, home, "chain", aktctx.AuthMethodKeyring)
+	cmd := &cobra.Command{}
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	clientContext := sdkclient.Context{}.WithFromAddress(sdk.AccAddress(bytes.Repeat([]byte{1}, 20)))
+	cmd.SetContext(context.WithValue(
+		context.Background(),
+		chaincli.ContextTypeClient,
+		noSignerWorkflowClient{node: noSignerWorkflowNode{}, clientContext: clientContext},
+	))
+
+	err := executeWorkflow(
+		cmd,
+		&wf.WorkflowDef{
+			Name:    "identity-check",
+			Version: 1,
+			Steps: []wf.StepDef{{
+				Name:     "done",
+				Type:     wf.StepOutput,
+				Template: "selected signer reached workflow execution",
+			}},
+		},
+		map[string]any{},
+		func() *aktctx.Manager { return manager },
+		func() string { return "chain" },
+		false,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("execute workflow with selected signer: %v", err)
 	}
 }
 

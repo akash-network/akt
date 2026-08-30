@@ -86,6 +86,18 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 		positional[pname] = struct{}{}
 	}
 
+	// Keep the deploy deposit in the same optional positional slot as the
+	// direct Console deployment command. The generated --deposit flag remains
+	// available as an alternative for scripts.
+	var depositParam string
+	for _, pname := range paramNames {
+		p := def.Params[pname]
+		if def.Name == "deploy" && p.Type == wf.ParamDeposit && pname == flagdefs.FlagDeposit {
+			use += " [deposit]"
+			depositParam = pname
+		}
+	}
+
 	// If the workflow has an optional int param (like dseq), allow it as positional.
 	var dseqParam string
 	for _, pname := range paramNames {
@@ -120,7 +132,16 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 				if rc == nil || rc.AuthMethod == aktctx.AuthMethodConsoleAPI || depositFlag == nil {
 					return nil
 				}
-				if !chainDryRunNeedsDepositQuery(depositFlag.Value.String()) {
+
+				deposit := depositFlag.Value.String()
+				positionalDeposit := depositParam != "" && len(args) > len(positionalParams)
+				if positionalDeposit {
+					if depositFlag.Changed {
+						return nil // RunE reports the positional/flag conflict before validation.
+					}
+					deposit = args[len(positionalParams)]
+				}
+				if !chainDryRunNeedsDepositQuery(deposit) {
 					return nil
 				}
 
@@ -166,6 +187,23 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 				}
 			}
 
+			// Resolve deposit from its optional positional or flag form.
+			if depositParam != "" {
+				deposit, _ := cmd.Flags().GetString(depositParam)
+				if argIdx < len(args) {
+					if cmd.Flags().Changed(depositParam) {
+						return fmt.Errorf(
+							"%s supplied both positionally and with --%s; use one form",
+							depositParam,
+							depositParam,
+						)
+					}
+					deposit = args[argIdx]
+					argIdx++
+				}
+				params[depositParam] = deposit
+			}
+
 			// Resolve dseq from positional or flag.
 			if dseqParam != "" {
 				dseq, _ := cmd.Flags().GetInt(dseqParam)
@@ -193,7 +231,7 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 			// Resolve remaining flag-based params.
 			for _, pname := range sortedParamNames(rtDef.Params) {
 				pdef := rtDef.Params[pname]
-				if _, ok := positional[pname]; ok || pname == dseqParam {
+				if _, ok := positional[pname]; ok || pname == depositParam || pname == dseqParam {
 					continue // already handled
 				}
 				switch pdef.Type {
@@ -283,6 +321,9 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 	// Set args validation based on what we expect.
 	minArgs := len(positionalParams)
 	maxArgs := len(positionalParams)
+	if depositParam != "" {
+		maxArgs++ // optional positional
+	}
 	if dseqParam != "" {
 		maxArgs++ // optional positional
 	}
@@ -487,14 +528,20 @@ func executeWorkflow(
 			)
 		}
 
+		addr := cl.ClientContext().GetFromAddress()
+		if addr.Empty() {
+			return fmt.Errorf(
+				"context %q prefers the chain workflow rail, but no signer was selected before workflow execution.\n"+
+					"Set one with `akt context edit %s --default-account <key-or-address>`, pass `--from <key-or-address>`, or switch with `akt context edit %s --deploy-via console`",
+				rc.Name,
+				rc.Name,
+				rc.Name,
+			)
+		}
+
+		account = addr.String()
 		chainCl = transport.NewChain(cl)
 		providerCl = transport.NewProvider(cl.ClientContext(), rc.AuthType)
-
-		if addr := cl.ClientContext().GetFromAddress(); !addr.Empty() {
-			account = addr.String()
-		} else if name := cl.ClientContext().FromName; name != "" {
-			account = name
-		}
 	}
 
 	registry := steps.NewRegistry(chainCl, providerCl)
