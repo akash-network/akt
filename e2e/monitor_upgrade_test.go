@@ -141,7 +141,10 @@ func TestMonitorThreeValidatorUpgradeHaltAndRestart(t *testing.T) {
 	// Keep consuming while the chain reaches its halt so the producer can
 	// observe the socket closure instead of filling its snapshot buffer.
 	go func() {
-		for range initial.Snapshots {
+		for {
+			if _, ok := <-initial.Snapshots; !ok {
+				return
+			}
 		}
 	}()
 
