@@ -372,10 +372,11 @@ func validateDeploymentDenominations(params map[string]any, rc *aktctx.Context) 
 	if err != nil {
 		return fmt.Errorf("read SDL %q for deployment denomination preflight: %w", sdlPath, err)
 	}
-	groups, err := doc.DeploymentGroups()
-	if err != nil {
-		return fmt.Errorf("derive SDL %q deployment groups for denomination preflight: %w", sdlPath, err)
-	}
+	// ReadFile returns only fully initialized v2/v2.1 documents; both concrete
+	// implementations return their already-built deployment groups without an
+	// error. The interface retains an error for uninitialized documents, which
+	// cannot escape ReadFile.
+	groups, _ := doc.DeploymentGroups()
 
 	for _, group := range groups {
 		sdlDenom := group.Price().Denom

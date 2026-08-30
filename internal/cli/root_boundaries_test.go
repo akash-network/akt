@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -91,6 +92,18 @@ func TestRootExitsAfterSuccessfulFirstRunBootstrap(t *testing.T) {
 	}
 	if strings.Contains(out.String(), "Usage:") || strings.Contains(out.String(), "Available Commands:") {
 		t.Fatalf("root printed full help after successful setup:\n%s", out.String())
+	}
+}
+
+func TestRootReturnsFirstRunBootstrapError(t *testing.T) {
+	wantErr := errors.New("bootstrap failed")
+	root := newRootCmd(BuildInfo{}, func(string) error { return wantErr })
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"--home", t.TempDir()})
+
+	if err := Execute(root); !errors.Is(err, wantErr) {
+		t.Fatalf("bootstrap error = %v, want %v", err, wantErr)
 	}
 }
 

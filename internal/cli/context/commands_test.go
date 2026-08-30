@@ -127,6 +127,19 @@ func TestCreateDeployViaSelectsPreferredWorkflowRail(t *testing.T) {
 	}
 }
 
+func TestCreateRejectsInvalidDeployRailBeforePersisting(t *testing.T) {
+	m := newTestManager(t)
+	err := runErr(t, createCmd(func() *aktctx.Manager { return m }),
+		"invalid", "--network", "mainnet", "--deploy-via", "carrier-pigeon",
+	)
+	if !strings.Contains(err.Error(), "invalid deploy rail") {
+		t.Fatalf("invalid deploy preference error = %v", err)
+	}
+	if m.GetContext("invalid") != nil {
+		t.Fatal("invalid deploy preference persisted a context")
+	}
+}
+
 func TestCreateRejectsConflictingDeployRailFlags(t *testing.T) {
 	m := newTestManager(t)
 	err := runErr(t, createCmd(func() *aktctx.Manager { return m }),

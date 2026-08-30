@@ -561,6 +561,27 @@ func TestDeployPreflightAcceptsMatchingExplicitChainDenomination(t *testing.T) {
 	}
 }
 
+func TestDeployPreflightReportsMalformedDepositAndUnreadableSDL(t *testing.T) {
+	rc := &aktctx.Context{AuthMethod: aktctx.AuthMethodKeyring}
+
+	err := validateDeploymentDenominations(map[string]any{
+		"sdl-file":           "unused.yaml",
+		flagdefs.FlagDeposit: "not-a-coin",
+	}, rc)
+	if err == nil || !strings.Contains(err.Error(), "resolve deployment deposit denomination") {
+		t.Fatalf("malformed deposit error = %v", err)
+	}
+
+	missing := filepath.Join(t.TempDir(), "missing.yaml")
+	err = validateDeploymentDenominations(map[string]any{
+		"sdl-file":           missing,
+		flagdefs.FlagDeposit: "5000000uact",
+	}, rc)
+	if err == nil || !strings.Contains(err.Error(), "read SDL") {
+		t.Fatalf("unreadable SDL error = %v", err)
+	}
+}
+
 func TestDeployExecutionChecksDenominationsBeforeTransport(t *testing.T) {
 	home := t.TempDir()
 	m := newTestManager(t, home, "chain", aktctx.AuthMethodKeyring)

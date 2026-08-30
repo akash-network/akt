@@ -106,12 +106,17 @@ func (s Set) Satisfies(requirement string) bool {
 	return false
 }
 
-// remedies maps a capability to how the user enables it.
-var remedies = map[Capability]string{
-	ChainQuery: "add an RPC endpoint to the context's network (akt context network edit <network> --rpc <url>)",
-	ChainTx:    "configure a keyring and an RPC endpoint on the context (akt context edit <context> --keyring <keyring>)",
-	Console:    "configure a Console API key (akt console login, or akt context edit <context> --console-api-key <key>)",
-	Provider:   "add an RPC endpoint to the context's network (akt context network edit <network> --rpc <url>)",
+func capabilityRemedy(c Capability) (string, bool) {
+	switch c {
+	case ChainQuery, Provider:
+		return "add an RPC endpoint to the context's network (akt context network edit <network> --rpc <url>)", true
+	case ChainTx:
+		return "configure a keyring and an RPC endpoint on the context (akt context edit <context> --keyring <keyring>)", true
+	case Console:
+		return "configure a Console API key (akt console login, or akt context edit <context> --console-api-key <key>)", true
+	default:
+		return "", false
+	}
 }
 
 // Explain describes an unsatisfied requirement and how to fix it. The
@@ -121,7 +126,7 @@ func (s Set) Explain(requirement string) string {
 	var wants []string
 	for _, alt := range strings.Split(requirement, "|") {
 		c := Capability(strings.TrimSpace(alt))
-		remedy, known := remedies[c]
+		remedy, known := capabilityRemedy(c)
 		if !known {
 			continue
 		}
