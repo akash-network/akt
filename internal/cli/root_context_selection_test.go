@@ -199,7 +199,7 @@ func TestRootRefusesToRunWhenSelectedActionLogCannotOpen(t *testing.T) {
 	}
 }
 
-func TestRootRejectsEveryRawTxBeforeConsoleContextTxHooks(t *testing.T) {
+func TestRootAllowsRawTxWithConsolePreferredContext(t *testing.T) {
 	m := rootTestManager(t)
 	cfg := m.Config()
 	cfg.Defaults.CommandGating = "off"
@@ -223,33 +223,29 @@ func TestRootRejectsEveryRawTxBeforeConsoleContextTxHooks(t *testing.T) {
 		t.Fatalf("UseContext: %v", err)
 	}
 
-	commands := map[string][]string{
-		"bank send":          {"tx", "bank", "send", "managed", "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx", "1uakt"},
-		"certificate create": {"tx", "cert", "generate"},
-		"deployment create":  {"tx", "deployment", "create", "missing.yaml"},
+	root := NewRootCmd(BuildInfo{Version: "test"})
+	txCmd, _, err := root.Find([]string{"tx"})
+	if err != nil {
+		t.Fatalf("find tx command: %v", err)
 	}
+	ran := false
+	txCmd.AddCommand(&cobra.Command{
+		Use:  "probe-local-tx",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			ran = sdkclient.GetClientContextFromCmd(cmd).Keyring != nil
+			return nil
+		},
+	})
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"--home", m.Root(), "tx", "probe-local-tx"})
 
-	for name, args := range commands {
-		t.Run(name, func(t *testing.T) {
-			var runErr error
-			func() {
-				defer func() {
-					if recovered := recover(); recovered != nil {
-						t.Fatalf("raw tx panicked instead of failing at the auth boundary: %v", recovered)
-					}
-				}()
-				runErr = executeRoot(t, append([]string{"--home", m.Root()}, args...)...)
-			}()
-
-			if runErr == nil {
-				t.Fatal("raw tx succeeded under console-api auth")
-			}
-			for _, want := range []string{"raw chain transactions", "keyring", "akt deploy", "akt console"} {
-				if !strings.Contains(runErr.Error(), want) {
-					t.Errorf("error %q missing %q", runErr, want)
-				}
-			}
-		})
+	if err := Execute(root); err != nil {
+		t.Fatalf("raw tx with Console-preferred context: %v", err)
+	}
+	if !ran {
+		t.Fatal("raw tx did not receive the context's local keyring")
 	}
 }
 

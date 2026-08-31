@@ -48,6 +48,61 @@ func TestWalletListShowsDollarScaleCredits(t *testing.T) {
 	}
 }
 
+func TestWalletAddressPrintsFullManagedAddress(t *testing.T) {
+	const address = "akash1gnz8venxvenxvenxvenxvenxvenxvenx4m3e0y"
+	m := newTestManager(t)
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
+		t.Fatalf("SetConsoleAPIKey: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/user/me":
+			writeJSON(t, w, `{"data":{"id":"u1"}}`)
+		case "/v1/wallets":
+			writeJSON(t, w, `{"data":[{"address":"`+address+`"}]}`)
+		default:
+			t.Errorf("unexpected request %s", r.URL.RequestURI())
+		}
+	}))
+	defer srv.Close()
+
+	for _, format := range []string{"pretty", "json", "yaml"} {
+		out, err := execConsole(t, m, srv.URL, "wallet", "address", "--output", format)
+		if err != nil {
+			t.Fatalf("wallet address (%s): %v", format, err)
+		}
+		if !strings.Contains(out, address) {
+			t.Errorf("wallet address (%s) omitted full address: %q", format, out)
+		}
+	}
+}
+
+func TestWalletAddressReportsCredentialAndManagedWalletErrors(t *testing.T) {
+	t.Run("missing Console credential", func(t *testing.T) {
+		_, err := execConsole(t, newTestManager(t), "", "wallet", "address")
+		if err == nil || !strings.Contains(err.Error(), "Console API key") {
+			t.Fatalf("missing credential error = %v", err)
+		}
+	})
+
+	t.Run("managed wallet lookup", func(t *testing.T) {
+		m := newTestManager(t)
+		if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
+			t.Fatalf("SetConsoleAPIKey: %v", err)
+		}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+		}))
+		defer srv.Close()
+
+		_, err := execConsole(t, m, srv.URL, "wallet", "address")
+		if err == nil || !strings.Contains(err.Error(), "managed wallet user") {
+			t.Fatalf("managed wallet lookup error = %v", err)
+		}
+	})
+}
+
 // TestWalletSettingsReportsOneShape pins `wallet settings` to the shaped
 // {autoReloadEnabled, configured} object on both success paths. The read and
 // write paths used to hand the raw API record to the printer, so the same

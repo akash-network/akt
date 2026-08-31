@@ -1,15 +1,77 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/spf13/cobra"
+
 	chaincli "pkg.akt.dev/akt/internal/cli/chain"
 	aktctx "pkg.akt.dev/akt/internal/context"
 )
+
+func TestRootAttachesManagedWalletFallbackToKeyringPreferredQuery(t *testing.T) {
+	const address = "akash1gnz8venxvenxvenxvenxvenxvenxvenx4m3e0y"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/user/me":
+			_, _ = w.Write([]byte(`{"data":{"id":"user-1"}}`))
+		case "/v1/wallets":
+			_, _ = w.Write([]byte(`{"data":[{"address":"` + address + `"}]}`))
+		default:
+			t.Errorf("unexpected request %s", r.URL.RequestURI())
+		}
+	}))
+	defer srv.Close()
+
+	m := rootTestManager(t)
+	if err := m.CreateContext(aktctx.Context{
+		Name:          "dual",
+		Network:       aktctx.Network{Name: "mainnet"},
+		AuthMethod:    aktctx.AuthMethodKeyring,
+		ConsoleAPIURL: srv.URL,
+	}); err != nil {
+		t.Fatalf("CreateContext: %v", err)
+	}
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "dual", "secret"); err != nil {
+		t.Fatalf("SetConsoleAPIKey: %v", err)
+	}
+	if err := m.UseContext("dual"); err != nil {
+		t.Fatalf("UseContext: %v", err)
+	}
+
+	root := NewRootCmd(BuildInfo{Version: "test"})
+	queryCmd, _, err := root.Find([]string{"query"})
+	if err != nil {
+		t.Fatalf("find query command: %v", err)
+	}
+	var got string
+	queryCmd.AddCommand(&cobra.Command{
+		Use:  "probe-managed-owner",
+		Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			resolver, ok := cmd.Context().Value(chaincli.ContextTypeDefaultOwnerResolver).(chaincli.DefaultOwnerResolver)
+			if !ok {
+				t.Fatal("managed-wallet resolver was not attached")
+			}
+			got, err = resolver(cmd.Context())
+			return err
+		},
+	})
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"--home", m.Root(), "query", "probe-managed-owner"})
+	if err := Execute(root); err != nil {
+		t.Fatalf("query probe: %v", err)
+	}
+	if got != address {
+		t.Fatalf("managed owner = %q, want %q", got, address)
+	}
+}
 
 func TestConsoleDefaultOwnerResolverUsesManagedWallet(t *testing.T) {
 	const address = "akash1gnz8venxvenxvenxvenxvenxvenxvenx4m3e0y"

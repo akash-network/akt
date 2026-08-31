@@ -20,12 +20,37 @@ func walletCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 	cmd.AddCommand(
 		walletListCmd(mgrFn),
+		walletAddressCmd(mgrFn),
 		walletBalanceCmd(mgrFn),
 		walletSettingsCmd(mgrFn),
 		walletCostCmd(mgrFn),
 	)
 
 	return cmd
+}
+
+func walletAddressCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
+	return &cobra.Command{
+		Use:     "address",
+		Short:   "Print the managed wallet blockchain address",
+		Args:    cobra.NoArgs,
+		Example: `  akt console wallet address`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cl, _, err := clientFromCmd(cmd, mgrFn, true)
+			if err != nil {
+				return err
+			}
+
+			address, err := cl.ManagedWalletAddress(cmd.Context())
+			if err != nil {
+				return err
+			}
+
+			return printJSON(cmd, struct {
+				Address string `json:"address"`
+			}{Address: address})
+		},
+	}
 }
 
 func walletListCmd(mgrFn func() *aktctx.Manager) *cobra.Command {

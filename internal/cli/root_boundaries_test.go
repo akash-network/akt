@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -15,6 +16,7 @@ import (
 	"github.com/spf13/viper"
 
 	"pkg.akt.dev/akt/internal/actionlog"
+	"pkg.akt.dev/akt/internal/capability"
 	aktclient "pkg.akt.dev/akt/internal/client"
 	"pkg.akt.dev/akt/internal/cliutil"
 	aktctx "pkg.akt.dev/akt/internal/context"
@@ -66,6 +68,42 @@ func TestRootConfigurationBoundaries(t *testing.T) {
 	}
 	if !requiresContext(tx) {
 		t.Fatal("transaction commands must require a resolved context")
+	}
+}
+
+func TestRootExitsAfterSuccessfulFirstRunBootstrap(t *testing.T) {
+	home := t.TempDir()
+	bootstrapCalled := false
+	root := newRootCmd(BuildInfo{}, func(cfgRoot string) error {
+		bootstrapCalled = true
+		cfg := aktctx.DefaultConfig()
+		return aktctx.SaveConfig(cfgRoot, &cfg)
+	})
+
+	var out bytes.Buffer
+	root.SetOut(&out)
+	root.SetErr(&out)
+	root.SetArgs([]string{"--home", home})
+	if err := Execute(root); err != nil {
+		t.Fatalf("root after bootstrap: %v", err)
+	}
+	if !bootstrapCalled {
+		t.Fatal("first-run bootstrap was not called")
+	}
+	if strings.Contains(out.String(), "Usage:") || strings.Contains(out.String(), "Available Commands:") {
+		t.Fatalf("root printed full help after successful setup:\n%s", out.String())
+	}
+}
+
+func TestRootReturnsFirstRunBootstrapError(t *testing.T) {
+	wantErr := errors.New("bootstrap failed")
+	root := newRootCmd(BuildInfo{}, func(string) error { return wantErr })
+	root.SetOut(&bytes.Buffer{})
+	root.SetErr(&bytes.Buffer{})
+	root.SetArgs([]string{"--home", t.TempDir()})
+
+	if err := Execute(root); !errors.Is(err, wantErr) {
+		t.Fatalf("bootstrap error = %v, want %v", err, wantErr)
 	}
 }
 
@@ -182,7 +220,7 @@ func TestRootCanonicalFlagsDrivePreRunAndCompletion(t *testing.T) {
 	}
 }
 
-func TestLocalIdentityDryRunsDoNotOpenSigningKeyrings(t *testing.T) {
+func TestLocalIdentityDryRunsAndCrossRailWorkflowsDeferKeyrings(t *testing.T) {
 	root := &cobra.Command{Use: "akt"}
 
 	provider := &cobra.Command{Use: "provider"}
@@ -196,9 +234,18 @@ func TestLocalIdentityDryRunsDoNotOpenSigningKeyrings(t *testing.T) {
 
 	workflow := &cobra.Command{Use: "deploy"}
 	workflow.Flags().Bool(flagdefs.FlagDryRun, true, "")
+	workflow.Annotations = map[string]string{
+		capability.AnnotationKey: string(capability.ChainTx) + "|" + string(capability.Console),
+	}
 	root.AddCommand(workflow)
-	if got := localIdentityMode(workflow); got != aktclient.LocalIdentityNone {
-		t.Fatalf("workflow dry-run identity mode = %v, want none", got)
+	if got := localIdentityMode(workflow); got != aktclient.LocalIdentityOnDemand {
+		t.Fatalf("workflow dry-run identity mode = %v, want on demand", got)
+	}
+	if err := workflow.Flags().Set(flagdefs.FlagDryRun, "false"); err != nil {
+		t.Fatalf("clear workflow dry-run: %v", err)
+	}
+	if got := localIdentityMode(workflow); got != aktclient.LocalIdentityOnDemand {
+		t.Fatalf("workflow execution identity mode = %v, want on demand", got)
 	}
 }
 

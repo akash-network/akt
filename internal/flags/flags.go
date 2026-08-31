@@ -61,6 +61,7 @@ const (
 	FlagDenom                       = "denom"
 	FlagDenyValidators              = "deny-validators"
 	FlagDeposit                     = "deposit"
+	FlagDeployVia                   = "deploy-via"
 	FlagDepositor                   = "depositor"
 	FlagDepositSources              = "deposit-sources"
 	FlagDescription                 = "description"

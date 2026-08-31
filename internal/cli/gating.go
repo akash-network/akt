@@ -57,15 +57,14 @@ func applyCapabilityGating(root *cobra.Command, set capability.Set, mode capabil
 // argv is the raw command line because several clean-copied SDK groups
 // disable flag parsing; posArgs are the command's parsed positional
 // arguments, used for commands that take an endpoint positionally.
-func invocationCapabilities(set capability.Set, authMethod string, cmd *cobra.Command, argv, posArgs []string) capability.Set {
+func invocationCapabilities(set capability.Set, cmd *cobra.Command, argv, posArgs []string) capability.Set {
 	grantChain := func() {
 		set.ChainQuery = true
 		set.Provider = true
-		// An endpoint override supplies a connection, not a signer. Empty is
-		// the backwards-compatible default for resolved keyring contexts.
-		if authMethod != aktctx.AuthMethodConsoleAPI {
-			set.ChainTx = true
-		}
+		// Every resolved context references a keyring. The endpoint override
+		// completes the chain transaction capability regardless of which rail
+		// workflows prefer.
+		set.ChainTx = true
 	}
 
 	for _, a := range argv {

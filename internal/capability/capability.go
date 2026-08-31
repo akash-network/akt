@@ -29,7 +29,7 @@ type Capability string
 const (
 	// ChainQuery requires a network RPC endpoint.
 	ChainQuery Capability = "chain-query"
-	// ChainTx requires keyring auth and a network RPC endpoint (transactions
+	// ChainTx requires a configured keyring and a network RPC endpoint (transactions
 	// additionally need a funded key at execution time; key presence is
 	// deliberately not probed here because opening OS keyrings can prompt).
 	ChainTx Capability = "chain-tx"
@@ -55,13 +55,13 @@ func Resolve(rc *aktctx.Context) Set {
 	}
 
 	hasRPC := len(rc.Network.Endpoints.RPC) > 0
-	hasKey := rc.ConsoleAPIKey != ""
-	hasLocalTxAuth := rc.AuthMethod != aktctx.AuthMethodConsoleAPI
+	hasKeyring := strings.TrimSpace(rc.Keyring.Name) != ""
+	hasConsoleKey := rc.ConsoleAPIKey != ""
 
 	return Set{
 		ChainQuery: hasRPC,
-		ChainTx:    hasRPC && hasLocalTxAuth,
-		Console:    hasKey,
+		ChainTx:    hasRPC && hasKeyring,
+		Console:    hasConsoleKey,
 		Provider:   hasRPC,
 	}
 }
@@ -106,12 +106,17 @@ func (s Set) Satisfies(requirement string) bool {
 	return false
 }
 
-// remedies maps a capability to how the user enables it.
-var remedies = map[Capability]string{
-	ChainQuery: "add an RPC endpoint to the context's network (akt context network edit <network> --rpc <url>)",
-	ChainTx:    "use a keyring-auth context with an RPC endpoint (akt context use <context>)",
-	Console:    "configure a Console API key (akt console login, or akt context edit <context> --console-api-key <key>)",
-	Provider:   "add an RPC endpoint to the context's network (akt context network edit <network> --rpc <url>)",
+func capabilityRemedy(c Capability) (string, bool) {
+	switch c {
+	case ChainQuery, Provider:
+		return "add an RPC endpoint to the context's network (akt context network edit <network> --rpc <url>)", true
+	case ChainTx:
+		return "configure a keyring and an RPC endpoint on the context (akt context edit <context> --keyring <keyring>)", true
+	case Console:
+		return "configure a Console API key (akt console login, or akt context edit <context> --console-api-key <key>)", true
+	default:
+		return "", false
+	}
 }
 
 // Explain describes an unsatisfied requirement and how to fix it. The
@@ -121,7 +126,7 @@ func (s Set) Explain(requirement string) string {
 	var wants []string
 	for _, alt := range strings.Split(requirement, "|") {
 		c := Capability(strings.TrimSpace(alt))
-		remedy, known := remedies[c]
+		remedy, known := capabilityRemedy(c)
 		if !known {
 			continue
 		}

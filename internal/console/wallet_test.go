@@ -48,6 +48,52 @@ func TestListWallets(t *testing.T) {
 	assert.True(t, ws[0].IsTrialing)
 }
 
+func TestManagedWalletAddressReturnsFirstNonblankAddress(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/user/me":
+			_, _ = w.Write([]byte(`{"data":{"id":"uuid-internal"}}`))
+		case "/v1/wallets":
+			assert.Equal(t, "uuid-internal", r.URL.Query().Get("userId"))
+			_, _ = w.Write([]byte(`{"data":[{"address":"  "},{"address":"akash1fulladdress"}]}`))
+		default:
+			t.Errorf("unexpected request %s", r.URL.RequestURI())
+		}
+	}))
+	defer srv.Close()
+
+	address, err := console.New(srv.URL, "test-key").ManagedWalletAddress(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "akash1fulladdress", address)
+}
+
+func TestManagedWalletAddressReportsIncompleteAccountData(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+		want string
+	}{
+		{name: "missing user ID", body: `{"data":{"id":""}}`, want: "omitted user ID"},
+		{name: "no wallet address", body: `{"data":[{"address":" "}]}`, want: "no managed wallet address"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/v1/user/me" && test.name == "no wallet address" {
+					_, _ = w.Write([]byte(`{"data":{"id":"uuid-internal"}}`))
+					return
+				}
+				_, _ = w.Write([]byte(test.body))
+			}))
+			defer srv.Close()
+
+			_, err := console.New(srv.URL, "test-key").ManagedWalletAddress(context.Background())
+			require.ErrorContains(t, err, test.want)
+		})
+	}
+}
+
 func TestWalletSettingsRoundTrip(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, "/v1/wallet-settings", r.URL.Path)

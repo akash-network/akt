@@ -213,15 +213,15 @@ func TestCommandFromDefClose(t *testing.T) {
 }
 
 // TestCommandFromDefDeploy verifies the generated deploy command: the
-// required file param is positional in Use (not a flag), the remaining
-// params become flags, and the common --yes/--dry-run flags exist.
+// required file and optional deposit params are positional in Use, the SDL
+// remains positional-only, and the common --yes/--dry-run flags exist.
 func TestCommandFromDefDeploy(t *testing.T) {
 	homeFn, ctxNameFn := staticFns(t.TempDir())
 
 	cmd := commandFromDef(loadBuiltin(t, "deploy"), homeFn, ctxNameFn, nil)
 
-	if cmd.Use != "deploy <sdl-file>" {
-		t.Fatalf("deploy Use = %q, want %q", cmd.Use, "deploy <sdl-file>")
+	if cmd.Use != "deploy <sdl-file> [deposit]" {
+		t.Fatalf("deploy Use = %q, want %q", cmd.Use, "deploy <sdl-file> [deposit]")
 	}
 	if cmd.Flags().Lookup("sdl-file") != nil {
 		t.Fatal("deploy command has --sdl-file flag; file param must be positional only")
@@ -500,6 +500,106 @@ func TestConsoleDryRunResolvesAndValidatesDeposit(t *testing.T) {
 		if err == nil {
 			t.Errorf("deposit %q unexpectedly passed Console dry-run validation", deposit)
 		}
+	}
+}
+
+func TestDeployPreflightRejectsDepositSDLDenominationMismatch(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		authMethod string
+		deposit    string
+		sdlDenom   string
+	}{
+		{name: "chain", authMethod: aktctx.AuthMethodKeyring, deposit: "5000000uact", sdlDenom: "uakt"},
+		{name: "console", authMethod: aktctx.AuthMethodConsoleAPI, deposit: "5", sdlDenom: "uakt"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			m := newTestManager(t, home, test.name, test.authMethod)
+			cmd := findCommand(CommandsWithManager(
+				func() string { return home },
+				func() string { return test.name },
+				func() *aktctx.Manager { return m },
+			), "deploy")
+
+			out, err := executeCommand(t, cmd,
+				writeWorkflowSDLWithDenom(t, test.sdlDenom),
+				"--deposit", test.deposit,
+				"--dry-run",
+			)
+			if err == nil {
+				t.Fatalf("mismatched deployment unexpectedly passed:\n%s", out)
+			}
+			for _, want := range []string{"SDL price denomination", "deposit denomination", "uakt", "uact"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("preflight error %q missing %q", err, want)
+				}
+			}
+			if strings.Contains(out, "Workflow:") {
+				t.Fatalf("mismatched deployment printed a plan:\n%s", out)
+			}
+		})
+	}
+}
+
+func TestDeployPreflightAcceptsMatchingExplicitChainDenomination(t *testing.T) {
+	home := t.TempDir()
+	m := newTestManager(t, home, "chain", aktctx.AuthMethodKeyring)
+	cmd := findCommand(CommandsWithManager(
+		func() string { return home },
+		func() string { return "chain" },
+		func() *aktctx.Manager { return m },
+	), "deploy")
+
+	out, err := executeCommand(t, cmd,
+		writeWorkflowSDLWithDenom(t, "uakt"),
+		"--deposit", "5000000uakt",
+		"--dry-run",
+	)
+	if err != nil {
+		t.Fatalf("matching explicit denomination: %v\n%s", err, out)
+	}
+}
+
+func TestDeployPreflightReportsMalformedDepositAndUnreadableSDL(t *testing.T) {
+	rc := &aktctx.Context{AuthMethod: aktctx.AuthMethodKeyring}
+
+	err := validateDeploymentDenominations(map[string]any{
+		"sdl-file":           "unused.yaml",
+		flagdefs.FlagDeposit: "not-a-coin",
+	}, rc)
+	if err == nil || !strings.Contains(err.Error(), "resolve deployment deposit denomination") {
+		t.Fatalf("malformed deposit error = %v", err)
+	}
+
+	missing := filepath.Join(t.TempDir(), "missing.yaml")
+	err = validateDeploymentDenominations(map[string]any{
+		"sdl-file":           missing,
+		flagdefs.FlagDeposit: "5000000uact",
+	}, rc)
+	if err == nil || !strings.Contains(err.Error(), "read SDL") {
+		t.Fatalf("unreadable SDL error = %v", err)
+	}
+}
+
+func TestDeployExecutionChecksDenominationsBeforeTransport(t *testing.T) {
+	home := t.TempDir()
+	m := newTestManager(t, home, "chain", aktctx.AuthMethodKeyring)
+	cmd := findCommand(CommandsWithManager(
+		func() string { return home },
+		func() string { return "chain" },
+		func() *aktctx.Manager { return m },
+	), "deploy")
+
+	_, err := executeCommand(t, cmd,
+		writeWorkflowSDLWithDenom(t, "uakt"),
+		"--deposit", "5000000uact",
+	)
+	if err == nil || !strings.Contains(err.Error(), "SDL price denomination") {
+		t.Fatalf("execution preflight error = %v", err)
+	}
+	if strings.Contains(err.Error(), "no wallet/chain client") {
+		t.Fatalf("transport was selected before denomination preflight: %v", err)
 	}
 }
 
@@ -1030,6 +1130,58 @@ func TestArgumentSurfaceAuthIndependent(t *testing.T) {
 	}
 }
 
+func TestDeployAcceptsPositionalDepositAcrossRails(t *testing.T) {
+	tests := []struct {
+		name       string
+		authMethod string
+		deposit    string
+	}{
+		{name: "chain coin", authMethod: aktctx.AuthMethodKeyring, deposit: "5000000uact"},
+		{name: "Console USD", authMethod: aktctx.AuthMethodConsoleAPI, deposit: "5"},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			home := t.TempDir()
+			manager := newTestManager(t, home, "deploy", test.authMethod)
+			cmd := findCommand(CommandsWithManager(
+				func() string { return home },
+				func() string { return "deploy" },
+				func() *aktctx.Manager { return manager },
+			), "deploy")
+			if cmd == nil {
+				t.Fatal("deploy command not found")
+			}
+
+			out, err := executeCommand(t, cmd, writeValidWorkflowSDL(t), test.deposit, "--dry-run")
+			if err != nil {
+				t.Fatalf("positional deposit dry run: %v\n%s", err, out)
+			}
+			if !strings.Contains(out, "deposit:") || !strings.Contains(out, test.deposit) {
+				t.Fatalf("plan does not contain positional deposit %q:\n%s", test.deposit, out)
+			}
+		})
+	}
+}
+
+func TestDeployRejectsPositionalAndFlagDepositsTogether(t *testing.T) {
+	home := t.TempDir()
+	manager := newTestManager(t, home, "chain", aktctx.AuthMethodKeyring)
+	cmd := findCommand(CommandsWithManager(
+		func() string { return home },
+		func() string { return "chain" },
+		func() *aktctx.Manager { return manager },
+	), "deploy")
+	if cmd == nil {
+		t.Fatal("deploy command not found")
+	}
+
+	_, err := executeCommand(t, cmd, writeValidWorkflowSDL(t), "5", "--deposit", "6", "--dry-run")
+	if err == nil || !strings.Contains(err.Error(), "deposit supplied both positionally and with --deposit") {
+		t.Fatalf("deposit conflict error = %v", err)
+	}
+}
+
 // TestExecuteWithoutManager verifies that commands built via the legacy
 // Commands constructor (nil manager) fail execution with a clear
 // no-configuration message instead of a panic or a silent no-op.
@@ -1162,6 +1314,10 @@ func workflowSDLVersionHash(t *testing.T, path string) string {
 }
 
 func writeValidWorkflowSDL(t *testing.T) string {
+	return writeWorkflowSDLWithDenom(t, "uact")
+}
+
+func writeWorkflowSDLWithDenom(t *testing.T, denom string) string {
 	t.Helper()
 
 	path := filepath.Join(t.TempDir(), "deploy.yaml")
@@ -1188,7 +1344,7 @@ profiles:
     westcoast:
       pricing:
         web:
-          denom: uakt
+          denom: ` + denom + `
           amount: 50
 deployment:
   web:

@@ -104,7 +104,10 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			gas, _ := cmd.Flags().GetString(flagdefs.FlagGas)
 			fees, _ := cmd.Flags().GetString(flagdefs.FlagFees)
 			providerAuthType, _ := cmd.Flags().GetString(flagdefs.FlagProviderAuthType)
-			authMethod, _ := cmd.Flags().GetString(flagdefs.FlagAuthMethod)
+			authMethod, err := preferredWorkflowAuthMethod(cmd)
+			if err != nil {
+				return err
+			}
 			consoleAPIURL, _ := cmd.Flags().GetString(flagdefs.FlagConsoleAPIURL)
 			consoleAPIKey, _ := cmd.Flags().GetString(flagdefs.FlagConsoleAPIKey)
 			setCurrent, _ := cmd.Flags().GetBool(flagdefs.FlagSetCurrent)
@@ -113,7 +116,7 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			// operate through the Console API alone (chain commands are
 			// capability-gated until a network is attached).
 			if network == "" && authMethod != aktctx.AuthMethodConsoleAPI {
-				return fmt.Errorf("--network is required unless --auth-method %s is used", aktctx.AuthMethodConsoleAPI)
+				return fmt.Errorf("--network is required unless --deploy-via console is used")
 			}
 
 			ctx := aktctx.Context{
@@ -177,28 +180,30 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			}
 
 			checked := output.NewCheckedWriter(cmd.OutOrStdout())
-			_, err := fmt.Fprintf(
+			_, err = fmt.Fprintf(
 				checked,
-				"Context %q created (network: %s, auth-method: %s, current: %t).\n",
+				"Context %q created (network: %s, deploy-via: %s, current: %t).\n",
 				name,
 				effectiveNetwork,
-				effectiveAuth,
+				deployRailName(effectiveAuth),
 				setCurrent,
 			)
 			return checked.Complete(err)
 		},
 	}
 
-	cmd.Flags().String(flagdefs.FlagNetwork, "", "Network name to use (required unless --auth-method console-api)")
+	cmd.Flags().String(flagdefs.FlagNetwork, "", "Network name to use (required unless --deploy-via console)")
 	cmd.Flags().String(flagdefs.FlagKeyring, "default", "Keyring name to use")
 	cmd.Flags().String(flagdefs.FlagDefaultAccount, "", "Default account name")
 	cmd.Flags().String(flagdefs.FlagGas, "auto", "Gas limit override")
 	cmd.Flags().String(flagdefs.FlagFees, "", "Fixed fees override")
 	cmd.Flags().String(flagdefs.FlagProviderAuthType, aktctx.ProviderAuthJWT, "Provider gateway auth default: jwt or mtls")
-	cmd.Flags().String(flagdefs.FlagAuthMethod, "", "Authentication method: keyring (default) or console-api")
-	cmd.Flags().String(flagdefs.FlagConsoleAPIURL, "", "Console API base URL (empty = default; only with console-api auth)")
+	cmd.Flags().String(flagdefs.FlagAuthMethod, "", "Preferred workflow authentication: keyring (default) or console-api")
+	cmd.Flags().String(flagdefs.FlagDeployVia, "", "Preferred workflow rail: chain or console")
+	cmd.Flags().String(flagdefs.FlagConsoleAPIURL, "", "Console API base URL (empty = default)")
 	cmd.Flags().String(flagdefs.FlagConsoleAPIKey, "", "Console API key stored as a per-context credential (never written to config.yaml)")
 	cmd.Flags().Bool(flagdefs.FlagSetCurrent, false, "Set as current context after creation")
+	cmd.MarkFlagsMutuallyExclusive(flagdefs.FlagAuthMethod, flagdefs.FlagDeployVia)
 	// --network is validated in RunE rather than MarkFlagRequired: console-api
 	// contexts are allowed to omit it (network-less, Console-only operation).
 
@@ -216,6 +221,14 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	})
 
 	return cmd
+}
+
+func deployRailName(authMethod string) string {
+	if authMethod == aktctx.AuthMethodConsoleAPI {
+		return "console"
+	}
+
+	return "chain"
 }
 
 func useCmd(mgr func() *aktctx.Manager) *cobra.Command {
@@ -464,6 +477,11 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 				forkName = targetNetwork + "-" + name
 			}
 
+			preferredAuth, err := preferredWorkflowAuthMethod(cmd)
+			if err != nil {
+				return err
+			}
+
 			changed := map[string]string{}
 
 			applyContext := func(c *aktctx.Context) error {
@@ -499,13 +517,9 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 					changed["provider-auth-type"] = c.ProviderDefaults.AuthType
 				}
 
-				if cmd.Flags().Changed(flagdefs.FlagAuthMethod) {
-					method, _ := cmd.Flags().GetString(flagdefs.FlagAuthMethod)
-					if method != aktctx.AuthMethodKeyring && method != aktctx.AuthMethodConsoleAPI {
-						return fmt.Errorf("invalid auth-method %q: must be %q or %q", method, aktctx.AuthMethodKeyring, aktctx.AuthMethodConsoleAPI)
-					}
-					c.AuthMethod = method
-					changed["auth-method"] = method
+				if cmd.Flags().Changed(flagdefs.FlagAuthMethod) || cmd.Flags().Changed(flagdefs.FlagDeployVia) {
+					c.AuthMethod = preferredAuth
+					changed["auth-method"] = preferredAuth
 				}
 
 				if cmd.Flags().Changed(flagdefs.FlagConsoleAPIURL) {
@@ -578,7 +592,8 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd.Flags().String(flagdefs.FlagGas, "", "Change gas setting")
 	cmd.Flags().String(flagdefs.FlagFees, "", "Change fees setting")
 	cmd.Flags().String(flagdefs.FlagProviderAuthType, "", "Change provider gateway auth default: jwt or mtls")
-	cmd.Flags().String(flagdefs.FlagAuthMethod, "", "Change authentication method: keyring or console-api")
+	cmd.Flags().String(flagdefs.FlagAuthMethod, "", "Change preferred workflow authentication: keyring or console-api")
+	cmd.Flags().String(flagdefs.FlagDeployVia, "", "Change preferred workflow rail: chain or console")
 	cmd.Flags().String(flagdefs.FlagConsoleAPIURL, "", "Change Console API base URL (empty = default)")
 	cmd.Flags().String(flagdefs.FlagConsoleAPIKey, "", "Set the per-context Console API key (empty string removes it)")
 	cmd.Flags().Bool(flagdefs.FlagForkNetwork, false, "Fork the context's network before editing")
@@ -589,6 +604,7 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd.Flags().String(flagdefs.FlagGasAdjustment, "", "Change the selected network's gas adjustment")
 	cmd.Flags().BoolP(flagdefs.FlagSkipConfirmation, "y", false, "Edit a shared parent network without prompting")
 	cmd.MarkFlagsMutuallyExclusive(flagdefs.FlagForkNetwork, flagdefs.FlagSkipConfirmation)
+	cmd.MarkFlagsMutuallyExclusive(flagdefs.FlagAuthMethod, flagdefs.FlagDeployVia)
 
 	_ = cmd.RegisterFlagCompletionFunc(flagdefs.FlagNetwork, func(_ *cobra.Command, _ []string, _ string) ([]string, cobra.ShellCompDirective) {
 		m := mgr()
@@ -604,6 +620,27 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	})
 
 	return cmd
+}
+
+func preferredWorkflowAuthMethod(cmd *cobra.Command) (string, error) {
+	if cmd.Flags().Changed(flagdefs.FlagDeployVia) {
+		rail, _ := cmd.Flags().GetString(flagdefs.FlagDeployVia)
+		switch rail {
+		case "chain":
+			return aktctx.AuthMethodKeyring, nil
+		case "console":
+			return aktctx.AuthMethodConsoleAPI, nil
+		default:
+			return "", fmt.Errorf("invalid deploy rail %q: must be %q or %q", rail, "chain", "console")
+		}
+	}
+
+	method, _ := cmd.Flags().GetString(flagdefs.FlagAuthMethod)
+	if method == "" || method == aktctx.AuthMethodKeyring || method == aktctx.AuthMethodConsoleAPI {
+		return method, nil
+	}
+
+	return "", fmt.Errorf("invalid auth-method %q: must be %q or %q", method, aktctx.AuthMethodKeyring, aktctx.AuthMethodConsoleAPI)
 }
 
 func networkSharedAfterContextUpdate(m *aktctx.Manager, network, contextName string) bool {

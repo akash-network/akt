@@ -2,7 +2,6 @@ package cli
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"net"
 	"net/url"
@@ -59,6 +58,10 @@ type BuildInfo struct {
 
 // NewRootCmd creates the root cobra command for akt.
 func NewRootCmd(bi BuildInfo) *cobra.Command {
+	return newRootCmd(bi, bootstrap.Run)
+}
+
+func newRootCmd(bi BuildInfo, runBootstrap func(string) error) *cobra.Command {
 	cobra.EnableTraverseRunHooks = true
 
 	// Copied SDK commands interpolate this value while their command trees are
@@ -83,6 +86,7 @@ func NewRootCmd(bi BuildInfo) *cobra.Command {
 	var krMgr *aktkeyring.Manager
 	var resolvedCfgRoot string
 	var mainnetChainID string
+	var bootstrapped bool
 
 	mgrFn := func() *aktctx.Manager { return mgr }
 	mainnetChainIDFn := func() string { return mainnetChainID }
@@ -129,7 +133,8 @@ Running akt for the first time in a terminal walks you through creating a
 context: the network to talk to, the keyring that signs, and where akt keeps
 its record of your deployments.
 
-Two ways to pay and sign, chosen per context:
+Two ways to pay and sign can coexist in one context. The context preference
+chooses the rail for shared workflows such as deploy:
   keyring       you hold the key, akt signs and broadcasts, costs are in AKT
   console-api   Akash Console holds a managed wallet and signs for you, in USD
 
@@ -206,8 +211,17 @@ the deployment is created.`,
 				// available — uses flag/env/auto-detect only).
 				initGlyphs(v)
 
-				if err := bootstrap.Run(cfgRoot); err != nil {
+				if err := runBootstrap(cfgRoot); err != nil {
 					return err
+				}
+				if _, statErr := os.Stat(cfgPath); statErr == nil {
+					// Setup is a complete interaction. Do not execute the command
+					// that triggered it or append another screen of help to the
+					// wizard's closing summary.
+					bootstrapped = true
+					cmd.Run = nil
+					cmd.RunE = func(*cobra.Command, []string) error { return nil }
+					return nil
 				}
 			}
 
@@ -276,18 +290,13 @@ the deployment is created.`,
 				if resolveErr != nil {
 					return resolveErr
 				}
-				if !isHelpInvocation(cmd, os.Args[1:]) {
-					if err := rawTxAuthError(cmd, rc); err != nil {
-						return err
-					}
-				}
 				if err := applyTransactionDefaults(cmd, rc); err != nil {
 					return err
 				}
 				if err := applyProviderDefaults(cmd, rc); err != nil {
 					return err
 				}
-				if rc.AuthMethod == aktctx.AuthMethodConsoleAPI && rc.ConsoleAPIKey != "" {
+				if rc.ConsoleAPIKey != "" {
 					cmd.SetContext(withConsoleDefaultOwnerResolver(cmd.Context(), rc))
 				}
 			}
@@ -312,7 +321,7 @@ the deployment is created.`,
 					// positional monitor endpoint) grant their capability so
 					// gating never rejects a command that carries its own
 					// connection details.
-					set := invocationCapabilities(capability.Resolve(rc), rc.AuthMethod, cmd, os.Args[1:], args)
+					set := invocationCapabilities(capability.Resolve(rc), cmd, os.Args[1:], args)
 
 					applyCapabilityGating(cmd.Root(), set, mode)
 
@@ -379,6 +388,9 @@ the deployment is created.`,
 			return cmd.Help()
 		},
 		PersistentPostRunE: func(cmd *cobra.Command, _ []string) error {
+			if bootstrapped {
+				return nil
+			}
 			// Close the action logger opened in PersistentPreRunE (SPEC §5.6).
 			if l := cliutil.ActionLogFromContext(cmd.Context()); l != nil {
 				if err := l.Close(); err != nil {
@@ -488,7 +500,7 @@ the deployment is created.`,
 						// Same mode resolution as enforcement (flag > env >
 						// config) so help and execution never disagree.
 						mode := capability.ParseMode(gatingMode(v, m))
-						set := invocationCapabilities(capability.Resolve(rc), rc.AuthMethod, c, os.Args[1:], nil)
+						set := invocationCapabilities(capability.Resolve(rc), c, os.Args[1:], nil)
 						applyCapabilityGating(root, set, mode)
 					}
 				}
@@ -747,6 +759,11 @@ func localIdentityMode(cmd *cobra.Command) aktclient.LocalIdentityMode {
 	// reaches the command handler.
 	case strings.HasPrefix(path, "akt query"):
 		return aktclient.LocalIdentityOnDemand
+	// Cross-rail workflows defer the local identity until their selected
+	// transport actually needs it. Console execution therefore remains
+	// prompt-free while chain execution can still sign locally.
+	case cmd.Annotations[capability.AnnotationKey] == string(capability.ChainTx)+"|"+string(capability.Console):
+		return aktclient.LocalIdentityOnDemand
 	// Provider status is the gateway's public endpoint. Protected provider
 	// operations still preflight their signing identity before network work.
 	case path == "akt provider status":
@@ -768,8 +785,7 @@ func localIdentityMode(cmd *cobra.Command) aktclient.LocalIdentityMode {
 			return aktclient.LocalIdentityOnDemand
 		}
 		return aktclient.LocalIdentityRequired
-	// Workflow dry-runs validate and print a plan without selecting a transport
-	// client or local signer.
+	// Other dry-runs validate and print a plan without selecting a local signer.
 	case boolFlag(cmd, flagdefs.FlagDryRun):
 		return aktclient.LocalIdentityNone
 	}
@@ -780,40 +796,10 @@ func localIdentityMode(cmd *cobra.Command) aktclient.LocalIdentityMode {
 func withConsoleDefaultOwnerResolver(ctx context.Context, rc *aktctx.Context) context.Context {
 	resolver := chaincli.DefaultOwnerResolver(func(callCtx context.Context) (string, error) {
 		cl := aktconsole.New(rc.ConsoleAPIURL, rc.ConsoleAPIKey)
-		user, err := cl.GetUser(callCtx)
-		if err != nil {
-			return "", fmt.Errorf("resolve Console managed wallet user: %w", err)
-		}
-		if strings.TrimSpace(user.ID) == "" {
-			return "", errors.New("resolve Console managed wallet user: response omitted user ID")
-		}
-		wallets, err := cl.ListWallets(callCtx, user.ID)
-		if err != nil {
-			return "", fmt.Errorf("resolve Console managed wallets: %w", err)
-		}
-		for _, wallet := range wallets {
-			if address := strings.TrimSpace(wallet.Address); address != "" {
-				return address, nil
-			}
-		}
-
-		return "", errors.New("console account has no managed wallet address")
+		return cl.ManagedWalletAddress(callCtx)
 	})
 
 	return context.WithValue(ctx, chaincli.ContextTypeDefaultOwnerResolver, resolver)
-}
-
-// rawTxAuthError is the execution boundary between raw Cosmos/Akash
-// transaction commands and Console-managed signing. Workflow tx steps have
-// their own transport abstraction; the raw tx tree always needs local keyring
-// auth and must fail before any child hook can dereference a missing keyring.
-func rawTxAuthError(cmd *cobra.Command, rc *aktctx.Context) error {
-	if cmd == nil || rc == nil || rc.AuthMethod != aktctx.AuthMethodConsoleAPI ||
-		!strings.HasPrefix(cmd.CommandPath(), "akt tx") {
-		return nil
-	}
-
-	return fmt.Errorf("raw chain transactions require keyring auth; the active context uses console-api: use `akt deploy`, `akt update`, `akt close`, or `akt console` for managed-wallet operations, or switch to a keyring context")
 }
 
 func boolFlag(cmd *cobra.Command, name string) bool {

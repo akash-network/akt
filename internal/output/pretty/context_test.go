@@ -143,7 +143,7 @@ func TestRenderContextShowReportsUnavailableKeyring(t *testing.T) {
 	}
 }
 
-func TestRenderContextShowConsoleCannotRunRawTransactions(t *testing.T) {
+func TestRenderContextShowConsolePreferredKeepsRawTransactions(t *testing.T) {
 	rc := aktctx.Context{
 		Name:          "managed",
 		AuthMethod:    aktctx.AuthMethodConsoleAPI,
@@ -152,17 +152,46 @@ func TestRenderContextShowConsoleCannotRunRawTransactions(t *testing.T) {
 			Name:      "mainnet",
 			Endpoints: aktctx.Endpoints{RPC: []string{"https://rpc.example"}},
 		},
+		Keyring: aktctx.Keyring{Name: "default", Backend: "test"},
 	}
 
-	for _, line := range plainLines(RenderContextShow(rc, "")) {
+	out := RenderContextShow(rc, "test")
+	if !strings.Contains(out, "Deploy Via:") || !strings.Contains(out, "console") {
+		t.Fatalf("context output does not show the preferred Console rail:\n%s", out)
+	}
+	if !strings.Contains(out, "API Key:") || !strings.Contains(out, "configured") {
+		t.Fatalf("context output does not show the configured Console credential:\n%s", out)
+	}
+
+	for _, line := range plainLines(out) {
 		if !strings.Contains(line, "Chain transactions") {
 			continue
 		}
-		if !strings.Contains(line, "unavailable") || !strings.Contains(line, "keyring") {
-			t.Fatalf("chain transaction capability = %q, want unavailable with keyring remedy", line)
+		if !strings.Contains(line, "available") || strings.Contains(line, "unavailable") {
+			t.Fatalf("chain transaction capability = %q, want available", line)
 		}
 		return
 	}
 
 	t.Fatal("context output omitted the chain transaction capability")
+}
+
+func TestRenderContextShowChainPreferredShowsConsoleCredential(t *testing.T) {
+	rc := aktctx.Context{
+		Name:          "dual-rail",
+		AuthMethod:    aktctx.AuthMethodKeyring,
+		ConsoleAPIKey: "sk-test",
+		Network: aktctx.Network{
+			Name:      "mainnet",
+			Endpoints: aktctx.Endpoints{RPC: []string{"https://rpc.example"}},
+		},
+		Keyring: aktctx.Keyring{Name: "default", Backend: "test"},
+	}
+
+	out := RenderContextShow(rc, "test")
+	for _, want := range []string{"Deploy Via:", "chain", "Console API", "API Key:", "configured"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("context output does not contain %q:\n%s", want, out)
+		}
+	}
 }

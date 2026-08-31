@@ -40,7 +40,7 @@ func NewConsoleChainClient(cc *console.Client, chainQueries steps.ChainClient, r
 
 // BroadcastTx routes the workflow tx message to the matching Console API
 // endpoint (SPEC §7.5). Message types without a Console mapping produce an
-// unsupported-command error directing the user to a keyring context.
+// unsupported-command error directing the user to the chain workflow rail.
 func (c *consoleChainClient) BroadcastTx(ctx context.Context, msgType string, params map[string]string) (*steps.TxResult, error) {
 	switch msgType {
 	case msgCreateDeployment:
@@ -52,14 +52,14 @@ func (c *consoleChainClient) BroadcastTx(ctx context.Context, msgType string, pa
 	case msgCreateLease:
 		return c.createLease(ctx, params)
 	default:
-		return nil, fmt.Errorf("command %q is not supported with console-api auth. Use a context with auth-method: keyring for this operation", msgType)
+		return nil, fmt.Errorf("command %q is not supported on the Console workflow rail; set the context's preferred workflow rail with --deploy-via chain", msgType)
 	}
 }
 
 // Query delegates to the chain query client when available. Without chain
 // access, market.bids is served from the Console bids endpoint (shaped like
 // the chain response, i.e. a top-level "bids" array); other query paths
-// require a keyring context.
+// require chain access.
 func (c *consoleChainClient) Query(ctx context.Context, path string, params map[string]string) (json.RawMessage, error) {
 	if c.chainQueries != nil {
 		return c.chainQueries.Query(ctx, path, params)
@@ -91,7 +91,7 @@ func (c *consoleChainClient) Query(ctx context.Context, path string, params map[
 		})
 
 	default:
-		return nil, fmt.Errorf("query %q is not supported with console-api auth without chain access. Use a context with auth-method: keyring for this operation", path)
+		return nil, fmt.Errorf("query %q is not supported on the Console workflow rail without chain access; add a network with an RPC endpoint to the context", path)
 	}
 }
 
@@ -299,12 +299,12 @@ func looksLikeSDLPath(s string) bool {
 func parseConsoleDeposit(s string) (float64, error) {
 	s = strings.TrimSpace(s)
 	if s == "" || s == depositAuto {
-		return 0, fmt.Errorf("console-api contexts require an explicit deposit in USD: pass --deposit with an amount of at least %.2f (e.g. --deposit 5)", console.MinDepositUSD)
+		return 0, fmt.Errorf("the Console workflow rail requires an explicit deposit in USD: pass --deposit with an amount of at least %.2f (e.g. --deposit 5)", console.MinDepositUSD)
 	}
 
 	v, err := strconv.ParseFloat(s, 64)
 	if err != nil {
-		return 0, fmt.Errorf("invalid deposit %q: console-api contexts take the deposit as a plain USD amount (e.g. --deposit 5)", s)
+		return 0, fmt.Errorf("invalid deposit %q: the Console workflow rail takes the deposit as a plain USD amount (e.g. --deposit 5)", s)
 	}
 
 	if v < console.MinDepositUSD {

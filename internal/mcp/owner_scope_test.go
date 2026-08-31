@@ -43,8 +43,8 @@ func (q *refusingQueryClient) Certs() ctypes.QueryClient      { q.reject("cert")
 func (q *refusingQueryClient) ClientContext() sdkclient.Context { return sdkclient.Context{} }
 
 // accountlessClient is a LightClient whose context has no default account --
-// the permanent state of a console-api context, and (before the default account
-// is resolved to an address) the state of every context on a query path.
+// a valid state for Console-only and monitoring contexts, and (before the
+// default account is resolved to an address) every query path.
 type accountlessClient struct {
 	q cv1beta3.QueryClient
 }

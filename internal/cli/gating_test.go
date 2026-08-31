@@ -11,7 +11,6 @@ import (
 
 	"pkg.akt.dev/akt/internal/capability"
 	aktclient "pkg.akt.dev/akt/internal/client"
-	aktctx "pkg.akt.dev/akt/internal/context"
 )
 
 func gatedTree() (*cobra.Command, *cobra.Command, *cobra.Command) {
@@ -141,32 +140,32 @@ func TestIsHelpInvocationMatchesHelpCommand(t *testing.T) {
 func TestInvocationCapabilitiesGrantsExplicitOverrides(t *testing.T) {
 	empty := capability.Set{}
 
-	if got := invocationCapabilities(empty, aktctx.AuthMethodKeyring, nil, []string{"query", "deployment", "--node", "https://rpc"}, nil); !got.ChainQuery {
+	if got := invocationCapabilities(empty, nil, []string{"query", "deployment", "--node", "https://rpc"}, nil); !got.ChainQuery {
 		t.Error("--node must grant chain capabilities")
 	}
-	if got := invocationCapabilities(empty, aktctx.AuthMethodKeyring, nil, []string{"query", "--node=https://rpc"}, nil); !got.ChainTx {
+	if got := invocationCapabilities(empty, nil, []string{"query", "--node=https://rpc"}, nil); !got.ChainTx {
 		t.Error("--node=value form must grant chain capabilities")
 	}
 	console := capability.Set{Console: true}
-	if got := invocationCapabilities(console, aktctx.AuthMethodConsoleAPI, nil, []string{"tx", "bank", "send", "--node=https://rpc"}, nil); got.ChainTx {
-		t.Error("--node must not grant a local signing identity to a Console context")
+	if got := invocationCapabilities(console, nil, []string{"tx", "bank", "send", "--node=https://rpc"}, nil); !got.ChainTx {
+		t.Error("--node must grant chain tx to a Console-preferred dual-rail context")
 	}
-	if got := invocationCapabilities(empty, aktctx.AuthMethodKeyring, nil, []string{"console", "whoami", "--console-api-key", "sk"}, nil); !got.Console {
+	if got := invocationCapabilities(empty, nil, []string{"console", "whoami", "--console-api-key", "sk"}, nil); !got.Console {
 		t.Error("--console-api-key must grant the console capability")
 	}
 
 	// Overrides after the terminator are command data, not akt flags.
-	if got := invocationCapabilities(empty, aktctx.AuthMethodKeyring, nil, []string{"provider", "lease-shell", "--", "sh", "--node"}, nil); got.ChainQuery {
+	if got := invocationCapabilities(empty, nil, []string{"provider", "lease-shell", "--", "sh", "--node"}, nil); got.ChainQuery {
 		t.Error("tokens after -- must not grant capabilities")
 	}
 
 	monitor := &cobra.Command{Use: "monitor"}
 	root := &cobra.Command{Use: "akt"}
 	root.AddCommand(monitor)
-	if got := invocationCapabilities(empty, aktctx.AuthMethodKeyring, monitor, []string{"monitor", "https://rpc"}, []string{"https://rpc"}); !got.ChainQuery {
+	if got := invocationCapabilities(empty, monitor, []string{"monitor", "https://rpc"}, []string{"https://rpc"}); !got.ChainQuery {
 		t.Error("a positional monitor endpoint must grant chain capabilities")
 	}
-	if got := invocationCapabilities(empty, aktctx.AuthMethodKeyring, monitor, []string{"monitor"}, nil); got.ChainQuery {
+	if got := invocationCapabilities(empty, monitor, []string{"monitor"}, nil); got.ChainQuery {
 		t.Error("monitor without an endpoint must not grant capabilities")
 	}
 }
@@ -174,7 +173,7 @@ func TestInvocationCapabilitiesGrantsExplicitOverrides(t *testing.T) {
 func TestInvocationCapabilitiesGrantsFromEnv(t *testing.T) {
 	t.Setenv("AKT_CONSOLE_API_KEY", "sk-env")
 
-	if got := invocationCapabilities(capability.Set{}, aktctx.AuthMethodKeyring, nil, []string{"console", "whoami"}, nil); !got.Console {
+	if got := invocationCapabilities(capability.Set{}, nil, []string{"console", "whoami"}, nil); !got.Console {
 		t.Error("AKT_CONSOLE_API_KEY must grant the console capability")
 	}
 }
