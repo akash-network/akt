@@ -85,6 +85,58 @@ func TestDoJSONPreservesEarlierCallerDeadline(t *testing.T) {
 	}
 }
 
+func TestDoJSONRejectsInvalidRequestMethod(t *testing.T) {
+	client := New("https://console.example.test", "key")
+	err := client.doJSON(context.Background(), "invalid\nmethod", "/test", nil, nil)
+	if err == nil || !strings.Contains(err.Error(), "console: create request") {
+		t.Fatalf("doJSON error = %v, want request construction failure", err)
+	}
+}
+
+func TestRequestFailureClassification(t *testing.T) {
+	tests := []struct {
+		name       string
+		callerErr  error
+		requestErr error
+		transport  error
+		want       string
+	}{
+		{
+			name:      "caller cancellation wins",
+			callerErr: context.Canceled,
+			transport: errors.New("transport failed"),
+			want:      "context canceled",
+		},
+		{
+			name:       "attempt deadline is explicit",
+			requestErr: context.DeadlineExceeded,
+			transport:  errors.New("transport failed"),
+			want:       "request timed out after 2m0s",
+		},
+		{
+			name:      "transport error redacts API key",
+			transport: errors.New("transport exposed secret-key"),
+			want:      "transport exposed [REDACTED]",
+		},
+	}
+
+	client := New("https://console.example.test", "secret-key")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := client.requestFailure(
+				tt.callerErr,
+				tt.requestErr,
+				http.MethodPost,
+				"/test",
+				tt.transport,
+			)
+			if err == nil || !strings.Contains(err.Error(), tt.want) {
+				t.Fatalf("requestFailure error = %v, want %q", err, tt.want)
+			}
+		})
+	}
+}
+
 func TestCreateLeaseReconcilesTransportFailureWithoutReplayingPost(t *testing.T) {
 	var posts atomic.Int32
 	var gets atomic.Int32
@@ -197,6 +249,28 @@ func TestCloseReconciliationWaitsBeyondLegacyAttemptLimit(t *testing.T) {
 	}
 }
 
+func TestCloseReconciliationRejectsMismatchedDeployment(t *testing.T) {
+	var gets atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		dseq := "wrong"
+		if gets.Add(1) > 1 {
+			dseq = "42"
+		}
+		_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"` + dseq + `"},"state":"closed"}}}`))
+	}))
+	defer srv.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	reconciled, err := New(srv.URL, "key").reconcileClosedDeploymentUntil(ctx, "42", time.Millisecond)
+	if err != nil || !reconciled {
+		t.Fatalf("reconcile result = %t, %v; want exact deployment eventually closed", reconciled, err)
+	}
+	if gets.Load() != 2 {
+		t.Fatalf("reconciliation GETs = %d, want mismatch followed by exact match", gets.Load())
+	}
+}
+
 func TestCloseReconciliationAcceptsAbsentPostState(t *testing.T) {
 	var gets atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -243,5 +317,32 @@ func TestReconciliationStopsBeforeReadingWhenCallerIsCanceled(t *testing.T) {
 	}
 	if requests.Load() != 0 {
 		t.Fatalf("canceled reconciliation made %d transport requests", requests.Load())
+	}
+}
+
+func TestLeaseReconciliationRequiresOneDeployment(t *testing.T) {
+	client := New("https://console.example.test", "key")
+	tests := []struct {
+		name      string
+		requested []LeaseRequest
+	}{
+		{name: "no leases"},
+		{name: "empty dseq", requested: []LeaseRequest{{Provider: "akash1provider"}}},
+		{
+			name: "multiple dseqs",
+			requested: []LeaseRequest{
+				{DSeq: "42", Provider: "akash1provider"},
+				{DSeq: "43", Provider: "akash1provider"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, matched, err := client.readCreatedLeases(context.Background(), tt.requested)
+			if matched || err == nil || !strings.Contains(err.Error(), "requires") {
+				t.Fatalf("readCreatedLeases = %t, %v; want validation error", matched, err)
+			}
+		})
 	}
 }

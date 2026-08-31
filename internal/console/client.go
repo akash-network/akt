@@ -276,19 +276,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, resul
 		if err != nil {
 			requestErr := requestCtx.Err()
 			cancelRequest()
-			if ctxErr := ctx.Err(); ctxErr != nil {
-				return fmt.Errorf("console: %s %s: %w", method, path, ctxErr)
-			}
-			if errors.Is(requestErr, context.DeadlineExceeded) {
-				return fmt.Errorf(
-					"console: %s %s: request timed out after %s: %w",
-					method,
-					path,
-					requestTimeout(method),
-					requestErr,
-				)
-			}
-			return fmt.Errorf("console: %s %s: %s", method, path, redactResponseSecret(err.Error(), c.apiKey))
+			return c.requestFailure(ctx.Err(), requestErr, method, path, err)
 		}
 
 		respBody, err := readResponseBody(resp.Body, maxResponseBodyBytes)
@@ -351,6 +339,28 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, resul
 	}
 
 	return lastErr
+}
+
+func (c *Client) requestFailure(callerErr, requestErr error, method, path string, transportErr error) error {
+	if callerErr != nil {
+		return fmt.Errorf("console: %s %s: %w", method, path, callerErr)
+	}
+	if errors.Is(requestErr, context.DeadlineExceeded) {
+		return fmt.Errorf(
+			"console: %s %s: request timed out after %s: %w",
+			method,
+			path,
+			requestTimeout(method),
+			requestErr,
+		)
+	}
+
+	return fmt.Errorf(
+		"console: %s %s: %s",
+		method,
+		path,
+		redactResponseSecret(transportErr.Error(), c.apiKey),
+	)
 }
 
 func readResponseBody(reader io.Reader, limit int64) ([]byte, error) {
