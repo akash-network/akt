@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"pkg.akt.dev/akt/internal/console"
@@ -375,6 +376,35 @@ func TestConsoleCloseDeploymentAlreadyClosed(t *testing.T) {
 	}
 }
 
+func TestConsoleCloseDeploymentAcceptsReconciledPostState(t *testing.T) {
+	var submitted atomic.Bool
+	var deletes atomic.Int32
+	c, _ := newConsoleClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			state := "active"
+			if submitted.Load() {
+				state = "closed"
+			}
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"888"},"state":"` + state + `"}}}`))
+		case http.MethodDelete:
+			deletes.Add(1)
+			submitted.Store(true)
+			_, _ = w.Write([]byte(`{"data":{}}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+
+	res, err := c.BroadcastTx(context.Background(), msgCloseDeployment, map[string]string{"dseq": "888"})
+	if err != nil {
+		t.Fatalf("BroadcastTx: %v", err)
+	}
+	if res == nil || deletes.Load() != 1 {
+		t.Fatalf("reconciled result = %+v, DELETE requests = %d", res, deletes.Load())
+	}
+}
+
 func TestConsoleUnsupportedMsg(t *testing.T) {
 	c, _ := newConsoleClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		t.Error("no request expected for unsupported messages")
@@ -439,6 +469,34 @@ func TestConsoleCreateLeaseUsesCachedManifest(t *testing.T) {
 	_ = json.Unmarshal(res.Data, &data)
 	if data["dseq"] != "900" || data["gseq"] != "2" || data["oseq"] != "3" || data["provider"] != "akash1provider" {
 		t.Errorf("result data = %v", data)
+	}
+}
+
+func TestConsoleCreateLeaseAcceptsExactReadBackWithoutReplayingPost(t *testing.T) {
+	var posts atomic.Int32
+	c, root := newConsoleClient(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost:
+			posts.Add(1)
+			w.WriteHeader(http.StatusBadGateway)
+		case http.MethodGet:
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"900"},"state":"active"},"leases":[{"id":{"dseq":"900","gseq":2,"oseq":3,"provider":"akash1provider"},"state":"active"}]}}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	})
+	if err := console.SaveManifest(root, testConsoleCtx, "900", "[MANIFEST]"); err != nil {
+		t.Fatalf("SaveManifest: %v", err)
+	}
+
+	res, err := c.BroadcastTx(context.Background(), msgCreateLease, map[string]string{
+		"dseq": "900", "gseq": "2", "oseq": "3", "provider": "akash1provider",
+	})
+	if err != nil {
+		t.Fatalf("BroadcastTx: %v", err)
+	}
+	if res == nil || posts.Load() != 1 {
+		t.Fatalf("reconciled result = %+v, POST requests = %d", res, posts.Load())
 	}
 }
 

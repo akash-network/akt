@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"errors"
 	"io"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -50,6 +51,26 @@ func TestTerminalAwareWriterPropagatesDestinationFailures(t *testing.T) {
 
 func TestTerminalAwareWriterStripsANSIAndReportsSourceBytes(t *testing.T) {
 	t.Setenv("NO_COLOR", "")
+	styled := []byte("\x1b[31mfailed\x1b[0m")
+	var destination bytes.Buffer
+
+	n, err := TerminalAwareWriter(&destination).Write(styled)
+	require.NoError(t, err)
+	require.Equal(t, len(styled), n)
+	require.Equal(t, "failed", destination.String())
+}
+
+func TestTerminalAwareWriterStripsANSIOutsideTTYWithoutNoColor(t *testing.T) {
+	value, present := os.LookupEnv("NO_COLOR")
+	require.NoError(t, os.Unsetenv("NO_COLOR"))
+	t.Cleanup(func() {
+		if present {
+			_ = os.Setenv("NO_COLOR", value)
+			return
+		}
+		_ = os.Unsetenv("NO_COLOR")
+	})
+
 	styled := []byte("\x1b[31mfailed\x1b[0m")
 	var destination bytes.Buffer
 

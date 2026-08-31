@@ -92,7 +92,6 @@ func New(baseURL, apiKey string) *Client {
 		baseURL: baseURL,
 		apiKey:  apiKey,
 		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
 			CheckRedirect: func(*http.Request, []*http.Request) error {
 				// Return the response to doJSON without following it. Returning a
 				// normal error here makes net/http embed the untrusted Location URL
@@ -199,6 +198,20 @@ func (c *Client) doData(ctx context.Context, method, path string, reqBody, resul
 
 const maxRetries = 3
 
+const (
+	readRequestTimeout     = 30 * time.Second
+	mutationRequestTimeout = 2 * time.Minute
+)
+
+func requestTimeout(method string) time.Duration {
+	switch method {
+	case http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete:
+		return mutationRequestTimeout
+	default:
+		return readRequestTimeout
+	}
+}
+
 // retryableStatus reports whether a failed attempt with the given method and
 // status may safely be re-sent.
 //
@@ -236,13 +249,19 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, resul
 
 	var lastErr error
 	for attempt := range maxRetries {
+		if err := ctx.Err(); err != nil {
+			return fmt.Errorf("console: %s %s: %w", method, path, err)
+		}
+
 		var bodyReader io.Reader
 		if payload != nil {
 			bodyReader = bytes.NewReader(payload)
 		}
 
-		req, err := http.NewRequestWithContext(ctx, method, c.baseURL+path, bodyReader)
+		requestCtx, cancelRequest := context.WithTimeout(ctx, requestTimeout(method))
+		req, err := http.NewRequestWithContext(requestCtx, method, c.baseURL+path, bodyReader)
 		if err != nil {
+			cancelRequest()
 			return fmt.Errorf("console: create request: %w", err)
 		}
 
@@ -255,14 +274,26 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, resul
 
 		resp, err := c.httpClient.Do(req)
 		if err != nil {
+			requestErr := requestCtx.Err()
+			cancelRequest()
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return fmt.Errorf("console: %s %s: %w", method, path, ctxErr)
+			}
+			if errors.Is(requestErr, context.DeadlineExceeded) {
+				return fmt.Errorf(
+					"console: %s %s: request timed out after %s: %w",
+					method,
+					path,
+					requestTimeout(method),
+					requestErr,
+				)
 			}
 			return fmt.Errorf("console: %s %s: %s", method, path, redactResponseSecret(err.Error(), c.apiKey))
 		}
 
 		respBody, err := readResponseBody(resp.Body, maxResponseBodyBytes)
 		resp.Body.Close()
+		cancelRequest()
 		if err != nil {
 			return fmt.Errorf("console: read response: %w", err)
 		}

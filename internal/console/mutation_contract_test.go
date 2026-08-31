@@ -326,11 +326,19 @@ func TestReconcileDepositWaitsBeyondLegacyAttemptLimit(t *testing.T) {
 	}
 }
 
-func TestDepositReconciliationPolicy(t *testing.T) {
-	if depositReconciliationWindow != 30*time.Second {
-		t.Fatalf("deposit reconciliation window = %s, want 30s", depositReconciliationWindow)
+func TestMutationRequestAndReconciliationPolicy(t *testing.T) {
+	if requestTimeout(http.MethodGet) != 30*time.Second {
+		t.Fatalf("GET request timeout = %s, want 30s", requestTimeout(http.MethodGet))
 	}
-	if depositReconciliationPollInterval != 2*time.Second {
-		t.Fatalf("deposit reconciliation poll interval = %s, want 2s", depositReconciliationPollInterval)
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		if requestTimeout(method) != 2*time.Minute {
+			t.Fatalf("%s request timeout = %s, want 2m", method, requestTimeout(method))
+		}
+	}
+	if mutationReconciliationWindow != 30*time.Second {
+		t.Fatalf("mutation reconciliation window = %s, want 30s", mutationReconciliationWindow)
+	}
+	if mutationReconciliationPollInterval != 2*time.Second {
+		t.Fatalf("mutation reconciliation poll interval = %s, want 2s", mutationReconciliationPollInterval)
 	}
 }

@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"fmt"
+	"io"
 	"sort"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
@@ -179,8 +180,8 @@ func renderSyncResult(cmd *cobra.Command, owners []string, stats syncpkg.Reconci
 		return nil
 	}
 
-	checked := output.NewCheckedWriter(cmd.OutOrStdout())
-	out := output.TerminalAwareWriter(checked)
+	checked := output.NewCheckedTerminalWriter(cmd.OutOrStdout())
+	out := io.Writer(checked)
 
 	fmt.Fprintln(out, pretty.Section("Store Sync"))
 	pretty.KV(out, "Accounts", fmt.Sprintf("%d", len(owners)))

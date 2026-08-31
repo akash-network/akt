@@ -323,6 +323,55 @@ func TestCloseValidation400RecordedAsFailed(t *testing.T) {
 	}
 }
 
+func TestAmbiguousCloseIsLoggedPendingWithRecoveryCommands(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var gets atomic.Int32
+	var deletes atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodGet:
+			gets.Add(1)
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"777"},"state":"active"}}}`))
+			if deletes.Load() > 0 {
+				cancel()
+			}
+		case http.MethodDelete:
+			deletes.Add(1)
+			_, _ = w.Write([]byte(`{"data":{}}`))
+		default:
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	l := openTestLog(t)
+	err := New(srv.URL, "test-key").WithActionLog(l).CloseDeployment(ctx, "777")
+	if err == nil || !strings.Contains(err.Error(), "outcome unknown") {
+		t.Fatalf("ambiguous close error = %v", err)
+	}
+	for _, want := range []string{
+		"akt console deployment get 777",
+		"akt close 777",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("ambiguous close error %q does not contain %q", err, want)
+		}
+	}
+	if deletes.Load() != 1 || gets.Load() != 2 {
+		t.Fatalf("requests DELETE=%d GET=%d, want one submission and two observations", deletes.Load(), gets.Load())
+	}
+
+	entries, readErr := l.Read(actionlog.Filter{Type: actionlog.TypeConsole})
+	if readErr != nil {
+		t.Fatalf("read: %v", readErr)
+	}
+	if len(entries) != 1 || entries[0].Action != "close-deployment" || entries[0].Status != "pending" || entries[0].DSeq != 777 {
+		t.Fatalf("pending close entry = %+v", entries)
+	}
+}
+
 func TestNewMutationsRecordedInActionLog(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
@@ -564,6 +613,9 @@ func TestAmbiguousLeaseAPIKeyAndDepositAreLoggedPending(t *testing.T) {
 	}})
 	if err == nil || !strings.Contains(err.Error(), "outcome unknown") {
 		t.Fatalf("ambiguous lease error = %v", err)
+	}
+	if !strings.Contains(err.Error(), "akt console deployment get 42") {
+		t.Fatalf("ambiguous lease error lacks recovery command: %v", err)
 	}
 
 	if _, err := c.CreateAPIKey(context.Background(), "ci", ""); err == nil || !strings.Contains(err.Error(), "outcome unknown") {

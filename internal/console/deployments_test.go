@@ -521,24 +521,30 @@ func TestCloseDeployment(t *testing.T) {
 	require.NoError(t, c.CloseDeployment(context.Background(), "99999"))
 }
 
-func TestCloseDeploymentRejectsMissingOrFalseSuccess(t *testing.T) {
+func TestCloseDeploymentReconcilesMissingOrFalseSuccess(t *testing.T) {
 	for _, body := range []string{
 		`{"data":{}}`,
 		`{"data":{"success":false}}`,
 	} {
 		t.Run(body, func(t *testing.T) {
+			var submitted atomic.Bool
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if r.Method == http.MethodGet {
-					_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"1"},"state":"active"}}}`))
+					state := "active"
+					if submitted.Load() {
+						state = "closed"
+					}
+					_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"1"},"state":"` + state + `"}}}`))
 					return
 				}
 				assert.Equal(t, http.MethodDelete, r.Method)
+				submitted.Store(true)
 				_, _ = w.Write([]byte(body))
 			}))
 			defer srv.Close()
 
 			err := console.New(srv.URL, "test-key").CloseDeployment(context.Background(), "1")
-			require.ErrorContains(t, err, "success: true")
+			require.NoError(t, err)
 		})
 	}
 }

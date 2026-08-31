@@ -26,6 +26,14 @@ func NewCheckedWriter(destination io.Writer) *CheckedWriter {
 	return &CheckedWriter{destination: destination}
 }
 
+// NewCheckedTerminalWriter detects terminal capabilities from the original
+// destination before adding write accounting. Passing a CheckedWriter to
+// TerminalAwareWriter hides an underlying *os.File and incorrectly disables
+// styling on a real terminal.
+func NewCheckedTerminalWriter(destination io.Writer) *CheckedWriter {
+	return NewCheckedWriter(TerminalAwareWriter(destination))
+}
+
 func (w *CheckedWriter) Write(p []byte) (int, error) {
 	if w.err != nil {
 		return 0, w.err

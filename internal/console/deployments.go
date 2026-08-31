@@ -467,24 +467,82 @@ func (c *Client) CloseDeployment(ctx context.Context, dseq string) error {
 	var out struct {
 		Success *bool `json:"success"`
 	}
-	err = c.doData(ctx, http.MethodDelete, "/v1/deployments/"+url.PathEscape(dseq), nil, &out)
-	if err == nil && (out.Success == nil || !*out.Success) {
-		err = errors.New("console: close deployment response did not acknowledge success: true")
+	postErr := c.doData(ctx, http.MethodDelete, "/v1/deployments/"+url.PathEscape(dseq), nil, &out)
+	if postErr == nil && (out.Success == nil || !*out.Success) {
+		postErr = errors.New("console: close deployment response did not acknowledge success: true")
 	}
 
 	switch {
-	case err == nil:
+	case postErr == nil:
 		c.record("close-deployment", dseq, nil)
 		return nil
 
-	case isAlreadyClosed(err):
-		err = fmt.Errorf("%w (dseq %s)", ErrAlreadyClosed, dseq)
-		c.record("close-deployment", dseq, err)
-		return err
+	case isAlreadyClosed(postErr):
+		postErr = fmt.Errorf("%w (dseq %s)", ErrAlreadyClosed, dseq)
+		c.record("close-deployment", dseq, postErr)
+		return postErr
 
-	default:
-		c.record("close-deployment", dseq, err)
-		return err
+	case definitiveCreateFailure(postErr):
+		c.record("close-deployment", dseq, postErr)
+		return postErr
+	}
+
+	if reconciled, reconcileErr := c.reconcileClosedDeployment(ctx, dseq); reconciled {
+		c.record("close-deployment", dseq, nil)
+		return nil
+	} else if reconcileErr != nil {
+		postErr = errors.Join(postErr, reconcileErr)
+	}
+
+	unknown := fmt.Errorf(
+		"close deployment outcome unknown after one submission (%w); the request was not replayed: inspect with `akt console deployment get %s`; if it remains active, retry `akt close %s`",
+		postErr,
+		dseq,
+		dseq,
+	)
+	c.recordOutcome("close-deployment", dseq, "pending", unknown, nil)
+	return unknown
+}
+
+func (c *Client) reconcileClosedDeployment(ctx context.Context, dseq string) (bool, error) {
+	reconciliationCtx, cancel := context.WithTimeout(ctx, mutationReconciliationWindow)
+	defer cancel()
+
+	return c.reconcileClosedDeploymentUntil(
+		reconciliationCtx,
+		dseq,
+		mutationReconciliationPollInterval,
+	)
+}
+
+func (c *Client) reconcileClosedDeploymentUntil(
+	ctx context.Context,
+	dseq string,
+	pollInterval time.Duration,
+) (bool, error) {
+	var lastErr error
+	for {
+		detail, err := c.GetDeployment(ctx, dseq)
+		switch {
+		case errors.Is(err, ErrNotFound):
+			return true, nil
+		case err != nil:
+			lastErr = err
+		case detail.Deployment.ID.DSeq.String() != dseq:
+			lastErr = fmt.Errorf(
+				"console: close reconciliation returned dseq %q, want %q",
+				detail.Deployment.ID.DSeq.String(),
+				dseq,
+			)
+		case strings.EqualFold(strings.TrimSpace(detail.Deployment.State), "closed"):
+			return true, nil
+		default:
+			lastErr = fmt.Errorf("deployment %s remains %s", dseq, detail.Deployment.State)
+		}
+
+		if err := waitForMutationObservation(ctx, pollInterval); err != nil {
+			return false, errors.Join(lastErr, err)
+		}
 	}
 }
 
@@ -699,8 +757,8 @@ func parseDeploymentEscrowAmount(raw string) (*big.Rat, error) {
 }
 
 const (
-	depositReconciliationWindow       = 30 * time.Second
-	depositReconciliationPollInterval = 2 * time.Second
+	mutationReconciliationWindow       = 30 * time.Second
+	mutationReconciliationPollInterval = 2 * time.Second
 )
 
 func (c *Client) reconcileDeposit(
@@ -709,7 +767,7 @@ func (c *Client) reconcileDeposit(
 	beforeTotals map[string]*big.Rat,
 	expectedMicros *big.Int,
 ) (bool, error) {
-	reconciliationCtx, cancel := context.WithTimeout(ctx, depositReconciliationWindow)
+	reconciliationCtx, cancel := context.WithTimeout(ctx, mutationReconciliationWindow)
 	defer cancel()
 
 	return c.reconcileDepositUntil(
@@ -717,7 +775,7 @@ func (c *Client) reconcileDeposit(
 		dseq,
 		beforeTotals,
 		expectedMicros,
-		depositReconciliationPollInterval,
+		mutationReconciliationPollInterval,
 	)
 }
 
@@ -743,13 +801,13 @@ func (c *Client) reconcileDepositUntil(
 			lastErr = fmt.Errorf("deployment escrow did not increase by exactly %s uact", expectedMicros)
 		}
 
-		if err := waitForDepositObservation(ctx, pollInterval); err != nil {
+		if err := waitForMutationObservation(ctx, pollInterval); err != nil {
 			return false, errors.Join(lastErr, err)
 		}
 	}
 }
 
-func waitForDepositObservation(ctx context.Context, interval time.Duration) error {
+func waitForMutationObservation(ctx context.Context, interval time.Duration) error {
 	timer := time.NewTimer(interval)
 	defer timer.Stop()
 
@@ -830,19 +888,30 @@ func (c *Client) CreateLease(ctx context.Context, manifest string, leases []Leas
 	}
 	if err != nil {
 		// Never replay this POST: the live API can return an error after the
-		// lease transaction succeeded. Read back the exact lease identities
-		// and accept only authoritative active state.
-		if detail, ok := c.reconcileCreatedLeases(ctx, leases); ok {
-			c.record("create-lease", leaseDSeq, nil)
-			return detail, nil
-		}
-
+		// lease transaction succeeded. A definitive 4xx receives one exact
+		// read-back in case the response contradicted chain state; ambiguous
+		// outcomes receive the full propagation window below.
 		if definitiveCreateFailure(err) {
+			if detail, ok, _ := c.readCreatedLeases(ctx, leases); ok {
+				c.record("create-lease", leaseDSeq, nil)
+				return detail, nil
+			}
 			c.record("create-lease", leaseDSeq, err)
 			return nil, err
 		}
 
-		unknown := fmt.Errorf("lease creation outcome unknown after one submission (%w); the request was not replayed: inspect deployment %s for the requested lease", err, leaseDSeq)
+		if detail, ok, reconcileErr := c.reconcileCreatedLeases(ctx, leases); ok {
+			c.record("create-lease", leaseDSeq, nil)
+			return detail, nil
+		} else if reconcileErr != nil {
+			err = errors.Join(err, reconcileErr)
+		}
+
+		unknown := fmt.Errorf(
+			"lease creation outcome unknown after one submission (%w); the request was not replayed: inspect with `akt console deployment get %s` for the requested active lease",
+			err,
+			leaseDSeq,
+		)
 		c.recordOutcome("create-lease", leaseDSeq, "pending", unknown, nil)
 		return nil, unknown
 	}
@@ -851,32 +920,63 @@ func (c *Client) CreateLease(ctx context.Context, manifest string, leases []Leas
 	return &out, nil
 }
 
-func (c *Client) reconcileCreatedLeases(ctx context.Context, requested []LeaseRequest) (*DeploymentDetail, bool) {
+func (c *Client) reconcileCreatedLeases(
+	ctx context.Context,
+	requested []LeaseRequest,
+) (*DeploymentDetail, bool, error) {
+	reconciliationCtx, cancel := context.WithTimeout(ctx, mutationReconciliationWindow)
+	defer cancel()
+
+	return c.reconcileCreatedLeasesUntil(
+		reconciliationCtx,
+		requested,
+		mutationReconciliationPollInterval,
+	)
+}
+
+func (c *Client) reconcileCreatedLeasesUntil(
+	ctx context.Context,
+	requested []LeaseRequest,
+	pollInterval time.Duration,
+) (*DeploymentDetail, bool, error) {
+	var lastErr error
+	for {
+		detail, matched, err := c.readCreatedLeases(ctx, requested)
+		if matched {
+			return detail, true, nil
+		}
+		lastErr = err
+
+		if err := waitForMutationObservation(ctx, pollInterval); err != nil {
+			return nil, false, errors.Join(lastErr, err)
+		}
+	}
+}
+
+func (c *Client) readCreatedLeases(
+	ctx context.Context,
+	requested []LeaseRequest,
+) (*DeploymentDetail, bool, error) {
 	if len(requested) == 0 || requested[0].DSeq == "" {
-		return nil, false
+		return nil, false, errors.New("console: lease reconciliation requires a deployment")
 	}
 
 	dseq := requested[0].DSeq
 	for _, req := range requested[1:] {
 		if req.DSeq != dseq {
-			return nil, false
+			return nil, false, errors.New("console: lease reconciliation requires one deployment")
 		}
 	}
 
-	for attempt := range maxRetries {
-		detail, err := c.GetDeployment(ctx, dseq)
-		if err == nil && requestedLeasesActive(detail.Leases, requested) {
-			return detail, true
-		}
-
-		if attempt < maxRetries-1 {
-			if err := waitForRetry(ctx, attempt); err != nil {
-				return nil, false
-			}
-		}
+	detail, err := c.GetDeployment(ctx, dseq)
+	if err != nil {
+		return nil, false, err
+	}
+	if requestedLeasesActive(detail.Leases, requested) {
+		return detail, true, nil
 	}
 
-	return nil, false
+	return nil, false, fmt.Errorf("deployment %s does not contain every requested active lease", dseq)
 }
 
 func requestedLeasesActive(actual []Lease, requested []LeaseRequest) bool {
