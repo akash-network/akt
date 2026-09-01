@@ -27,6 +27,7 @@ const (
 	TypeProvider ActionType = "provider"
 	TypeContext  ActionType = "context"
 	TypeConsole  ActionType = "console"
+	TypeFaucet   ActionType = "faucet"
 	TypeError    ActionType = "error"
 )
 

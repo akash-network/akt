@@ -126,6 +126,7 @@ func TestEditAppliesEveryCanonicalNetworkFlag(t *testing.T) {
 		"--grpc", "grpc.example.test:443",
 		"--gas-prices", "0.04uakt",
 		"--gas-adjustment", "1.4",
+		"--faucet", "https://faucet.example.test/",
 	})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
@@ -140,5 +141,8 @@ func TestEditAppliesEveryCanonicalNetworkFlag(t *testing.T) {
 	}
 	if got.GasPrices != "0.04uakt" || got.GasAdjustment != "1.4" {
 		t.Fatalf("edited gas defaults = %+v", got)
+	}
+	if got.Faucet != "https://faucet.example.test/" {
+		t.Fatalf("edited faucet = %+v", got)
 	}
 }

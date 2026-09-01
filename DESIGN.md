@@ -302,6 +302,16 @@ graph TB
 - After startup loads the common config, runtime code derives the mainnet chain
   ID from the configured `mainnet` network. Command code does not duplicate the
   registry-owned chain ID as a literal or package-level variable.
+- A network optionally carries a `faucet` URL (test networks only). First-run
+  bootstrap and `--template` populate it from the upstream registry's
+  `meta.json` `faucets[0].url` when the entry publishes one; mainnet's never
+  does. `akt faucet` is the single command that reads it: presence of a
+  non-empty `faucet` is the only signal that a network has a faucet, so there
+  is no separate "is mainnet" flag to keep in sync. `akt faucet` only shows
+  the URL and address by default; `akt faucet --send` submits an
+  unauthenticated POST to the faucet's `/faucet` endpoint and broadcasts the
+  funding transaction on the faucet's side, so `--send` is refused outright
+  on a network that resolves as mainnet even if `faucet` was set manually.
 - The human context detail view presents these resolved fields in one
   `Network` subsection. It does not repeat the shared network object's name as
   a separate row above that subsection; structured output retains the complete

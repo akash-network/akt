@@ -123,6 +123,15 @@ func resolveDefaultAccountAddress(cctx sdkclient.Context) (string, error) {
 	return addr.String(), nil
 }
 
+// ResolveDefaultAccountAddress resolves the invoking context's default
+// account address, using the same chain (bech32 --from, named keyring
+// account, or transport default owner) that an omitted query owner resolves
+// through. Exported for callers outside this package that need a best-effort
+// address without duplicating the resolution order.
+func ResolveDefaultAccountAddress(cctx sdkclient.Context) (string, error) {
+	return resolveDefaultAccountAddress(cctx)
+}
+
 func resolveTransportDefaultOwner(cctx sdkclient.Context) (string, error) {
 	if cctx.CmdContext == nil {
 		return "", nil

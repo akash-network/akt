@@ -39,6 +39,19 @@ func TestRenderNetworkShow(t *testing.T) {
 			},
 			usedBy: nil,
 		},
+		"WithFaucet": {
+			net: aktctx.Network{
+				Name:    "sandbox",
+				ChainID: "sandbox-2",
+				Endpoints: aktctx.Endpoints{
+					RPC: []string{"https://rpc.sandbox-2.aksh.pw:443"},
+				},
+				GasPrices:     "0.025uakt",
+				GasAdjustment: "1.5",
+				Faucet:        "http://faucet.sandbox-2.aksh.pw/",
+			},
+			usedBy: nil,
+		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

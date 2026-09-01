@@ -48,6 +48,34 @@
   contract spec was re-vendored from the live Console API, and SPEC/DESIGN/README
   were updated first per the spec-first rule.
 
+### Added
+
+- **`akt faucet`**: a new top-level command shows how to request test funds
+  from the active context's network faucet. Networks now carry an optional
+  `faucet` URL, populated from the upstream `akash-network/net` registry's
+  `meta.json` `faucets[0].url` during first-run bootstrap and `--template`
+  network creation (the sandbox template ships with
+  `http://faucet.sandbox-2.aksh.pw/`; mainnet and testnet have none upstream
+  today) and settable directly via `--faucet` on `akt context network
+  create`/`edit`. `akt faucet` resolves the active context's default account
+  address best-effort and prints it beside the faucet URL, or explains why
+  there is no faucet: a Console-managed wallet has no chain faucet, a
+  network-less context has nothing to point at, and a live network (mainnet)
+  or a test network without a configured faucet each get a specific remedy.
+- **`akt faucet --send`**: requests the funds automatically instead of only
+  displaying the URL. It posts `address` (form-encoded) to the faucet's
+  `/faucet` endpoint over an unauthenticated HTTP request and prints the
+  transaction hash the faucet returns; the deployed sandbox/test faucets
+  accept this without a login and broadcast a `MsgSend`. `--send` is refused
+  on a network that resolves as mainnet, even if `faucet` was set manually,
+  and requires a resolvable default account since it needs a concrete
+  address to submit. A non-2xx faucet response (including the faucet's own
+  per-address rate limit, roughly one grant per day) surfaces as an error
+  carrying the faucet's response body. Being state-changing, `--send`
+  records a new `type=faucet` action-log entry on both success and failure;
+  the display-only path still records nothing. Added `actionlog.TypeFaucet`
+  and the matching `akt context log --type faucet` filter.
+
 ### Fixed
 
 - **Dual-rail contexts now keep chain and Console operations available at the

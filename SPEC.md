@@ -189,6 +189,9 @@ Networks define chain connectivity. They are shared resources -- a single networ
 | `endpoints.grpc` | []string | no       | []            | gRPC endpoint URLs                                |
 | `gas-prices`     | string   | no       | `"0.025uakt"` | Default gas price for transactions                |
 | `gas-adjustment` | string   | no       | `"1.5"`       | Gas estimation multiplier (when gas=auto)         |
+| `faucet`         | string   | no       | `""`          | Faucet URL (test networks only); presence is what `akt faucet` (§2.13) uses to decide whether the network has a faucet |
+
+**Faucet population from the registry:** when a network is created via `--template` or discovered through first-run bootstrap (§2.0), `faucet` is populated from the upstream `akash-network/net/<dir>/meta.json` `faucets[0].url` field (cosmos chain-registry schema) when present. Mainnet's `meta.json` carries no `faucets` entry, so mainnet never gets one. A network created or edited manually sets `faucet` with `--faucet` (§2.2.1).
 
 **Endpoint port inference:** Ports are optional in RPC and API endpoint URLs. When a port is not explicitly specified, it is inferred from the URL scheme: `http` → 80, `https` → 443 (likewise `ws` → 80, `wss` → 443). The underlying cosmos-sdk and CometBFT libraries require an explicit port in the host string, so `akt` normalizes endpoints at startup by appending the scheme-default port when one is absent. For example, `https://rpc.akashnet.net` is equivalent to `https://rpc.akashnet.net:443`. The `tcp` scheme (used internally by the cosmos-sdk `--node` flag) defaults to port 80 since it is treated as an alias for `http`.
 
@@ -421,7 +424,14 @@ endpoints:
     - grpc.sandbox-2.aksh.pw:9090
 gas-prices: "0.025uakt"
 gas-adjustment: "1.5"
+faucet: "http://faucet.sandbox-2.aksh.pw/"
 ```
+
+The `testnet` template carries no `faucet`: the live testnet directories in
+`akash-network/net` (`testnet-oracle`, `testnet-reclamation` -- `testnet-02` no
+longer exists upstream) publish no `faucets` entry in their `meta.json` as of
+this writing. The template is left without one rather than guessing a URL;
+set it with `akt context network edit testnet --faucet <url>` once one exists.
 
 ### 1.11 Terminal Requirements and Glyph Registry
 
@@ -913,6 +923,7 @@ akt
 │   ├── oracle [rpc-endpoint]            # Oracle/BME dashboard (alias)
 │   └── bme [rpc-endpoint]              # Oracle/BME dashboard (alias)
 ├── mcp                                  # MCP server for AI assistant integration (stdio)
+├── faucet [--send]                      # Show (or with --send, request) test funds from the active network's faucet
 ├── version [--long]                     # Version information (--long: full build info)
 └── completion                           # Shell completion scripts
 ```
@@ -1169,7 +1180,7 @@ View the action log for the current context.
 | --------------- | ------ | --------- | ------------------------------------------------------------------- |
 | `--context`     | string | current   | Context to view log for                                             |
 | `--limit`       | int    | `50`      | Number of entries to show                                           |
-| `--type`        | string | `""`      | Filter by action type: `tx`, `workflow`, `provider`, `context`, `console`, `error` (see §5.6) |
+| `--type`        | string | `""`      | Filter by action type: `tx`, `workflow`, `provider`, `context`, `console`, `faucet`, `error` (see §5.6) |
 | `--workflow-id` | string | `""`      | Show only the entries of one workflow run (the `run` id shown in `SUMMARY`) |
 | `--since`       | string | `""`      | Show entries since timestamp or duration (e.g., `1h`, `2024-01-01`) |
 | `--output`      | string | `pretty`  | Output format: `pretty` (table), `json` (raw JSONL entries, one per line) |
@@ -1226,6 +1237,7 @@ Create a new network definition.
 | `--grpc`           | []string | `[]`          | gRPC endpoint URLs                                     |
 | `--gas-prices`     | string   | `"0.025uakt"` | Default gas prices                                     |
 | `--gas-adjustment` | string   | `"1.5"`       | Gas estimation multiplier                              |
+| `--faucet`         | string   | `""`          | Faucet URL (test networks only)                        |
 
 **Examples:**
 ```bash
@@ -1244,6 +1256,8 @@ akt context network create sandbox --template sandbox
 #### `akt context network edit <name>`
 
 Edit a network definition. Changes apply to all contexts using this network.
+Accepts the same flags as `create` (including `--faucet`), each applied only
+when passed.
 
 ```bash
 # Add a backup RPC endpoint
@@ -1251,6 +1265,9 @@ akt context network edit mainnet --rpc https://rpc.akashnet.net:443,https://my-b
 
 # Change gas prices
 akt context network edit mainnet --gas-prices 0.04uakt
+
+# Set a faucet URL on a test network
+akt context network edit sandbox --faucet http://faucet.sandbox-2.aksh.pw/
 ```
 
 #### `akt context network delete <name>`
@@ -3126,6 +3143,102 @@ akt completion zsh > "${fpath[1]}/_akt"
 Both commands run without a configured context (§2.10): they require no
 transport.
 
+### 2.13 Faucet Command
+
+#### `akt faucet`
+
+Show how to request test funds from the active context's network faucet, or
+with `--send`, request them automatically. Takes no positional arguments.
+Carries no capability annotation (it talks to the faucet's own HTTP endpoint,
+not a chain RPC, provider gateway, or Console API). The display path (no
+`--send`) changes no state and records no action log entry; `--send` is
+state-changing and always records a `type=faucet` entry (§5.6).
+
+Resolution is an ordered decision, first match wins:
+
+1. The active context uses `console-api` auth (§1.4): a Console-managed
+   wallet has no chain faucet.
+   ```
+   Error: the active context "prod-console" uses a Console-managed wallet, which has no chain faucet; check the balance with 'akt console wallet balance' or add funds at https://console.akash.network
+   ```
+2. The active context has no network attached (a network-less `console-api`
+   context, §1.4):
+   ```
+   Error: the active context "billing" has no network attached, so there is no faucet; attach a test network and try again
+   ```
+3. The network's `faucet` field (§1.3) is empty and the network is mainnet
+   (name contains "mainnet", chain-id is `akashnet-2`, or matches the
+   resolved mainnet chain-id):
+   ```
+   Error: mainnet (akashnet-2) is a live network and has no faucet; acquire real AKT by transfer, or switch to a test network with 'akt context use sandbox'
+   ```
+4. The network's `faucet` field is empty and the network is not mainnet:
+   ```
+   Error: network "testnet" (testnet-oracle) has no faucet configured; set one with 'akt context network edit testnet --faucet <url>'
+   ```
+5. Otherwise: the network has a faucet. `akt faucet` prints it together with
+   the context's default account address, resolved best-effort the same way
+   an omitted query owner resolves (§1.4, `--from` / keyring). Resolution
+   failure or an unconfigured default account is not a command failure --
+   the address line is replaced with a prompt to paste one manually.
+
+```bash
+$ akt faucet
+  Network:             sandbox (sandbox-2)
+  Address:             akash1jwsq8n7qkxexz6mnvqa9gagcrvt4uf0jqvlp8t
+  Faucet:              http://faucet.sandbox-2.aksh.pw/
+
+Open the faucet page and paste your address to request test funds. These tokens are for testing only and have no monetary value.
+Run 'akt faucet --send' to request funds automatically.
+```
+
+`--output json`/`yaml` (§10.3) emit `{network, chain_id, address, faucet_url}`
+instead of the pretty block; `address` is `""` when it could not be resolved.
+`status` and `transaction_hash` are omitted on the display path rather than
+emitted empty; `--send` below is what sets them.
+
+#### `akt faucet --send`
+
+Submits an unauthenticated `POST` of `address` (form-encoded) to the faucet
+URL's `/faucet` endpoint and prints the transaction hash the faucet returns.
+The deployed sandbox and other test-network faucets accept this request
+without a login and broadcast a `MsgSend` crediting the address; there is no
+Auth0 flow or other authentication step. `--send` reuses the resolution
+above (state 5 must be reached: a configured faucet on a non-Console
+context), then applies two more rules before posting:
+
+- **Mainnet is refused unconditionally**, even if `faucet` was set manually
+  on a network that otherwise resolves as mainnet (the normal population
+  path in §1.3 never sets one there, so this only fires on a manual
+  `--faucet` override):
+  ```
+  Error: refusing to auto-request funds on mainnet "mainnet"; --send is for test networks only
+  ```
+- **The default account must resolve.** `--send` needs a concrete address to
+  submit, so the best-effort placeholder the display path falls back to does
+  not apply here:
+  ```
+  Error: no default account resolved for context "sbx"; set one with 'akt context edit sbx --default-account <name>' or add a key, then retry
+  ```
+
+The faucet enforces its own per-address rate limit (roughly one grant per
+day); a request against an already-funded address surfaces as a non-2xx
+response, and the command returns an error carrying the faucet's response
+body.
+
+```bash
+$ akt faucet --send
+  Network:             sandbox (sandbox-2)
+  Address:             akash1jwsq8n7qkxexz6mnvqa9gagcrvt4uf0jqvlp8t
+  Faucet:              http://faucet.sandbox-2.aksh.pw/
+  Tx Hash:             ABC123...
+
+Requested test funds for akash1jwsq8n7qkxexz6mnvqa9gagcrvt4uf0jqvlp8t. These tokens are for testing only and have no monetary value.
+```
+
+`--output json`/`yaml` add `transaction_hash` and `status: requested` to the
+same payload shape as the display path.
+
 ---
 
 ## 3. Flag Specification
@@ -4069,6 +4182,7 @@ Each context has its own action log at:
 | `provider` | A provider gateway operation               | Operation (send-manifest, lease-logs, etc.), provider address, result |
 | `context`  | A context or keyring management operation  | Operation (switch, edit, `keys.add`, etc.), old/new values            |
 | `console`  | A state-changing Console API operation     | Operation (create-deployment, close-deployment, etc.), dseq, result   |
+| `faucet`   | An `akt faucet --send` request             | Account, tx hash (on success), status, error (on failure)             |
 | `error`    | A failed operation                         | Original action type, error message, context                          |
 
 ### 5.3 Action Entry Format
@@ -4177,6 +4291,7 @@ The action log records entries for the following command categories:
 | `context keys *` (state-changing: `add`, `add --recover`, `delete`, `rename`, `import`) | Always | `context` | After the keyring mutation returns (success or failure), under a dotted `keys.*` action. Secrets — mnemonics, BIP39 and armor passphrases, key material — are never recorded (§2.2.2). Read-only `list`, `show`, `parse`, and `mnemonic` are not recorded. |
 | `context keys export` | Always | `context` | The single exception to the read-only rule: exporting private key material is recorded as a security event, with the key name only and never the armor or passphrase (§2.2.2). |
 | Console API state changes from CLI, workflow, or MCP (create/update/close deployment, create lease, settings writes) | Always | `console` | After the Console API call completes (success or failure). Read-only Console queries, including MCP query tools, are not recorded. |
+| `akt faucet --send` | Always | `faucet` | After the faucet HTTP request completes (success or failure). The display path (no `--send`) is read-only and is never recorded (§2.13). |
 | All commands | On failure | `error` | When any command fails. Includes original action type and error message. |
 | `query` (read-only, no side effects) | When `-v` is set (future) | `query` | Verbose-mode query logging for debugging is planned but not yet implemented. Internal queries (e.g. by the sync engine) are never logged. |
 
