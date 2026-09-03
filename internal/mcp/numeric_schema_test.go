@@ -80,17 +80,6 @@ func TestStateSchemasDeclareAcceptedEnums(t *testing.T) {
 	}
 }
 
-func TestConsoleDepositSchemaDeclaresMinimum(t *testing.T) {
-	tool := consoletools.ToolDeposit()
-	property, ok := tool.InputSchema.Properties["amount_usd"].(map[string]any)
-	if !ok {
-		t.Fatalf("amount_usd schema = %#v", tool.InputSchema.Properties["amount_usd"])
-	}
-	if minimum, ok := property["minimum"].(float64); !ok || minimum <= 0 {
-		t.Fatalf("amount_usd minimum = %#v, want the positive Console minimum", property["minimum"])
-	}
-}
-
 func TestPaginationSchemasRequireNonNegativeIntegers(t *testing.T) {
 	tools := []protocol.Tool{
 		consoletools.ToolListDeployments(),

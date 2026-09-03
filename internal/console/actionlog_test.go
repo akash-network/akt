@@ -82,7 +82,7 @@ func TestConsoleMutationsRecordedInActionLog(t *testing.T) {
 	l := openTestLog(t)
 	c := New(srv.URL, "test-key").WithActionLog(l)
 
-	if _, err := c.CreateDeployment(context.Background(), actionLogTestSDL, 5); err != nil {
+	if _, err := c.CreateDeployment(context.Background(), actionLogTestSDL); err != nil {
 		t.Fatalf("CreateDeployment: %v", err)
 	}
 
@@ -331,7 +331,7 @@ func TestNewMutationsRecordedInActionLog(t *testing.T) {
 		case r.Method == http.MethodPut && r.URL.Path == "/v1/wallet-settings":
 			_, _ = w.Write([]byte(`{"data":{"autoReloadEnabled":true}}`))
 		case r.Method == http.MethodPatch && r.URL.Path == "/v2/deployment-settings/42":
-			_, _ = w.Write([]byte(`{"data":{"dseq":"42","autoTopUpEnabled":true}}`))
+			_, _ = w.Write([]byte(`{"data":{"dseq":"42","autoTopUpEnabled":true,"runtimeLimitHours":12}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/api-keys":
 			_, _ = w.Write([]byte(`{"data":{"id":"k1","name":"n","apiKey":"secret"}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/api-keys":
@@ -352,8 +352,9 @@ func TestNewMutationsRecordedInActionLog(t *testing.T) {
 	if _, err := c.UpdateWalletSettings(ctx, true); err != nil {
 		t.Fatalf("UpdateWalletSettings: %v", err)
 	}
-	if _, err := c.SetDeploymentAutoTopUp(ctx, "42", true); err != nil {
-		t.Fatalf("SetDeploymentAutoTopUp: %v", err)
+	twelveHours := 12
+	if _, err := c.SetDeploymentRuntimeLimit(ctx, "42", &twelveHours); err != nil {
+		t.Fatalf("SetDeploymentRuntimeLimit: %v", err)
 	}
 	if _, err := c.CreateAPIKey(ctx, "n", ""); err != nil {
 		t.Fatalf("CreateAPIKey: %v", err)
@@ -404,8 +405,9 @@ func TestConsoleValidationFailuresOccurBeforeNetworkAndAreLogged(t *testing.T) {
 	if _, err := client.UpdateDeployment(context.Background(), "42", "not-valid-sdl: ["); err == nil || !strings.Contains(err.Error(), "prepare deployment SDL") {
 		t.Fatalf("invalid deployment SDL error = %v", err)
 	}
-	if err := client.Deposit(context.Background(), "42", 0); err == nil || !strings.Contains(err.Error(), "at least $0.50") {
-		t.Fatalf("invalid deployment deposit error = %v", err)
+	zeroHours := 0
+	if _, err := client.SetDeploymentRuntimeLimit(context.Background(), "42", &zeroHours); err == nil || !strings.Contains(err.Error(), "at least 1 hour") {
+		t.Fatalf("invalid runtime limit error = %v", err)
 	}
 	if requests.Load() != 0 {
 		t.Fatalf("local validation failures made %d requests, want zero", requests.Load())
@@ -415,7 +417,7 @@ func TestConsoleValidationFailuresOccurBeforeNetworkAndAreLogged(t *testing.T) {
 	if readErr != nil {
 		t.Fatalf("read action log: %v", readErr)
 	}
-	wantActions := []string{"deposit", "update-deployment", "create-api-key"}
+	wantActions := []string{"update-deployment-settings", "update-deployment", "create-api-key"}
 	if len(entries) != len(wantActions) {
 		t.Fatalf("validation action entries = %+v, want %d failures", entries, len(wantActions))
 	}
@@ -465,7 +467,7 @@ func TestConsoleWithoutActionLogIsNoop(t *testing.T) {
 	defer srv.Close()
 
 	c := New(srv.URL, "test-key")
-	if _, err := c.CreateDeployment(context.Background(), actionLogTestSDL, 5); err != nil {
+	if _, err := c.CreateDeployment(context.Background(), actionLogTestSDL); err != nil {
 		t.Fatalf("CreateDeployment without logger: %v", err)
 	}
 }
@@ -502,7 +504,7 @@ func TestAmbiguousDeploymentCreateIsLoggedPending(t *testing.T) {
 
 	l := openTestLog(t)
 	c := New(srv.URL, "test-key").WithActionLog(l)
-	_, err = c.CreateDeployment(context.Background(), actionLogTestSDL, 5)
+	_, err = c.CreateDeployment(context.Background(), actionLogTestSDL)
 	if err == nil || !strings.Contains(err.Error(), "outcome unknown") || !strings.Contains(err.Error(), "akt console deployment list") {
 		t.Fatalf("ambiguous create error = %v", err)
 	}
@@ -523,15 +525,12 @@ func TestAmbiguousDeploymentCreateIsLoggedPending(t *testing.T) {
 	}
 }
 
-func TestAmbiguousLeaseAPIKeyAndDepositAreLoggedPending(t *testing.T) {
+func TestAmbiguousLeaseAndAPIKeyAreLoggedPending(t *testing.T) {
 	leaseCtx, cancelLease := context.WithCancel(context.Background())
 	defer cancelLease()
-	depositCtx, cancelDeposit := context.WithCancel(context.Background())
-	defer cancelDeposit()
 
 	var leasePosts atomic.Int32
 	var keyPosts atomic.Int32
-	var depositPosts atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/leases":
@@ -540,14 +539,9 @@ func TestAmbiguousLeaseAPIKeyAndDepositAreLoggedPending(t *testing.T) {
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/api-keys":
 			keyPosts.Add(1)
 			_, _ = w.Write([]byte(`{"data":{}}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/deposit-deployment":
-			depositPosts.Add(1)
-			w.WriteHeader(http.StatusBadGateway)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/42":
-			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"1000000"}],"transferred":[]}}}}`))
-			if depositPosts.Load() > 0 {
-				cancelDeposit()
-			} else if leasePosts.Load() > 0 {
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"}},"leases":[]}}`))
+			if leasePosts.Load() > 0 {
 				cancelLease()
 			}
 		default:
@@ -570,23 +564,19 @@ func TestAmbiguousLeaseAPIKeyAndDepositAreLoggedPending(t *testing.T) {
 		t.Fatalf("ambiguous API-key error = %v", err)
 	}
 
-	if err := c.Deposit(depositCtx, "42", 1); err == nil || !strings.Contains(err.Error(), "outcome unknown") {
-		t.Fatalf("ambiguous deposit error = %v", err)
-	}
-
 	entries, readErr := l.Read(actionlog.Filter{Type: actionlog.TypeConsole})
 	if readErr != nil {
 		t.Fatalf("read: %v", readErr)
 	}
-	if len(entries) != 3 {
+	if len(entries) != 2 {
 		t.Fatalf("pending entries = %+v", entries)
 	}
-	for i, action := range []string{"deposit", "create-api-key", "create-lease"} {
+	for i, action := range []string{"create-api-key", "create-lease"} {
 		if entries[i].Action != action || entries[i].Status != "pending" {
 			t.Errorf("entry %d = %+v, want pending %s", i, entries[i], action)
 		}
 	}
-	if leasePosts.Load() != 1 || keyPosts.Load() != 1 || depositPosts.Load() != 1 {
-		t.Fatalf("POST counts lease=%d key=%d deposit=%d, want one each", leasePosts.Load(), keyPosts.Load(), depositPosts.Load())
+	if leasePosts.Load() != 1 || keyPosts.Load() != 1 {
+		t.Fatalf("POST counts lease=%d key=%d, want one each", leasePosts.Load(), keyPosts.Load())
 	}
 }

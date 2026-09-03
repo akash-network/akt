@@ -64,7 +64,7 @@ func TestWalletBalanceScalesMicroACT(t *testing.T) {
 
 	var got struct {
 		Available        string `json:"available"`
-		InDeployments    string `json:"inDeployments"`
+		Escrow           string `json:"escrow"`
 		Total            string `json:"total"`
 		AllocationStatus string `json:"allocationStatus"`
 		AllocationNote   string `json:"allocationNote"`
@@ -76,8 +76,8 @@ func TestWalletBalanceScalesMicroACT(t *testing.T) {
 	if got.Available != "$12.34" {
 		t.Errorf("available = %q, want $12.34", got.Available)
 	}
-	if got.InDeployments != "$7.50" {
-		t.Errorf("inDeployments = %q, want $7.50 (escrow must be scaled too)", got.InDeployments)
+	if got.Escrow != "$7.50" {
+		t.Errorf("escrow = %q, want $7.50 (escrow must be scaled too)", got.Escrow)
 	}
 	if got.Total != "$19.84" {
 		t.Errorf("total = %q, want $19.84", got.Total)
@@ -85,7 +85,7 @@ func TestWalletBalanceScalesMicroACT(t *testing.T) {
 	if got.AllocationStatus != "provisional" {
 		t.Errorf("allocationStatus = %q, want provisional", got.AllocationStatus)
 	}
-	for _, want := range []string{"may lag", "recent creates and closes", "total is authoritative"} {
+	for _, want := range []string{"held by running deployments", "may lag", "total is authoritative"} {
 		if !strings.Contains(got.AllocationNote, want) {
 			t.Errorf("allocationNote = %q, want it to contain %q", got.AllocationNote, want)
 		}
@@ -280,11 +280,11 @@ func TestWalletSettingsWireShape(t *testing.T) {
 	}
 }
 
-// TestSettingsRejectNonBooleanValue covers parseBoolValue on both settings
-// commands. A permissive parse ("yes", "1", "TRUE") would silently disagree
-// with the strict true|false the help text documents — and on the wallet
-// command that decides whether real money is auto-charged.
-func TestSettingsRejectNonBooleanValue(t *testing.T) {
+// TestWalletSettingsRejectNonBooleanValue covers parseBoolValue on the wallet
+// settings command. A permissive parse ("yes", "1", "TRUE") would silently
+// disagree with the strict true|false the help text documents, on the command
+// that decides whether real money is auto-charged to the card.
+func TestWalletSettingsRejectNonBooleanValue(t *testing.T) {
 	m := newAuthedManager(t)
 
 	var requests int
@@ -300,12 +300,6 @@ func TestSettingsRejectNonBooleanValue(t *testing.T) {
 		} else if !strings.Contains(err.Error(), "auto-reload must be true or false") {
 			t.Errorf("wallet settings %q: unexpected error %v", bad, err)
 		}
-
-		if _, err := execConsole(t, m, srv.URL, "deployment", "settings", "42", bad); err == nil {
-			t.Errorf("deployment settings %q must be rejected", bad)
-		} else if !strings.Contains(err.Error(), "auto-top-up must be true or false") {
-			t.Errorf("deployment settings %q: unexpected error %v", bad, err)
-		}
 	}
 
 	if requests != 0 {
@@ -314,8 +308,9 @@ func TestSettingsRejectNonBooleanValue(t *testing.T) {
 }
 
 // TestDeploymentSettingsWireShape covers the read and write branches of
-// `deployment settings`, including the PATCH body the API expects. Auto-top-up
-// draws from the managed wallet, so the dseq and flag must both be right.
+// `deployment settings`, including the PATCH body the API expects. The runtime
+// limit decides when the platform stops funding a deployment, so the dseq and
+// the hours must both be right.
 func TestDeploymentSettingsWireShape(t *testing.T) {
 	m := newAuthedManager(t)
 
@@ -325,7 +320,7 @@ func TestDeploymentSettingsWireShape(t *testing.T) {
 		b, _ := io.ReadAll(r.Body)
 		gotBody = string(b)
 
-		writeJSON(t, w, `{"data":{"dseq":"12345","autoTopUpEnabled":true}}`)
+		writeJSON(t, w, `{"data":{"dseq":"12345","autoTopUpEnabled":true,"runtimeLimitHours":12,"runtimeEndsAt":null}}`)
 	}))
 	defer srv.Close()
 
@@ -336,114 +331,17 @@ func TestDeploymentSettingsWireShape(t *testing.T) {
 		t.Errorf("read = %s %s, want GET /v2/deployment-settings/12345", gotMethod, gotPath)
 	}
 
-	if _, err := execConsole(t, m, srv.URL, "deployment", "settings", "12345", "true"); err != nil {
+	if _, err := execConsole(t, m, srv.URL, "deployment", "settings", "12345", "12"); err != nil {
 		t.Fatalf("deployment settings (write): %v", err)
 	}
 	if gotMethod != http.MethodPatch || gotPath != "/v2/deployment-settings/12345" {
 		t.Errorf("write = %s %s, want PATCH /v2/deployment-settings/12345", gotMethod, gotPath)
 	}
-	if !strings.Contains(gotBody, `"autoTopUpEnabled":true`) {
+	if !strings.Contains(gotBody, `"runtimeLimitHours":12`) {
 		t.Errorf("PATCH body = %s", gotBody)
 	}
-}
-
-// TestDeploymentSettingsCreatesWhenAbsent covers the PATCH->POST fallback: a
-// deployment with no settings row yet answers 404 to the PATCH, and the client
-// must create the row instead of surfacing "not found" to the user.
-func TestDeploymentSettingsCreatesWhenAbsent(t *testing.T) {
-	m := newAuthedManager(t)
-
-	var methods []string
-	var postBody string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// The command resolves the deployment before touching settings, so a
-		// dseq that does not exist cannot have auto-top-up enabled on it.
-		if strings.HasPrefix(r.URL.Path, "/v1/deployments/") {
-			writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"12345"}}}}`)
-			return
-		}
-
-		methods = append(methods, r.Method)
-
-		if r.Method == http.MethodPatch {
-			w.WriteHeader(http.StatusNotFound)
-			return
-		}
-
-		b, _ := io.ReadAll(r.Body)
-		postBody = string(b)
-		writeJSON(t, w, `{"data":{"dseq":"12345","autoTopUpEnabled":true}}`)
-	}))
-	defer srv.Close()
-
-	if _, err := execConsole(t, m, srv.URL, "deployment", "settings", "12345", "true"); err != nil {
-		t.Fatalf("settings on a deployment with no settings row: %v", err)
-	}
-
-	if len(methods) != 2 || methods[0] != http.MethodPatch || methods[1] != http.MethodPost {
-		t.Fatalf("methods = %v, want [PATCH POST]", methods)
-	}
-	// The POST body must carry the dseq; the PATCH carried it in the path.
-	if !strings.Contains(postBody, `"dseq":"12345"`) || !strings.Contains(postBody, `"autoTopUpEnabled":true`) {
-		t.Errorf("POST body = %s, want dseq and flag", postBody)
-	}
-}
-
-// TestDepositRejectsNonPositiveAmount covers the guard between the deposit
-// parser (which permits zero) and the API: a zero or omitted amount must fail
-// locally with a message pointing at the positional argument, rather than
-// sending a no-op charge.
-func TestDepositRejectsNonPositiveAmount(t *testing.T) {
-	m := newAuthedManager(t)
-
-	var requests int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests++
-		writeJSON(t, w, `{"data":{}}`)
-	}))
-	defer srv.Close()
-
-	for _, arg := range [][]string{
-		{"deployment", "deposit", "12345"},      // no amount at all
-		{"deployment", "deposit", "12345", "0"}, // explicit zero
-	} {
-		_, err := execConsole(t, m, srv.URL, arg...)
-		if err == nil {
-			t.Errorf("%v must be rejected", arg)
-			continue
-		}
-		if !strings.Contains(err.Error(), "at least $0.50") {
-			t.Errorf("%v: unexpected error %v", arg, err)
-		}
-	}
-
-	if requests != 0 {
-		t.Errorf("a rejected amount must not reach the API, got %d requests", requests)
-	}
-}
-
-// TestCreateRejectsNegativeDeposit covers the negative branch of the shared
-// deposit parser through the CLI. "-5" must never be sent as a charge.
-func TestCreateRejectsNegativeDeposit(t *testing.T) {
-	m := newAuthedManager(t)
-
-	sdlPath := filepath.Join(t.TempDir(), "deploy.yaml")
-	if err := os.WriteFile(sdlPath, []byte(validConsoleDeploymentSDL), 0o600); err != nil {
-		t.Fatalf("write SDL: %v", err)
-	}
-
-	var requests int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		requests++
-		writeJSON(t, w, `{"data":{"dseq":"1"}}`)
-	}))
-	defer srv.Close()
-
-	if _, err := execConsole(t, m, srv.URL, "deployment", "create", sdlPath, "$-5"); err == nil {
-		t.Fatal("a negative deposit must be rejected")
-	}
-	if requests != 0 {
-		t.Errorf("a negative deposit must not reach the API, got %d requests", requests)
+	if strings.Contains(gotBody, "autoTopUpEnabled") {
+		t.Errorf("PATCH body = %s, want no autoTopUpEnabled: always-on funding is not ours to toggle", gotBody)
 	}
 }
 
@@ -460,7 +358,7 @@ func TestCreateRejectsMissingSDLBeforeCharging(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := execConsole(t, m, srv.URL, "deployment", "create", filepath.Join(t.TempDir(), "nope.yaml"), "5")
+	_, err := execConsole(t, m, srv.URL, "deployment", "create", filepath.Join(t.TempDir(), "nope.yaml"))
 	if err == nil {
 		t.Fatal("a missing SDL file must fail")
 	}
@@ -506,7 +404,7 @@ func TestCreateCachesManifestForLeaseCreate(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	out, err := execConsole(t, m, srv.URL, "deployment", "create", sdlPath, "5")
+	out, err := execConsole(t, m, srv.URL, "deployment", "create", sdlPath)
 	if err != nil {
 		t.Fatalf("deployment create: %v", err)
 	}
@@ -520,15 +418,8 @@ func TestCreateCachesManifestForLeaseCreate(t *testing.T) {
 	if strings.Contains(out, `"state"`) || strings.Contains(out, `"open"`) {
 		t.Errorf("create acknowledgement must not invent deployment state, got %q", out)
 	}
-	for _, want := range []string{
-		`"autoTopUp"`,
-		`"enabled": true`,
-		`"frequency": "daily"`,
-		`"disableCommand": "akt console deployment settings 9911 false"`,
-	} {
-		if !strings.Contains(out, want) {
-			t.Errorf("create output does not contain %q: %s", want, out)
-		}
+	if strings.Contains(out, `"autoTopUp"`) {
+		t.Errorf("create output must not carry an auto-top-up notice; it named a command the API now refuses: %s", out)
 	}
 
 	cached, err := console.LoadManifest(m.Root(), "prod", "9911")

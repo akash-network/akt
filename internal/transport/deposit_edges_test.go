@@ -81,18 +81,18 @@ func TestCutSuffixFoldBoundaries(t *testing.T) {
 // across retries, so an in-place rewrite would double-translate on the second
 // attempt.
 func TestTranslateDepositParamDoesNotMutateInput(t *testing.T) {
-	params := map[string]string{"deposit": "5usd", "dseq": "12345"}
+	params := map[string]string{"deposit": "auto", "dseq": "12345"}
 
 	out, err := translateDepositParam(KindConsole, params)
 	if err != nil {
 		t.Fatalf("translateDepositParam: %v", err)
 	}
 
-	if params["deposit"] != "5usd" {
+	if params["deposit"] != "auto" {
 		t.Errorf("input map was mutated: deposit = %q", params["deposit"])
 	}
-	if out["deposit"] != "5" {
-		t.Errorf("translated deposit = %q, want the console wire form 5", out["deposit"])
+	if out["deposit"] != "" {
+		t.Errorf("translated deposit = %q, want empty: the console rail sends no deposit", out["deposit"])
 	}
 	if out["dseq"] != "12345" {
 		t.Errorf("unrelated params must be carried over, got %v", out)
@@ -124,19 +124,24 @@ func TestTranslateDepositParamReusesMapWhenUnchanged(t *testing.T) {
 	}
 }
 
-// TestMinConsoleDepositMatchesClientConstant pins the single-source-of-truth
-// claim in the doc comment. If the console client's minimum ever drifts from
-// the transport constant, the CLI would accept a deposit the API rejects.
-func TestMinConsoleDepositMatchesClientConstant(t *testing.T) {
-	if MinConsoleDepositUSD != 0.5 {
-		t.Errorf("MinConsoleDepositUSD = %v, want 0.5", MinConsoleDepositUSD)
-	}
+// TestConsoleRailRejectsEveryExplicitDeposit pins the console rail's whole
+// contract: credits fund the deployment, so only the rail default resolves and
+// every explicit form is refused locally rather than sent to an API that
+// discards it. The rejection must name the docs so a user knows where to look.
+func TestConsoleRailRejectsEveryExplicitDeposit(t *testing.T) {
+	for _, in := range []string{"5usd", "$5", "5", "0.5usd", "5000000uakt", "5akt"} {
+		dep, err := ParseDeposit(in)
+		if err != nil {
+			t.Fatalf("ParseDeposit(%q): %v", in, err)
+		}
 
-	dep, err := ParseDeposit("0.5usd")
-	if err != nil {
-		t.Fatalf("ParseDeposit: %v", err)
-	}
-	if dep.USD < MinConsoleDepositUSD {
-		t.Errorf("the documented minimum must itself be acceptable, got %v", dep.USD)
+		got, err := dep.RailValue(KindConsole)
+		if err == nil {
+			t.Errorf("RailValue(console) for %q: expected a rejection, got %q", in, got)
+			continue
+		}
+		if !strings.Contains(err.Error(), FundingDocsURL) {
+			t.Errorf("RailValue(console) for %q: error %q does not point at %s", in, err, FundingDocsURL)
+		}
 	}
 }

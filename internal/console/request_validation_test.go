@@ -2,7 +2,6 @@ package console_test
 
 import (
 	"context"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -53,13 +52,11 @@ func TestConsoleRequestBoundariesRejectInvalidValuesBeforeHTTP(t *testing.T) {
 			}})
 			return err
 		}, want: "invalid dseq"},
-		{name: "create deposit", call: func() error {
-			_, err := client.CreateDeployment(context.Background(), validUpdateSDL, 0.49)
+		{name: "runtime limit hours", call: func() error {
+			zero := 0
+			_, err := client.SetDeploymentRuntimeLimit(context.Background(), "123", &zero)
 			return err
-		}, want: "at least $0.50"},
-		{name: "escrow deposit", call: func() error {
-			return client.Deposit(context.Background(), "123", 0.01)
-		}, want: "at least $0.50"},
+		}, want: "at least 1 hour"},
 		{name: "api key uuid", call: func() error {
 			return client.DeleteAPIKey(context.Background(), "")
 		}, want: "valid UUID"},
@@ -90,11 +87,9 @@ func TestConsoleDeploymentMutationsRejectClosedState(t *testing.T) {
 			_, err := client.UpdateDeployment(context.Background(), "42", validUpdateSDL)
 			return err
 		}},
-		{name: "deposit", call: func(client *console.Client) error {
-			return client.Deposit(context.Background(), "42", 0.50)
-		}},
 		{name: "settings", call: func(client *console.Client) error {
-			_, err := client.SetDeploymentAutoTopUp(context.Background(), "42", false)
+			hours := 12
+			_, err := client.SetDeploymentRuntimeLimit(context.Background(), "42", &hours)
 			return err
 		}},
 	}
@@ -148,21 +143,18 @@ func TestDeploymentStateListAndMutationValidationEdges(t *testing.T) {
 		{name: "close dseq", call: func() error {
 			return client.CloseDeployment(context.Background(), "bad")
 		}},
-		{name: "deposit dseq", call: func() error {
-			return client.Deposit(context.Background(), "bad", 1)
-		}},
-		{name: "deposit nan", call: func() error {
-			return client.Deposit(context.Background(), "1", math.NaN())
-		}},
-		{name: "deposit sub-micro precision", call: func() error {
-			return client.Deposit(context.Background(), "1", 0.5000001)
-		}},
 		{name: "get settings dseq", call: func() error {
 			_, err := client.GetDeploymentSettings(context.Background(), "bad")
 			return err
 		}},
 		{name: "set settings dseq", call: func() error {
-			_, err := client.SetDeploymentAutoTopUp(context.Background(), "bad", true)
+			hours := 12
+			_, err := client.SetDeploymentRuntimeLimit(context.Background(), "bad", &hours)
+			return err
+		}},
+		{name: "set settings hours", call: func() error {
+			negative := -1
+			_, err := client.SetDeploymentRuntimeLimit(context.Background(), "1", &negative)
 			return err
 		}},
 	}
@@ -200,7 +192,8 @@ func TestDeploymentStateListBoundsAndRequestFailure(t *testing.T) {
 			http.Error(w, "offline", http.StatusBadGateway)
 		}))
 		defer srv.Close()
-		_, err := console.New(srv.URL, "test-key").SetDeploymentAutoTopUp(context.Background(), "42", true)
+		hours := 12
+		_, err := console.New(srv.URL, "test-key").SetDeploymentRuntimeLimit(context.Background(), "42", &hours)
 		require.ErrorContains(t, err, "preflight deployment settings")
 	})
 }

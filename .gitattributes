@@ -1,2 +1,6 @@
 # Golden test files — binary-like, no line-ending conversion, no diff.
 *.golden  -text -diff linguist-generated
+
+# Vendored OpenAPI contract: fetched verbatim from the Console API, never
+# hand-edited, and far too large to read as a diff.
+internal/console/testdata/openapi.json  -diff linguist-generated

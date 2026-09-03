@@ -142,8 +142,8 @@ func TestChainTransportKindAndRouting(t *testing.T) {
 }
 
 // TestConsoleTransportKindAndRouting verifies NewConsole reports KindConsole
-// and routes a create-deployment through the real console adapter with the
-// unified deposit syntax translated to a plain USD number on the wire.
+// and routes a create-deployment through the real console adapter, sending no
+// deposit: credits fund the deployment.
 func TestConsoleTransportKindAndRouting(t *testing.T) {
 	var gotMethod, gotPath string
 	var gotData map[string]any
@@ -175,7 +175,7 @@ func TestConsoleTransportKindAndRouting(t *testing.T) {
 
 	res, err := tr.BroadcastTx(context.Background(), msgCreateDeployment, map[string]string{
 		"sdl":     validConsoleTransportSDL, // raw SDL content
-		"deposit": "5usd",                   // unified syntax, not the wire form
+		"deposit": "auto",                   // the workflow default; resolves to no deposit
 	})
 	if err != nil {
 		t.Fatalf("BroadcastTx: %v", err)
@@ -184,8 +184,8 @@ func TestConsoleTransportKindAndRouting(t *testing.T) {
 	if gotMethod != http.MethodPost || gotPath != "/v1/deployments" {
 		t.Errorf("request = %s %s, want POST /v1/deployments", gotMethod, gotPath)
 	}
-	if dep, ok := gotData["deposit"].(float64); !ok || dep != 5 {
-		t.Errorf("wire deposit = %v, want 5 (USD) translated from \"5usd\"", gotData["deposit"])
+	if _, present := gotData["deposit"]; present {
+		t.Errorf("wire body carried a deposit (%v); the API discards it and the platform funds from credits", gotData["deposit"])
 	}
 	if res.TxHash != "H1" {
 		t.Errorf("TxHash = %q, want H1", res.TxHash)
@@ -226,7 +226,7 @@ func TestChainTransportRejectsUSDDeposit(t *testing.T) {
 			t.Errorf("deposit %q: expected cross-rail error", deposit)
 			continue
 		}
-		for _, want := range []string{"console-api context", "auto", "network's deployment deposit denomination"} {
+		for _, want := range []string{"auto", "network's deployment deposit denomination"} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("deposit %q: error %q does not mention %q", deposit, err, want)
 			}
@@ -237,55 +237,47 @@ func TestChainTransportRejectsUSDDeposit(t *testing.T) {
 	}
 }
 
-// TestConsoleTransportRewritesUSDDeposit verifies USD and bare forms are
-// rewritten to the plain USD number the console adapter expects, without
-// mutating the caller's params.
-func TestConsoleTransportRewritesUSDDeposit(t *testing.T) {
-	tests := []struct {
-		deposit string
-		want    string
-	}{
-		{"5usd", "5"},
-		{"$5.50", "5.5"},
-		{"5", "5"},
-		{"0.5usd", "0.5"},
-	}
-
-	for _, tt := range tests {
+// TestConsoleTransportClearsRailDefaultDeposit verifies the rail default
+// reaches the console adapter as no deposit at all, without mutating the
+// caller's params.
+func TestConsoleTransportClearsRailDefaultDeposit(t *testing.T) {
+	for _, deposit := range []string{"auto", ""} {
 		rec := &recordingStepsClient{}
 		tr := newConsoleTransport(rec)
 
-		params := map[string]string{"sdl": "app.yaml", "deposit": tt.deposit}
+		params := map[string]string{"sdl": "app.yaml", "deposit": deposit}
 		if _, err := tr.BroadcastTx(context.Background(), msgCreateDeployment, params); err != nil {
-			t.Errorf("deposit %q: unexpected error: %v", tt.deposit, err)
+			t.Errorf("deposit %q: unexpected error: %v", deposit, err)
 			continue
 		}
-		if rec.params["deposit"] != tt.want {
-			t.Errorf("deposit %q: delegated as %q, want %q", tt.deposit, rec.params["deposit"], tt.want)
+		if rec.params["deposit"] != "" {
+			t.Errorf("deposit %q: delegated as %q, want empty", deposit, rec.params["deposit"])
 		}
 		if rec.params["sdl"] != "app.yaml" {
-			t.Errorf("deposit %q: sdl param lost in translation: %v", tt.deposit, rec.params)
+			t.Errorf("deposit %q: sdl param lost in translation: %v", deposit, rec.params)
 		}
-		if params["deposit"] != tt.deposit {
-			t.Errorf("deposit %q: caller's params mutated to %q", tt.deposit, params["deposit"])
+		if params["deposit"] != deposit {
+			t.Errorf("deposit %q: caller's params mutated to %q", deposit, params["deposit"])
 		}
 	}
 }
 
-// TestConsoleTransportRejectsCoinDeposit verifies coin forms fail on the
-// console rail with the cross-rail guidance, before any delegation.
-func TestConsoleTransportRejectsCoinDeposit(t *testing.T) {
-	for _, deposit := range []string{"5000000uakt", "5akt"} {
+// TestConsoleTransportRejectsExplicitDeposit verifies every explicit form
+// fails on the console rail before any delegation. The API documents the
+// field as deprecated and discards it, so accepting one silently would let a
+// user believe the amount they typed bounded their spend.
+func TestConsoleTransportRejectsExplicitDeposit(t *testing.T) {
+	for _, deposit := range []string{"5usd", "$5.50", "5", "0.5usd", "5000000uakt", "5akt"} {
 		rec := &recordingStepsClient{}
 		tr := newConsoleTransport(rec)
 
 		_, err := tr.BroadcastTx(context.Background(), msgCreateDeployment, map[string]string{"deposit": deposit})
 		if err == nil {
-			t.Errorf("deposit %q: expected cross-rail error", deposit)
+			t.Errorf("deposit %q: expected a rejection", deposit)
 			continue
 		}
-		if !strings.Contains(err.Error(), "console deposits are in USD; use e.g. 5usd") {
-			t.Errorf("deposit %q: error %q lacks the console USD guidance", deposit, err)
+		if !strings.Contains(err.Error(), "funded automatically from your account credits") {
+			t.Errorf("deposit %q: error %q lacks the automatic-funding explanation", deposit, err)
 		}
 		if rec.calls != 0 {
 			t.Errorf("deposit %q: adapter was called %d times, want 0", deposit, rec.calls)

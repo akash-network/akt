@@ -22,7 +22,7 @@ func TestConsoleClientForCarriesMCPActionLog(t *testing.T) {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments":
 			_, _ = w.Write([]byte(`{"data":{"deployments":[],"pagination":{"skip":0,"limit":10,"hasMore":false}}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/42":
-			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"1000000"}],"transferred":[]}}}}`))
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"},"state":"active"}}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/41":
 			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"41"},"state":"active"}}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/44":
@@ -31,7 +31,7 @@ func TestConsoleClientForCarriesMCPActionLog(t *testing.T) {
 			_, _ = w.Write([]byte(`{"data":{"success":true}}`))
 		case r.Method == http.MethodDelete && r.URL.Path == "/v1/deployments/44":
 			_, _ = w.Write([]byte(`{"data":{"success":true}}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/v1/deposit-deployment":
+		case r.Method == http.MethodPatch && r.URL.Path == "/v2/deployment-settings/42":
 			w.WriteHeader(http.StatusConflict)
 			_, _ = w.Write([]byte(`{"error":"deployment is settling"}`))
 		default:
@@ -74,8 +74,9 @@ func TestConsoleClientForCarriesMCPActionLog(t *testing.T) {
 	if err := client.CloseDeployment(context.Background(), "41"); err != nil {
 		t.Fatalf("CloseDeployment: %v", err)
 	}
-	if err := client.Deposit(context.Background(), "42", 5); err == nil {
-		t.Fatal("Deposit should surface the Console conflict")
+	twelveHours := 12
+	if _, err := client.SetDeploymentRuntimeLimit(context.Background(), "42", &twelveHours); err == nil {
+		t.Fatal("SetDeploymentRuntimeLimit should surface the Console conflict")
 	}
 
 	entries, err := logger.Read(actionlog.Filter{})
@@ -85,8 +86,8 @@ func TestConsoleClientForCarriesMCPActionLog(t *testing.T) {
 	if len(entries) != 2 {
 		t.Fatalf("MCP Console mutations logged %d entries, want exactly 2: %+v", len(entries), entries)
 	}
-	if got := entries[0]; got.Type != actionlog.TypeConsole || got.Action != "deposit" || got.DSeq != 42 || got.Status != "failed" || got.Error == "" {
-		t.Errorf("failed deposit entry = %+v", got)
+	if got := entries[0]; got.Type != actionlog.TypeConsole || got.Action != "update-deployment-settings" || got.DSeq != 42 || got.Status != "failed" || got.Error == "" {
+		t.Errorf("failed settings entry = %+v", got)
 	}
 	if got := entries[1]; got.Type != actionlog.TypeConsole || got.Action != "close-deployment" || got.DSeq != 41 || got.Status != "success" {
 		t.Errorf("successful close entry = %+v", got)

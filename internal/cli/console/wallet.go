@@ -100,7 +100,7 @@ func walletListCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 func walletBalanceCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	return &cobra.Command{
 		Use:     "balance",
-		Short:   "Available / in-deployment / total balance in USD",
+		Short:   "Available / escrow / total balance in USD",
 		Args:    cobra.NoArgs,
 		Example: `  akt console wallet balance`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -116,16 +116,16 @@ func walletBalanceCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 			return printJSON(cmd, struct {
 				Available        string `json:"available"`
-				InDeployments    string `json:"inDeployments"`
+				Escrow           string `json:"escrow"`
 				Total            string `json:"total"`
 				AllocationStatus string `json:"allocationStatus"`
 				AllocationNote   string `json:"allocationNote"`
 			}{
 				Available:        formatUSD(b.BalanceUSD()),
-				InDeployments:    formatUSD(b.DeploymentsUSD()),
+				Escrow:           formatUSD(b.DeploymentsUSD()),
 				Total:            formatUSD(b.TotalUSD()),
 				AllocationStatus: "provisional",
-				AllocationNote:   "available and in-deployment allocations may lag recent creates and closes; total is authoritative",
+				AllocationNote:   "escrow is held by running deployments, not spent, and returns to available as each one closes; the split may lag recent creates and closes, so total is authoritative",
 			})
 		},
 	}
@@ -134,12 +134,15 @@ func walletBalanceCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 func walletSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "settings [true|false]",
-		Short: "View or change wallet settings",
+		Short: "View or change Auto Recharge, the account-level card charge",
 		Args:  cobra.MaximumNArgs(1),
+		Long: "View or change Auto Recharge: the Console charges your default card to keep the " +
+			"account's credit balance up. This is the account-level setting, not per-deployment " +
+			"funding, which is always on and cannot be changed.",
 		Example: `  # Show current settings
   akt console wallet settings
 
-  # Enable automatic top-up
+  # Enable Auto Recharge
   akt console wallet settings true`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, _, err := clientFromCmd(cmd, mgrFn, true)
@@ -182,7 +185,7 @@ func walletSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 					AutoReloadEnabled bool   `json:"autoReloadEnabled"`
 					Configured        bool   `json:"configured"`
 					Note              string `json:"note"`
-				}{false, false, "no wallet settings configured; enable auto-reload with `akt console wallet settings true`"})
+				}{false, false, "no wallet settings configured; enable Auto Recharge with `akt console wallet settings true`"})
 			}
 			if err != nil {
 				return fmt.Errorf("get wallet settings: %w", err)
@@ -195,7 +198,7 @@ func walletSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	// FEEDBACK(2026-07): --auto-reload disabled for the positional-only UX
 	// trial (use the positional form instead). Restore by uncommenting if
 	// users ask for the flag form back.
-	// cmd.Flags().String("auto-reload", "", "Enable or disable automatic top-up (true|false)")
+	// cmd.Flags().String("auto-reload", "", "Enable or disable Auto Recharge (true|false)")
 
 	return cmd
 }

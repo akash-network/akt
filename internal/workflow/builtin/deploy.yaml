@@ -32,7 +32,7 @@ params:
   deposit:
     type: deposit
     default: "auto"
-    description: "Initial deposit: auto (recommended chain minimum, keyring), 5usd or $5 (console-api), or an explicit coin in the network's deposit denomination (keyring)"
+    description: "Initial deposit (chain rail only): auto (recommended chain minimum) or an explicit coin in the network's deposit denomination. Console deployments are funded automatically from account credits and take no deposit."
   bid-timeout:
     type: duration
     default: "5m"

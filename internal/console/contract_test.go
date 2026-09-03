@@ -19,7 +19,6 @@ import (
 	"net/http/httptest"
 	"os"
 	"sync"
-	"sync/atomic"
 	"testing"
 
 	"github.com/getkin/kin-openapi/openapi3"
@@ -115,14 +114,12 @@ var cannedResponses = map[string]cannedResponse{
 	"GET /v1/deployments/{dseq}":    {http.StatusOK, `{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"1"},"state":"active","hash":"GbTNTFMvuz+cIuPv3tz+tH/A594cOMwNC5CIyNCdkMk="},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"1000000"}],"transferred":[]}}}}`},
 	"PUT /v1/deployments/{dseq}":    {http.StatusOK, `{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"1"},"state":"active","hash":"GbTNTFMvuz+cIuPv3tz+tH/A594cOMwNC5CIyNCdkMk="},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"1000000"}],"transferred":[]}}}}`},
 	"DELETE /v1/deployments/{dseq}": {http.StatusOK, `{"data":{"success":true}}`},
-	"POST /v1/deposit-deployment":   {http.StatusOK, `{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"1"},"state":"active","hash":"GbTNTFMvuz+cIuPv3tz+tH/A594cOMwNC5CIyNCdkMk="},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"6000000"}],"transferred":[]}}}}`},
 
 	"GET /v1/bids":    {http.StatusOK, `{"data":[{"bid":{"id":{"owner":"akash1x","dseq":"1","gseq":1,"oseq":1,"provider":"akash1p"},"state":"open","price":{"denom":"uakt","amount":"100"}}}]}`},
 	"POST /v1/leases": {http.StatusOK, `{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"1"},"state":"active"},"leases":[{"id":{"owner":"akash1x","dseq":"1","gseq":1,"oseq":1,"provider":"akash1p"},"state":"active"}]}}`},
 
-	"GET /v2/deployment-settings/{dseq}":   {http.StatusOK, `{"data":{"dseq":"1","autoTopUpEnabled":true,"estimatedTopUpAmount":5,"topUpFrequencyMs":60000}}`},
-	"PATCH /v2/deployment-settings/{dseq}": {http.StatusOK, `{"data":{"dseq":"1","autoTopUpEnabled":true,"estimatedTopUpAmount":5,"topUpFrequencyMs":60000}}`},
-	"POST /v2/deployment-settings":         {http.StatusOK, `{"data":{"dseq":"404","autoTopUpEnabled":true,"estimatedTopUpAmount":5,"topUpFrequencyMs":60000}}`},
+	"GET /v2/deployment-settings/{dseq}":   {http.StatusOK, `{"data":{"dseq":"1","autoTopUpEnabled":true,"estimatedTopUpAmount":5,"topUpFrequencyMs":60000,"runtimeLimitHours":null,"runtimeEndsAt":null}}`},
+	"PATCH /v2/deployment-settings/{dseq}": {http.StatusOK, `{"data":{"dseq":"1","autoTopUpEnabled":true,"estimatedTopUpAmount":5,"topUpFrequencyMs":60000,"runtimeLimitHours":12,"runtimeEndsAt":null}}`},
 
 	"POST /v1/create-jwt-token": {http.StatusOK, `{"data":{"token":"jwt-token"}}`},
 
@@ -148,7 +145,6 @@ var cannedResponses = map[string]cannedResponse{
 // request against the OpenAPI router and then serves the canned response for
 // the matched route.
 func newContractServer(router routers.Router, rec *contractRecorder) *httptest.Server {
-	var depositApplied atomic.Bool
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		route, pathParams, err := router.FindRoute(r)
 		if err != nil {
@@ -182,28 +178,13 @@ func newContractServer(router routers.Router, rec *contractRecorder) *httptest.S
 			rec.add(r.Method + " " + route.Path + ": request violates OpenAPI contract: " + err.Error())
 		}
 
-		// Force the PATCH -> POST create fallback of SetDeploymentAutoTopUp:
-		// settings for dseq 404 "do not exist yet".
 		key := r.Method + " " + route.Path
-		if key == "PATCH /v2/deployment-settings/{dseq}" && pathParams["dseq"] == "404" {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusNotFound)
-			_, _ = io.WriteString(w, `{"error":"not found"}`)
-			return
-		}
 
 		resp, ok := cannedResponses[key]
 		if !ok {
 			rec.add(key + ": no canned response registered; add one to cannedResponses")
 			resp = cannedResponse{status: http.StatusOK, body: `{}`}
 		}
-		if key == "POST /v1/deposit-deployment" {
-			depositApplied.Store(true)
-		}
-		if key == "GET /v1/deployments/{dseq}" && depositApplied.Load() {
-			resp.body = `{"data":{"deployment":{"id":{"owner":"akash1x","dseq":"1"},"state":"active","hash":"GbTNTFMvuz+cIuPv3tz+tH/A594cOMwNC5CIyNCdkMk="},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"6000000"}],"transferred":[]}}}}`
-		}
-
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(resp.status)
 		_, _ = io.WriteString(w, resp.body)
@@ -296,7 +277,7 @@ func TestClientRequestsMatchOpenAPIContract(t *testing.T) {
 			return err
 		}},
 		{"CreateDeployment", func(ctx context.Context) error {
-			_, err := c.CreateDeployment(ctx, sdl, 5)
+			_, err := c.CreateDeployment(ctx, sdl)
 			return err
 		}},
 		{"UpdateDeployment", func(ctx context.Context) error {
@@ -305,9 +286,6 @@ func TestClientRequestsMatchOpenAPIContract(t *testing.T) {
 		}},
 		{"CloseDeployment", func(ctx context.Context) error {
 			return c.CloseDeployment(ctx, "1")
-		}},
-		{"Deposit", func(ctx context.Context) error {
-			return c.Deposit(ctx, "1", 5)
 		}},
 		{"FetchBids", func(ctx context.Context) error {
 			_, err := c.FetchBids(ctx, "1")
@@ -323,14 +301,9 @@ func TestClientRequestsMatchOpenAPIContract(t *testing.T) {
 			_, err := c.GetDeploymentSettings(ctx, "1")
 			return err
 		}},
-		{"SetDeploymentAutoTopUp/patch", func(ctx context.Context) error {
-			_, err := c.SetDeploymentAutoTopUp(ctx, "1", true)
-			return err
-		}},
-		// dseq 404 makes the server answer the PATCH with 404, forcing the
-		// POST /v2/deployment-settings create fallback through validation.
-		{"SetDeploymentAutoTopUp/create-fallback", func(ctx context.Context) error {
-			_, err := c.SetDeploymentAutoTopUp(ctx, "404", true)
+		{"SetDeploymentRuntimeLimit/set", func(ctx context.Context) error {
+			hours := 12
+			_, err := c.SetDeploymentRuntimeLimit(ctx, "1", &hours)
 			return err
 		}},
 		{"CreateJWTToken", func(ctx context.Context) error {

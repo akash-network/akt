@@ -540,12 +540,11 @@ built. Deployment-list pagination rejects `skip < 0` and `limit < 1` instead
 of silently omitting those values. API-key deletion requires a non-empty UUID,
 lists the account's keys before mutation, and reports an absent UUID as an
 error without sending DELETE; key creation rejects a blank name, and local key
-creation rejects a name that is blank after trimming. USD deposit inputs use
-plain fixed-point decimal syntax with at most two fractional digits; exponent
-notation, non-finite values, and sub-cent precision are rejected before any
-request. The Console boundary validates the USD value and derives the exact
-whole-micro-ACT reconciliation delta in one operation. Mutation code consumes
-that normalized result directly; it does not perform a second fallible
+creation rejects a name that is blank after trimming. USD amounts read back
+from the API use plain fixed-point decimal syntax with at most two fractional
+digits; exponent notation, non-finite values, and sub-cent precision are
+rejected. Mutation code consumes that normalized result directly; it does not
+perform a second fallible
 conversion after validation has succeeded.
 Commands that require a terminal session, including an interactive Console
 shell with no explicit command, reject non-terminal stdin before any identity
@@ -593,11 +592,12 @@ valid dry-run emits one JSON object per planned step with `result:"planned"`,
 empty `errors` and `txs` arrays, and one generated run ID shared by every line;
 it emits no human plan text.
 
-Deployment dry-runs also resolve the effective deposit. The Console rail
-prints the validated USD amount and enforces the $0.50 minimum. The chain rail
-prints an explicit coin unchanged, while `auto` queries the active network's
+Deployment dry-runs also resolve the effective deposit on the chain rail: an
+explicit coin is printed unchanged, while `auto` queries the active network's
 deployment minimum; if that value cannot be resolved, planning fails rather
-than displaying an amount that execution would not use. Signer names are
+than displaying an amount that execution would not use. The Console rail plans
+no deposit at all: its deployments are funded automatically from account
+credits. Signer names are
 resolved to addresses before transaction simulation on every dry-run path.
 
 ### 2.0 Root Command Behavior (`akt` with no subcommand)
@@ -870,14 +870,14 @@ akt
 │   ├── tx <hash>
 │   ├── txs [events]                     # event list expr; --events override — **disabled pending feedback** (positional only, 2026-07)
 │   └── module-name-to-address <module>
-├── deploy <sdl-file> [deposit]          # Workflow: full deployment lifecycle
+├── deploy <sdl-file> [deposit]          # Workflow: full deployment lifecycle (deposit: chain rail only)
 ├── update <sdl-file> [dseq]             # Workflow: update deployment + send manifest
 ├── close [dseq]                         # Workflow: close deployment
 ├── console                              # Akash Console managed-wallet API (§2.9)
 │   ├── login [key]                      # Validate + store per-context API key credential
 │   ├── logout                           # Remove stored credential
 │   ├── whoami                           # Authenticated user info
-│   ├── deployment                       # list | get | create | update | close | deposit | settings
+│   ├── deployment                       # list | get | create | update | close | settings
 │   ├── bid list <dseq>                  # Bids for a deployment's open orders
 │   ├── lease create <dseq> [provider]   # Accept a bid (uses cached manifest)
 │   ├── wallet                           # list | balance | settings | cost
@@ -1422,7 +1422,7 @@ the credential (§7.1). Addresses are recorded in full.
 
 Workflow commands (`akt deploy`, `akt update`, `akt close`) are driven by a **declarative workflow engine**. Instead of hardcoded command logic, each workflow is a YAML definition that the engine interprets step by step. Users can override built-in workflows or create custom ones.
 
-**Transports**: actions are defined once — as workflow definitions — and translated per transport by `internal/transport`. Each transport carries the same abstract steps onto its backing rail: the **chain** transport (keyring auth) signs and broadcasts transactions locally plus provider-gateway calls, while the **console** transport (console-api auth) maps the same steps onto Console API REST calls (§7.4–§7.5). Because the command surface (positionals and flags) is generated from the workflow definition and the transport is chosen per context at execution time, `akt deploy/update/close` accept identical arguments on both rails, and adding a new action never requires per-rail redesign. The deploy deposit is positional-first (`akt deploy <sdl-file> [deposit]`) with `--deposit` as an alternative; both forms use the same cross-rail grammar and cannot be supplied together. Cross-rail deposit syntax (§7.4) is normalized in the transport layer. A successful Console `akt deploy` result also reports that the Console enabled its default daily auto top-up and prints the exact deployment-settings command that disables it; chain results omit this Console-only state.
+**Transports**: actions are defined once, as workflow definitions, and translated per transport by `internal/transport`. Each transport carries the same abstract steps onto its backing rail: the **chain** transport (keyring auth) signs and broadcasts transactions locally plus provider-gateway calls, while the **console** transport (console-api auth) maps the same steps onto Console API REST calls (§7.4–§7.5). Because the command surface (positionals and flags) is generated from the workflow definition and the transport is chosen per context at execution time, `akt deploy/update/close` accept identical arguments on both rails, and adding a new action never requires per-rail redesign. The deploy deposit is positional-first (`akt deploy <sdl-file> [deposit]`) with `--deposit` as an alternative; both forms use the same grammar and cannot be supplied together. The deposit applies to the chain rail only. Console deployments are funded automatically from account credits, so the console transport takes no deposit and rejects one at the transport boundary (§7.4).
 
 #### 2.3.1 Workflow Definition Location
 
@@ -1450,7 +1450,7 @@ params:
   deposit:
     type: deposit
     default: "auto"
-    description: "Initial deposit: auto (recommended chain minimum, keyring), 5usd or $5 (console-api), or an explicit coin in the network's deposit denomination (keyring)"
+    description: "Initial deposit (chain rail only): auto (recommended chain minimum) or an explicit coin in the network's deposit denomination. Console deployments are funded automatically and reject a deposit."
   bid-timeout:
     type: duration
     default: "5m"
@@ -1533,7 +1533,7 @@ Workflow parameter types are boundary contracts, not display hints:
 | `duration` | Positive Go duration such as `30s` or `5m` |
 | `file` | Required path exists and is readable |
 | `sdl` | File is readable and parses as a valid SDL document |
-| `deposit` | Unified deposit grammar from §7.4 |
+| `deposit` | Deposit grammar from §7.4; chain rail only |
 | `bid-selection` | `interactive`, `cheapest`, or `provider=<full-address>` |
 
 Validation runs before dry-run prints its plan. User-defined workflows receive
@@ -1648,7 +1648,7 @@ When a workflow aborts due to a step failure, the user may be left with partial 
 | `duration`      | Positive Go duration                 | `--name 5m`    |
 | `file`          | Readable file path (positional first)| positional arg |
 | `sdl`           | Parsed SDL file (positional first)   | positional arg |
-| `deposit`       | Unified §7.4 deposit (positional first for deploy) | `[5]` or `--deposit 5` |
+| `deposit`       | §7.4 deposit, chain rail only (positional first for deploy) | `[auto]` or `--deposit 5000000uact` |
 | `bid-selection` | Interactive/cheapest/provider mode   | `--bid-select cheapest` |
 
 #### 2.3.8 Execution Modes
@@ -1849,15 +1849,11 @@ The flagship workflow command. Orchestrates the full deployment lifecycle:
 6. **Wait for deployment to become active** (provider acknowledges, containers start).
 7. **Display endpoint URLs** for the deployed services.
 
-On the Console rail, the final display also identifies the default daily auto
-top-up and prints `akt console deployment settings <dseq> false` as the exact
-opt-out command. The chain rail does not display a Console setting.
-
-The optional positional `deposit` matches `akt console deployment create`:
-bare decimal, `usd`, and dollar-prefixed values select a Console USD deposit,
-while `auto` and explicit coin values select chain forms. `--deposit` remains
-a flag-based alternative for scripts; supplying both forms is a usage
-error. Before a chain execution begins, `--from` or the selected context's
+The optional positional `deposit` applies to the chain rail only: `auto` and
+explicit coin values select chain forms. On the Console rail the platform funds
+the deployment from account credits, so any explicit deposit is rejected before
+the workflow runs. `--deposit` remains a flag-based alternative for scripts;
+supplying both forms is a usage error. Before a chain execution begins, `--from` or the selected context's
 `default-account` must resolve to a full signer address. A missing signer fails
 before workflow steps or message validation and names these remedies plus
 `akt context edit <context> --deploy-via console`.
@@ -1865,7 +1861,7 @@ before workflow steps or message validation and names these remedies plus
 | Flag               | Type     | Default         | Description                                                 |
 | ------------------ | -------- | --------------- | ----------------------------------------------------------- |
 | `--from`           | string   | context default | Account to deploy from                                      |
-| `--deposit`        | string   | `auto`          | Initial deposit, unified syntax on both rails (see §7.4): `auto` (recommended for keyring), `5usd`/`$5` (Console), or an explicit network deposit coin |
+| `--deposit`        | string   | `auto`          | Initial deposit, chain rail only (see §7.4): `auto` (recommended) or an explicit network deposit coin. Rejected on the Console rail. |
 | `--bid-timeout`    | duration | `5m`            | Maximum time to wait for bids                               |
 | `--ready-timeout`  | duration | `2m`            | Maximum time to wait for service readiness                  |
 | `--min-bids`       | int      | `1`             | Minimum bids before selection                               |
@@ -2740,7 +2736,7 @@ client must never make an otherwise usable read-only MCP server fail startup.
 | `console_list_deployments`     | List deployments belonging to the configured Console account              |
 | `console_get_deployment`       | Get one Console-managed deployment                                         |
 | `console_list_bids`            | List bids for a Console-managed deployment                                 |
-| `console_wallet_balance`       | Available, in-deployment, and total Console credits in USD                  |
+| `console_wallet_balance`       | Available, escrow-held, and total Console credits in USD                    |
 | `console_usage_history`        | Get Console spend history                                                  |
 | `console_list_providers`       | List providers in the Console catalog                                      |
 | `console_get_provider`         | Get one provider from the Console catalog                                  |
@@ -2755,7 +2751,6 @@ client must never make an otherwise usable read-only MCP server fail startup.
 | `akash_close_lease`            | Close an active lease (on-chain transaction)                               |
 | `akash_submit_manifest`        | Resolve a provider owner/address and submit its manifest to the registered gateway |
 | `console_close_deployment`     | Close a Console-managed deployment                                         |
-| `console_deposit`              | Add USD credit to a Console-managed deployment                             |
 
 **Transport:** stdio (JSON-RPC over stdin/stdout). Designed for use with any MCP-compatible client.
 
@@ -2767,7 +2762,7 @@ observing these process signals.
 
 **Client implementation:** Uses `v1beta3.LightClient` from chain-sdk for read-only mode, `v1beta3.Client` for write mode, and the shared authenticated provider gateway client for provider REST tools. Every provider REST tool accepts a provider owner bech32 address, resolves that provider's current `host_uri` from chain state, and connects only to the registered endpoint. MCP input never supplies an arbitrary URL to a client carrying a wallet JWT or certificate. Keyring contexts attach a short-lived wallet-signed JWT for protected lease/service/manifest calls. That JWT uses granular claims restricted to the resolved provider, deployment identity, and exact operation scope; it MUST NOT use full lease access, so a provider cannot replay it for another provider or operation. Missing signing identity is reported before the request. Public provider status uses the same registered-endpoint resolution without attaching credentials.
 
-**Money units:** `console_wallet_balance` returns explicit `available_usd`, `in_deployments_usd`, and `total_usd` numbers. Console's integer µACT wire values must not leak through this semantic interface.
+**Money units:** `console_wallet_balance` returns explicit `available_usd`, `escrow_usd`, and `total_usd` numbers. Console's integer µACT wire values must not leak through this semantic interface.
 
 **Default account handling:** Tools that accept an `owner` parameter (e.g., `akash_list_deployments`, `akash_list_leases`) default to the context's `default-account` when the parameter is omitted. If no `default-account` is configured (e.g., a monitoring-only context), the `owner` parameter is **required** — the tool returns an error explaining that the owner must be specified explicitly when no default account is available.
 
@@ -2854,11 +2849,10 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | --------------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | `akt console deployment list [active\|closed]`       | `--skip` (0), `--limit` (20)                   | List deployments with validated pagination and an optional state filter. Filtering traverses bounded pages before applying the requested page window. |
 | `akt console deployment get <dseq>`                 |                                                | Deployment with leases and escrow account.                                                     |
-| `akt console deployment create <sdl-file> [deposit-usd]` | `--deposit <usd>` (alternative to positional; min 0.5) — **disabled pending feedback** (positional only, 2026-07) | Create a deployment; prints `dseq` + tx hash, the Console default `autoTopUp: {enabled: true, frequency: daily}`, and the exact command that disables it. It does not invent a deployment `state`; `deployment get` is authoritative for the later open/active transition. The deposit uses the unified cross-rail syntax (§7.4): `5`, `5usd`, or `$5` (min $0.50); coin forms like `5000000uakt` fail with the cross-rail error. The returned manifest is cached at `contexts/<name>/manifests/<dseq>.json` for `lease create`. |
+| `akt console deployment create <sdl-file>` | | Create a deployment; prints `dseq` + tx hash. There is no deposit: the platform funds the deployment from the account's credits. It does not invent a deployment `state`; `deployment get` is authoritative for the later open/active transition. The returned manifest is cached at `contexts/<name>/manifests/<dseq>.json` for `lease create`. |
 | `akt console deployment update <dseq> <sdl-file>`   |                                                | Update a deployment's SDL; closed deployments are rejected before mutation.                     |
 | `akt console deployment close <dseq>`               |                                                | Close an active deployment. A preflight rejects an already-closed or absent deployment with a clear non-zero error; the shared `akt close` workflow preserves that failure. A 2xx delete must acknowledge `success: true`. |
-| `akt console deployment deposit <dseq> [amount-usd]` | `--amount <usd>` (alternative to positional; min 0.50) — **disabled pending feedback** (positional only, 2026-07) | Add funds to a non-closed deployment's escrow. The amount uses the unified cross-rail syntax (§7.4): `10`, `10usd`, or `$10`; coin forms fail with the cross-rail error. Values below $0.50 are rejected before the API call. |
-| `akt console deployment settings <dseq> [true\|false]` | `--auto-top-up true\|false` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Show settings when no value is given; reject settings mutations for a closed deployment. |
+| `akt console deployment settings <dseq> [hours\|none]` | | Show the deployment's funding record when no value is given; otherwise set its runtime limit in hours, or `none` to clear it and return to always-on funding. Reading resolves the deployment first, because `GET /v2/deployment-settings/{dseq}` is get-or-create and would otherwise mint a record for any dseq. Rejects mutations for a closed deployment. |
 | `akt console bid list <dseq>`                       |                                                | List bids for the deployment's open orders.                                                    |
 | `akt console lease create <dseq> [provider]`        | `--gseq` (1), `--oseq` (1), `--provider` (alternative to positional) — **disabled pending feedback** (positional only, 2026-07), `--manifest <file>` | Accept a bid; the manifest defaults to the one cached by `deployment create`. |
 
@@ -2868,8 +2862,8 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | ----------------------------- | ---------------------------- | ---------------------------------------------------------------- |
 | `akt console wallet list`     |                              | List managed wallets. `creditAmount` is dollar-scale per the `/v1/wallets` contract (shown as `$X.XX`, no µ scaling), with the wallet's `denom` when the API reports one. |
 | `akt console wallet address`  |                              | Print the first nonblank managed-wallet blockchain address in full. JSON/YAML return `{address}`. The command resolves `GET /v1/user/me` followed by `GET /v1/wallets?userId=...`, the same boundary used by omitted query-owner fallback. |
-| `akt console wallet balance`  |                              | Available / in-deployment / total balance in USD. `total` is authoritative; the allocation fields carry `allocationStatus: provisional` and a note that they can lag recent creates/closes. |
-| `akt console wallet settings [true\|false]` | `--auto-reload true\|false` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Show settings when no value is given; set auto-reload otherwise. Reports `{ autoReloadEnabled, configured }` on every path — after a write, after a read, and for an account that has never configured auto-reload (the API's 404, which reports `configured: false` plus a `note` naming the command that enables it). The raw API record is never printed: like `deployment settings`, the command reshapes it so one command has one output shape. |
+| `akt console wallet balance`  |                              | Available / escrow / total balance in USD, the same split the Console UI shows: `escrow` is held by running deployments, not spent, and returns to `available` as each one closes. `total` is authoritative; the allocation fields carry `allocationStatus: provisional` and a note that they can lag recent creates/closes. |
+| `akt console wallet settings [true\|false]` | `--auto-reload true\|false` (alternative) — **disabled pending feedback** (positional only, 2026-07) | Show settings when no value is given; set Auto Recharge otherwise: the account-level card charge the Console UI calls "Auto Recharge", not per-deployment funding, which is always on. Reports `{ autoReloadEnabled, configured }` on every path — after a write, after a read, and for an account that has never configured auto-reload (the API's 404, which reports `configured: false` plus a `note` naming the command that enables it). The raw API record is never printed: like `deployment settings`, the command reshapes it so one command has one output shape. |
 | `akt console wallet cost`     |                              | Estimated weekly cost in USD.                                    |
 | `akt console usage [from] [to]` | `--from`, `--to` (YYYY-MM-DD, alternatives) — **disabled pending feedback** (positional only, 2026-07) | Daily spend history for the managed wallet. `totalSpent` is the spend within the requested range (sum of the daily values, order-independent); `lifetimeSpent` is the API's cumulative figure as of the range end, omitted when the range is empty. Omitted dates use the API defaults (last 30 days). |
 
@@ -2964,8 +2958,7 @@ callers can classify either failure with `errors.Is`.
 Mutation acknowledgements are structured in JSON/YAML mode. A successful
 deployment close emits `{dseq, state}` only after an active deployment's delete
 acknowledges `success: true`; an already-closed or absent deployment emits no
-success document and exits non-zero. Deposit emits
-`{dseq, amount_usd, status}`. Template SDL is byte-for-byte deployable YAML in
+success document and exits non-zero. Template SDL is byte-for-byte deployable YAML in
 default/pretty mode; JSON/YAML mode wraps the exact source text as `{sdl: ...}`
 so comments and ordering are not lost.
 
@@ -3047,7 +3040,7 @@ default output setting in configuration does not alter the generated document.
 Validate an SDL offline (`-` reads stdin). Parsing and schema/relational validation use `pkg.akt.dev/go/sdl` — the same parser behind `akt deploy` and the chain tx commands — followed by lint rules ported from the reference:
 
 - **Unpinned image** (error): every service image must carry an explicit tag or `@sha256:` digest; untagged images and `:latest` are rejected as non-reproducible.
-- **Pricing denom**: `uact` passes — it is the deployment pricing denom on **both** rails. `uakt` produces a **warning**, not an error: `akt` auto-resolves the deployment deposit to `uact` on the chain rail (`DetectDeploymentDeposit`) and on the console rail alike, and the chain requires the group price denom to equal the deposit denom (`Mismatched denominations (uact != uakt)`), so a `uakt`-priced SDL fails at `ValidateBasic()` before broadcast. It stays a warning rather than an error only because passing an explicitly matching `--deposit <amount>uakt` is a legitimate escape hatch; the reference hard-rejects anything but `uact`. Any other denom is an error, matching the reference.
+- **Pricing denom**: `uact` passes, since it is the deployment pricing denom on **both** rails. `uakt` produces a **warning**, not an error: `akt` auto-resolves the deployment deposit to `uact` on the chain rail (`DetectDeploymentDeposit`), and the console rail funds in `uact` too, and the chain requires the group price denom to equal the deposit denom (`Mismatched denominations (uact != uakt)`), so a `uakt`-priced SDL fails at `ValidateBasic()` before broadcast. It stays a warning rather than an error only because passing an explicitly matching `--deposit <amount>uakt` is a legitimate escape hatch; the reference hard-rejects anything but `uact`. Any other denom is an error, matching the reference.
 
 The command has three outcomes, and each one has its own exit code:
 
@@ -4183,7 +4176,7 @@ The action log records entries for the following command categories:
 | `context *` | Always | `context` | After context management operation (switch, edit, create, delete). |
 | `context keys *` (state-changing: `add`, `add --recover`, `delete`, `rename`, `import`) | Always | `context` | After the keyring mutation returns (success or failure), under a dotted `keys.*` action. Secrets — mnemonics, BIP39 and armor passphrases, key material — are never recorded (§2.2.2). Read-only `list`, `show`, `parse`, and `mnemonic` are not recorded. |
 | `context keys export` | Always | `context` | The single exception to the read-only rule: exporting private key material is recorded as a security event, with the key name only and never the armor or passphrase (§2.2.2). |
-| Console API state changes from CLI, workflow, or MCP (create/update/close deployment, create lease, deposit) | Always | `console` | After the Console API call completes (success or failure). Read-only Console queries, including MCP query tools, are not recorded. |
+| Console API state changes from CLI, workflow, or MCP (create/update/close deployment, create lease, settings writes) | Always | `console` | After the Console API call completes (success or failure). Read-only Console queries, including MCP query tools, are not recorded. |
 | All commands | On failure | `error` | When any command fails. Includes original action type and error message. |
 | `query` (read-only, no side effects) | When `-v` is set (future) | `query` | Verbose-mode query logging for debugging is planned but not yet implemented. Internal queries (e.g. by the sync engine) are never logged. |
 
@@ -4370,7 +4363,8 @@ from chain state.
 
 `deposit` is recorded only when the parameter names an explicit amount. `auto`
 resolves to a chain-queried minimum that the workflow never reports back, so
-the field is left empty instead of storing the literal word `auto`.
+the field is left empty instead of storing the literal word `auto`. Console
+workflow runs record no deposit at all.
 
 The owner is taken from the transaction result, falling back to the bid or
 lease identity returned by the market, and then to the context's
@@ -4470,11 +4464,11 @@ All requests include `Content-Type: application/json` and `x-api-key` headers.
 
 The client validates reusable request boundaries before constructing a URL or
 issuing HTTP: DSEQs are positive integers, pagination is non-negative with a
-positive limit, deletion IDs are UUIDs, API-key names are non-blank, deposits
-use at most cent precision and are at least $0.50, and JWT TTL is between 1 and
-3600 seconds. API-key deletion first lists keys and rejects an absent target
-without sending DELETE. Deployment update, deposit, settings writes, and close
-first read the deployment and reject a closed state. Close also rejects an
+positive limit, deletion IDs are UUIDs, API-key names are non-blank, runtime
+limits are positive integers, and JWT TTL is between 1 and 3600 seconds.
+API-key deletion first lists keys and rejects an absent target without sending
+DELETE. Deployment update, settings writes, and close first read the deployment
+and reject a closed state. Close also rejects an
 absent deployment; neither terminal case is reported as a successful mutation.
 
 The endpoints below cover the deployment lifecycle used by command and workflow routing (§7.4-§7.5). The client's full surface — user info, wallets, usage, provider/GPU/template catalogs, API keys, and provider-scoped JWTs — is documented per command in §2.9 and contract-tested against the vendored OpenAPI spec (`internal/console/testdata/openapi.json`).
@@ -4492,9 +4486,12 @@ it is returned or recorded in an action log.
 | Field           | Type   | Required | Description                           |
 | --------------- | ------ | -------- | ------------------------------------- |
 | `data.sdl`      | string | yes      | SDL content as string                 |
-| `data.deposit`  | number | yes      | Deposit in USD (minimum $0.50)        |
 
 Returns `{ data: { dseq: string, manifest: string } }`.
+
+The API also accepts `data.deposit`, which it documents as deprecated and
+discards: the platform funds every deployment from the account's credits. `akt`
+does not send the field.
 
 #### `GET /v1/deployments` -- List Deployments
 
@@ -4541,23 +4538,28 @@ treats the operation as successful only when every exact requested
 `dseq/gseq/oseq/provider` lease is present and active. If read-back does not
 prove that state, the original POST error is returned.
 
-#### `POST /v1/deposit-deployment` -- Add Deposit
+#### `POST /v1/deposit-deployment` -- Add Deposit (deprecated)
 
-| Field          | Type   | Required | Description        |
-| -------------- | ------ | -------- | ------------------ |
-| `data.deposit` | number | yes      | Amount in USD      |
-| `data.dseq`    | string | yes      | Deployment seq ID  |
+Deprecated in the published API and not called by `akt`. Deployments are funded
+automatically from account credits, so there is no top-up for a client to make.
 
 #### `GET /v2/deployment-settings/{dseq}` -- Get Deployment Settings
 
-Returns auto top-up configuration for a deployment. Settings are auto-created with auto top-up **enabled** by default.
+Returns a deployment's funding record: `autoTopUpEnabled` (always true, since
+always-on funding cannot be switched off), `runtimeLimitHours`, and `runtimeEndsAt`. The
+endpoint is get-or-create and answers 200 for any dseq, minting a record as a side
+effect, so `akt` resolves the deployment first (§2.9).
 
-#### `POST /v2/deployment-settings` -- Create Deployment Settings
+#### `PATCH /v2/deployment-settings/{dseq}` -- Update Deployment Settings
 
-| Field                    | Type    | Required | Description              |
-| ------------------------ | ------- | -------- | ------------------------ |
-| `data.dseq`              | string  | yes      | Deployment sequence ID   |
-| `data.autoTopUpEnabled`  | boolean | no       | Enable auto top-up       |
+| Field                     | Type            | Required | Description                                        |
+| ------------------------- | --------------- | -------- | -------------------------------------------------- |
+| `data.runtimeLimitHours`  | integer \| null | no       | Runtime limit in hours from lease start; null clears it |
+
+A limit is at most 48 hours on a deployment that has none yet, and each extension
+may raise the existing total by at most 48 hours; send the new total, not the
+increment. Lowering a limit is not supported. `data.autoTopUpEnabled` also exists
+but an explicit `false` is rejected under always-on funding, so `akt` never sends it.
 
 ### 7.4 Workflow Engine Integration
 
@@ -4574,14 +4576,14 @@ When a workflow runs in a context with `auth-method: console-api`, the workflow 
 | `provider` | Provider gateway call (JWT/mTLS) | Not supported — Console API contexts do not interact with provider gateways directly. The Console API handles manifest submission internally during lease creation. |
 | `foreach` | Iterate and execute nested step | Same, with nested step routing rules applied |
 
-**Deposit handling**: `--deposit` accepts one unified syntax on both rails, parsed in one place (`internal/transport.ParseDeposit`) and translated per transport. The `usd` unit is case-insensitive and always wins over coin parsing.
+**Deposit handling**: `--deposit` is a chain-rail input, parsed in one place (`internal/transport.ParseDeposit`) and translated per transport. The `usd` unit is case-insensitive and always wins over coin parsing. The console rail funds deployments automatically and accepts only the empty/`auto` form; an explicit amount is rejected at the transport boundary rather than sent to an API that discards it.
 
 | Form | Examples | `keyring` (chain rail) | `console-api` (console rail) |
 |---|---|---|---|
-| USD | `5usd`, `$5`, `5.50usd` | Error directs the user to `auto` (recommended) or an explicit coin in the network's deployment deposit denomination | Sent as USD in the Console API's `data.deposit` field (Console minimum: 0.50 USD) |
-| Coin | explicit `<amount><denom>` | Attached to the deployment; the denomination must match the active network's deployment deposit parameter | Error: `console deposits are in USD; use e.g. 5usd` |
-| Bare number | `5`, `5.50` | Error (coins require a denomination — the historical chain behavior, with cross-rail guidance) | Interpreted as USD, same as `5usd` |
-| `auto` / empty | `auto` | Chain-minimum deployment deposit, queried on chain | Error: an explicit USD deposit is required |
+| USD | `5usd`, `$5`, `5.50usd` | Error directs the user to `auto` (recommended) or an explicit coin in the network's deployment deposit denomination | Error: console deployments are funded automatically; drop the deposit |
+| Coin | explicit `<amount><denom>` | Attached to the deployment; the denomination must match the active network's deployment deposit parameter | Error: console deployments are funded automatically; drop the deposit |
+| Bare number | `5`, `5.50` | Error (coins require a denomination, the historical chain behavior, with cross-rail guidance) | Error: console deployments are funded automatically; drop the deposit |
+| `auto` / empty | `auto` | Chain-minimum deployment deposit, queried on chain | No deposit is sent; the platform funds the deployment from account credits |
 
 USD and bare-number forms use the exact grammar
 `[0-9]+(\.[0-9]{1,2})?` after removing an optional leading `$` or trailing
@@ -4594,8 +4596,8 @@ Before a deploy dry-run prints a plan or an execution broadcasts its first
 transaction, the workflow resolves the effective deposit and compares its
 denomination with every SDL placement price. On the chain rail, an explicit
 coin uses that coin's denomination and `auto` uses the live minimum deposit
-denomination. On the Console rail, USD deposits require `uact` placement
-prices. A mismatch fails locally and names both denominations. This preserves
+denomination. The Console rail requires `uact` placement prices. A mismatch
+fails locally and names both denominations. This preserves
 the valid explicit `uakt` escape hatch while preventing a dry-run from
 approving a message that `MsgCreateDeployment.ValidateBasic` will reject.
 
@@ -4607,12 +4609,11 @@ The Console adapter maps abstract workflow actions, not raw `akt tx` commands:
 
 | Workflow action / Console command | Console API Endpoint                 | Notes                                    |
 | --------------------------------- | ------------------------------------ | ---------------------------------------- |
-| deployment create                 | `POST /v1/deployments`               | USD deposit; single-submit reconciliation below |
+| deployment create                 | `POST /v1/deployments`               | SDL only; single-submit reconciliation below |
 | deployment update                 | `PUT /v1/deployments/{dseq}`         |                                          |
 | deployment close                  | `DELETE /v1/deployments/{dseq}`      |                                          |
 | bid list                          | `GET /v1/bids?dseq=`                 |                                          |
 | lease create                      | `POST /v1/leases`                    | Requires manifest from deployment create |
-| escrow deposit                    | `POST /v1/deposit-deployment`        | Amount in USD                            |
 | deployment list/get               | `GET /v1/deployments`                | Paginated via `--skip`/`--limit`         |
 
 The mappings are reached through `akt deploy/update/close` and the dedicated
@@ -4630,7 +4631,7 @@ identity boundary regardless of the preferred workflow rail.
 | 402         | Insufficient funds in Console account.                            |
 | 404         | Deployment not found (dseq does not exist or not owned by user).  |
 | 429         | Rate limited. Retry with backoff only for idempotent methods (GET/HEAD/PUT/DELETE). A non-idempotent request may already have reached the service and is never replayed. |
-| 5xx         | Console API server error. Retry with backoff (max 3 attempts) for idempotent methods (GET/HEAD/PUT/DELETE) only. A non-idempotent request is never replayed: it may have been processed despite the error (e.g. a gateway 502 after a completed write), and replaying it could duplicate a deployment or a USD deposit. |
+| 5xx         | Console API server error. Retry with backoff (max 3 attempts) for idempotent methods (GET/HEAD/PUT/DELETE) only. A non-idempotent request is never replayed: it may have been processed despite the error (e.g. a gateway 502 after a completed write), and replaying it could duplicate a deployment. |
 | 3xx         | Redirect refused. No second request is issued and the API key is not forwarded. |
 
 The Console may transiently reject an otherwise valid deployment PUT with
@@ -4664,7 +4665,7 @@ and an unresolved ambiguous outcome as `pending` with the SDL version hash.
 | ------------------ | ----------------------------------- | ----------------------------------------- |
 | Key management     | Local (OS keyring, file, ledger)    | None (Console-managed)                    |
 | Transaction signing | Local                              | Console backend                           |
-| Deposit currency   | uakt                               | USD                                       |
+| Deployment funding | Explicit deposit in uakt           | Automatic, from account credits           |
 | Payment method     | On-chain AKT                       | Credit card via Console                   |
 | Supported commands | All tx + query                     | Deployment lifecycle + queries via chain  |
 | Provider auth      | JWT / mTLS                         | Not applicable                            |
@@ -4681,18 +4682,18 @@ Status of `akt` coverage for every Akash Console capability. "Covered" means the
 | Console capability | akt equivalent | Notes |
 |---|---|---|
 | Authenticate with API key | `akt console login/logout/whoami`; per-context credential (`akt context edit --console-api-key`) | Resolution: flag > `AKT_CONSOLE_API_KEY` > per-context file (§7.1). Switching context switches Console identity. |
-| Create deployment (managed wallet) | `akt console deployment create <sdl> [deposit-usd]`; `akt deploy` in a `console-api` context | Deposit in USD (minimum $0.50), unified deposit syntax per §7.4. The manifest is cached per context for the follow-up lease. |
+| Create deployment (managed wallet) | `akt console deployment create <sdl>`; `akt deploy` in a `console-api` context | No deposit: the platform funds the deployment from account credits. The manifest is cached per context for the follow-up lease. |
 | List / inspect deployments | `akt console deployment list/get` | Pagination via `--skip`/`--limit`. |
 | Update / close deployment | `akt console deployment update/close`; `akt update`, `akt close` | Update and close reject an already-closed deployment with a non-zero result; close never turns an earlier terminal state into current-command success. |
-| Escrow deposit | `akt console deployment deposit <dseq> [amount-usd]` | |
-| Auto top-up settings | `akt console deployment settings <dseq> [true\|false]` | `/v2/deployment-settings`, PATCH with POST fallback. |
+| Escrow deposit | none | Deployments are funded automatically; the deprecated `/v1/deposit-deployment` endpoint is not called. |
+| Runtime limit | `akt console deployment settings <dseq> [hours\|none]` | `PATCH /v2/deployment-settings/{dseq}`. Reading resolves the deployment first because GET is get-or-create. |
 | View bids / create lease | `akt console bid list <dseq>`, `akt console lease create <dseq> [provider]` | The `akt deploy` workflow automates the bid wait and selection. |
 | Live lease status | `akt console status <dseq>` (`--watch`) | Reads the provider gateway directly using a Console-minted scoped JWT. |
 | Container logs / cluster events | `akt console logs <dseq> [service]`, `akt console events <dseq>` (`--follow`) | Same streaming paths as `akt provider lease-logs/lease-events`, authenticated by the Console JWT — no websocket relay needed. |
 | Exec / interactive shell | `akt console shell <dseq> <service> [-- command]` | Exec is the same command with an explicit command argument. |
 | Bid screening | `akt console screen <sdl-file>` | Public endpoint; resources are derived from the SDL. |
 | Wallet balances & managed wallets | `akt console wallet balance/list` | Balances are µACT rendered as USD (1 ACT = 1 USD); wallet credits are dollar-scale. |
-| Wallet auto-reload | `akt console wallet settings [true\|false]` | The only headless funding path, matching the reference CLI. |
+| Auto Recharge | `akt console wallet settings [true\|false]` | Account-level card charging (`autoReloadEnabled`), the Console UI's "Auto Recharge". Distinct from per-deployment funding, which is always on and not configurable. |
 | Cost estimate & usage history | `akt console wallet cost`, `akt console usage [from] [to]` | Usage totals the requested range; the lifetime figure is reported separately. |
 | Provider marketplace browse | `akt console provider list/get/regions/auditors` | Public endpoints; no key required. |
 | GPU availability & pricing | `akt console gpu` | Public. |
@@ -4706,7 +4707,7 @@ Status of `akt` coverage for every Akash Console capability. "Covered" means the
 
 | Console capability | Status | Rationale |
 |---|---|---|
-| Adding funds by card / 3DS payment | Not portable | Stripe checkout with 3DS is inherently interactive and web-only; the reference CLI defers to auto-reload as well. Headless path: `akt console wallet settings true` plus per-deployment auto top-up. |
+| Adding funds by card / 3DS payment | Not portable | Stripe checkout with 3DS is inherently interactive and web-only; the reference CLI defers to auto-reload as well. Headless path: `akt console wallet settings true`, which keeps credits topped up from the default card; deployments then fund themselves from those credits. |
 | Account signup / email verification / team management | Not portable | Web-only Console account flows with no public API endpoints. |
 | Certificate management for managed wallets | Not applicable | The managed wallet signs server-side, so no client certificate exists (the reference CLI has no cert commands either). |
 | Console's `provider-proxy` websocket relay | Superseded | akt reaches provider gateways directly with a Console-minted JWT, which covers the same operations without reimplementing the relay's in-band auth protocol. |
@@ -7589,36 +7590,14 @@ managed-wallet receipt with code zero and a nonblank transaction hash; an
 unusable 2xx response enters the existing no-replay version-hash
 reconciliation. Deployment update validates the returned DSEQ and deterministic
 SDL version hash before success, otherwise using its exact read-back. Close
-requires a present `success: true` acknowledgement. Deposit snapshots
-authoritative total escrow value, defined per denomination as current `funds`
-plus cumulative `transferred`, submits its POST exactly once, and validates the
-returned deployment identity. A returned total whose exact delta equals the
-requested deposit proves success. A lost, malformed, or stale acknowledgement
-MUST fall back to independent GET observations for a context-cancellable
-30-second propagation window. It MUST NOT replay the POST and records `pending`
-when the exact outcome remains unproved. Including `transferred` keeps the
-proof exact while active-lease settlement consumes current funds. Console
-encodes both escrow collections with the chain's fixed-point decimal grammar,
-so a whole micro amount MAY arrive as
-`500000.000000000000000000` and a settled balance MAY contain a genuine
-fractional micro amount. Current `funds` use the chain's signed `Balance`
-contract because an overdrawn escrow may be negative; cumulative `transferred`
-uses non-negative decimal coins. Production reconciliation MUST retain both
-collections as exact rationals, while the independent live observer MUST retain
-the current `funds` it uses for the pre-lease deposit proof. Both paths MUST
-parse the chain grammar without floating-point conversion, preserve values down
-to the 18th decimal place, accept signed `funds`, reject malformed values, and
-compare the pre/post delta exactly. Production MUST additionally reject a
-negative `transferred` amount. Neither path may require each endpoint value to
-be a lexical integer or discard a fractional component merely because the
-expected deposit delta is an integer. A created API key requires a
+requires a present `success: true` acknowledgement. A created API key requires a
 nonblank ID, the requested name, and its one-time secret; an ambiguous response
 is pending and is never replayed. A minted provider JWT requires a nonblank
 token before it may be used.
 
 The Console sandbox lifecycle covers deployment create, bid observation, lease
 creation, live status, logs, events, a deterministic non-interactive shell
-command, deposit, settings, update, child API-key lifecycle, close, and final
+command, settings, update, child API-key lifecycle, close, and final
 cleanup. Each state is verified independently through the Console API and,
 where applicable, chain RPC, provider gateway, and Kubernetes workload state.
 The deployment-get, bid-list, status, and default log-read contracts MUST run
@@ -7675,8 +7654,10 @@ Live credentials follow these rules:
 - separately cap run-attributable spend. Before the lease starts, the harness
   MUST independently prove that exact funded escrow, current `funds` plus
   cumulative `transferred`, equals the reserved lifecycle request, remains
-  within the spend ceiling, and has no pre-lease transferred value. Deployment
-  auto-top-up MUST already be independently observed disabled. After terminal
+  within the spend ceiling, and has no pre-lease transferred value. The
+  deployment MUST already carry the run's bounding runtime limit, independently
+  observed. Always-on funding cannot be switched off, so the runtime limit is
+  the only mechanism that bounds an abandoned lifecycle's spend. After terminal
   cleanup, the harness MUST derive gross spend from the lifecycle-owned
   escrow's exact non-negative cumulative `uact` `transferred` value. Missing,
   malformed, negative, regressing, or unexpected-denomination transferred
@@ -7700,8 +7681,9 @@ Live credentials follow these rules:
   as a credit or timing adjustment rather than fail solely because it is
   positive, and MUST NOT reduce or replace the owned `transferred` amount. Account-total
   changes are diagnostic and MUST NOT participate in the spend-limit decision;
-- disable auto top-up as soon as a deployment identifier is known unless the
-  scenario explicitly tests it.
+- set the shortest usable runtime limit as soon as a deployment identifier is
+  known, unless the scenario explicitly tests limits. This replaces disabling
+  auto top-up, which always-on funding rejects.
 
 Subprocess and observer response capture is bounded. Failure diagnostics MUST
 NOT print raw stdout, stderr, HTTP response bodies, action-log entries, API
@@ -7711,12 +7693,7 @@ harness scans its complete temporary akt home for the injected credential
 before teardown rather than checking only config and action-log files.
 For a failed Console subprocess, the error class MAY include a recognized HTTP
 status (for example, `console_http_401`) extracted from bounded stderr. It MUST
-NOT include the response body or any other captured text. A fixed local error
-marker MAY likewise map an unproved deposit to
-`console_deposit_outcome_unknown`; this exposes the safe failure phase without
-copying its potentially joined remote diagnostic.
-
-The production Console client applies the same boundary independently of the
+NOT include the response body or any other captured text. The production Console client applies the same boundary independently of the
 test harness. It reads no more than the configured maximum response size and
 fails a larger response without retaining or reporting its contents. Before an
 HTTP error body can enter a returned error or action-log entry, every exact
@@ -7736,16 +7713,16 @@ account keeps only the capped balance needed for the run.
 
 The mutation deadline expires before the overall test deadline and leaves a
 fixed cleanup reserve. Cleanup has separate bounded phases for ambiguous-write
-discovery, auto-top-up disablement and close requests, and terminal escrow,
+discovery, runtime-limit and close requests, and terminal escrow,
 account reconciliation, and cleanup observation. No discovery loop or single
 subprocess may consume the final observation reserve. When a create outcome is
 ambiguous, cleanup finds only post-baseline deployments carrying the run's
-unique SDL hash; once it finds one, it disables auto top-up before attempting
+unique SDL hash; once it finds one, it caps its runtime limit before attempting
 close.
 The ambiguous-create discovery allowance MUST be no shorter than the normal
 post-create indexer-observation allowance. The current 90-second cleanup
 reserve assigns up to 30 seconds to discovery, retains 40 seconds for
-auto-top-up disablement and close, and retains the final 20 seconds for
+runtime-limit capping and close, and retains the final 20 seconds for
 terminal-state, exact transferred-spend, and account-total reconciliation
 observations.
 

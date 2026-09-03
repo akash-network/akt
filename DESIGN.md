@@ -459,7 +459,7 @@ API key, and explicit command groups keep their own transport boundaries.
 - The Console backend holds the wallet keys, signs transactions, and broadcasts on the user's behalf.
 - Authenticated via an API key (created at console.akash.network > Settings > API Keys).
 - The API key is resolved as flag > env > per-context credential: `--console-api-key` (session only), then `AKT_CONSOLE_API_KEY`, then a per-context credential file at `contexts/<name>/console-api-key` (mode 0600, managed via `akt context create/edit --console-api-key`). It is never written to config.yaml, never printed, and never logged — each context carries its own key, so switching context switches Console identity.
-- Deposits are denominated in USD (not uakt) -- the Console handles the conversion.
+- Deployments are funded automatically from the account's credits: there is no deposit to send and no top-up to call. Each deployment still has its own on-chain escrow account; the Console fills it. Balances read back in USD (the Console converts from uact).
 - Raw `akt tx` commands never route through the Console API: that tree constructs
   and signs arbitrary chain messages with the context's referenced local
   keyring even when Console is the preferred workflow rail. The
@@ -467,9 +467,6 @@ API key, and explicit command groups keep their own transport boundaries.
   abstract deployment-lifecycle steps through the Console rail, and the
   step-by-step managed-wallet surface lives under `akt console`. Chain query
   commands still work directly against chain RPC when the context has one.
-- Successful Console deployment acknowledgements and the shared `akt deploy`
-  result expose the Console's default daily auto top-up plus its exact disable
-  command. Chain workflow output omits that Console-only setting.
 - A Console-only context needs only the API key. Adding a network enables chain
   queries, and adding a local account to the referenced keyring enables
   explicit chain transactions and authenticated provider operations without
@@ -496,8 +493,8 @@ API key, and explicit command groups keep their own transport boundaries.
   durable per-context action-log destination; contextless writes fail before
   any tool is registered.
 - Console request construction is a validation boundary shared by direct CLI,
-  workflows, and MCP. Numeric identities, pagination, fixed-point USD deposit
-  syntax and minimums, UUIDs, key names, mutation state, and JWT lifetime are
+  workflows, and MCP. Numeric identities, pagination, fixed-point USD
+  syntax, runtime limits, UUIDs, key names, mutation state, and JWT lifetime are
   rejected there before transport work. API-key deletion first lists the
   account's keys and requires the requested UUID to be present before issuing
   DELETE. An absent UUID is a failed cleanup attempt with no DELETE, even when
@@ -873,13 +870,10 @@ The same no-replay rule applies to every non-idempotent method, including HTTP
 deployment back and checking that every exact requested lease is active.
 An accepted create response is usable only when its DSEQ and managed-wallet
 transaction receipt are present, its transaction code is zero, and its hash is
-nonblank. Close requires a present `success: true` acknowledgement. Deposit
-validates the returned deployment identity and compares its total escrow value
-(`funds` plus cumulative `transferred`) with the exact pre-submit snapshot. An
-exact returned delta is a semantic acknowledgement. A missing, malformed, or
-stale acknowledgement, including an ambiguous transport response, falls back
-to independent GET observations for a context-cancellable 30-second propagation
-window without replaying the charge. This remains exact while an active lease
+nonblank. Close requires a present `success: true` acknowledgement. A
+missing, malformed, or stale acknowledgement, including an ambiguous transport
+response, falls back to independent GET observations for a context-cancellable
+30-second propagation window without replaying the request. This remains exact while an active lease
 settles concurrently; an unproved outcome remains pending. One-time API-key
 creation likewise requires
 its nonblank ID, requested name, and secret, while JWT minting requires a
@@ -894,7 +888,7 @@ merely the first HTTP response.
 
 **Why a translation layer and not per-rail commands**: the alternative — a `deploy` that knows about keyrings and a separate Console `deploy` — means every new action is designed twice, and the two surfaces drift on flag names, defaults, argument order, and error text. Here, adding an action is a workflow definition plus (at most) a message mapping in the console adapter. Neither rail's command handler changes, and no rail-specific redesign is required.
 
-**One argument surface**: the CLI's argument surface is *generated* from the workflow definition (`internal/cli/workflow`). Positional arguments come from the definition's required file param, the built-in deploy workflow's optional `deposit` param, and workflow definitions' optional `dseq` param. Every non-file param also gets a flag carrying the definition's type, default, and description. `akt deploy <sdl-file> [deposit]` therefore preserves the proven `akt console deployment create <sdl-file> [deposit]` order while retaining `--deposit` as an optional alternative; supplying both forms is an error. Because the definition is shared, `akt deploy`, `akt update`, and `akt close` take **identical arguments on both rails**. The preferred rail is a property of the active context (`auth-method`, edited more clearly through `--deploy-via`), not of the workflow command line. Switching the preferred rail does not hide `akt tx` or `akt console` when their credentials remain configured.
+**One argument surface**: the CLI's argument surface is *generated* from the workflow definition (`internal/cli/workflow`). Positional arguments come from the definition's required file param, the built-in deploy workflow's optional `deposit` param, and workflow definitions' optional `dseq` param. Every non-file param also gets a flag carrying the definition's type, default, and description. `akt deploy <sdl-file> [deposit]` keeps the deposit in an optional trailing slot while retaining `--deposit` as an alternative; supplying both forms is an error. The deposit is meaningful on the chain rail only, since the console rail funds deployments itself, so on a console context the slot is simply left empty. Because the definition is shared, `akt deploy`, `akt update`, and `akt close` take **identical arguments on both rails**. The preferred rail is a property of the active context (`auth-method`, edited more clearly through `--deploy-via`), not of the workflow command line. Switching the preferred rail does not hide `akt tx` or `akt console` when their credentials remain configured.
 
 **Cross-rail normalization**: rail-independent argument syntax is translated inside `Transport.BroadcastTx` before delegating to the adapter, so a cross-rail mistake fails at the transport boundary with a clear message rather than deep inside a rail's client — or, worse, on the wire. The concrete case is the deployment deposit, parsed in one place (`transport.ParseDeposit`) and rendered per rail by `Deposit.RailValue`:
 
@@ -902,21 +896,21 @@ merely the first HTTP response.
 |---|---|---|
 | USD | `5usd`, `$5`, `5.50usd` | A plain decimal USD amount with at most two fractional digits. The `usd` unit is case-insensitive and always wins over coin parsing, so a value ending in `usd` is never read as a chain denomination. Scientific notation, non-finite values, and sub-cent precision are rejected. |
 | Coin | an explicit `<amount><denom>` | A chain coin amount, parsed as a decimal coin. The denomination must match the active network's deployment deposit parameter. |
-| Bare number | `5`, `5.50` | Unit-less plain decimal: USD on the console rail, rejected on the chain rail (coins have always required a denomination). |
-| `auto` / empty | `auto` | Defer to the rail default: the chain-minimum deployment deposit on the chain rail; the console rail has no default and asks for an explicit USD amount. |
+| Bare number | `5`, `5.50` | Unit-less plain decimal, rejected on both rails: the chain has always required a denomination, and the console rail takes no amount at all. |
+| `auto` / empty | `auto` | Defer to the rail default: the chain-minimum deployment deposit on the chain rail; on the console rail, no deposit is sent. |
 
-Every form parses on every rail; only the *interpretation* is rail-specific,
-and each rejection names the rail that would accept the value. Chain users are
-directed to `auto` first because it queries the active network's minimum amount
-and denomination; an explicit coin remains available as an override. SPEC
-§7.4 carries the full per-rail acceptance table. The Console minimum is a
-single exported constant (`transport.MinConsoleDepositUSD`, aliasing
-`console.MinDepositUSD`) so every surface that enforces it — CLI commands and
-workflow adapters alike — shares one value.
+Every form still parses, so a rejection can name what is wrong rather than
+failing as a syntax error. Chain users are directed to `auto` first because it
+queries the active network's minimum amount and denomination; an explicit coin
+remains available as an override. The console rail accepts only `auto`/empty:
+the platform funds every deployment from the account's credits, and an amount
+sent to `POST /v1/deployments` is documented as deprecated and discarded, so
+`akt` rejects it locally rather than letting a user believe a number they typed
+did something. SPEC §7.4 carries the full per-rail acceptance table.
 
-The resolved deposit and the SDL placement prices form one pre-broadcast
-invariant. Dry-run and execution both resolve `auto` through the selected rail,
-then require every group price denomination to match the effective deposit
+On the chain rail, the resolved deposit and the SDL placement prices form one
+pre-broadcast invariant. Dry-run and execution both resolve `auto`, then
+require every group price denomination to match the effective deposit
 denomination. Explicit matching legacy `uakt` remains valid; an automatic
 `uact` deposit paired with `uakt` pricing fails before a plan can claim the
 deployment is executable.
@@ -1948,9 +1942,9 @@ Console exposes deployment escrow through Cosmos fixed-point decimal coins.
 Whole micro amounts can therefore carry 18 zero decimal places, and settlement
 can leave genuinely fractional micro amounts. Current `funds` are signed
 because an overdrawn escrow balance may be negative; cumulative `transferred`
-remains non-negative. Deposit reconciliation retains both collections as exact
-rationals, while the independent live observer retains the current `funds` used
-by its pre-lease deposit proof. Both validate the chain decimal grammar, preserve
+remains non-negative. The independent live observer retains the current `funds`
+used by its pre-lease funding proof as exact rationals. It validates the chain
+decimal grammar, preserves
 the 18th decimal place, accept signed `funds`, sum duplicate denominations, and
 compare the complete pre/post delta without floating-point rounding or
 integer-only assumptions. Production also rejects a negative `transferred`
@@ -2000,8 +1994,9 @@ Every USD-bearing request is charged to an attempted-request budget before the
 subprocess starts, and an ambiguous request is never refunded to that budget.
 Before lease creation, the independent observer proves that exact funded
 escrow (`funds` plus cumulative `transferred`) equals the reserved request,
-that cumulative `transferred` is still zero, and that deployment auto-top-up
-is disabled. After terminal cleanup, gross spend is the owned escrow's exact
+that cumulative `transferred` is still zero, and that the deployment carries the
+run's bounding runtime limit. Always-on funding cannot be switched off, so that
+limit is what caps an abandoned run. After terminal cleanup, gross spend is the owned escrow's exact
 non-negative cumulative `uact` `transferred` value. Missing, malformed,
 negative, regressing, or unexpected-denomination transfer state fails closed.
 For the successfully leased bounded scenario, the deployment must be closed
@@ -2021,19 +2016,19 @@ serialized. Before lease creation, the CLI and independent raw observer agree
 on the exact bid identity and numeric price; selection is price-first, accepts
 only the Console settlement denomination, and rejects a bid whose
 one-block-per-second full-remaining-runtime projection exceeds that ceiling.
-The exact funded escrow with auto-top-up disabled remains the absolute loss
-bound if blocks arrive faster than the conservative projection interval.
+The runtime limit, which auto-closes the deployment and returns unused funds,
+remains the absolute loss bound if blocks arrive faster than the conservative
+projection interval.
 
 The harness observes Console state with a small raw HTTP client that is
 independent of the `akt console` command and its Console client package. Command
 responses remain assertions about the public CLI, but create, settings, lease,
-deposit, update, close, and final balance claims require API-side read-back.
+update, close, and final balance claims require API-side read-back.
 Captured stdout, stderr, HTTP bodies, and action-log entries are bounded and are
 never copied into test failure output; diagnostics identify the operation,
 recognized HTTP status, resource ID when known, and byte counts only. Status
 classification is an allowlist over numeric Console statuses and fixed local
-semantic failures such as an unproved deposit outcome; the underlying stderr
-and response body remain private.
+semantic failures; the underlying stderr and response body remain private.
 
 That credential boundary also lives in the production Console client, not only
 in tests. Response reads have a hard byte ceiling. Error bodies are scrubbed of
@@ -2069,7 +2064,7 @@ escrow and account-reconciliation observation.
 implements the raw Console observer, attempted-request and exact
 transferred-spend limits, direct action-log inspection, bounded redacted
 diagnostics, and phased in-process cleanup for create, bid, lease, status,
-deposit, settings, update,
+settings, update,
 logs, events, deterministic non-interactive shell, child API-key lifecycle,
 and close. The provider-reported public workload URI must also return a
 bounded non-empty successful response through a standard HTTP client that does
@@ -2169,7 +2164,7 @@ never handle.
 - Store schema versioning and migration framework
 - Sync engine: WebSocket subscription, event routing, state reconciliation
 - `akt deploy` workflow command: create deployment, wait for bids, select bid (interactive or auto), create lease, send manifest, wait for active, display endpoint URLs. Workflows support **two execution modes**: TUI mode (interactive, user-friendly progress display) and JSONL mode (`--output jsonl`, JSONL output for automation and scripting).
-- Transport translation layer (§3.5): `akt deploy`, `akt update`, and `akt close` execute from a single workflow definition on either the chain rail or the console rail, chosen from the context's `auth-method`. The command surface (positionals, flags, defaults, help) is generated from that definition, so the argument syntax — including the unified `--deposit` forms — is identical on both rails.
+- Transport translation layer (§3.5): `akt deploy`, `akt update`, and `akt close` execute from a single workflow definition on either the chain rail or the console rail, chosen from the context's `auth-method`. The command surface (positionals, flags, defaults, help) is generated from that definition, so the argument syntax is identical on both rails; `--deposit` is the one rail-specific input, meaningful on chain and rejected on console, which funds deployments itself.
 - Provider gateway client: status, lease-status, lease-logs, lease-events, lease-shell, send-manifest, get-manifest
 - Provider migration commands: migrate-hostnames, migrate-endpoints
 - Store export/import commands

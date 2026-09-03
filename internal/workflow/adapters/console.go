@@ -104,12 +104,7 @@ func (c *consoleChainClient) createDeployment(ctx context.Context, params map[st
 		return nil, fmt.Errorf("%s: %w", msgCreateDeployment, err)
 	}
 
-	deposit, err := parseConsoleDeposit(params["deposit"])
-	if err != nil {
-		return nil, fmt.Errorf("%s: %w", msgCreateDeployment, err)
-	}
-
-	res, err := c.cc.CreateDeployment(ctx, sdlStr, deposit)
+	res, err := c.cc.CreateDeployment(ctx, sdlStr)
 	if err != nil {
 		return nil, err
 	}
@@ -291,25 +286,4 @@ func looksLikeSDLPath(s string) bool {
 	}
 
 	return strings.ContainsRune(s, '/') || strings.ContainsRune(s, os.PathSeparator)
-}
-
-// parseConsoleDeposit parses the workflow "deposit" param as a USD amount.
-// "auto" (the keyring default) and empty values are rejected: the Console
-// API needs an explicit USD deposit.
-func parseConsoleDeposit(s string) (float64, error) {
-	s = strings.TrimSpace(s)
-	if s == "" || s == depositAuto {
-		return 0, fmt.Errorf("the Console workflow rail requires an explicit deposit in USD: pass --deposit with an amount of at least %.2f (e.g. --deposit 5)", console.MinDepositUSD)
-	}
-
-	v, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid deposit %q: the Console workflow rail takes the deposit as a plain USD amount (e.g. --deposit 5)", s)
-	}
-
-	if v < console.MinDepositUSD {
-		return 0, fmt.Errorf("deposit %s USD is below the Console minimum of %.2f USD", s, console.MinDepositUSD)
-	}
-
-	return v, nil
 }
