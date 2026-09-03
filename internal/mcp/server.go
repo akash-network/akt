@@ -174,7 +174,6 @@ func (s *Server) registerConsoleQueryTools(cl *aktconsole.Client) {
 // or tear down workloads.
 func (s *Server) registerConsoleWriteTools(cl *aktconsole.Client) {
 	s.addWriteTool(consoletools.ToolCloseDeployment(), consoletools.HandleCloseDeployment(cl))
-	s.addWriteTool(consoletools.ToolDeposit(), consoletools.HandleDeposit(cl))
 }
 
 // ServeStdio starts the server over stdio transport.

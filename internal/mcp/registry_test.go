@@ -79,7 +79,7 @@ func consoleQueryToolNames() []string {
 }
 
 func consoleWriteToolNames() []string {
-	return []string{"console_close_deployment", "console_deposit"}
+	return []string{"console_close_deployment"}
 }
 
 func TestNewRegistersExactToolsForEachAvailableRail(t *testing.T) {
@@ -262,7 +262,6 @@ func TestRegisteredToolsRejectInvalidArgumentsBeforeDependencies(t *testing.T) {
 		{name: "console_list_providers", args: map[string]any{"scope": "active"}, want: "scope must be one of all, trial"},
 		{name: "console_get_provider", args: map[string]any{}, want: "missing required parameter: address"},
 		{name: "console_close_deployment", args: map[string]any{}, want: "missing required parameter: dseq"},
-		{name: "console_deposit", args: map[string]any{"dseq": "1", "amount_usd": 0.01}, want: "amount_usd must be greater than or equal to 0.5"},
 		{name: "akash_account_balance", args: map[string]any{"unknown": "akash1typo"}, want: "unknown parameter: unknown"},
 		{name: "akash_get_deployment", args: map[string]any{"owner": "akash1owner", "dseq": float64(9007199254740992)}, want: "dseq must be less than or equal to 9007199254740991"},
 	}

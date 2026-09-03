@@ -6,29 +6,21 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math"
-	"math/big"
 	"net/http"
 	"net/url"
 	"strconv"
 	"strings"
-	"time"
 
-	sdkmath "cosmossdk.io/math"
 	"pkg.akt.dev/go/sdl"
 )
 
-// CreateDeployment creates a deployment via the managed wallet. Deposit is in
-// USD. The returned manifest should be cached (see SaveManifest) so that
-// CreateLease can send it after bid selection.
+// CreateDeployment creates a deployment via the managed wallet. There is no
+// deposit: the platform funds the deployment from the account's credits. The
+// returned manifest should be cached (see SaveManifest) so that CreateLease
+// can send it after bid selection.
 //
-// Wire: POST /v1/deployments, body {"data":{"sdl":..., "deposit":...}}.
-func (c *Client) CreateDeployment(ctx context.Context, sdl string, depositUSD float64) (*CreateDeploymentResult, error) {
-	if _, err := normalizeDepositUSD(depositUSD); err != nil {
-		c.record("create-deployment", "", err)
-		return nil, err
-	}
-
+// Wire: POST /v1/deployments, body {"data":{"sdl":...}}.
+func (c *Client) CreateDeployment(ctx context.Context, sdl string) (*CreateDeploymentResult, error) {
 	versionHash, manifest, err := deploymentArtifacts(sdl)
 	if err != nil {
 		wrapped := fmt.Errorf("prepare deployment SDL: %w", err)
@@ -47,10 +39,7 @@ func (c *Client) CreateDeployment(ctx context.Context, sdl string, depositUSD fl
 		known[item.Deployment.ID.DSeq.String()] = struct{}{}
 	}
 
-	body := envelope(map[string]any{
-		"sdl":     sdl,
-		"deposit": depositUSD,
-	})
+	body := envelope(map[string]any{"sdl": sdl})
 
 	var out CreateDeploymentResult
 	err = c.doData(ctx, http.MethodPost, "/v1/deployments", body, &out)
@@ -512,269 +501,6 @@ func isAlreadyClosed(err error) bool {
 		strings.Contains(body, "not found")
 }
 
-// Deposit adds funds to a deployment's escrow. Amount is in USD.
-//
-// Wire: POST /v1/deposit-deployment, body {"data":{"dseq":..., "deposit":...}}.
-func (c *Client) Deposit(ctx context.Context, dseq string, amountUSD float64) error {
-	if err := validateDSeq(dseq); err != nil {
-		c.record("deposit", dseq, err)
-		return err
-	}
-	expectedMicros, err := normalizeDepositUSD(amountUSD)
-	if err != nil {
-		c.record("deposit", dseq, err)
-		return err
-	}
-
-	before, err := c.GetDeployment(ctx, dseq)
-	if err != nil {
-		wrapped := fmt.Errorf("snapshot deployment escrow before deposit: %w", err)
-		c.record("deposit", dseq, wrapped)
-		return wrapped
-	}
-	if err := requireMutableState(before, dseq); err != nil {
-		c.record("deposit", dseq, err)
-		return err
-	}
-	if before.Deployment.ID.DSeq.String() != dseq {
-		wrapped := fmt.Errorf("console: deployment pre-state returned dseq %q, want %q", before.Deployment.ID.DSeq.String(), dseq)
-		c.record("deposit", dseq, wrapped)
-		return wrapped
-	}
-	beforeTotals, err := deploymentEscrowTotals(before)
-	if err != nil {
-		wrapped := fmt.Errorf("snapshot deployment escrow before deposit: %w", err)
-		c.record("deposit", dseq, wrapped)
-		return wrapped
-	}
-
-	body := envelope(map[string]any{
-		"dseq":    dseq,
-		"deposit": amountUSD,
-	})
-
-	var out DeploymentDetail
-	postErr := c.doData(ctx, http.MethodPost, "/v1/deposit-deployment", body, &out)
-	if postErr == nil && out.Deployment.ID.DSeq.String() != dseq {
-		postErr = fmt.Errorf("console: deposit response returned dseq %q, want %q", out.Deployment.ID.DSeq.String(), dseq)
-	}
-	if postErr == nil {
-		afterTotals, escrowErr := deploymentEscrowTotals(&out)
-		switch {
-		case escrowErr != nil:
-			postErr = fmt.Errorf("console: validate deposit response escrow: %w", escrowErr)
-		case depositTotalDeltaMatches(beforeTotals, afterTotals, expectedMicros):
-			c.record("deposit", dseq, nil)
-			return nil
-		default:
-			postErr = fmt.Errorf("console: deposit response escrow did not increase by exactly %s uact", expectedMicros)
-		}
-	}
-	if definitiveCreateFailure(postErr) {
-		c.record("deposit", dseq, postErr)
-		return postErr
-	}
-
-	if reconciled, reconcileErr := c.reconcileDeposit(ctx, dseq, beforeTotals, expectedMicros); reconciled {
-		c.record("deposit", dseq, nil)
-		return nil
-	} else if reconcileErr != nil {
-		postErr = errors.Join(postErr, reconcileErr)
-	}
-	unknown := fmt.Errorf("deposit outcome unknown after one submission (%w); the request was not replayed: inspect deployment %s escrow state", postErr, dseq)
-	c.recordOutcome("deposit", dseq, "pending", unknown, map[string]any{"amountUSD": amountUSD})
-	return unknown
-}
-
-func normalizeDepositUSD(amountUSD float64) (*big.Int, error) {
-	if math.IsNaN(amountUSD) || math.IsInf(amountUSD, 0) {
-		return nil, fmt.Errorf("console: deployment deposit must be a finite USD amount")
-	}
-	if amountUSD < 0 {
-		return nil, fmt.Errorf("console: deployment deposit must not be negative")
-	}
-
-	text := strconv.FormatFloat(amountUSD, 'f', -1, 64)
-	whole, fraction, _ := strings.Cut(text, ".")
-	if len(fraction) > 2 {
-		return nil, fmt.Errorf("console: deployment deposit must have at most two fractional digits")
-	}
-	if amountUSD < MinDepositUSD {
-		return nil, fmt.Errorf("console: deployment deposit must be at least $%.2f, got %v", MinDepositUSD, amountUSD)
-	}
-
-	microDigits := whole + fraction + strings.Repeat("0", 6-len(fraction))
-	micros := new(big.Int)
-	ten := big.NewInt(10)
-	digitValue := new(big.Int)
-	for _, digit := range microDigits {
-		micros.Mul(micros, ten)
-		micros.Add(micros, digitValue.SetInt64(int64(digit-'0')))
-	}
-
-	return micros, nil
-}
-
-func deploymentEscrowTotals(detail *DeploymentDetail) (map[string]*big.Rat, error) {
-	if detail == nil || len(detail.EscrowAccount) == 0 || string(detail.EscrowAccount) == "null" {
-		return nil, errors.New("deployment omitted its escrow account")
-	}
-
-	var escrow struct {
-		State struct {
-			Funds       json.RawMessage `json:"funds"`
-			Transferred json.RawMessage `json:"transferred"`
-		} `json:"state"`
-	}
-	if err := json.Unmarshal(detail.EscrowAccount, &escrow); err != nil {
-		return nil, fmt.Errorf("decode deployment escrow: %w", err)
-	}
-
-	type coin struct {
-		Denom  string     `json:"denom"`
-		Amount FlexString `json:"amount"`
-	}
-
-	totals := make(map[string]*big.Rat)
-	addCoins := func(field string, raw json.RawMessage, allowNegative bool) error {
-		encoded := strings.TrimSpace(string(raw))
-		if encoded == "" || encoded == "null" {
-			return fmt.Errorf("deployment escrow omitted its %s", field)
-		}
-
-		var coins []coin
-		if strings.HasPrefix(encoded, "[") {
-			if err := json.Unmarshal(raw, &coins); err != nil {
-				return fmt.Errorf("decode deployment escrow %s: %w", field, err)
-			}
-		} else {
-			var single coin
-			if err := json.Unmarshal(raw, &single); err != nil {
-				return fmt.Errorf("decode deployment escrow %s: %w", field, err)
-			}
-			coins = []coin{single}
-		}
-
-		for _, coin := range coins {
-			denom := strings.ToLower(strings.TrimSpace(coin.Denom))
-			if denom == "" {
-				return fmt.Errorf("deployment escrow %s entry omitted its denomination", field)
-			}
-			amount, err := parseDeploymentEscrowAmount(coin.Amount.String())
-			if err != nil {
-				return fmt.Errorf("deployment escrow %s amount %q for %s is not a valid fixed-point decimal: %w", field, coin.Amount, denom, err)
-			}
-			if !allowNegative && amount.Sign() < 0 {
-				return fmt.Errorf("deployment escrow %s amount %q for %s must be non-negative", field, coin.Amount, denom)
-			}
-			if current := totals[denom]; current != nil {
-				amount.Add(amount, current)
-			}
-			totals[denom] = amount
-		}
-
-		return nil
-	}
-
-	if err := addCoins("funds", escrow.State.Funds, true); err != nil {
-		return nil, err
-	}
-	if err := addCoins("transferred", escrow.State.Transferred, false); err != nil {
-		return nil, err
-	}
-
-	return totals, nil
-}
-
-func parseDeploymentEscrowAmount(raw string) (*big.Rat, error) {
-	amount, err := sdkmath.LegacyNewDecFromStr(raw)
-	if err != nil {
-		return nil, err
-	}
-
-	return new(big.Rat).SetFrac(
-		amount.BigInt(),
-		new(big.Int).Exp(big.NewInt(10), big.NewInt(sdkmath.LegacyPrecision), nil),
-	), nil
-}
-
-const (
-	depositReconciliationWindow       = 30 * time.Second
-	depositReconciliationPollInterval = 2 * time.Second
-)
-
-func (c *Client) reconcileDeposit(
-	ctx context.Context,
-	dseq string,
-	beforeTotals map[string]*big.Rat,
-	expectedMicros *big.Int,
-) (bool, error) {
-	reconciliationCtx, cancel := context.WithTimeout(ctx, depositReconciliationWindow)
-	defer cancel()
-
-	return c.reconcileDepositUntil(
-		reconciliationCtx,
-		dseq,
-		beforeTotals,
-		expectedMicros,
-		depositReconciliationPollInterval,
-	)
-}
-
-func (c *Client) reconcileDepositUntil(
-	ctx context.Context,
-	dseq string,
-	beforeTotals map[string]*big.Rat,
-	expectedMicros *big.Int,
-	pollInterval time.Duration,
-) (bool, error) {
-	var lastErr error
-	for {
-		detail, err := c.GetDeployment(ctx, dseq)
-		if err != nil {
-			lastErr = err
-		} else if detail.Deployment.ID.DSeq.String() != dseq {
-			lastErr = fmt.Errorf("console: deployment post-state returned dseq %q, want %q", detail.Deployment.ID.DSeq.String(), dseq)
-		} else if afterTotals, escrowErr := deploymentEscrowTotals(detail); escrowErr != nil {
-			lastErr = escrowErr
-		} else if depositTotalDeltaMatches(beforeTotals, afterTotals, expectedMicros) {
-			return true, nil
-		} else {
-			lastErr = fmt.Errorf("deployment escrow did not increase by exactly %s uact", expectedMicros)
-		}
-
-		if err := waitForDepositObservation(ctx, pollInterval); err != nil {
-			return false, errors.Join(lastErr, err)
-		}
-	}
-}
-
-func waitForDepositObservation(ctx context.Context, interval time.Duration) error {
-	timer := time.NewTimer(interval)
-	defer timer.Stop()
-
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
-}
-
-func depositTotalDeltaMatches(before, after map[string]*big.Rat, expected *big.Int) bool {
-	afterAmount := after["uact"]
-	if afterAmount == nil {
-		return false
-	}
-	beforeAmount := before["uact"]
-	if beforeAmount == nil {
-		beforeAmount = new(big.Rat)
-	}
-
-	delta := new(big.Rat).Sub(new(big.Rat).Set(afterAmount), beforeAmount)
-	return delta.Cmp(new(big.Rat).SetInt(expected)) == 0
-}
-
 // FetchBids fetches bids for a deployment's open orders.
 //
 // Wire: GET /v1/bids?dseq=, response {"data":[{"bid":{...}}]}.
@@ -917,15 +643,24 @@ func (c *Client) GetDeploymentSettings(ctx context.Context, dseq string) (*Deplo
 	return &out, nil
 }
 
-// SetDeploymentAutoTopUp enables or disables auto-top-up for a deployment.
-// It PATCHes existing settings and transparently falls back to creating them
-// (POST) when none exist yet.
+// SetDeploymentRuntimeLimit sets a deployment's runtime limit in hours, or
+// clears it (hours == nil) to return the deployment to always-on funding.
+//
+// There is no auto-top-up counterpart: always-on funding cannot be switched
+// off, and the API rejects an explicit autoTopUpEnabled:false, so the runtime
+// limit is the only per-deployment funding control a client can set.
 //
 // Wire: PATCH /v2/deployment-settings/{dseq}, body
-// {"data":{"autoTopUpEnabled":...}}; on 404, POST /v2/deployment-settings,
-// body {"data":{"dseq":..., "autoTopUpEnabled":...}}.
-func (c *Client) SetDeploymentAutoTopUp(ctx context.Context, dseq string, enabled bool) (*DeploymentSettings, error) {
+// {"data":{"runtimeLimitHours": <hours>|null}}. There is no POST fallback:
+// the create endpoint's body has no runtime-limit field, and GET is
+// get-or-create, so a settings record always exists by the time we PATCH.
+func (c *Client) SetDeploymentRuntimeLimit(ctx context.Context, dseq string, hours *int) (*DeploymentSettings, error) {
 	if err := validateDSeq(dseq); err != nil {
+		c.record("update-deployment-settings", dseq, err)
+		return nil, err
+	}
+	if hours != nil && *hours < 1 {
+		err := fmt.Errorf("console: runtime limit must be at least 1 hour, got %d", *hours)
 		c.record("update-deployment-settings", dseq, err)
 		return nil, err
 	}
@@ -940,16 +675,20 @@ func (c *Client) SetDeploymentAutoTopUp(ctx context.Context, dseq string, enable
 		AutoTopUpEnabled     *bool       `json:"autoTopUpEnabled"`
 		EstimatedTopUpAmount float64     `json:"estimatedTopUpAmount"`
 		TopUpFrequencyMs     int64       `json:"topUpFrequencyMs"`
+		RuntimeLimitHours    *int        `json:"runtimeLimitHours"`
+		RuntimeEndsAt        *string     `json:"runtimeEndsAt"`
+	}
+
+	// Explicitly nil-able: clearing the limit is a JSON null, not an omitted key.
+	var requested any
+	if hours != nil {
+		requested = *hours
 	}
 
 	err := c.doData(ctx, http.MethodPatch, "/v2/deployment-settings/"+url.PathEscape(dseq),
-		envelope(map[string]any{"autoTopUpEnabled": enabled}), &out)
-	if errors.Is(err, ErrNotFound) {
-		err = c.doData(ctx, http.MethodPost, "/v2/deployment-settings",
-			envelope(map[string]any{"dseq": dseq, "autoTopUpEnabled": enabled}), &out)
-	}
-	if err == nil && (out.DSeq == nil || out.DSeq.String() != dseq || out.AutoTopUpEnabled == nil || *out.AutoTopUpEnabled != enabled) {
-		err = errors.New("console: deployment settings response did not echo the requested dseq and auto-top-up value")
+		envelope(map[string]any{"runtimeLimitHours": requested}), &out)
+	if err == nil && (out.DSeq == nil || out.DSeq.String() != dseq || !runtimeLimitEchoed(out.RuntimeLimitHours, hours)) {
+		err = errors.New("console: deployment settings response did not echo the requested dseq and runtime limit")
 	}
 
 	c.record("update-deployment-settings", dseq, err)
@@ -957,12 +696,26 @@ func (c *Client) SetDeploymentAutoTopUp(ctx context.Context, dseq string, enable
 		return nil, err
 	}
 
-	return &DeploymentSettings{
+	settings := &DeploymentSettings{
 		DSeq:                 *out.DSeq,
-		AutoTopUpEnabled:     *out.AutoTopUpEnabled,
 		EstimatedTopUpAmount: out.EstimatedTopUpAmount,
 		TopUpFrequencyMs:     out.TopUpFrequencyMs,
-	}, nil
+		RuntimeLimitHours:    out.RuntimeLimitHours,
+		RuntimeEndsAt:        out.RuntimeEndsAt,
+	}
+	if out.AutoTopUpEnabled != nil {
+		settings.AutoTopUpEnabled = *out.AutoTopUpEnabled
+	}
+
+	return settings, nil
+}
+
+func runtimeLimitEchoed(got, want *int) bool {
+	if want == nil {
+		return got == nil
+	}
+
+	return got != nil && *got == *want
 }
 
 func (c *Client) requireMutableDeployment(ctx context.Context, dseq string) (*DeploymentDetail, error) {

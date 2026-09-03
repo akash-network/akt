@@ -435,7 +435,6 @@ func TestMCPToolInventory(t *testing.T) {
 		"akash_create_lease",
 		"akash_submit_manifest",
 		"console_close_deployment",
-		"console_deposit",
 	}
 
 	readTools := mcpToolsList(t, home)
@@ -635,22 +634,22 @@ func TestMCPWriteCallRequiresOptIn(t *testing.T) {
 	mustRunAkt(t, home, "context", "network", "create", "net", "--chain-id", "akashnet-2", "--rpc", unreachableNode)
 	mustRunAkt(t, home, "context", "create", "ctx", "--network", "net", "--set-current")
 
-	arguments := map[string]any{"dseq": "1", "amount_usd": 1}
+	arguments := map[string]any{"dseq": "1"}
 	withoutWrites := runMCPConversation(t, home, []string{
 		initializeMessage(t, 1),
-		toolCallMessage(t, 2, "console_deposit", arguments),
+		toolCallMessage(t, 2, "console_close_deployment", arguments),
 	})
 	response := withoutWrites.response(t, 2)
-	if response.Error == nil || response.Error.Code != -32602 || !strings.Contains(response.Error.Message, "console_deposit") {
+	if response.Error == nil || response.Error.Code != -32602 || !strings.Contains(response.Error.Message, "console_close_deployment") {
 		t.Fatalf("write call without opt-in error = %#v, want named -32602", response.Error)
 	}
 
 	withWrites := runMCPConversation(t, home, []string{
 		initializeMessage(t, 1),
-		toolCallMessage(t, 2, "console_deposit", map[string]any{"dseq": "1", "amount_usd": 0.01}),
+		toolCallMessage(t, 2, "console_close_deployment", map[string]any{}),
 	}, "--enable-writes")
 	result := decodeToolResult(t, withWrites.response(t, 2))
-	if !result.isError || !strings.Contains(result.text, "amount_usd must be greater than or equal to 0.5") {
+	if !result.isError || !strings.Contains(result.text, "missing required parameter: dseq") {
 		t.Fatalf("write call with opt-in result = %#v", result)
 	}
 }
@@ -711,7 +710,7 @@ func TestMCPArgumentBoundariesReturnToolErrorsWithoutCallingBackends(t *testing.
 		{tool: "console_list_deployments", args: map[string]any{"limit": "fifty"}, want: "limit must be a number"},
 		{tool: "console_list_providers", args: map[string]any{"scope": "active"}, want: "scope must be one of all, trial"},
 		{tool: "console_get_provider", args: map[string]any{}, want: "missing required parameter: address"},
-		{tool: "console_deposit", args: map[string]any{"dseq": "1", "amount_usd": 0.01}, want: "amount_usd must be greater than or equal to 0.5"},
+		{tool: "console_get_deployment", args: map[string]any{}, want: "missing required parameter: dseq"},
 	}
 
 	runCases := func(t *testing.T, contextName string, cases []boundaryCase) {
@@ -925,9 +924,9 @@ func TestMCPReadOnlyConsoleCallDoesNotAppendActionLog(t *testing.T) {
 		t.Fatalf("decode wallet balance: %v\n%s", err, result.text)
 	}
 	want := map[string]float64{
-		"available_usd":      1.5,
-		"in_deployments_usd": 2.5,
-		"total_usd":          4,
+		"available_usd": 1.5,
+		"escrow_usd":    2.5,
+		"total_usd":     4,
 	}
 	for field, expected := range want {
 		if balance[field] != expected {
@@ -951,22 +950,14 @@ func TestMCPReadOnlyConsoleCallDoesNotAppendActionLog(t *testing.T) {
 
 func TestMCPConsoleMutationsAppendOneActionLogEntryPerAttempt(t *testing.T) {
 	requests := make(chan string, 2)
-	var stateMu sync.Mutex
-	depositApplied := false
 	consoleAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		dseq := strings.TrimPrefix(r.URL.Path, "/v1/deployments/")
+
 		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/v1/deployments/") {
-			dseq := strings.TrimPrefix(r.URL.Path, "/v1/deployments/")
-			stateMu.Lock()
-			applied := depositApplied
-			stateMu.Unlock()
-			amount := "1000000"
-			if dseq == "41" && applied {
-				amount = "6000000"
-			}
-			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"` + dseq + `"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"` + amount + `"}],"transferred":[]}}}}`))
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"` + dseq + `"},"state":"active"},"leases":[]}}`))
 			return
 		}
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/deposit-deployment" {
+		if r.Method != http.MethodDelete || !strings.HasPrefix(r.URL.Path, "/v1/deployments/") {
 			t.Errorf("unexpected Console request = %s %s", r.Method, r.URL.Path)
 			http.NotFound(w, r)
 			return
@@ -975,30 +966,13 @@ func TestMCPConsoleMutationsAppendOneActionLogEntryPerAttempt(t *testing.T) {
 			t.Errorf("x-api-key = %q, want configured credential", key)
 		}
 
-		var envelope struct {
-			Data struct {
-				DSeq    string  `json:"dseq"`
-				Deposit float64 `json:"deposit"`
-			} `json:"data"`
-		}
-		if err := json.NewDecoder(r.Body).Decode(&envelope); err != nil {
-			t.Errorf("decode Console deposit: %v", err)
-			http.Error(w, "bad request", http.StatusBadRequest)
-			return
-		}
-		requests <- envelope.Data.DSeq
-		if envelope.Data.Deposit != 5 {
-			t.Errorf("deposit = %v, want 5 USD", envelope.Data.Deposit)
-		}
+		requests <- dseq
 
-		if envelope.Data.DSeq == "42" {
+		if dseq == "42" {
 			http.Error(w, "deployment is settling", http.StatusConflict)
 			return
 		}
-		stateMu.Lock()
-		depositApplied = true
-		stateMu.Unlock()
-		_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"41"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"6000000"}],"transferred":[]}}}}`))
+		_, _ = w.Write([]byte(`{"data":{"success":true}}`))
 	}))
 	defer consoleAPI.Close()
 
@@ -1012,17 +986,17 @@ func TestMCPConsoleMutationsAppendOneActionLogEntryPerAttempt(t *testing.T) {
 
 	conversation := runMCPConversation(t, home, []string{
 		initializeMessage(t, 1),
-		toolCallMessage(t, 2, "console_deposit", map[string]any{"dseq": "41", "amount_usd": 5}),
-		toolCallMessage(t, 3, "console_deposit", map[string]any{"dseq": "42", "amount_usd": 5}),
+		toolCallMessage(t, 2, "console_close_deployment", map[string]any{"dseq": "41"}),
+		toolCallMessage(t, 3, "console_close_deployment", map[string]any{"dseq": "42"}),
 	}, "--enable-writes")
 	if conversation.exitCode != 0 {
 		t.Fatalf("akt mcp exited %d; stderr:\n%s", conversation.exitCode, conversation.stderr)
 	}
 	if result := decodeToolResult(t, conversation.response(t, 2)); result.isError {
-		t.Fatalf("successful deposit returned an MCP error: %s", result.text)
+		t.Fatalf("successful close returned an MCP error: %s", result.text)
 	}
 	if result := decodeToolResult(t, conversation.response(t, 3)); !result.isError || !strings.Contains(result.text, "unexpected status 409") {
-		t.Fatalf("failed deposit result = %#v", result)
+		t.Fatalf("failed close result = %#v", result)
 	}
 
 	seen := map[string]int{}
@@ -1054,10 +1028,10 @@ func TestMCPConsoleMutationsAppendOneActionLogEntryPerAttempt(t *testing.T) {
 	for _, entry := range entries {
 		byDSeq[entry.DSeq] = entry
 	}
-	if got := byDSeq[41]; got.Action != "deposit" || got.Status != "success" || got.Error != "" {
-		t.Errorf("successful MCP deposit entry = %+v", got)
+	if got := byDSeq[41]; got.Action != "close-deployment" || got.Status != "success" || got.Error != "" {
+		t.Errorf("successful MCP close entry = %+v", got)
 	}
-	if got := byDSeq[42]; got.Action != "deposit" || got.Status != "failed" || !strings.Contains(got.Error, "409") {
-		t.Errorf("failed MCP deposit entry = %+v", got)
+	if got := byDSeq[42]; got.Action != "close-deployment" || got.Status != "failed" || !strings.Contains(got.Error, "409") {
+		t.Errorf("failed MCP close entry = %+v", got)
 	}
 }

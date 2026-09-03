@@ -124,7 +124,7 @@ func TestConsoleCreateDeployment(t *testing.T) {
 
 	res, err := c.BroadcastTx(context.Background(), msgCreateDeployment, map[string]string{
 		"sdl":     sdlPath,
-		"deposit": "5",
+		"deposit": "auto",
 	})
 	if err != nil {
 		t.Fatalf("BroadcastTx: %v", err)
@@ -136,8 +136,8 @@ func TestConsoleCreateDeployment(t *testing.T) {
 	if gotData["sdl"] != sdlText {
 		t.Errorf("sent sdl = %q, want file content %q", gotData["sdl"], sdlText)
 	}
-	if dep, ok := gotData["deposit"].(float64); !ok || dep != 5 {
-		t.Errorf("sent deposit = %v, want 5 USD", gotData["deposit"])
+	if _, present := gotData["deposit"]; present {
+		t.Errorf("sent deposit = %v, want none: credits fund the deployment", gotData["deposit"])
 	}
 
 	if res.TxHash != "HASH1" {
@@ -265,34 +265,28 @@ func TestConsoleCreateDeploymentDerivesMissingManifest(t *testing.T) {
 	}
 }
 
-func TestConsoleCreateDeploymentDepositValidation(t *testing.T) {
-	c, _ := newConsoleClient(t, func(w http.ResponseWriter, _ *http.Request) {
-		t.Error("no request expected for invalid deposits")
-		w.WriteHeader(http.StatusInternalServerError)
-	})
+// Rejecting an explicit deposit is the transport's job (Deposit.RailValue),
+// not the adapter's. What the adapter owes is that no deposit reaches the
+// wire whatever it is handed, so a param that slipped past cannot become a
+// field the API would have to discard.
+func TestConsoleCreateDeploymentNeverSendsADeposit(t *testing.T) {
+	sdlPath := writeTestSDL(t, validConsoleSDL)
 
-	tests := []struct {
-		deposit string
-		want    string
-	}{
-		{"auto", "USD"},
-		{"", "USD"},
-		{"auto", "--deposit"},
-		{"5000000uakt", "USD"},
-		{"0.1", "below the Console minimum"},
-	}
-
-	for _, tt := range tests {
-		_, err := c.BroadcastTx(context.Background(), msgCreateDeployment, map[string]string{
-			"sdl":     "services: {}",
-			"deposit": tt.deposit,
+	for _, deposit := range []string{"", "auto", "5", "5usd"} {
+		var gotData map[string]any
+		c, _ := newConsoleClient(t, func(w http.ResponseWriter, r *http.Request) {
+			gotData = decodeEnvelope(t, r)
+			_, _ = w.Write([]byte(`{"data":{"dseq":"4242","manifest":"[]","signTx":{"code":0,"transactionHash":"HASH1","rawLog":""}}}`))
 		})
-		if err == nil {
-			t.Errorf("deposit %q: expected error", tt.deposit)
-			continue
+
+		if _, err := c.BroadcastTx(context.Background(), msgCreateDeployment, map[string]string{
+			"sdl":     sdlPath,
+			"deposit": deposit,
+		}); err != nil {
+			t.Fatalf("deposit %q: BroadcastTx: %v", deposit, err)
 		}
-		if !strings.Contains(err.Error(), tt.want) {
-			t.Errorf("deposit %q: error %q does not mention %q", tt.deposit, err, tt.want)
+		if _, present := gotData["deposit"]; present {
+			t.Errorf("deposit %q: reached the wire as %v", deposit, gotData["deposit"])
 		}
 	}
 }

@@ -121,7 +121,7 @@ Lint rules: an unpinned image is an **error** -- every service image must carry 
 Full command group for the [Akash Console](https://console.akash.network) managed-wallet API:
 
 - **Authentication** -- `login` (validates the key, then stores it for the active context), `logout`, `whoami`.
-- **Deployment lifecycle** -- `deployment list/get/create/update/close/deposit/settings`. Deposits and amounts are USD (minimum $0.50), accepted as `5`, `5usd`, or `$5`.
+- **Deployment lifecycle** -- `deployment list/get/create/update/close/settings`. There is no deposit: the platform funds every deployment from your account credits, and `settings` sets an optional runtime limit in hours. See [How Funding Works](https://akash.network/docs/getting-started/how-funding-works/).
 - **Bids and leases** -- `bid list <dseq>` and `lease create <dseq> [provider]`, which defaults to the manifest cached per context by `deployment create`.
 - **Wallet and usage** -- `wallet list/balance/settings/cost` and `usage [from] [to]` spend history, all rendered in USD.
 - **Keyless marketplace** -- `provider list/get/regions/auditors`, `gpu`, `template list/get/sdl`, and `screen <sdl-file>` bid screening. These hit public endpoints and need neither an API key nor a configured context.
@@ -400,11 +400,12 @@ All transaction commands accept `--from`, `--gas`, `--fees`, `--broadcast-mode`,
 Workflow commands orchestrate multi-step operations, routing each step through the active context's auth method (local signing for `keyring`, Console API for `console-api`). They support two execution modes:
 
 SDL prices use canonical `uact` on both rails. A legacy `uakt` price is valid
-on chain only with an explicitly matching `--deposit <amount>uakt`. Console
-deposits are USD with a $0.50 minimum. On the
-chain rail, an omitted or `auto` deposit resolves the live on-chain minimum;
-an explicit coin is preserved. `--dry-run` displays the resolved rail-specific
-deposit and fails if it cannot be determined.
+on chain only with an explicitly matching `--deposit <amount>uakt`. The
+`--deposit` argument is chain-rail only: on the chain rail an omitted or `auto`
+deposit resolves the live on-chain minimum and an explicit coin is preserved,
+while a console-api context funds the deployment from your account credits and
+rejects a deposit outright. `--dry-run` displays the resolved chain deposit and
+fails if it cannot be determined.
 
 Successful deploys wait up to two minutes for service readiness and then print
 live URIs. Use `--ready-timeout` to change the bound or `--no-wait-active` to
@@ -544,7 +545,7 @@ akt context log --since 2026-01-01
 
 ### Console API (Managed Wallet)
 
-Contexts with `--auth-method console-api` use the [Akash Console Managed Wallet API](https://akash.network/docs/api-documentation/console-api/api-reference/) for deployment operations. No local keys are needed -- the Console backend handles signing and broadcasting. Deposits are in USD.
+Contexts with `--auth-method console-api` use the [Akash Console Managed Wallet API](https://akash.network/docs/api-documentation/console-api/api-reference/) for deployment operations. No local keys are needed -- the Console backend handles signing and broadcasting. Funding is not something you do: you add credits to the account and the platform keeps every deployment funded from that balance. See [How Funding Works](https://akash.network/docs/getting-started/how-funding-works/).
 
 ```bash
 # Set up a console-api context
@@ -555,8 +556,8 @@ akt context create console --network mainnet --auth-method console-api --set-cur
 # writes it to contexts/<name>/console-api-key (0600).
 akt console login
 
-# Deploy using the Console managed wallet
-akt tx deployment create deploy.yaml --deposit 5
+# Deploy using the Console managed wallet (no deposit -- credits fund it)
+akt deploy deploy.yaml
 
 # List your deployments
 akt query deployment

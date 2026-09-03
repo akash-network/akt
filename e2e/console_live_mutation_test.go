@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"math"
-	"math/big"
 	"os"
 	"path/filepath"
 	"sort"
@@ -183,28 +182,21 @@ func TestConsoleLiveManagedWalletLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Reserve the complete immutable request plan before the first mutation.
-	// Ambiguous subprocess outcomes never refund these reservations.
-	if err := budget.reserveRequest(consoleCreateDepositUSD); err != nil {
-		t.Fatal(err)
-	}
-	if err := budget.reserveRequest(consoleAdditionalDepositUSD); err != nil {
+	// Ambiguous subprocess outcomes never refund this reservation. The
+	// platform now chooses the funding amount, so the reservation is the
+	// lifecycle ceiling rather than a sum of deposits we picked.
+	if err := budget.reserveRequest(consoleLifecycleRequestUSD); err != nil {
 		t.Fatal(err)
 	}
 	tracker.markCreateAttempted()
 
 	var created struct {
-		DSeq      consoleFlexibleID `json:"dseq"`
-		TxHash    *string           `json:"txHash"`
-		AutoTopUp struct {
-			Enabled        *bool  `json:"enabled"`
-			Frequency      string `json:"frequency"`
-			DisableCommand string `json:"disableCommand"`
-		} `json:"autoTopUp"`
+		DSeq   consoleFlexibleID `json:"dseq"`
+		TxHash *string           `json:"txHash"`
 	}
 	requireConsoleJSON(t,
 		runConsoleAkt(lifecycleCtx, t, home,
 			"console", "deployment", "create", initialSDLPath,
-			strconv.FormatFloat(consoleCreateDepositUSD, 'f', 2, 64),
 		),
 		"akt console deployment create",
 		&created,
@@ -219,26 +211,23 @@ func TestConsoleLiveManagedWalletLifecycle(t *testing.T) {
 		}
 	}
 	tracker.track(dseq)
-	if created.AutoTopUp.Enabled == nil || !*created.AutoTopUp.Enabled {
-		t.Fatal("create did not report managed-wallet auto-top-up enabled; the safety-disable path cannot be verified")
-	}
 	if created.TxHash != nil && strings.TrimSpace(*created.TxHash) == "" {
 		t.Fatal("create acknowledgement included an empty managed-wallet transaction hash")
-	}
-	if created.AutoTopUp.Frequency != "daily" || created.AutoTopUp.DisableCommand != "akt console deployment settings "+dseq+" false" {
-		t.Fatalf("create acknowledgement omitted the daily auto-top-up contract or exact disable command for dseq %s", dseq)
 	}
 	expectedActions := []string{"create-deployment"}
 	assertConsoleActions(t, home, contextName, dseq, expectedActions...)
 
-	// Disable unattended spending as soon as the deployment identity exists.
-	assertConsoleAutoTopUpDisabled(lifecycleCtx, t, home, dseq)
+	// Bound unattended spending as soon as the deployment identity exists.
+	// Always-on funding cannot be switched off, so the runtime limit is the
+	// only control that stops an abandoned lifecycle from being funded
+	// indefinitely.
+	assertConsoleRuntimeLimit(lifecycleCtx, t, home, dseq)
 	expectedActions = append(expectedActions, "update-deployment-settings")
 	assertConsoleActions(t, home, contextName, dseq, expectedActions...)
 	settingsObserveCtx, cancelSettingsObserve := context.WithTimeout(lifecycleCtx, 15*time.Second)
-	if err := waitForConsoleAutoTopUpDisabled(settingsObserveCtx, observer, dseq); err != nil {
+	if err := waitForConsoleRuntimeLimit(settingsObserveCtx, observer, dseq); err != nil {
 		cancelSettingsObserve()
-		t.Fatalf("auto-top-up was not independently observed disabled before paid operations for dseq %s: %v", dseq, err)
+		t.Fatalf("the runtime limit was not independently observed before paid operations for dseq %s: %v", dseq, err)
 	}
 	cancelSettingsObserve()
 
@@ -283,8 +272,11 @@ func TestConsoleLiveManagedWalletLifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatalf("new deployment %s had unproved escrow accounting: %v", dseq, err)
 	}
-	if createdFunded.Cmp(big.NewRat(500_000, 1)) != 0 || createdTransferred.Sign() != 0 {
-		t.Fatalf("new deployment %s did not contain exactly $%.2f funded escrow and zero transferred spend", dseq, consoleCreateDepositUSD)
+	// The platform chooses the funding amount, so an exact figure is not ours
+	// to assert. What must hold before a lease exists is that the escrow is
+	// funded and nothing has been spent out of it yet.
+	if createdFunded.Sign() <= 0 || createdTransferred.Sign() != 0 {
+		t.Fatalf("new deployment %s did not contain positive funded escrow and zero transferred spend", dseq)
 	}
 	cliDetail, _, err := getConsoleDeployment(lifecycleCtx, t, home, dseq)
 	if err != nil {
@@ -306,68 +298,20 @@ func TestConsoleLiveManagedWalletLifecycle(t *testing.T) {
 	)
 	assertConsoleActions(t, home, contextName, dseq, expectedActions...)
 
-	// Deposit before accepting a lease. With no active provider consuming
-	// escrow, the independent observer can prove the exact requested amount
-	// rather than accepting any positive balance change.
-	beforeDeposit, err := observer.getDeployment(lifecycleCtx, dseq)
+	// Snapshot the escrow immediately before the lease. With no active
+	// provider consuming it, this is the last point at which transferred
+	// spend is provably zero, which is what the post-cleanup spend figure is
+	// measured against.
+	preLeaseDetail, err := observer.getDeployment(lifecycleCtx, dseq)
 	if err != nil {
-		t.Fatalf("capture escrow before deposit: %v", err)
-	}
-	beforeFunds, err := consoleEscrowFunds(beforeDeposit)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var deposited struct {
-		DSeq      consoleFlexibleID `json:"dseq"`
-		AmountUSD float64           `json:"amount_usd"`
-		Status    string            `json:"status"`
-	}
-	requireConsoleJSON(t,
-		runConsoleAkt(lifecycleCtx, t, home,
-			"console", "deployment", "deposit", dseq,
-			strconv.FormatFloat(consoleAdditionalDepositUSD, 'f', 2, 64),
-		),
-		"akt console deployment deposit",
-		&deposited,
-	)
-	if deposited.DSeq.String() != dseq || deposited.AmountUSD != consoleAdditionalDepositUSD || deposited.Status != "deposited" {
-		t.Fatalf("deposit acknowledgement did not report dseq=%s amount=%.2f status=deposited", dseq, consoleAdditionalDepositUSD)
-	}
-	expectedActions = append(expectedActions, "deposit")
-	assertConsoleActions(t, home, contextName, dseq, expectedActions...)
-
-	expectedDepositMicros := new(big.Rat).SetInt(big.NewInt(int64(math.Round(consoleAdditionalDepositUSD * 1e6))))
-	depositObserveCtx, cancelDepositObserve := context.WithTimeout(lifecycleCtx, 30*time.Second)
-	var preLeaseDetail consoleDeploymentObservation
-	err = waitForConsoleCondition(depositObserveCtx, 2*time.Second, func() (bool, string, error) {
-		detail, err := observer.getDeployment(depositObserveCtx, dseq)
-		if err != nil {
-			return false, "", err
-		}
-		afterFunds, err := consoleEscrowFunds(detail)
-		if err != nil {
-			return false, "", err
-		}
-		delta, ok := consoleFundsDeltaForDenom(beforeFunds, afterFunds, bid.Price.Denom)
-		if !ok {
-			return false, fmt.Sprintf("escrow omitted denomination %s", bid.Price.Denom), nil
-		}
-		if delta.Cmp(expectedDepositMicros) == 0 {
-			preLeaseDetail = detail
-			return true, "escrow increased by the exact requested deposit", nil
-		}
-		return false, fmt.Sprintf("escrow delta in %s is %s, waiting for %s", bid.Price.Denom, delta, expectedDepositMicros), nil
-	})
-	cancelDepositObserve()
-	if err != nil {
-		t.Fatalf("deposit succeeded but independent escrow state did not increase by exactly %.2f USD for dseq %s: %v", consoleAdditionalDepositUSD, dseq, err)
+		t.Fatalf("capture escrow before lease: %v", err)
 	}
 	preLeaseFunded, preLeaseTransferred, err := consoleEscrowAccountingForDenom(preLeaseDetail, "uact")
 	if err != nil {
 		t.Fatalf("pre-lease deployment %s had unproved escrow accounting: %v", dseq, err)
 	}
-	if preLeaseFunded.Cmp(big.NewRat(1_000_000, 1)) != 0 || preLeaseTransferred.Sign() != 0 {
-		t.Fatalf("pre-lease deployment %s did not contain exactly $%.2f funded escrow and zero transferred spend", dseq, consoleLifecycleRequestUSD)
+	if preLeaseFunded.Sign() <= 0 || preLeaseTransferred.Sign() != 0 {
+		t.Fatalf("pre-lease deployment %s did not contain positive funded escrow and zero transferred spend", dseq)
 	}
 	tracker.recordTransferredBaseline(dseq, preLeaseTransferred)
 
@@ -592,18 +536,18 @@ func TestConsoleLiveManagedWalletLifecycle(t *testing.T) {
 	}
 	assertConsoleActions(t, home, contextName, dseq, expectedActions...)
 
-	// Exercise the existing-settings update path without ever re-enabling
-	// unattended top-up.
-	assertConsoleAutoTopUpDisabled(lifecycleCtx, t, home, dseq)
+	// Exercise the existing-settings update path without ever loosening the
+	// runtime bound.
+	assertConsoleRuntimeLimit(lifecycleCtx, t, home, dseq)
 	expectedActions = append(expectedActions, "update-deployment-settings")
 	assertConsoleActions(t, home, contextName, dseq, expectedActions...)
 	settingsObserveCtx, cancelSettingsObserve = context.WithTimeout(lifecycleCtx, 15*time.Second)
-	if err := waitForConsoleAutoTopUpDisabled(settingsObserveCtx, observer, dseq); err != nil {
+	if err := waitForConsoleRuntimeLimit(settingsObserveCtx, observer, dseq); err != nil {
 		cancelSettingsObserve()
-		t.Fatalf("updated auto-top-up setting was not independently observable for dseq %s: %v", dseq, err)
+		t.Fatalf("the updated runtime limit was not independently observable for dseq %s: %v", dseq, err)
 	}
 	cancelSettingsObserve()
-	assertConsoleAutoTopUpRead(lifecycleCtx, t, home, dseq)
+	assertConsoleRuntimeLimitRead(lifecycleCtx, t, home, dseq)
 	assertConsoleActions(t, home, contextName, dseq, expectedActions...)
 
 	var updated consoleDeploymentObservation
@@ -914,7 +858,7 @@ func consoleDeploymentRecordFingerprints(deployments []consoleDeploymentObservat
 	return records
 }
 
-func waitForConsoleAutoTopUpDisabled(ctx context.Context, observer *consoleAPIObserver, dseq string) error {
+func waitForConsoleRuntimeLimit(ctx context.Context, observer *consoleAPIObserver, dseq string) error {
 	return waitForConsoleCondition(ctx, time.Second, func() (bool, string, error) {
 		settings, err := observer.getDeploymentSettings(ctx, dseq)
 		if err != nil {
@@ -923,43 +867,44 @@ func waitForConsoleAutoTopUpDisabled(ctx context.Context, observer *consoleAPIOb
 		if settings.DSeq.String() != dseq {
 			return false, fmt.Sprintf("settings returned dseq %s", settings.DSeq), nil
 		}
-		if settings.AutoTopUpEnabled {
-			return false, "auto-top-up is still enabled", nil
+		if settings.RuntimeLimitHours == nil {
+			return false, "no runtime limit is set", nil
 		}
-		return true, "auto-top-up is disabled", nil
+		if *settings.RuntimeLimitHours > consoleLifecycleRuntimeLimitHours {
+			return false, fmt.Sprintf("runtime limit is %dh, above the %dh bound", *settings.RuntimeLimitHours, consoleLifecycleRuntimeLimitHours), nil
+		}
+		return true, "runtime limit bounds the lifecycle", nil
 	})
 }
 
-func assertConsoleAutoTopUpDisabled(ctx context.Context, t *testing.T, home, dseq string) {
+func assertConsoleRuntimeLimit(ctx context.Context, t *testing.T, home, dseq string) {
 	t.Helper()
-	var settings struct {
-		DSeq             consoleFlexibleID `json:"dseq"`
-		AutoTopUpEnabled *bool             `json:"autoTopUpEnabled"`
-	}
-	requireConsoleJSON(t,
-		runConsoleAkt(ctx, t, home, "console", "deployment", "settings", dseq, "false"),
-		"akt console deployment settings <dseq> false",
-		&settings,
-	)
-	if settings.DSeq.String() != dseq || settings.AutoTopUpEnabled == nil || *settings.AutoTopUpEnabled {
-		t.Fatalf("deployment settings did not report dseq=%s with auto-top-up disabled", dseq)
+	settings := runConsoleDeploymentSettings(ctx, t, home, dseq, strconv.Itoa(consoleLifecycleRuntimeLimitHours))
+	if settings.DSeq.String() != dseq || settings.RuntimeLimitHours == nil || *settings.RuntimeLimitHours != consoleLifecycleRuntimeLimitHours {
+		t.Fatalf("deployment settings did not report dseq=%s with a %dh runtime limit", dseq, consoleLifecycleRuntimeLimitHours)
 	}
 }
 
-func assertConsoleAutoTopUpRead(ctx context.Context, t *testing.T, home, dseq string) {
+func assertConsoleRuntimeLimitRead(ctx context.Context, t *testing.T, home, dseq string) {
 	t.Helper()
-	var settings struct {
-		DSeq             consoleFlexibleID `json:"dseq"`
-		AutoTopUpEnabled *bool             `json:"autoTopUpEnabled"`
+	settings := runConsoleDeploymentSettings(ctx, t, home, dseq)
+	if settings.DSeq.String() != dseq || settings.RuntimeLimitHours == nil || *settings.RuntimeLimitHours > consoleLifecycleRuntimeLimitHours {
+		t.Fatalf("read-back deployment settings did not report dseq=%s with a bounded runtime limit", dseq)
 	}
+}
+
+func runConsoleDeploymentSettings(ctx context.Context, t *testing.T, home, dseq string, extra ...string) consoleSettingsObservation {
+	t.Helper()
+	args := append([]string{"console", "deployment", "settings", dseq}, extra...)
+
+	var settings consoleSettingsObservation
 	requireConsoleJSON(t,
-		runConsoleAkt(ctx, t, home, "console", "deployment", "settings", dseq),
-		"akt console deployment settings <dseq>",
+		runConsoleAkt(ctx, t, home, args...),
+		"akt "+strings.Join(args, " "),
 		&settings,
 	)
-	if settings.DSeq.String() != dseq || settings.AutoTopUpEnabled == nil || *settings.AutoTopUpEnabled {
-		t.Fatalf("read-back deployment settings did not report dseq=%s with auto-top-up disabled", dseq)
-	}
+
+	return settings
 }
 
 func waitForConsoleBid(

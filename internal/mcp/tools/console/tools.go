@@ -147,7 +147,7 @@ func HandleListBids(cl *console.Client) mcpserver.ToolHandlerFunc {
 func ToolWalletBalance() mcp.Tool {
 	return mcp.NewTool(
 		"console_wallet_balance",
-		mcp.WithDescription("Get the Console-managed wallet's available, in-deployment, and total balances in USD."),
+		mcp.WithDescription("Get the Console-managed wallet's available, escrow-held, and total balances in USD. Escrow is held by running deployments, not spent, and returns to available as each one closes."),
 	)
 }
 
@@ -160,13 +160,13 @@ func HandleWalletBalance(cl *console.Client) mcpserver.ToolHandlerFunc {
 		}
 
 		return marshal.ToTextResult(struct {
-			AvailableUSD     float64 `json:"available_usd"`
-			InDeploymentsUSD float64 `json:"in_deployments_usd"`
-			TotalUSD         float64 `json:"total_usd"`
+			AvailableUSD float64 `json:"available_usd"`
+			EscrowUSD    float64 `json:"escrow_usd"`
+			TotalUSD     float64 `json:"total_usd"`
 		}{
-			AvailableUSD:     resp.BalanceUSD(),
-			InDeploymentsUSD: resp.DeploymentsUSD(),
-			TotalUSD:         resp.TotalUSD(),
+			AvailableUSD: resp.BalanceUSD(),
+			EscrowUSD:    resp.DeploymentsUSD(),
+			TotalUSD:     resp.TotalUSD(),
 		})
 	}
 }
@@ -382,54 +382,6 @@ func HandleCloseDeployment(cl *console.Client) mcpserver.ToolHandlerFunc {
 		return marshal.ToTextResult(map[string]string{
 			"dseq":   dseq,
 			"status": "closed",
-		})
-	}
-}
-
-// ToolDeposit returns the tool definition for topping up a deployment.
-func ToolDeposit() mcp.Tool {
-	return mcp.NewTool(
-		"console_deposit",
-		mcp.WithDescription("Add funds to a Console-managed deployment's escrow, extending how long it runs. Spends real credits from the managed wallet."),
-		mcp.WithString("dseq",
-			mcp.Required(),
-			mcp.Description("Deployment sequence number to deposit into."),
-		),
-		mcp.WithNumber("amount_usd",
-			mcp.Required(),
-			mcp.Min(console.MinDepositUSD),
-			mcp.Description(fmt.Sprintf("Amount to deposit in USD. Must be at least %.2f.", console.MinDepositUSD)),
-		),
-	)
-}
-
-// HandleDeposit returns the handler for console_deposit.
-func HandleDeposit(cl *console.Client) mcpserver.ToolHandlerFunc {
-	return func(ctx context.Context, req mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-		dseq, err := marshal.RequireString(req, "dseq")
-		if err != nil {
-			return marshal.ErrResult(err.Error()), nil
-		}
-
-		amount, ok := marshal.OptionalFloat(req, "amount_usd")
-		if !ok {
-			return marshal.ErrResult("amount_usd is required"), nil
-		}
-		// Checked here as well as server-side so a wrong amount costs a tool
-		// call rather than a failed API request against a funded account.
-		if amount < console.MinDepositUSD {
-			return marshal.ErrResultf("amount_usd must be at least %.2f, got %.2f", console.MinDepositUSD, amount), nil
-		}
-
-		if err := cl.Deposit(ctx, dseq, amount); err != nil {
-			return marshal.ErrResultf("failed to deposit into %s: %v", dseq, err), nil
-		}
-
-		return marshal.ToTextResult(map[string]any{
-			"dseq":        dseq,
-			"amount_usd":  amount,
-			"status":      "deposited",
-			"description": "escrow topped up",
 		})
 	}
 }

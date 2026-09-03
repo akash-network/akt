@@ -92,7 +92,7 @@ func TestConsoleLive(t *testing.T) {
 			args: []string{"console", "wallet", "balance"},
 			contract: consoleLiveJSONContract{shape: consoleLiveObject, fields: []consoleLiveFieldContract{
 				{name: "available", contract: nonEmptyString},
-				{name: "inDeployments", contract: nonEmptyString},
+				{name: "escrow", contract: nonEmptyString},
 				{name: "total", contract: nonEmptyString},
 				{name: "allocationStatus", contract: nonEmptyString},
 				{name: "allocationNote", contract: nonEmptyString},
