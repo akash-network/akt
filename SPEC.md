@@ -4481,6 +4481,17 @@ one-shot deadline. Provider-controlled error detail is length-bounded, stripped
 of terminal control sequences, and redacted for bearer/API credentials before
 it is returned or recorded in an action log.
 
+The Console API client MUST apply a deadline to every request attempt. GET and
+HEAD attempts use 30 seconds. POST, PUT, PATCH, and DELETE attempts use two
+minutes because mutation handlers may synchronously sign and broadcast a chain
+transaction; lease creation additionally sends the manifest
+before answering and its server-side provider retry path alone can consume 57
+seconds. An earlier caller deadline always wins, and cancellation MUST stop an
+in-flight request promptly. The request deadline and the post-submit
+reconciliation window are independent bounds: an ambiguous mutation response
+MUST still receive its complete observation window when the caller remains
+active.
+
 #### `POST /v1/deployments` -- Create Deployment
 
 | Field           | Type   | Required | Description                           |
@@ -4519,6 +4530,15 @@ Returns updated deployment with leases and escrow.
 
 Returns `{ data: { success: boolean } }`.
 
+An absent or closed deployment discovered by the preflight is an
+already-closed error and sends no DELETE. After a DELETE has been submitted, a
+lost, malformed, or stale acknowledgement is ambiguous. The client MUST NOT
+replay that ambiguous request automatically. It reads the deployment back for
+a context-cancellable 30-second observation window and treats closed or absent
+state as success. If active state remains unproved at the deadline, the action
+is recorded as `pending` and the error names
+`akt console deployment get <dseq>` before suggesting another close attempt.
+
 #### `GET /v1/bids?dseq={dseq}` -- Fetch Bids
 
 Query parameter: `dseq` (required). Returns array of bids with provider details, pricing, and resource offers.
@@ -4535,8 +4555,12 @@ Returns deployment with created leases and escrow state.
 `POST /v1/leases` is not replayed after an error because it is not
 idempotent. Instead, the client reads each referenced deployment back and
 treats the operation as successful only when every exact requested
-`dseq/gseq/oseq/provider` lease is present and active. If read-back does not
-prove that state, the original POST error is returned.
+`dseq/gseq/oseq/provider` lease is present and active. Read-back continues for
+a context-cancellable 30-second observation window rather than a fixed number
+of rapid attempts. If the window does not prove that state, the action is
+recorded as `pending` and an outcome-unknown error retains the original POST
+error and names `akt console deployment get <dseq>`. The POST is issued exactly
+once.
 
 #### `POST /v1/deposit-deployment` -- Add Deposit (deprecated)
 
@@ -4641,6 +4665,11 @@ the client reads the deployment back and compares its base64 `hash` with the
 deterministic SDL version; a match proves success despite the failed response.
 All other 4xx responses remain terminal. A failed lease POST follows the
 read-back rule in §7.3 and is never replayed.
+
+Transport failures are not automatically retried, including for DELETE: the
+server may still have accepted a transaction before the response was lost.
+Lease and close transport failures use the exact post-state observation rules
+in §7.3. HTTP 429 and 5xx responses retain the method-aware retry policy above.
 
 Deployment creation adds a stronger ambiguity protocol. Before POSTing, the
 client validates the SDL, derives its base64 version hash and rendered
@@ -5601,7 +5630,12 @@ Query commands use a **registry-based pretty output system** (`internal/output/p
 When `--output pretty` (the default), output is styled using **lipgloss**. At the
 final write boundary, all ANSI styling (color, bold, underline, and related
 sequences) is removed when stdout is not a TTY or when the `NO_COLOR`
-environment variable is present, even when its value is empty.
+environment variable is present, even when its value is empty. Terminal
+detection MUST inspect the original Cobra output writer before it is wrapped by
+write accounting. The checked writer MUST then wrap the terminal-aware writer:
+renderer -> checked writer -> terminal-aware writer -> original destination.
+Passing a checked writer into terminal detection is invalid because the wrapper
+does not expose the destination's terminal file descriptor.
 
 ### 10.1.1 Stream Separation (stdout vs stderr)
 
@@ -5637,7 +5671,9 @@ query formatters, every transaction result type and format, generic JSON/YAML,
 and tables. Commands write through `cmd.OutOrStdout()` rather than bypassing
 Cobra with `os.Stdout`. ANSI removal is a transparent decorator: it reports a
 short write of stripped bytes as `io.ErrShortWrite` while returning the original
-input length only after the stripped payload was accepted in full.
+input length only after the stripped payload was accepted in full. Pretty
+query, transaction, simulation, deployment-group, and store renderers all use
+the same terminal-aware checked-writer composition.
 
 The transaction pretty renderer applies this contract to the complete public
 `PrintTxResult` path. Summary rows, section headers, registered formatters,
@@ -7590,10 +7626,11 @@ managed-wallet receipt with code zero and a nonblank transaction hash; an
 unusable 2xx response enters the existing no-replay version-hash
 reconciliation. Deployment update validates the returned DSEQ and deterministic
 SDL version hash before success, otherwise using its exact read-back. Close
-requires a present `success: true` acknowledgement. A created API key requires a
-nonblank ID, the requested name, and its one-time secret; an ambiguous response
-is pending and is never replayed. A minted provider JWT requires a nonblank
-token before it may be used.
+requires a present `success: true` acknowledgement or independent observation
+of closed/absent post-state during its 30-second ambiguity window. A created API
+key requires a nonblank ID, the requested name, and its one-time secret; an
+ambiguous response is pending and is never replayed. A minted provider JWT
+requires a nonblank token before it may be used.
 
 The Console sandbox lifecycle covers deployment create, bid observation, lease
 creation, live status, logs, events, a deterministic non-interactive shell

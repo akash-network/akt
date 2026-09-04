@@ -36,7 +36,9 @@ func PrintQueryResult(cmd *cobra.Command, cctx sdkclient.Context, msg proto.Mess
 			return checked.Complete(cctx.WithOutputFormat("json").PrintProto(msg))
 		}
 
-		return checked.Complete(f.Format(clioutput.TerminalAwareWriter(checked), cmd, cctx, msg))
+		checked = clioutput.NewCheckedTerminalWriter(cmd.OutOrStdout())
+		cctx = cctx.WithOutput(checked)
+		return checked.Complete(f.Format(checked, cmd, cctx, msg))
 	}
 }
 

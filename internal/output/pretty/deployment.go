@@ -182,7 +182,8 @@ func PrintGroupsList(cmd *cobra.Command, cctx sdkclient.Context, groups dvbeta.G
 		return checked.Complete(outCctx.PrintRaw(raw))
 	}
 
-	_, err := fmt.Fprint(clioutput.TerminalAwareWriter(checked), RenderGroupsList(groups))
+	checked = clioutput.NewCheckedTerminalWriter(cmd.OutOrStdout())
+	_, err := fmt.Fprint(checked, RenderGroupsList(groups))
 	return checked.Complete(err)
 }
 

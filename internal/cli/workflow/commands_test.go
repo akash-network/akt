@@ -818,10 +818,10 @@ func TestWorkflowCommandFailsWhenFinalReportWriteFails(t *testing.T) {
 		{
 			name:           "engine and JSONL writer errors",
 			outputArgs:     []string{"--output", "jsonl"},
-			responseStatus: http.StatusInternalServerError,
+			responseStatus: http.StatusConflict,
 			wantReport:     "write workflow JSONL report",
 			wantRunFailure: true,
-			wantRequests:   4,
+			wantRequests:   2,
 		},
 	}
 
@@ -989,7 +989,7 @@ func TestWorkflowCommandReturnsRunFailureAfterWritingFinalReport(t *testing.T) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		http.Error(w, "console unavailable", http.StatusInternalServerError)
+		http.Error(w, "close conflict", http.StatusConflict)
 	}))
 	t.Cleanup(srv.Close)
 
@@ -1014,10 +1014,10 @@ func TestWorkflowCommandReturnsRunFailureAfterWritingFinalReport(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), `workflow "close" failed`) {
 		t.Fatalf("execute error = %v, want workflow failure", err)
 	}
-	if requests != 4 {
-		t.Fatalf("Console close requests = %d, want one preflight and three DELETE attempts", requests)
+	if requests != 2 {
+		t.Fatalf("Console close requests = %d, want one preflight and one terminal DELETE", requests)
 	}
-	for _, want := range []string{"Results:", "close-deployment", "failed", "HTTP 500"} {
+	for _, want := range []string{"Results:", "close-deployment", "failed", "status 409"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("final report does not contain %q:\n%s", want, out)
 		}

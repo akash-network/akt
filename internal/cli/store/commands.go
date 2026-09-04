@@ -102,8 +102,8 @@ func statusCmd(homeFn func() string, ctxNameFn func() string) *cobra.Command {
 				}{ctxName, p, dbSize, s.SchemaVersion(), stats, describeReconciliation(ss)})
 			}
 
-			checked := output.NewCheckedWriter(cmd.OutOrStdout())
-			out := output.TerminalAwareWriter(checked)
+			checked := output.NewCheckedTerminalWriter(cmd.OutOrStdout())
+			out := io.Writer(checked)
 
 			fmt.Fprintln(out, pretty.Section("Store"))
 			pretty.KV(out, "Context", ctxName)
