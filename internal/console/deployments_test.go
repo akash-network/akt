@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -71,7 +72,7 @@ func TestCreateDeployment(t *testing.T) {
 			assert.Equal(t, "/v1/deployments", r.URL.Path)
 			data := decodeDataBody(t, r)
 			assert.Equal(t, validUpdateSDL, data["sdl"])
-			assert.InDelta(t, 5.0, data["deposit"], 0.001)
+			assert.NotContains(t, data, "deposit", "the API discards a deposit; credits fund the deployment")
 
 			w.Header().Set("Content-Type", "application/json")
 			_, _ = w.Write([]byte(`{"data":{"dseq":"12345","manifest":"[{\"name\":\"web\"}]","signTx":{"code":0,"transactionHash":"ABC123","rawLog":""}}}`))
@@ -82,7 +83,7 @@ func TestCreateDeployment(t *testing.T) {
 	defer srv.Close()
 
 	c := console.New(srv.URL, "test-key")
-	resp, err := c.CreateDeployment(context.Background(), validUpdateSDL, 5.0)
+	resp, err := c.CreateDeployment(context.Background(), validUpdateSDL)
 	require.NoError(t, err)
 	assert.Equal(t, "12345", resp.DSeq.String())
 	assert.Equal(t, `[{"name":"web"}]`, resp.Manifest)
@@ -117,7 +118,7 @@ func TestCreateDeploymentReconcilesAmbiguousResponseWithoutReplayingPost(t *test
 	defer srv.Close()
 
 	result, err := console.New(srv.URL, "test-key").CreateDeployment(
-		context.Background(), validUpdateSDL, 5,
+		context.Background(), validUpdateSDL,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "12345", result.DSeq.String())
@@ -149,7 +150,7 @@ func TestCreateDeploymentReconcilesMalformedReceiptWithoutReplayingPost(t *testi
 	defer srv.Close()
 
 	result, err := console.New(srv.URL, "test-key").CreateDeployment(
-		context.Background(), validUpdateSDL, 5,
+		context.Background(), validUpdateSDL,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "888", result.DSeq.String(), "malformed acknowledgement must be replaced by exact read-back")
@@ -171,7 +172,7 @@ func TestCreateDeploymentAbortsBeforePostWhenSnapshotFails(t *testing.T) {
 	defer srv.Close()
 
 	_, err := console.New(srv.URL, "test-key").CreateDeployment(
-		context.Background(), validUpdateSDL, 5,
+		context.Background(), validUpdateSDL,
 	)
 	require.ErrorIs(t, err, console.ErrUnauthorized)
 	assert.Zero(t, posts.Load(), "creation without a baseline cannot be reconciled safely")
@@ -207,7 +208,7 @@ func TestCreateDeploymentSnapshotsMultipleDeploymentPages(t *testing.T) {
 	defer srv.Close()
 
 	result, err := console.New(srv.URL, "test-key").CreateDeployment(
-		context.Background(), validUpdateSDL, 5,
+		context.Background(), validUpdateSDL,
 	)
 	require.NoError(t, err)
 	assert.Equal(t, "12345", result.DSeq.String())
@@ -239,7 +240,7 @@ func TestCreateDeploymentRejectsEndlessDeploymentPaginationBeforePost(t *testing
 	defer srv.Close()
 
 	_, err := console.New(srv.URL, secret).CreateDeployment(
-		context.Background(), validUpdateSDL, 5,
+		context.Background(), validUpdateSDL,
 	)
 	require.ErrorContains(t, err, "deployment pagination exceeded safety limit")
 	assert.NotContains(t, err.Error(), secret)
@@ -284,7 +285,7 @@ func TestCreateDeploymentRejectsDeploymentRecordLimitBeforePost(t *testing.T) {
 	defer srv.Close()
 
 	_, err := console.New(srv.URL, "test-key").CreateDeployment(
-		context.Background(), validUpdateSDL, 5,
+		context.Background(), validUpdateSDL,
 	)
 	require.ErrorContains(t, err, "deployment pagination exceeded safety limit")
 	assert.Zero(t, posts.Load(), "an incomplete baseline cannot authorize deployment creation")
@@ -643,234 +644,6 @@ func TestCloseDeploymentCannotBeClosedIsRealError(t *testing.T) {
 	assert.NotErrorIs(t, err, console.ErrAlreadyClosed)
 }
 
-func TestDepositBodyShape(t *testing.T) {
-	var gets atomic.Int32
-	var posts atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			gets.Add(1)
-			amount := "1000000"
-			if posts.Load() > 0 {
-				amount = "13500000"
-			}
-			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"321"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"` + amount + `"}],"transferred":[]}}}}`))
-		case http.MethodPost:
-			posts.Add(1)
-			assert.Equal(t, "/v1/deposit-deployment", r.URL.Path)
-
-			data := decodeDataBody(t, r)
-			assert.Equal(t, "321", data["dseq"])
-			assert.InDelta(t, 12.5, data["deposit"], 0.001)
-			assert.NotContains(t, data, "amount", "wire field is deposit, not amount")
-
-			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"321"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"13500000"}],"transferred":[]}}}}`))
-		default:
-			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer srv.Close()
-
-	c := console.New(srv.URL, "test-key")
-	require.NoError(t, c.Deposit(context.Background(), "321", 12.5))
-	assert.Equal(t, int32(1), gets.Load(), "an exact returned post-state must avoid a redundant read-back")
-	assert.Equal(t, int32(1), posts.Load())
-}
-
-func TestDepositRejectsInvalidAmountBeforeNetwork(t *testing.T) {
-	var requests atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
-		requests.Add(1)
-	}))
-	defer srv.Close()
-
-	client := console.New(srv.URL, "test-key")
-	err := client.Deposit(context.Background(), "321", 0)
-	require.ErrorContains(t, err, "at least $0.50")
-	err = client.Deposit(context.Background(), "321", -1)
-	require.ErrorContains(t, err, "must not be negative")
-	err = client.Deposit(context.Background(), "321", 0.505)
-	require.ErrorContains(t, err, "at most two fractional digits")
-	assert.Equal(t, int32(0), requests.Load(), "invalid amount must not read or mutate remote state")
-}
-
-func TestDepositRequiresAuthoritativePreStateBeforePost(t *testing.T) {
-	tests := []struct {
-		name       string
-		status     int
-		body       string
-		wantDetail string
-	}{
-		{
-			name:       "deployment lookup fails",
-			status:     http.StatusNotFound,
-			body:       `{"message":"deployment missing"}`,
-			wantDetail: "snapshot deployment escrow before deposit",
-		},
-		{
-			name:       "deployment identity differs",
-			status:     http.StatusOK,
-			body:       `{"data":{"deployment":{"id":{"dseq":"999"}},"escrow_account":{"state":{"funds":[],"transferred":[]}}}}`,
-			wantDetail: `pre-state returned dseq "999", want "321"`,
-		},
-		{
-			name:       "escrow is omitted",
-			status:     http.StatusOK,
-			body:       `{"data":{"deployment":{"id":{"dseq":"321"}}}}`,
-			wantDetail: "omitted its escrow account",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var gets, posts atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.Method == http.MethodPost {
-					posts.Add(1)
-					w.WriteHeader(http.StatusNoContent)
-					return
-				}
-				gets.Add(1)
-				w.WriteHeader(tt.status)
-				_, _ = w.Write([]byte(tt.body))
-			}))
-			defer srv.Close()
-
-			err := console.New(srv.URL, "test-key").Deposit(context.Background(), "321", 1)
-			require.ErrorContains(t, err, tt.wantDetail)
-			assert.Equal(t, int32(1), gets.Load())
-			assert.Equal(t, int32(0), posts.Load(), "untrusted pre-state must prevent the deposit POST")
-		})
-	}
-}
-
-func TestDepositAcceptsExactReturnedPostState(t *testing.T) {
-	var gets, posts atomic.Int32
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			gets.Add(1)
-			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"}},"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"500000.000000000000000000"}],"transferred":[]}}}}`))
-		case http.MethodPost:
-			posts.Add(1)
-			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"}},"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"1000000.000000000000000000"}],"transferred":[]}}}}`))
-		default:
-			t.Fatalf("unexpected request %s", r.Method)
-		}
-	}))
-	defer srv.Close()
-
-	err := console.New(srv.URL, "test-key").Deposit(context.Background(), "42", 0.5)
-	require.NoError(t, err)
-	assert.Equal(t, int32(1), gets.Load(), "exact acknowledgement must be semantic proof without a read-back")
-	assert.Equal(t, int32(1), posts.Load())
-}
-
-func TestDepositStaleAcknowledgementTimesOutWithoutReplaying(t *testing.T) {
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	var gets, posts atomic.Int32
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			gets.Add(1)
-			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"}},"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"1000000"}],"transferred":[]}}}}`))
-			if posts.Load() > 0 {
-				cancel()
-			}
-		case http.MethodPost:
-			posts.Add(1)
-			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"}},"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"1000000"}],"transferred":[]}}}}`))
-		default:
-			t.Fatalf("unexpected request %s", r.Method)
-		}
-	}))
-	defer srv.Close()
-
-	err := console.New(srv.URL, "test-key").Deposit(ctx, "42", 1)
-	require.ErrorContains(t, err, "outcome unknown")
-	assert.Equal(t, int32(1), posts.Load(), "stale acknowledgement must not cause a replay")
-	assert.GreaterOrEqual(t, gets.Load(), int32(2), "deposit must inspect post-state")
-}
-
-func TestDepositReconcilesUnusableAcknowledgementWithoutReplayingPost(t *testing.T) {
-	for _, tt := range []struct {
-		name string
-		body string
-	}{
-		{
-			name: "wrong deployment identity",
-			body: `{"data":{"deployment":{"id":{"dseq":"999"}}}}`,
-		},
-		{
-			name: "missing escrow state",
-			body: `{"data":{"deployment":{"id":{"dseq":"42"}}}}`,
-		},
-		{
-			name: "stale escrow state",
-			body: `{"data":{"deployment":{"id":{"dseq":"42"}},"escrow_account":{"state":{"funds":{"denom":"uact","amount":"500000"},"transferred":[]}}}}`,
-		},
-	} {
-		t.Run(tt.name, func(t *testing.T) {
-			var gets atomic.Int32
-			var posts atomic.Int32
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				switch r.Method {
-				case http.MethodGet:
-					gets.Add(1)
-					amount := "500000"
-					if posts.Load() > 0 {
-						amount = "1500000"
-					}
-					_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"}},"leases":[],"escrow_account":{"state":{"funds":{"denom":"uact","amount":"` + amount + `"},"transferred":[]}}}}`))
-				case http.MethodPost:
-					posts.Add(1)
-					_, _ = w.Write([]byte(tt.body))
-				default:
-					t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
-				}
-			}))
-			defer srv.Close()
-
-			err := console.New(srv.URL, "test-key").Deposit(context.Background(), "42", 1)
-			require.NoError(t, err)
-			assert.Equal(t, int32(2), gets.Load())
-			assert.Equal(t, int32(1), posts.Load())
-		})
-	}
-}
-
-func TestDepositReturnedPostStateIncludesCumulativeTransferredDuringSettlement(t *testing.T) {
-	var posts atomic.Int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			funds, transferred := "5000000.100000000000000001", "999999.899999999999999999"
-			if posts.Load() > 0 {
-				// While the $1 deposit lands, an active lease settles $1.5:
-				// current funds fall by $0.5, but total escrow value rises by
-				// exactly the requested $1 when cumulative transfers are included.
-				// Fractional endpoints prove reconciliation retains the chain's
-				// fixed-point values instead of rounding each coin to micro units.
-				funds, transferred = "4500000.200000000000000001", "2499999.799999999999999999"
-			}
-			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"` + funds + `"}],"transferred":[{"denom":"uact","amount":"` + transferred + `"}]}}}}`))
-		case http.MethodPost:
-			posts.Add(1)
-			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"42"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"4500000.200000000000000001"}],"transferred":[{"denom":"uact","amount":"2499999.799999999999999999"}]}}}}`))
-		default:
-			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
-		}
-	}))
-	defer srv.Close()
-
-	err := console.New(srv.URL, "test-key").Deposit(context.Background(), "42", 1)
-	require.NoError(t, err)
-	assert.Equal(t, int32(1), posts.Load(), "deposit POST must never be replayed")
-}
-
 func TestFetchBids(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(t, http.MethodGet, r.Method)
@@ -1062,7 +835,7 @@ func TestGetDeploymentSettingsNotFound(t *testing.T) {
 	assert.ErrorIs(t, err, console.ErrNotFound)
 }
 
-func TestSetDeploymentAutoTopUpPatch(t *testing.T) {
+func TestSetDeploymentRuntimeLimitPatch(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {
 			assert.Equal(t, "/v1/deployments/321", r.URL.Path)
@@ -1073,69 +846,78 @@ func TestSetDeploymentAutoTopUpPatch(t *testing.T) {
 		assert.Equal(t, "/v2/deployment-settings/321", r.URL.Path)
 
 		data := decodeDataBody(t, r)
-		assert.Equal(t, true, data["autoTopUpEnabled"])
+		assert.Equal(t, float64(12), data["runtimeLimitHours"])
+		assert.NotContains(t, data, "autoTopUpEnabled", "always-on funding is not ours to toggle")
 
-		_, _ = w.Write([]byte(`{"data":{"dseq":"321","autoTopUpEnabled":true}}`))
+		_, _ = w.Write([]byte(`{"data":{"dseq":"321","autoTopUpEnabled":true,"runtimeLimitHours":12,"runtimeEndsAt":"2026-09-04T00:00:00.000Z"}}`))
 	}))
 	defer srv.Close()
 
-	c := console.New(srv.URL, "test-key")
-	s, err := c.SetDeploymentAutoTopUp(context.Background(), "321", true)
+	hours := 12
+	s, err := console.New(srv.URL, "test-key").SetDeploymentRuntimeLimit(context.Background(), "321", &hours)
 	require.NoError(t, err)
-	assert.True(t, s.AutoTopUpEnabled)
+	require.NotNil(t, s.RuntimeLimitHours)
+	assert.Equal(t, 12, *s.RuntimeLimitHours)
+	require.NotNil(t, s.RuntimeEndsAt)
+	assert.Equal(t, "2026-09-04T00:00:00.000Z", *s.RuntimeEndsAt)
 }
 
-func TestSetDeploymentAutoTopUpFallsBackToPost(t *testing.T) {
-	var patchCalled, postCalled bool
+// A cleared limit is a JSON null, not an omitted key: omitting it would leave
+// the existing limit in place, which is the opposite of what `none` asks for.
+func TestSetDeploymentRuntimeLimitClearsWithExplicitNull(t *testing.T) {
+	var rawBody string
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.Method {
-		case http.MethodGet:
-			assert.Equal(t, "/v1/deployments/654", r.URL.Path)
-			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"654"},"state":"active"}}}`))
-		case http.MethodPatch:
-			patchCalled = true
-			assert.Equal(t, "/v2/deployment-settings/654", r.URL.Path)
-			w.WriteHeader(http.StatusNotFound)
-
-		case http.MethodPost:
-			postCalled = true
-			assert.Equal(t, "/v2/deployment-settings", r.URL.Path)
-
-			data := decodeDataBody(t, r)
-			assert.Equal(t, "654", data["dseq"])
-			assert.Equal(t, false, data["autoTopUpEnabled"])
-
-			_, _ = w.Write([]byte(`{"data":{"dseq":"654","autoTopUpEnabled":false}}`))
-
-		default:
-			t.Errorf("unexpected method %s", r.Method)
+		if r.Method == http.MethodGet {
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"321"},"state":"active"}}}`))
+			return
 		}
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		rawBody = string(body)
+
+		_, _ = w.Write([]byte(`{"data":{"dseq":"321","autoTopUpEnabled":true,"runtimeLimitHours":null,"runtimeEndsAt":null}}`))
 	}))
 	defer srv.Close()
 
-	c := console.New(srv.URL, "test-key")
-	s, err := c.SetDeploymentAutoTopUp(context.Background(), "654", false)
+	s, err := console.New(srv.URL, "test-key").SetDeploymentRuntimeLimit(context.Background(), "321", nil)
 	require.NoError(t, err)
-	assert.True(t, patchCalled, "PATCH must be attempted first")
-	assert.True(t, postCalled, "POST fallback must run after PATCH 404")
-	assert.False(t, s.AutoTopUpEnabled)
-	assert.Equal(t, "654", s.DSeq.String())
+	assert.Contains(t, rawBody, `"runtimeLimitHours":null`)
+	assert.Nil(t, s.RuntimeLimitHours)
 }
 
-func TestSetDeploymentAutoTopUpRejectsMissingOrMismatchedAcknowledgement(t *testing.T) {
+func TestSetDeploymentRuntimeLimitRejectsNonPositiveBeforeNetwork(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+	}))
+	defer srv.Close()
+
+	zero := 0
+	_, err := console.New(srv.URL, "test-key").SetDeploymentRuntimeLimit(context.Background(), "321", &zero)
+	require.ErrorContains(t, err, "at least 1 hour")
+	assert.Zero(t, requests.Load())
+}
+
+func TestSetDeploymentRuntimeLimitRejectsMissingOrMismatchedAcknowledgement(t *testing.T) {
 	for _, body := range []string{
 		`{"data":{}}`,
-		`{"data":{"dseq":"321","autoTopUpEnabled":false}}`,
-		`{"data":{"dseq":"999","autoTopUpEnabled":true}}`,
+		`{"data":{"dseq":"321","runtimeLimitHours":null}}`,
+		`{"data":{"dseq":"321","runtimeLimitHours":24}}`,
+		`{"data":{"dseq":"999","runtimeLimitHours":12}}`,
 	} {
 		t.Run(body, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet {
+					_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"321"},"state":"active"}}}`))
+					return
+				}
 				_, _ = w.Write([]byte(body))
 			}))
 			defer srv.Close()
 
-			_, err := console.New(srv.URL, "test-key").SetDeploymentAutoTopUp(context.Background(), "321", true)
+			hours := 12
+			_, err := console.New(srv.URL, "test-key").SetDeploymentRuntimeLimit(context.Background(), "321", &hours)
 			require.ErrorContains(t, err, "did not echo")
 		})
 	}

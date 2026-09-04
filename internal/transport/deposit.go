@@ -6,21 +6,18 @@ import (
 	"strconv"
 	"strings"
 
-	"pkg.akt.dev/akt/internal/console"
-
 	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
 // depositAuto is the deposit value that defers to the rail's default: the
 // chain rail resolves it to the chain-minimum deployment deposit; the
-// console rail rejects it (an explicit USD amount is required).
+// console rail sends no deposit at all.
 const depositAuto = "auto"
 
-// MinConsoleDepositUSD is the minimum deployment deposit the Console API
-// accepts, in USD (SPEC §7.4: console-api deposits are USD, not uakt).
-// Exported so every surface enforcing the console minimum (CLI commands,
-// workflow adapters) shares one value instead of hard-coding 0.5.
-const MinConsoleDepositUSD = console.MinDepositUSD
+// FundingDocsURL explains how Console funds deployments from account credits.
+// The console rail's deposit rejection is the one place a user is told that
+// something they typed no longer exists, so it points here.
+const FundingDocsURL = "https://akash.network/docs/getting-started/how-funding-works/"
 
 // Deposit is a deployment deposit parsed from the unified --deposit syntax
 // accepted on every rail (see ParseDeposit).
@@ -120,10 +117,11 @@ func ParseDeposit(s string) (Deposit, error) {
 //
 // Chain rail: ""/"auto" pass through (the adapter resolves the chain-minimum
 // deposit), coin strings pass through to coin parsing, and USD or bare
-// amounts are rejected. Console rail: USD and bare amounts become a plain
-// USD number (the Console API wire form), ""/"auto" pass through (the
-// adapter reports that an explicit USD deposit is required), and coin
-// amounts are rejected.
+// amounts are rejected. Console rail: only ""/"auto" is accepted, and it
+// resolves to no deposit at all, because the Console funds every deployment
+// from the account's credits. An explicit amount is rejected here rather than sent,
+// because POST /v1/deployments discards it: a user who typed a number would
+// otherwise believe it bounded their spend.
 func (d Deposit) RailValue(kind Kind) (string, error) {
 	switch kind {
 	case KindChain:
@@ -134,22 +132,19 @@ func (d Deposit) RailValue(kind Kind) (string, error) {
 			return d.Coin, nil
 		case d.Bare:
 			return "", fmt.Errorf(
-				"deposit %q: a bare amount is a USD deposit, and USD deposits require a console-api context; use auto (recommended), or specify an explicit coin amount in the network's deployment deposit denomination", d.Raw)
+				"deposit %q: a bare amount has no denomination; use auto (recommended), or specify an explicit coin amount in the network's deployment deposit denomination", d.Raw)
 		default:
 			return "", fmt.Errorf(
-				"deposit %q: USD deposits require a console-api context; use auto (recommended), or specify an explicit coin amount in the network's deployment deposit denomination", d.Raw)
+				"deposit %q: chain deposits are coins, not USD; use auto (recommended), or specify an explicit coin amount in the network's deployment deposit denomination", d.Raw)
 		}
 
 	case KindConsole:
-		switch {
-		case d.Auto:
-			return d.Raw, nil
-		case d.IsUSD:
-			return strconv.FormatFloat(d.USD, 'f', -1, 64), nil
-		default:
-			return "", fmt.Errorf(
-				"deposit %q: console deposits are in USD; use e.g. 5usd", d.Raw)
+		if d.Auto {
+			return "", nil
 		}
+
+		return "", fmt.Errorf(
+			"deposit %q: console deployments are funded automatically from your account credits, so they take no deposit; drop the argument. See %s", d.Raw, FundingDocsURL)
 
 	default:
 		return "", fmt.Errorf("unknown transport kind %q", kind)

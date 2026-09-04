@@ -44,8 +44,7 @@ Write tools, unlocked only by --enable-writes:
   akash_create_lease        accept a bid and create a lease
   akash_close_lease         close a lease on chain
   akash_submit_manifest     send a manifest to a provider
-  console_close_deployment  close a Console-managed deployment
-  console_deposit           add funds to a deployment, spending real credits`,
+  console_close_deployment  close a Console-managed deployment`,
 		Args: cobra.NoArgs,
 		Example: `  # Read-only mode
   akt mcp

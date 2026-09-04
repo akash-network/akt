@@ -209,15 +209,15 @@ func TestResolveDryRunParamsAcrossRails(t *testing.T) {
 		managerFn := func() *aktctx.Manager { return manager }
 		cmd := &cobra.Command{}
 
-		for _, raw := range []string{"bad", "auto", "$0.10"} {
+		for _, raw := range []string{"bad", "$0.10", "5", "5000000uact"} {
 			_, err := resolveWorkflowParams(cmd, map[string]any{flagdefs.FlagDeposit: raw}, managerFn, func() string { return "console" })
 			if err == nil {
 				t.Fatalf("Console deposit %q did not fail", raw)
 			}
 		}
-		resolved, err := resolveWorkflowParams(cmd, map[string]any{flagdefs.FlagDeposit: "$0.50"}, managerFn, func() string { return "console" })
-		if err != nil || resolved[flagdefs.FlagDeposit] != "0.5" {
-			t.Fatalf("resolved Console deposit = %#v, %v", resolved, err)
+		resolved, err := resolveWorkflowParams(cmd, map[string]any{flagdefs.FlagDeposit: "auto"}, managerFn, func() string { return "console" })
+		if err != nil || resolved[flagdefs.FlagDeposit] != "" {
+			t.Fatalf("resolved Console deposit = %#v, %v; want the rail default to clear it", resolved, err)
 		}
 	})
 

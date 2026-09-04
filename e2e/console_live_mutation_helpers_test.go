@@ -39,29 +39,32 @@ const (
 	consoleMutationOptInValue        = "I_UNDERSTAND_THIS_SPENDS_SANDBOX_FUNDS"
 	consoleRuntimeAPIKeyEnv          = "AKT_CONSOLE_API_KEY"
 
-	consoleLifecycleRequestUSD       = 1.0
-	consoleCreateDepositUSD          = 0.5
-	consoleAdditionalDepositUSD      = 0.5
-	consoleDefaultMaxRequestUSD      = 1.0
-	consoleHardMaxRequestUSD         = 5.0
-	consoleDefaultMaxSpendUSD        = 1.0
-	consoleHardMaxSpendUSD           = 1.0
-	consoleDefaultMaxDeployments     = 1
-	consoleHardMaxDeployments        = 1
-	consoleLifecycleMaxLeases        = 1
-	consoleDefaultMaxRuntime         = 5 * time.Minute
-	consoleMinimumMaxRuntime         = 2 * time.Minute
-	consoleHardMaxRuntime            = 10 * time.Minute
-	consoleCleanupReserve            = 90 * time.Second
-	consoleCleanupDiscoveryBudget    = 30 * time.Second
-	consoleCleanupMutationReserve    = 40 * time.Second
-	consoleCleanupObservationReserve = 20 * time.Second
-	consoleCleanupBalanceReserve     = 5 * time.Second
-	consoleObserverRequestTimeout    = 10 * time.Second
-	consoleCommandCaptureLimit       = 1 << 20
-	consoleObserverResponseLimit     = 4 << 20
-	consoleActionLogReadLimit        = 1 << 20
-	consoleSafetyBillingInterval     = time.Second
+	consoleLifecycleRequestUSD = 1.0
+	// The platform funds each deployment itself and keeps topping it up, so
+	// the amount is no longer ours to pick. A one-hour runtime limit, set as
+	// soon as the dseq exists, is what bounds an abandoned lifecycle: the
+	// platform closes the deployment at the limit and returns unused funds.
+	consoleLifecycleRuntimeLimitHours = 1
+	consoleDefaultMaxRequestUSD       = 1.0
+	consoleHardMaxRequestUSD          = 5.0
+	consoleDefaultMaxSpendUSD         = 1.0
+	consoleHardMaxSpendUSD            = 1.0
+	consoleDefaultMaxDeployments      = 1
+	consoleHardMaxDeployments         = 1
+	consoleLifecycleMaxLeases         = 1
+	consoleDefaultMaxRuntime          = 5 * time.Minute
+	consoleMinimumMaxRuntime          = 2 * time.Minute
+	consoleHardMaxRuntime             = 10 * time.Minute
+	consoleCleanupReserve             = 90 * time.Second
+	consoleCleanupDiscoveryBudget     = 30 * time.Second
+	consoleCleanupMutationReserve     = 40 * time.Second
+	consoleCleanupObservationReserve  = 20 * time.Second
+	consoleCleanupBalanceReserve      = 5 * time.Second
+	consoleObserverRequestTimeout     = 10 * time.Second
+	consoleCommandCaptureLimit        = 1 << 20
+	consoleObserverResponseLimit      = 4 << 20
+	consoleActionLogReadLimit         = 1 << 20
+	consoleSafetyBillingInterval      = time.Second
 )
 
 type consoleMutationConfig struct {
@@ -416,9 +419,6 @@ func consoleCommandDiagnostic(result consoleCommandResult) string {
 }
 
 func classifyConsoleProcessError(stderr string) string {
-	if strings.Contains(stderr, "deposit outcome unknown after one submission") {
-		return "console_deposit_outcome_unknown"
-	}
 
 	bestIndex := -1
 	bestStatus := 0
@@ -998,8 +998,8 @@ func (balances consoleBalancesObservation) TotalUSD() float64 {
 }
 
 type consoleSettingsObservation struct {
-	DSeq             consoleFlexibleID `json:"dseq"`
-	AutoTopUpEnabled bool              `json:"autoTopUpEnabled"`
+	DSeq              consoleFlexibleID `json:"dseq"`
+	RuntimeLimitHours *int              `json:"runtimeLimitHours"`
 }
 
 type consoleObserverHTTPError struct {
@@ -1383,19 +1383,19 @@ func (observer *consoleAPIObserver) listBids(ctx context.Context, dseq string) (
 
 func (observer *consoleAPIObserver) getDeploymentSettings(ctx context.Context, dseq string) (consoleSettingsObservation, error) {
 	var wire struct {
-		DSeq             *consoleFlexibleID `json:"dseq"`
-		AutoTopUpEnabled *bool              `json:"autoTopUpEnabled"`
+		DSeq              *consoleFlexibleID `json:"dseq"`
+		RuntimeLimitHours *int               `json:"runtimeLimitHours"`
 	}
 	if err := observer.getData(ctx, "/v2/deployment-settings/"+url.PathEscape(dseq), &wire); err != nil {
 		return consoleSettingsObservation{}, err
 	}
-	if wire.DSeq == nil || wire.AutoTopUpEnabled == nil {
+	if wire.DSeq == nil {
 		return consoleSettingsObservation{}, fmt.Errorf("Console observer deployment settings for %s omitted a required field", dseq)
 	}
 	if wire.DSeq.String() != dseq {
 		return consoleSettingsObservation{}, fmt.Errorf("Console observer deployment settings for %s returned dseq %s", dseq, wire.DSeq.String())
 	}
-	return consoleSettingsObservation{DSeq: *wire.DSeq, AutoTopUpEnabled: *wire.AutoTopUpEnabled}, nil
+	return consoleSettingsObservation{DSeq: *wire.DSeq, RuntimeLimitHours: wire.RuntimeLimitHours}, nil
 }
 
 func consoleCleanupPhaseDeadlines(now, overall time.Time) (time.Time, time.Time) {
@@ -2124,22 +2124,22 @@ func (tracker *consoleResourceTracker) cleanup() {
 		if !terminal {
 			settingsDeadline, ok := consoleBoundedDeadline(mutationCtx, time.Now().Add(8*time.Second))
 			if !ok {
-				tracker.t.Errorf("Console cleanup had no time left to disable auto-top-up for %s", dseq)
+				tracker.t.Errorf("Console cleanup had no time left to cap the runtime limit for %s", dseq)
 			} else {
 				settingsCtx, cancelSettings := context.WithDeadline(mutationCtx, settingsDeadline)
-				settingsResult := runConsoleAkt(settingsCtx, tracker.t, tracker.home, "console", "deployment", "settings", dseq, "false")
+				settingsResult := runConsoleAkt(settingsCtx, tracker.t, tracker.home, "console", "deployment", "settings", dseq, strconv.Itoa(consoleLifecycleRuntimeLimitHours))
 				cancelSettings()
 				if settingsResult.Exit != 0 || settingsResult.Err != nil || settingsResult.CredentialLeak || settingsResult.StdoutTruncated || settingsResult.StderrTruncated {
-					tracker.t.Errorf("Console cleanup could not disable auto-top-up for %s (%s)", dseq, consoleCommandDiagnostic(settingsResult))
+					tracker.t.Errorf("Console cleanup could not cap the runtime limit for %s (%s)", dseq, consoleCommandDiagnostic(settingsResult))
 				} else if verifyDeadline, ok := consoleBoundedDeadline(mutationCtx, time.Now().Add(5*time.Second)); ok {
 					verifyCtx, cancelVerify := context.WithDeadline(mutationCtx, verifyDeadline)
 					settings, verifyErr := tracker.observer.getDeploymentSettings(verifyCtx, dseq)
 					cancelVerify()
-					if verifyErr != nil || settings.DSeq.String() != dseq || settings.AutoTopUpEnabled {
-						tracker.t.Errorf("Console cleanup could not independently verify disabled auto-top-up for %s", dseq)
+					if verifyErr != nil || settings.DSeq.String() != dseq || settings.RuntimeLimitHours == nil || *settings.RuntimeLimitHours > consoleLifecycleRuntimeLimitHours {
+						tracker.t.Errorf("Console cleanup could not independently verify a capped runtime limit for %s", dseq)
 					}
 				} else {
-					tracker.t.Errorf("Console cleanup had no time left to verify disabled auto-top-up for %s", dseq)
+					tracker.t.Errorf("Console cleanup had no time left to verify the capped runtime limit for %s", dseq)
 				}
 			}
 		}

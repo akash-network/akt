@@ -104,9 +104,9 @@ func TestDepositRailValueChain(t *testing.T) {
 		{"auto", "auto", ""},
 		{"5000000uakt", "5000000uakt", ""},
 		{"5akt", "5akt", ""},
-		{"5usd", "", "USD deposits require a console-api context; use auto (recommended)"},
-		{"$5", "", "USD deposits require a console-api context; use auto (recommended)"},
-		{"5", "", "console-api context; use auto (recommended)"},
+		{"5usd", "", "chain deposits are coins, not USD; use auto (recommended)"},
+		{"$5", "", "chain deposits are coins, not USD; use auto (recommended)"},
+		{"5", "", "a bare amount has no denomination; use auto (recommended)"},
 	}
 
 	for _, tt := range tests {
@@ -158,15 +158,14 @@ func TestDepositRailValueConsole(t *testing.T) {
 		want    string
 		wantErr string
 	}{
-		{"", "", ""},         // passes through; the console adapter demands explicit USD
-		{"auto", "auto", ""}, // same
-		{"5usd", "5", ""},
-		{"$5.50", "5.5", ""},
-		{"5", "5", ""},
-		{"5.50", "5.5", ""},
-		{"0.5usd", "0.5", ""},
-		{"5000000uakt", "", "console deposits are in USD; use e.g. 5usd"},
-		{"5akt", "", "console deposits are in USD; use e.g. 5usd"},
+		{"", "", ""},     // no deposit to send: credits fund the deployment
+		{"auto", "", ""}, // same
+		{"5usd", "", "funded automatically from your account credits"},
+		{"$5.50", "", "funded automatically from your account credits"},
+		{"5", "", "funded automatically from your account credits"},
+		{"0.5usd", "", "funded automatically from your account credits"},
+		{"5000000uakt", "", "funded automatically from your account credits"},
+		{"5akt", "", "funded automatically from your account credits"},
 	}
 
 	for _, tt := range tests {

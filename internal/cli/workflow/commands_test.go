@@ -465,7 +465,10 @@ func TestExecuteDryRunJSONLEmitsPlannedSteps(t *testing.T) {
 	}
 }
 
-func TestConsoleDryRunResolvesAndValidatesDeposit(t *testing.T) {
+// A console-api context is the whole point of CON-733: `akt deploy` must run
+// with no deposit argument at all, and must refuse one rather than send a
+// number the API discards.
+func TestConsoleDryRunPlansWithoutADeposit(t *testing.T) {
 	home := t.TempDir()
 	m := newTestManager(t, home, "console", aktctx.AuthMethodConsoleAPI)
 	sdl := writeValidWorkflowSDL(t)
@@ -477,28 +480,18 @@ func TestConsoleDryRunResolvesAndValidatesDeposit(t *testing.T) {
 		), "deploy")
 	}
 
-	out, err := executeCommand(t, newCommand(), sdl, "--deposit", "$5", "--dry-run")
+	out, err := executeCommand(t, newCommand(), sdl, "--dry-run")
 	if err != nil {
-		t.Fatalf("Console dry-run: %v\n%s", err, out)
-	}
-	if !strings.Contains(out, "deposit:") || !strings.Contains(out, "5") || strings.Contains(out, "$5") {
-		t.Fatalf("dry-run did not show resolved Console deposit:\n%s", out)
+		t.Fatalf("Console dry-run without a deposit: %v\n%s", err, out)
 	}
 	if !strings.Contains(out, "Rail: console") || !strings.Contains(out, "Console API create deployment") || strings.Contains(out, "deployment.MsgCreateDeployment") {
 		t.Fatalf("dry-run did not translate steps for the Console rail:\n%s", out)
 	}
 
-	for _, deposit := range []string{"auto", "0.49usd"} {
+	for _, deposit := range []string{"$5", "5", "0.49usd", "5000000uakt"} {
 		_, err := executeCommand(t, newCommand(), sdl, "--deposit", deposit, "--dry-run")
-		if err == nil || !strings.Contains(err.Error(), "$0.50") {
-			t.Errorf("deposit %q error = %v, want Console minimum guidance", deposit, err)
-		}
-	}
-
-	for _, deposit := range []string{"0.005", "1e0"} {
-		_, err := executeCommand(t, newCommand(), sdl, "--deposit", deposit, "--dry-run")
-		if err == nil {
-			t.Errorf("deposit %q unexpectedly passed Console dry-run validation", deposit)
+		if err == nil || !strings.Contains(err.Error(), "funded automatically from your account credits") {
+			t.Errorf("deposit %q error = %v, want the automatic-funding explanation", deposit, err)
 		}
 	}
 }
@@ -511,7 +504,7 @@ func TestDeployPreflightRejectsDepositSDLDenominationMismatch(t *testing.T) {
 		sdlDenom   string
 	}{
 		{name: "chain", authMethod: aktctx.AuthMethodKeyring, deposit: "5000000uact", sdlDenom: "uakt"},
-		{name: "console", authMethod: aktctx.AuthMethodConsoleAPI, deposit: "5", sdlDenom: "uakt"},
+		{name: "console", authMethod: aktctx.AuthMethodConsoleAPI, deposit: "", sdlDenom: "uakt"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			home := t.TempDir()
@@ -522,11 +515,13 @@ func TestDeployPreflightRejectsDepositSDLDenominationMismatch(t *testing.T) {
 				func() *aktctx.Manager { return m },
 			), "deploy")
 
-			out, err := executeCommand(t, cmd,
-				writeWorkflowSDLWithDenom(t, test.sdlDenom),
-				"--deposit", test.deposit,
-				"--dry-run",
-			)
+			args := []string{writeWorkflowSDLWithDenom(t, test.sdlDenom)}
+			if test.deposit != "" {
+				args = append(args, "--deposit", test.deposit)
+			}
+			args = append(args, "--dry-run")
+
+			out, err := executeCommand(t, cmd, args...)
 			if err == nil {
 				t.Fatalf("mismatched deployment unexpectedly passed:\n%s", out)
 			}
@@ -579,6 +574,19 @@ func TestDeployPreflightReportsMalformedDepositAndUnreadableSDL(t *testing.T) {
 	}, rc)
 	if err == nil || !strings.Contains(err.Error(), "read SDL") {
 		t.Fatalf("unreadable SDL error = %v", err)
+	}
+
+	// On the chain rail the denomination comes from the deposit, so with no
+	// deposit resolved there is nothing to compare the SDL against and the
+	// preflight declines rather than guessing uact. It must decline before
+	// reading the SDL, which "unused.yaml" would fail at.
+	for name, params := range map[string]map[string]any{
+		"absent deposit": {"sdl-file": "unused.yaml"},
+		"blank deposit":  {"sdl-file": "unused.yaml", flagdefs.FlagDeposit: "  "},
+	} {
+		if err := validateDeploymentDenominations(params, rc); err != nil {
+			t.Errorf("%s: chain preflight should decline quietly, got %v", name, err)
+		}
 	}
 }
 
@@ -691,7 +699,7 @@ func TestExecuteConsoleDeployEndToEnd(t *testing.T) {
 		t.Fatal("CommandsWithManager() did not surface deploy")
 	}
 
-	out, err := executeCommand(t, cmd, sdlPath, "--deposit", "5", "--bid-select", "cheapest")
+	out, err := executeCommand(t, cmd, sdlPath, "--bid-select", "cheapest")
 	if err != nil {
 		t.Fatalf("deploy execute: %v\noutput:\n%s", err, out)
 	}
@@ -1130,14 +1138,14 @@ func TestArgumentSurfaceAuthIndependent(t *testing.T) {
 	}
 }
 
-func TestDeployAcceptsPositionalDepositAcrossRails(t *testing.T) {
+func TestDeployAcceptsPositionalDepositOnTheChainRail(t *testing.T) {
 	tests := []struct {
 		name       string
 		authMethod string
 		deposit    string
 	}{
 		{name: "chain coin", authMethod: aktctx.AuthMethodKeyring, deposit: "5000000uact"},
-		{name: "Console USD", authMethod: aktctx.AuthMethodConsoleAPI, deposit: "5"},
+		{name: "chain small coin", authMethod: aktctx.AuthMethodKeyring, deposit: "5uact"},
 	}
 
 	for _, test := range tests {

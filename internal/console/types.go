@@ -236,6 +236,8 @@ type DeploymentSettings struct {
 	AutoTopUpEnabled     bool       `json:"autoTopUpEnabled"`
 	EstimatedTopUpAmount float64    `json:"estimatedTopUpAmount"`
 	TopUpFrequencyMs     int64      `json:"topUpFrequencyMs"`
+	RuntimeLimitHours    *int       `json:"runtimeLimitHours"`
+	RuntimeEndsAt        *string    `json:"runtimeEndsAt"`
 }
 
 // EstimatedTopUpUSD returns the estimated top-up in USD.

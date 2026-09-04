@@ -25,9 +25,6 @@ func TestHandlersRejectMissingAndInvalidMutationArgumentsWithoutCallingConsole(t
 		{name: "list bids", handler: HandleListBids, want: "missing required parameter: dseq"},
 		{name: "get provider", handler: HandleGetProvider, want: "missing required parameter: address"},
 		{name: "close deployment", handler: HandleCloseDeployment, want: "missing required parameter: dseq"},
-		{name: "deposit missing dseq", handler: HandleDeposit, want: "missing required parameter: dseq"},
-		{name: "deposit missing amount", handler: HandleDeposit, args: map[string]any{"dseq": "1"}, want: "amount_usd is required"},
-		{name: "deposit below minimum", handler: HandleDeposit, args: map[string]any{"dseq": "1", "amount_usd": 0.01}, want: "amount_usd must be at least"},
 	}
 
 	for _, tc := range tests {
@@ -294,9 +291,9 @@ func TestWalletBalanceReturnsExplicitUSDFields(t *testing.T) {
 	}
 
 	want := map[string]float64{
-		"available_usd":      17.937977,
-		"in_deployments_usd": 39.437176,
-		"total_usd":          57.375153,
+		"available_usd": 17.937977,
+		"escrow_usd":    39.437176,
+		"total_usd":     57.375153,
 	}
 	if len(got) != len(want) {
 		t.Fatalf("result fields = %#v, want exactly %#v", got, want)

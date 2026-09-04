@@ -385,10 +385,7 @@ func TestConsoleMutationBudgetReservationsFailBeforeWrites(t *testing.T) {
 	if err := budget.reserveLease(); err == nil {
 		t.Fatal("second lease reservation exceeded the budget without an error")
 	}
-	if err := budget.reserveRequest(consoleCreateDepositUSD); err != nil {
-		t.Fatal(err)
-	}
-	if err := budget.reserveRequest(consoleAdditionalDepositUSD); err != nil {
+	if err := budget.reserveRequest(consoleLifecycleRequestUSD); err != nil {
 		t.Fatal(err)
 	}
 	if err := budget.reserveRequest(0.01); err == nil {
@@ -441,7 +438,6 @@ func TestConsoleCommandDiagnosticClassifiesSafeHTTPStatus(t *testing.T) {
 		{name: "sentinel HTTP status", stderr: "get user: console: invalid or expired API key (HTTP 401)", want: "error_class=console_http_401"},
 		{name: "generic HTTP status", stderr: "console: unexpected status 422: private body", want: "error_class=console_http_422"},
 		{name: "outer status wins over body marker", stderr: "console: unexpected status 422: upstream body mentioned (HTTP 401)", want: "error_class=console_http_422"},
-		{name: "deposit outcome unknown", stderr: "deposit outcome unknown after one submission (private detail)", want: "error_class=console_deposit_outcome_unknown"},
 		{name: "nearby number is not an HTTP status", stderr: "private status 4010", want: "error_class=process_error"},
 		{name: "unknown process error", stderr: "private transport failure", want: "error_class=process_error"},
 	} {
@@ -1124,7 +1120,7 @@ func TestConsoleAPIObserverReadsStateWithoutLeakingBodies(t *testing.T) {
 			}
 			_, _ = fmt.Fprint(w, `{"data":[{"bid":{"id":{"owner":"akash1owner","dseq":"7","gseq":1,"oseq":1,"provider":"akash1provider"},"state":"open","price":{"denom":"uact","amount":"1"}}}]}`)
 		case "/v2/deployment-settings/7":
-			_, _ = fmt.Fprint(w, `{"data":{"dseq":"7","autoTopUpEnabled":false}}`)
+			_, _ = fmt.Fprint(w, `{"data":{"dseq":"7","autoTopUpEnabled":true,"runtimeLimitHours":1,"runtimeEndsAt":null}}`)
 		case "/v1/deployments/500":
 			w.WriteHeader(http.StatusInternalServerError)
 			_, _ = fmt.Fprint(w, `{"error":"server echoed akt_observer_secret and a private manifest"}`)
@@ -1155,7 +1151,7 @@ func TestConsoleAPIObserverReadsStateWithoutLeakingBodies(t *testing.T) {
 		t.Fatalf("listBids() = %+v, %v", bids, err)
 	}
 	settings, err := observer.getDeploymentSettings(ctx, "7")
-	if err != nil || settings.DSeq.String() != "7" || settings.AutoTopUpEnabled {
+	if err != nil || settings.DSeq.String() != "7" || settings.RuntimeLimitHours == nil || *settings.RuntimeLimitHours != 1 {
 		t.Fatalf("getDeploymentSettings() = %+v, %v", settings, err)
 	}
 	if _, err := observer.getDeployment(ctx, "500"); err == nil {
@@ -1223,8 +1219,10 @@ func TestConsoleAPIObserverRejectsMalformedSuccessBodies(t *testing.T) {
 			},
 		},
 		{
-			name: "missing auto top up flag",
-			body: `{"data":{"dseq":"7"}}`,
+			// runtimeLimitHours is legitimately null, so dseq is the only
+			// field a settings response must carry.
+			name: "settings missing dseq",
+			body: `{"data":{"runtimeLimitHours":1}}`,
 			call: func(observer *consoleAPIObserver) error {
 				_, err := observer.getDeploymentSettings(context.Background(), "7")
 				return err

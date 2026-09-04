@@ -2,6 +2,52 @@
 
 ## Unreleased
 
+### Changed
+
+- **Console deployments are funded automatically; the deposit surface is gone
+  from that rail (CON-890)**: Console abstracted escrow away: the platform
+  funds every deployment from the account's credits, `POST /v1/deployments`
+  documents `deposit` as deprecated and discards it, `/v1/deposit-deployment`
+  is deprecated, and an explicit `autoTopUpEnabled: false` is rejected because
+  always-on funding cannot be switched off. `akt` had not followed, and was
+  wrong in two ways that cost the user something rather than merely misleading
+  them. First, `akt deploy` could not run at all on a console-api context: the
+  workflow's `deposit: "auto"` default was rejected with "the Console workflow
+  rail requires an explicit deposit in USD", so the CLI demanded a value the
+  API throws away and refused to deploy without it. Second,
+  `akt console deployment settings <dseq> false` failed against production, and
+  `deployment create` printed that exact command as the way to opt out of
+  unattended spending.
+
+  On the console rail the deposit is now removed rather than deprecated, since
+  a path the API ignores is worse than no path: `akt console deployment deposit`
+  and the `console_deposit` MCP tool are gone, `deployment create` takes only an
+  SDL and no longer prints an auto-top-up notice, and any explicit deposit is
+  refused at the transport boundary (`Deposit.RailValue`) with a message naming
+  automatic funding and linking the docs. Rejecting locally is the difference
+  between telling a user their number did nothing and letting them believe it
+  did. `deployment settings` now sets `runtimeLimitHours` via
+  `PATCH /v2/deployment-settings/{dseq}`, which is the only per-deployment
+  funding control a client can still set and which `akt` could not set at all
+  before; `none` clears it. `wallet balance` and `console_wallet_balance` report
+  Available/Escrow/Total, matching the shipped Console vocabulary, and
+  `wallet settings` is named Auto Recharge, the account-level card charge,
+  distinct from the retired per-deployment toggle.
+
+  Two things the removal would otherwise have broken quietly. The
+  `uakt`-pricing preflight read its denomination from the resolved deposit, so
+  with the console deposit always empty it stopped running; it now uses `uact`
+  unconditionally on that rail. And the live-mutation e2e suite bounded an
+  abandoned run's spend by disabling auto-top-up, which the API now refuses.
+  It caps the runtime limit instead, so the deployment auto-closes and unused
+  funds are returned.
+
+  The chain rail is untouched: `--deposit`, `auto` resolution, and the `uakt`
+  escape hatch all behave as before, though its USD rejection no longer points
+  at a console-api context as the place USD deposits work. The vendored
+  contract spec was re-vendored from the live Console API, and SPEC/DESIGN/README
+  were updated first per the spec-first rule.
+
 ### Fixed
 
 - **Console deployment mutations timed out before the API could finish valid

@@ -22,35 +22,13 @@ import (
 	aktctx "pkg.akt.dev/akt/internal/context"
 	sstore "pkg.akt.dev/akt/internal/store"
 	"pkg.akt.dev/akt/internal/store/bbolt"
-	"pkg.akt.dev/akt/internal/transport"
 )
 
-// parseConsoleUSD parses a positional deposit/amount argument using the
-// unified cross-rail deposit syntax (transport.ParseDeposit, SPEC §7.4):
-// bare numbers, "5usd", and "$5" are USD on the console rail; coin forms
-// ("5000000uakt") fail with the transport package's cross-rail error before
-// any request is made.
-func parseConsoleUSD(arg string) (float64, error) {
-	dep, err := transport.ParseDeposit(arg)
-	if err != nil {
-		return 0, err
-	}
-
-	if _, err := dep.RailValue(transport.KindConsole); err != nil {
-		return 0, err
-	}
-
-	// ""/"auto" defers to the rail default, but the console rail has none:
-	// callers' minimum/positivity checks reject the zero value with a
-	// message pointing at the positional argument.
-	return dep.USD, nil
-}
-
-func confirmDeploymentCreate(cmd *cobra.Command, prompt bool, path string, deposit float64) error {
+func confirmDeploymentCreate(cmd *cobra.Command, prompt bool, path string) error {
 	if !prompt {
 		return nil
 	}
-	if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Create deployment from %s with a %s deposit? [y/N] ", path, formatUSD(deposit)); err != nil {
+	if _, err := fmt.Fprintf(cmd.ErrOrStderr(), "Create deployment from %s? [y/N] ", path); err != nil {
 		return err
 	}
 	answer, err := bufio.NewReader(cmd.InOrStdin()).ReadString('\n')
@@ -65,21 +43,13 @@ func confirmDeploymentCreate(cmd *cobra.Command, prompt bool, path string, depos
 	return nil
 }
 
-func addNegativePositionalHint(cmd *cobra.Command, positional string) {
-	cmd.SetFlagErrorFunc(func(_ *cobra.Command, err error) error {
-		if strings.Contains(err.Error(), "unknown shorthand flag") {
-			return fmt.Errorf("%w; if %s begins with '-', place `--` before the positional value", err, positional)
-		}
-		return err
-	})
-}
-
 func deploymentCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "deployment",
 		RunE:  sdkclient.ValidateCmd,
 		Short: "Manage Console deployments",
-		Long: "Create, inspect, update, fund, and close deployments through the Console managed wallet. " +
+		Long: "Create, inspect, update, and close deployments through the Console managed wallet. " +
+			"Deployments are funded automatically from your account credits. " +
 			"Use `akt deploy <sdl-file>` for the complete create, bid, lease, and manifest flow.",
 	}
 
@@ -89,7 +59,6 @@ func deploymentCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 		deploymentCreateCmd(mgrFn),
 		deploymentUpdateCmd(mgrFn),
 		deploymentCloseCmd(mgrFn),
-		deploymentDepositCmd(mgrFn),
 		deploymentSettingsCmd(mgrFn),
 	)
 
@@ -170,39 +139,23 @@ func deploymentCreateCmdWithTerminal(
 	isTerminal func(int) bool,
 ) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "create <sdl-file> [deposit-usd]",
+		Use:   "create <sdl-file>",
 		Short: "Create a deployment (managed wallet signs server-side)",
-		Long: "Create a deployment from an SDL file with a USD deposit. The returned manifest " +
+		Long: "Create a deployment from an SDL file. There is no deposit: the platform funds the " +
+			"deployment from your account credits. The returned manifest " +
 			"is cached per-context so `akt console lease create` can send it without re-passing it. " +
 			"For the complete lifecycle, use `akt deploy <sdl-file>`.",
-		Args: cobra.RangeArgs(1, 2),
-		Example: `  # Deposit as positional argument
-  akt console deployment create deploy.yaml 5`,
+		Args:    cobra.ExactArgs(1),
+		Example: `  akt console deployment create deploy.yaml`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, rc, err := clientFromCmd(cmd, mgrFn, true)
 			if err != nil {
 				return err
 			}
 
-			// FEEDBACK(2026-07): --deposit disabled for the positional-only
-			// UX trial; the positional [deposit-usd] argument is the only
-			// source (zero fallback). Restore by uncommenting if users ask
-			// for the flag form back.
-			// deposit, _ := cmd.Flags().GetFloat64("deposit")
-			deposit := 0.0
-			if len(args) > 1 {
-				deposit, err = parseConsoleUSD(args[1])
-				if err != nil {
-					return err
-				}
-			}
-			// NOTE: internal/workflow/adapters/console.go carries a private
-			if deposit < transport.MinConsoleDepositUSD {
-				return fmt.Errorf("deposit must be at least %s (got %s): pass it as the [deposit-usd] argument", formatUSD(transport.MinConsoleDepositUSD), formatUSD(deposit))
-			}
 			skipConfirmation, _ := cmd.Flags().GetBool(flagdefs.FlagSkipConfirmation)
 			if err := confirmDeploymentCreate(cmd,
-				!skipConfirmation && isTerminal(int(os.Stdin.Fd())), args[0], deposit); err != nil {
+				!skipConfirmation && isTerminal(int(os.Stdin.Fd())), args[0]); err != nil {
 				return err
 			}
 
@@ -211,7 +164,7 @@ func deploymentCreateCmdWithTerminal(
 				return fmt.Errorf("read SDL file: %w", err)
 			}
 
-			result, err := cl.CreateDeployment(cmd.Context(), string(sdl), deposit)
+			result, err := cl.CreateDeployment(cmd.Context(), string(sdl))
 			if err != nil {
 				return fmt.Errorf("create deployment: %w", err)
 			}
@@ -242,39 +195,21 @@ func deploymentCreateCmdWithTerminal(
 				txHash = result.SignTx.TransactionHash
 			}
 
-			type autoTopUpNotice struct {
-				Enabled        bool   `json:"enabled"`
-				Frequency      string `json:"frequency"`
-				DisableCommand string `json:"disableCommand"`
-			}
-
-			dseq := result.DSeq.String()
 			return printJSON(cmd, struct {
-				DSeq      string          `json:"dseq"`
-				TxHash    string          `json:"txHash,omitempty"`
-				AutoTopUp autoTopUpNotice `json:"autoTopUp"`
-				Note      string          `json:"note,omitempty"`
-				Manifest  string          `json:"manifest,omitempty"`
+				DSeq     string `json:"dseq"`
+				TxHash   string `json:"txHash,omitempty"`
+				Note     string `json:"note,omitempty"`
+				Manifest string `json:"manifest,omitempty"`
 			}{
-				DSeq:   dseq,
-				TxHash: txHash,
-				AutoTopUp: autoTopUpNotice{
-					Enabled:        true,
-					Frequency:      "daily",
-					DisableCommand: "akt console deployment settings " + dseq + " false",
-				},
+				DSeq:     result.DSeq.String(),
+				TxHash:   txHash,
 				Note:     note,
 				Manifest: uncachedManifest,
 			})
 		},
 	}
 
-	// FEEDBACK(2026-07): --deposit disabled for the positional-only UX trial
-	// (use the positional form instead). Restore by uncommenting if users
-	// ask for the flag form back.
-	// cmd.Flags().Float64("deposit", 0, "Deposit amount in USD (minimum 0.5); alternative to the positional argument")
 	cmd.Flags().BoolP(flagdefs.FlagSkipConfirmation, "y", false, "Skip the deployment creation confirmation")
-	addNegativePositionalHint(cmd, "deposit-usd")
 
 	return cmd
 }
@@ -374,104 +309,38 @@ func convergeClosedDeployment(cmd *cobra.Command, rc *aktctx.Context, dseqText s
 	return s.MarkDeploymentClosed(ctx, owner, dseq, time.Now().Unix())
 }
 
-func deploymentDepositCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "deposit <dseq> [amount-usd]",
-		Short: "Add funds to a deployment's escrow",
-		Args:  cobra.RangeArgs(1, 2),
-		Example: `  # Amount as positional argument
-  akt console deployment deposit 12345 10`,
+func deploymentSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
+	return &cobra.Command{
+		Use:   "settings <dseq> [hours|none]",
+		Short: "View a deployment's funding record, or set its runtime limit",
+		Long: "Show a deployment's funding record, or set the runtime limit that bounds how long " +
+			"it runs before the platform closes it and returns the unused funds. Pass `none` to " +
+			"clear the limit and return the deployment to always-on funding. " +
+			"Automatic funding itself cannot be switched off.",
+		Args: cobra.RangeArgs(1, 2),
+		Example: `  # Show the current funding record
+  akt console deployment settings 12345
+
+  # Stop after 12 hours
+  akt console deployment settings 12345 12
+
+  # Back to always-on funding
+  akt console deployment settings 12345 none`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, _, err := clientFromCmd(cmd, mgrFn, true)
 			if err != nil {
 				return err
 			}
 
-			// FEEDBACK(2026-07): --amount disabled for the positional-only
-			// UX trial; the positional [amount-usd] argument is the only
-			// source (zero fallback). Restore by uncommenting if users ask
-			// for the flag form back.
-			// amount, _ := cmd.Flags().GetFloat64("amount")
-			amount := 0.0
+			// Parsed before anything is sent: a rejected limit must not
+			// reach the API.
 			if len(args) > 1 {
-				amount, err = parseConsoleUSD(args[1])
+				hours, err := parseRuntimeLimit(args[1])
 				if err != nil {
 					return err
 				}
-			}
-			if amount < transport.MinConsoleDepositUSD {
-				return fmt.Errorf("amount must be at least %s (got %s): pass it as the [amount-usd] argument", formatUSD(transport.MinConsoleDepositUSD), formatUSD(amount))
-			}
 
-			if err := cl.Deposit(cmd.Context(), args[0], amount); err != nil {
-				return fmt.Errorf("deposit to deployment %s: %w", args[0], err)
-			}
-
-			return printConsoleResult(cmd,
-				fmt.Sprintf("Deposited %s to deployment %s.", formatUSD(amount), args[0]),
-				struct {
-					DSeq      string  `json:"dseq"`
-					AmountUSD float64 `json:"amount_usd"`
-					Status    string  `json:"status"`
-				}{args[0], amount, "deposited"},
-			)
-		},
-	}
-
-	// FEEDBACK(2026-07): --amount disabled for the positional-only UX trial
-	// (use the positional form instead). Restore by uncommenting if users
-	// ask for the flag form back.
-	// cmd.Flags().Float64("amount", 0, "Amount to add in USD; alternative to the positional argument")
-	addNegativePositionalHint(cmd, "amount-usd")
-
-	return cmd
-}
-
-func deploymentSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "settings <dseq> [true|false]",
-		Short: "View or change a deployment's auto-top-up setting",
-		Args:  cobra.RangeArgs(1, 2),
-		Example: `  # Show current settings
-  akt console deployment settings 12345
-
-  # Enable auto-top-up
-  akt console deployment settings 12345 true`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cl, _, err := clientFromCmd(cmd, mgrFn, true)
-			if err != nil {
-				return err
-			}
-
-			// FEEDBACK(2026-07): --auto-top-up disabled for the
-			// positional-only UX trial; the positional [true|false] argument
-			// is the only source. Restore by uncommenting if users ask for
-			// the flag form back.
-			// if len(args) > 1 || cmd.Flags().Changed("auto-top-up") {
-			// 	value, _ := cmd.Flags().GetString("auto-top-up")
-			// 	if len(args) > 1 {
-			// 		value = args[1]
-			// 	}
-			//
-			// Parsed before anything is sent: a rejected boolean must not
-			// reach the API.
-			var enabled bool
-
-			if len(args) > 1 {
-				if enabled, err = parseBoolValue(args[1], "auto-top-up"); err != nil {
-					return err
-				}
-			}
-
-			// GET /v2/deployment-settings/{dseq} is get-or-create: it answers
-			// 200 for any dseq and mints a settings record as a side effect,
-			// so a command documented as a view both wrote and reported
-			// auto-top-up -- the setting that spends money unattended -- as
-			// enabled on deployments that do not exist and on deployments
-			// belonging to other accounts. Resolve the deployment first, which
-			// is the 404 the sibling `deployment get` already returns.
-			if len(args) > 1 {
-				settings, err := cl.SetDeploymentAutoTopUp(cmd.Context(), args[0], enabled)
+				settings, err := cl.SetDeploymentRuntimeLimit(cmd.Context(), args[0], hours)
 				if err != nil {
 					return fmt.Errorf("update deployment settings for %s: %w", args[0], err)
 				}
@@ -479,6 +348,12 @@ func deploymentSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return printJSON(cmd, renderSettings(settings))
 			}
 
+			// GET /v2/deployment-settings/{dseq} is get-or-create: it answers
+			// 200 for any dseq and mints a settings record as a side effect,
+			// so a command documented as a view would also report funding
+			// state for deployments that do not exist and for deployments
+			// belonging to other accounts. Resolve the deployment first,
+			// which is the 404 the sibling `deployment get` already returns.
 			if _, err := cl.GetDeployment(cmd.Context(), args[0]); err != nil {
 				return fmt.Errorf("deployment %s: %w", args[0], err)
 			}
@@ -491,13 +366,25 @@ func deploymentSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			return printJSON(cmd, renderSettings(settings))
 		},
 	}
+}
 
-	// FEEDBACK(2026-07): --auto-top-up disabled for the positional-only UX
-	// trial (use the positional form instead). Restore by uncommenting if
-	// users ask for the flag form back.
-	// cmd.Flags().String("auto-top-up", "", "Enable or disable auto-top-up (true|false)")
+// parseRuntimeLimit reads the positional runtime limit: a positive whole
+// number of hours, or "none" to clear the limit (a nil result).
+func parseRuntimeLimit(value string) (*int, error) {
+	text := strings.ToLower(strings.TrimSpace(value))
+	if text == "none" {
+		return nil, nil
+	}
 
-	return cmd
+	hours, err := strconv.Atoi(text)
+	if err != nil {
+		return nil, fmt.Errorf("runtime limit must be a whole number of hours or `none`, got %q", value)
+	}
+	if hours < 1 {
+		return nil, fmt.Errorf("runtime limit must be at least 1 hour, got %d", hours)
+	}
+
+	return &hours, nil
 }
 
 // --- bids and leases --------------------------------------------------------
@@ -651,18 +538,22 @@ func manifestFromFile(path string) (string, error) {
 	return string(data), nil
 }
 
-// renderSettings formats deployment settings for display, putting the top-up
+// renderSettings formats a deployment's funding record for display, putting the top-up
 // estimate through formatUSD like every other money value on this rail.
 func renderSettings(s *console.DeploymentSettings) any {
 	return struct {
-		DSeq                 string `json:"dseq"`
-		AutoTopUpEnabled     bool   `json:"autoTopUpEnabled"`
-		EstimatedTopUpAmount string `json:"estimatedTopUpAmount"`
-		TopUpFrequencyMs     int64  `json:"topUpFrequencyMs"`
+		DSeq                 string  `json:"dseq"`
+		AutoTopUpEnabled     bool    `json:"autoTopUpEnabled"`
+		EstimatedTopUpAmount string  `json:"estimatedTopUpAmount"`
+		TopUpFrequencyMs     int64   `json:"topUpFrequencyMs"`
+		RuntimeLimitHours    *int    `json:"runtimeLimitHours"`
+		RuntimeEndsAt        *string `json:"runtimeEndsAt"`
 	}{
 		DSeq:                 s.DSeq.String(),
 		AutoTopUpEnabled:     s.AutoTopUpEnabled,
 		EstimatedTopUpAmount: formatUSD(s.EstimatedTopUpUSD()),
 		TopUpFrequencyMs:     s.TopUpFrequencyMs,
+		RuntimeLimitHours:    s.RuntimeLimitHours,
+		RuntimeEndsAt:        s.RuntimeEndsAt,
 	}
 }

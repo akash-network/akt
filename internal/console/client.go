@@ -31,12 +31,6 @@ const DefaultBaseURL = "https://console-api.akash.network"
 // DefaultUIBaseURL is the production Console browser origin.
 const DefaultUIBaseURL = "https://console.akash.network"
 
-// MinDepositUSD is the minimum deployment deposit the Console API accepts.
-// It lives here — the leaf package every Console caller already imports —
-// so the CLI, the workflow transport, and the client itself cannot drift
-// apart on the limit they enforce.
-const MinDepositUSD = 0.5
-
 // maxResponseBodyBytes bounds every Console response before it can be decoded,
 // returned in an error, or copied into an action log. Successful list responses
 // are currently far smaller; the ceiling leaves room for growth without

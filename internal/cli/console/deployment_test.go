@@ -32,23 +32,23 @@ func TestConfirmDeploymentCreateDefaultsToNo(t *testing.T) {
 	cmd.SetErr(&diagnostics)
 
 	cmd.SetIn(strings.NewReader("\n"))
-	require.ErrorContains(t, confirmDeploymentCreate(cmd, true, "deploy.yaml", 5), "cancelled")
+	require.ErrorContains(t, confirmDeploymentCreate(cmd, true, "deploy.yaml"), "cancelled")
 	assert.Contains(t, diagnostics.String(), "Create deployment")
 
 	cmd.SetIn(strings.NewReader("yes\n"))
-	require.NoError(t, confirmDeploymentCreate(cmd, true, "deploy.yaml", 5))
-	require.NoError(t, confirmDeploymentCreate(cmd, false, "deploy.yaml", 5))
+	require.NoError(t, confirmDeploymentCreate(cmd, true, "deploy.yaml"))
+	require.NoError(t, confirmDeploymentCreate(cmd, false, "deploy.yaml"))
 }
 
 func TestConfirmDeploymentCreateReportsPromptAndReadFailures(t *testing.T) {
 	cmd := &cobra.Command{}
 	cmd.SetErr(consoleOutputErrorWriter{err: assert.AnError})
 	cmd.SetIn(strings.NewReader("yes\n"))
-	require.ErrorIs(t, confirmDeploymentCreate(cmd, true, "deploy.yaml", 5), assert.AnError)
+	require.ErrorIs(t, confirmDeploymentCreate(cmd, true, "deploy.yaml"), assert.AnError)
 
 	cmd.SetErr(io.Discard)
 	cmd.SetIn(strings.NewReader(""))
-	require.ErrorContains(t, confirmDeploymentCreate(cmd, true, "deploy.yaml", 5), "read deployment confirmation")
+	require.ErrorContains(t, confirmDeploymentCreate(cmd, true, "deploy.yaml"), "read deployment confirmation")
 }
 
 func TestDeploymentCreateReturnsInteractiveCancellation(t *testing.T) {
@@ -57,28 +57,9 @@ func TestDeploymentCreateReturnsInteractiveCancellation(t *testing.T) {
 	cmd.SetIn(strings.NewReader("no\n"))
 	cmd.SetOut(io.Discard)
 	cmd.SetErr(io.Discard)
-	cmd.SetArgs([]string{"deploy.yaml", "5"})
+	cmd.SetArgs([]string{"deploy.yaml"})
 
 	require.ErrorContains(t, cmd.Execute(), "deployment creation cancelled")
-}
-
-func TestNegativePositionalHintCoversMatchingAndOrdinaryFlagErrors(t *testing.T) {
-	for _, test := range []struct {
-		name string
-		arg  string
-		want string
-	}{
-		{name: "negative shorthand", arg: "-1", want: "place `--` before"},
-		{name: "ordinary flag", arg: "--unknown", want: "unknown flag"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			cmd := &cobra.Command{Use: "deposit [amount]", RunE: func(*cobra.Command, []string) error { return nil }}
-			addNegativePositionalHint(cmd, "amount")
-			cmd.SetArgs([]string{test.arg})
-			_, err := cmd.ExecuteC()
-			require.ErrorContains(t, err, test.want)
-		})
-	}
 }
 
 func TestDeploymentListStateCommandValidationAndFiltering(t *testing.T) {
@@ -162,12 +143,10 @@ deployment:
       count: 1
 `
 
-// TestDeploymentCreateUnifiedDepositSyntax pins the cross-rail deposit
-// contract (transport.ParseDeposit, SPEC §7.4) on `deployment create`: bare
-// numbers, "5usd", and "$5" are all USD on the console rail; coin forms fail
-// with the transport package's cross-rail error before any request is sent;
-// and the shared $0.50 minimum (transport.MinConsoleDepositUSD) is enforced.
-func TestDeploymentCreateUnifiedDepositSyntax(t *testing.T) {
+// TestDeploymentCreateSendsNoDeposit pins the console rail's funding contract
+// on `deployment create`: the request carries only the SDL, and the command
+// takes no deposit argument at all.
+func TestDeploymentCreateSendsNoDeposit(t *testing.T) {
 	m := newTestManager(t)
 	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
 		t.Fatalf("SetConsoleAPIKey: %v", err)
@@ -193,153 +172,65 @@ func TestDeploymentCreateUnifiedDepositSyntax(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	for _, tc := range []struct {
-		arg  string
-		want string
-	}{
-		{"5", `"deposit":5`},
-		{"5usd", `"deposit":5`},
-		{"$5", `"deposit":5`},
-		{"2.50usd", `"deposit":2.5`},
-	} {
-		body = ""
-		if _, err := execConsole(t, m, srv.URL, "deployment", "create", sdlPath, tc.arg); err != nil {
-			t.Fatalf("create with deposit %q: %v", tc.arg, err)
-		}
-		if !strings.Contains(body, tc.want) {
-			t.Errorf("deposit %q: request body = %s, want %s", tc.arg, body, tc.want)
-		}
+	out, err := execConsole(t, m, srv.URL, "deployment", "create", sdlPath)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	if strings.Contains(body, "deposit") {
+		t.Errorf("request body = %s, want no deposit field", body)
+	}
+	if strings.Contains(out, "autoTopUp") {
+		t.Errorf("create result = %s, want no auto-top-up notice: it named a command the API now refuses", out)
 	}
 
-	// Coin forms are chain-rail syntax: rejected client-side with the
-	// transport package's cross-rail message, no request sent.
-	body = ""
-	_, err := execConsole(t, m, srv.URL, "deployment", "create", sdlPath, "5000000uakt")
-	if err == nil || !strings.Contains(err.Error(), "console deposits are in USD") {
-		t.Errorf("coin deposit must fail with the cross-rail error, got %v", err)
-	}
-	if body != "" {
-		t.Errorf("no request must be sent for a rejected deposit, got body %s", body)
-	}
-
-	// Below the shared minimum (transport.MinConsoleDepositUSD).
-	_, err = execConsole(t, m, srv.URL, "deployment", "create", sdlPath, "0.25")
-	if err == nil || !strings.Contains(err.Error(), "$0.50") {
-		t.Errorf("sub-minimum deposit must fail mentioning the $0.50 floor, got %v", err)
+	// A trailing deposit is no longer a positional this command accepts.
+	if _, err := execConsole(t, m, srv.URL, "deployment", "create", sdlPath, "5"); err == nil {
+		t.Error("a deposit argument must be rejected, not silently discarded")
 	}
 }
 
-// TestDeploymentDepositUnifiedSyntax pins the same unified syntax on
-// `deployment deposit`: USD forms are accepted, coin forms rejected with the
-// cross-rail error, and garbage rejected before any request.
-func TestDeploymentDepositUnifiedSyntax(t *testing.T) {
+// TestDeploymentSettingsSetsRuntimeLimit pins the replacement for the retired
+// auto-top-up toggle: the positional is a runtime limit in hours, and `none`
+// clears it.
+func TestDeploymentSettingsSetsRuntimeLimit(t *testing.T) {
 	m := newTestManager(t)
 	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
 		t.Fatalf("SetConsoleAPIKey: %v", err)
 	}
 
 	var body string
-	var deposited bool
-	var requestedMicros string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/12345" {
-			amount := "1000000"
-			if deposited {
-				amount = requestedMicros
-			}
-			writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"12345"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"`+amount+`"}],"transferred":[]}}}}`)
+		if r.Method == http.MethodGet {
+			writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"12345"},"state":"active"}}}`)
 			return
 		}
 		b, _ := io.ReadAll(r.Body)
 		body = string(b)
-		if strings.Contains(body, `"deposit":10`) {
-			requestedMicros = "11000000"
-		} else {
-			requestedMicros = "3500000"
-		}
-		deposited = true
-		writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"12345"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"`+requestedMicros+`"}],"transferred":[]}}}}`)
-	}))
-	defer srv.Close()
-
-	for _, tc := range []struct {
-		arg  string
-		want string
-	}{
-		{"10usd", `"deposit":10`},
-		{"$2.50", `"deposit":2.5`},
-	} {
-		body = ""
-		deposited = false
-		if _, err := execConsole(t, m, srv.URL, "deployment", "deposit", "12345", tc.arg); err != nil {
-			t.Fatalf("deposit %q: %v", tc.arg, err)
-		}
-		if !strings.Contains(body, tc.want) || !strings.Contains(body, `"dseq":"12345"`) {
-			t.Errorf("deposit %q: request body = %s, want %s", tc.arg, body, tc.want)
-		}
-	}
-
-	body = ""
-	_, err := execConsole(t, m, srv.URL, "deployment", "deposit", "12345", "1akt")
-	if err == nil || !strings.Contains(err.Error(), "console deposits are in USD") {
-		t.Errorf("coin amount must fail with the cross-rail error, got %v", err)
-	}
-	if body != "" {
-		t.Errorf("no request must be sent for a rejected amount, got body %s", body)
-	}
-
-	if _, err := execConsole(t, m, srv.URL, "deployment", "deposit", "12345", "ten"); err == nil {
-		t.Error("non-numeric amount must be rejected")
-	}
-}
-
-func TestDeploymentDepositStructuredAcknowledgement(t *testing.T) {
-	m := newTestManager(t)
-	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
-		t.Fatalf("SetConsoleAPIKey: %v", err)
-	}
-
-	var deposited bool
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/12345" {
-			amount := "1000000"
-			if deposited {
-				amount = "3500000"
-			}
-			writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"12345"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"`+amount+`"}],"transferred":[]}}}}`)
+		if strings.Contains(body, `"runtimeLimitHours":null`) {
+			writeJSON(t, w, `{"data":{"dseq":"12345","autoTopUpEnabled":true,"runtimeLimitHours":null,"runtimeEndsAt":null}}`)
 			return
 		}
-		deposited = true
-		if r.Method != http.MethodPost || r.URL.Path != "/v1/deposit-deployment" {
-			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
-		}
-		writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"12345"}},"leases":[],"escrow_account":{"state":{"funds":[{"denom":"uact","amount":"3500000"}],"transferred":[]}}}}`)
+		writeJSON(t, w, `{"data":{"dseq":"12345","autoTopUpEnabled":true,"runtimeLimitHours":12,"runtimeEndsAt":null}}`)
 	}))
 	defer srv.Close()
 
-	for _, format := range []string{"json", "yaml"} {
-		t.Run(format, func(t *testing.T) {
-			deposited = false
-			out, err := execConsole(t, m, srv.URL, "deployment", "deposit", "12345", "$2.50", "-o", format)
-			if err != nil {
-				t.Fatalf("deposit -o %s: %v", format, err)
-			}
+	for _, tc := range []struct{ arg, want string }{
+		{"12", `"runtimeLimitHours":12`},
+		{"none", `"runtimeLimitHours":null`},
+	} {
+		body = ""
+		if _, err := execConsole(t, m, srv.URL, "deployment", "settings", "12345", tc.arg); err != nil {
+			t.Fatalf("settings %q: %v", tc.arg, err)
+		}
+		if !strings.Contains(body, tc.want) {
+			t.Errorf("settings %q: request body = %s, want %s", tc.arg, body, tc.want)
+		}
+	}
 
-			got := decodeStructuredMap(t, format, out)
-			want := map[string]any{
-				"dseq":       "12345",
-				"amount_usd": 2.5,
-				"status":     "deposited",
-			}
-			if len(got) != len(want) {
-				t.Fatalf("deposit acknowledgement = %#v, want %#v", got, want)
-			}
-			for key, wantValue := range want {
-				if got[key] != wantValue {
-					t.Errorf("deposit acknowledgement %s = %#v, want %#v", key, got[key], wantValue)
-				}
-			}
-		})
+	for _, arg := range []string{"0", "-3", "twelve", "true"} {
+		if _, err := execConsole(t, m, srv.URL, "deployment", "settings", "12345", arg); err == nil {
+			t.Errorf("settings %q: expected a rejection", arg)
+		}
 	}
 }
 

@@ -360,13 +360,9 @@ func resolveWorkflowParams(
 	}
 	resolved := ""
 	if rc.AuthMethod == aktctx.AuthMethodConsoleAPI {
+		// Resolves to the empty string: the Console funds the deployment
+		// from account credits, so there is nothing to carry to the adapter.
 		resolved, err = parsed.RailValue(transport.KindConsole)
-		if err == nil && parsed.Auto {
-			err = fmt.Errorf("deposit %q: console-api deployments require an explicit USD amount of at least $%.2f", raw, transport.MinConsoleDepositUSD)
-		}
-		if err == nil && parsed.USD < transport.MinConsoleDepositUSD {
-			err = fmt.Errorf("deposit must be at least $%.2f on the Console rail (got $%.2f)", transport.MinConsoleDepositUSD, parsed.USD)
-		}
 	} else {
 		resolved, err = parsed.RailValue(transport.KindChain)
 		if err == nil && parsed.Auto {
@@ -395,13 +391,21 @@ func resolveWorkflowParams(
 
 func validateDeploymentDenominations(params map[string]any, rc *aktctx.Context) error {
 	sdlPath, hasSDL := params["sdl-file"].(string)
-	resolvedDeposit, hasDeposit := params[flagdefs.FlagDeposit].(string)
-	if !hasSDL || !hasDeposit || strings.TrimSpace(sdlPath) == "" || strings.TrimSpace(resolvedDeposit) == "" {
+	if !hasSDL || strings.TrimSpace(sdlPath) == "" {
 		return nil
 	}
 
+	// The console rail funds in uact and carries no deposit to read a
+	// denomination from, so the check runs unconditionally there. Reading it
+	// from the (now always empty) deposit param would skip the preflight and
+	// let a uakt-priced SDL reach an API that cannot deploy it.
 	depositDenom := "uact"
 	if rc.AuthMethod != aktctx.AuthMethodConsoleAPI {
+		resolvedDeposit, hasDeposit := params[flagdefs.FlagDeposit].(string)
+		if !hasDeposit || strings.TrimSpace(resolvedDeposit) == "" {
+			return nil
+		}
+
 		coin, err := sdk.ParseDecCoin(resolvedDeposit)
 		if err != nil {
 			return fmt.Errorf("resolve deployment deposit denomination from %q: %w", resolvedDeposit, err)

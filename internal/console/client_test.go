@@ -163,8 +163,8 @@ func TestRetryOn5xxExhausted(t *testing.T) {
 func TestPostNotRetriedOn5xx(t *testing.T) {
 	// A 5xx does not prove the server failed to process the request (a
 	// gateway 502 can hide a completed write). Replaying a POST could
-	// duplicate a deployment or charge the managed wallet twice, so POST
-	// must do exactly one attempt and surface the error.
+	// duplicate a deployment or a lease, so POST must do exactly one attempt
+	// and surface the error.
 	var posts atomic.Int32
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -184,7 +184,9 @@ func TestPostNotRetriedOn5xx(t *testing.T) {
 	defer srv.Close()
 
 	c := console.New(srv.URL, "key")
-	err := c.Deposit(ctx, "123", 5)
+	_, err := c.CreateLease(ctx, "manifest", []console.LeaseRequest{{
+		DSeq: "123", GSeq: 1, OSeq: 1, Provider: "akash1provider",
+	}})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "server error")
 	assert.Equal(t, int32(1), posts.Load(), "POST + 5xx must not be retried")
@@ -192,7 +194,7 @@ func TestPostNotRetriedOn5xx(t *testing.T) {
 
 func TestPostNotRetriedOn429(t *testing.T) {
 	// A rate-limit response does not prove that a non-idempotent request was
-	// never processed. Replaying it could duplicate a deployment or charge.
+	// never processed. Replaying it could duplicate a deployment or a lease.
 	var posts atomic.Int32
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -212,7 +214,9 @@ func TestPostNotRetriedOn429(t *testing.T) {
 	defer srv.Close()
 
 	c := console.New(srv.URL, "key")
-	err := c.Deposit(ctx, "123", 5)
+	_, err := c.CreateLease(ctx, "manifest", []console.LeaseRequest{{
+		DSeq: "123", GSeq: 1, OSeq: 1, Provider: "akash1provider",
+	}})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "rate limited")
 	assert.Equal(t, int32(1), posts.Load(), "POST + 429 must not be replayed")
