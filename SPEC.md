@@ -7798,7 +7798,14 @@ Live credentials follow these rules:
   changes are diagnostic and MUST NOT participate in the spend-limit decision;
 - set the shortest usable runtime limit as soon as a deployment identifier is
   known, unless the scenario explicitly tests limits. This replaces disabling
-  auto top-up, which always-on funding rejects.
+  auto top-up, which always-on funding rejects. The normal success lifecycle
+  MUST issue exactly one runtime-limit PATCH, immediately after create and
+  before paid operations; later settings assertions MUST use GET. Repeating the
+  same total is not an extension and MUST NOT be sent as a second PATCH.
+  Cleanup MUST read settings first, skip the PATCH when the existing limit is
+  already at or below the bound, set the limit only when none exists, and
+  report a higher existing limit rather than attempt the unsupported operation
+  of lowering it.
 
 Subprocess and observer response capture is bounded. Failure diagnostics MUST
 NOT print raw stdout, stderr, HTTP response bodies, action-log entries, API

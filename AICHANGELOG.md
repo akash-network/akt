@@ -78,6 +78,15 @@
 
 ### Fixed
 
+- **The live Console lifecycle repeated an unchanged runtime-limit PATCH**:
+  the sandbox API rejects an equal total because it is not an extension, so the
+  otherwise successful protected job failed late in its lifecycle and cleanup
+  repeated the same rejected request. The lifecycle now writes its one-hour
+  bound once before paid operations and uses GET for later coverage. Cleanup
+  reads settings first, skips an already bounded deployment, sets an absent
+  limit, and reports a higher limit instead of attempting the unsupported
+  operation of lowering it.
+
 - **Dual-rail contexts now keep chain and Console operations available at the
   same time**: The context's existing `auth-method` selects only the preferred
   `deploy`/`update`/`close` rail, with `--deploy-via chain|console` as the clear
