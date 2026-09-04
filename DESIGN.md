@@ -302,6 +302,16 @@ graph TB
 - After startup loads the common config, runtime code derives the mainnet chain
   ID from the configured `mainnet` network. Command code does not duplicate the
   registry-owned chain ID as a literal or package-level variable.
+- A network optionally carries a `faucet` URL (test networks only). First-run
+  bootstrap and `--template` populate it from the upstream registry's
+  `meta.json` `faucets[0].url` when the entry publishes one; mainnet's never
+  does. `akt faucet` is the single command that reads it: presence of a
+  non-empty `faucet` is the only signal that a network has a faucet, so there
+  is no separate "is mainnet" flag to keep in sync. `akt faucet` only shows
+  the URL and address by default; `akt faucet --send` submits an
+  unauthenticated POST to the faucet's `/faucet` endpoint and broadcasts the
+  funding transaction on the faucet's side, so `--send` is refused outright
+  on a network that resolves as mainnet even if `faucet` was set manually.
 - The human context detail view presents these resolved fields in one
   `Network` subsection. It does not repeat the shared network object's name as
   a separate row above that subsection; structured output retains the complete
@@ -2020,6 +2030,14 @@ The runtime limit, which auto-closes the deployment and returns unused funds,
 remains the absolute loss bound if blocks arrive faster than the conservative
 projection interval.
 
+The normal lifecycle establishes its one-hour runtime limit with one PATCH
+immediately after create and before any paid operation. Later settings coverage
+is read-only: sending the same total again does not extend the limit and is not
+a valid settings update under the Console contract. Cleanup reads the current
+settings first. It skips the PATCH when the deployment is already bounded,
+sets the limit only when none exists, and reports a higher existing limit
+instead of attempting the unsupported operation of lowering it.
+
 The harness observes Console state with a small raw HTTP client that is
 independent of the `akt console` command and its Console client package. Command
 responses remain assertions about the public CLI, but create, settings, lease,
@@ -2049,16 +2067,16 @@ so SDK zero values cannot masquerade as a healthy dynamic response.
 Mutation time and cleanup time have separate deadlines. The lifecycle context
 expires before the overall test deadline, leaving a fixed cleanup reserve.
 Cleanup subdivides that reserve so discovery or one close request cannot consume
-the time needed to disable auto top-up, verify terminal state, and observe final
-escrow accounting. Cleanup starts before the first write is issued and retains both the
-pre-state DSEQ set and unique SDL hashes so an ambiguous create can be found
-without closing another run's deployment.
+the time needed to verify or cap the runtime limit, verify terminal state, and
+observe final escrow accounting. Cleanup starts before the first write is issued
+and retains both the pre-state DSEQ set and unique SDL hashes so an ambiguous
+create can be found without closing another run's deployment.
 The discovery phase is at least as long as normal create-state observation;
 cleanup therefore cannot abandon an accepted create merely because the
 Console indexer exposes it after the ordinary success path would still wait.
-The fixed reserve separately retains forty seconds for disabling auto top-up
-and closing after discovery, then twenty seconds for terminal-state and final
-escrow and account-reconciliation observation.
+The fixed reserve separately retains forty seconds for runtime-limit
+observation or capping and closing after discovery, then twenty seconds for
+terminal-state and final escrow and account-reconciliation observation.
 
 **Current live-suite boundary (2026-08-14):** the opt-in managed-wallet suite
 implements the raw Console observer, attempted-request and exact

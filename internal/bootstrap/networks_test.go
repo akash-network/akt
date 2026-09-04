@@ -122,6 +122,58 @@ func TestMetaToNetworkMapsEndpointsAndGasPrice(t *testing.T) {
 	}
 }
 
+// TestMetaToNetworkMapsFaucet pins the translation of the upstream
+// chain-registry "faucets" array into the Network.Faucet field: sandbox-2's
+// meta.json carries one, mainnet's does not, and an empty or malformed entry
+// must not leave a URL nothing can actually reach (SPEC §1.3, §1.10).
+func TestMetaToNetworkMapsFaucet(t *testing.T) {
+	cases := map[string]struct {
+		meta *metaJSON
+		want string
+	}{
+		"no faucets field": {&metaJSON{ChainID: "akashnet-2"}, ""},
+		"empty faucets list": {&metaJSON{ChainID: "x-1", Faucets: []struct {
+			URL string `json:"url"`
+		}{}}, ""},
+		"empty url": {&metaJSON{ChainID: "x-1", Faucets: []struct {
+			URL string `json:"url"`
+		}{{URL: ""}}}, ""},
+		"present": {&metaJSON{ChainID: "sandbox-2", Faucets: []struct {
+			URL string `json:"url"`
+		}{{URL: "http://faucet.sandbox-2.aksh.pw/"}}}, "http://faucet.sandbox-2.aksh.pw/"},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			if got := metaToNetwork("n", tc.meta).Faucet; got != tc.want {
+				t.Errorf("faucet = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestFetchMetaParsesFaucets covers the field end-to-end through JSON
+// unmarshaling, since the hand-built metaJSON literals above skip decoding.
+func TestFetchMetaParsesFaucets(t *testing.T) {
+	client, _ := newStubClient(map[string]stubResponse{
+		"/sandbox-2/meta.json": {http.StatusOK, `{
+			"chain_id": "sandbox-2",
+			"apis": {},
+			"faucets": [{"url": "http://faucet.sandbox-2.aksh.pw/"}]
+		}`},
+	})
+
+	meta, err := fetchMeta(client, "sandbox-2")
+	if err != nil {
+		t.Fatalf("fetchMeta: %v", err)
+	}
+
+	n := metaToNetwork("sandbox-2", meta)
+	if n.Faucet != "http://faucet.sandbox-2.aksh.pw/" {
+		t.Errorf("faucet = %q, want the registry URL", n.Faucet)
+	}
+}
+
 // TestMetaToNetworkOmitsUnusableGasPrice covers the two guards around the fee
 // token: a zero price or a missing denom must leave GasPrices empty so the
 // context falls back to its own default rather than writing "0" or a bare
