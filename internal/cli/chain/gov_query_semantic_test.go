@@ -3,6 +3,7 @@ package cli
 import (
 	flagdefs "pkg.akt.dev/akt/internal/flags"
 
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -11,8 +12,10 @@ import (
 	"time"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
+	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
+	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	govv1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
@@ -184,6 +187,12 @@ func TestGovQueryExactRequestsAndStructuredResults(t *testing.T) {
 	depositor, voter := govTestAddresses()
 
 	t.Run("proposal", func(t *testing.T) {
+		message, err := codectypes.NewAnyWithValue(banktypes.NewMsgSend(
+			depositor,
+			voter,
+			sdk.NewCoins(sdk.NewInt64Coin("uakt", 1234567)),
+		))
+		require.NoError(t, err)
 		recorder := &govQueryRecorder{proposalResponse: &govv1.QueryProposalResponse{
 			Proposal: &govv1.Proposal{
 				Id:       101,
@@ -191,22 +200,40 @@ func TestGovQueryExactRequestsAndStructuredResults(t *testing.T) {
 				Summary:  "A result that must survive structured output",
 				Status:   govv1.StatusVotingPeriod,
 				Proposer: depositor.String(),
+				Messages: []*codectypes.Any{message},
 			},
 		}}
 
-		output, err := execQueryCmd(
+		var output bytes.Buffer
+		err = runGovQueryWithWriter(
 			t,
 			GetQueryGovProposalCmd(),
 			&govAggregateQuery{gov: recorder},
+			&output,
 			"101",
 		)
 		require.NoError(t, err)
 		require.Equal(t, []*govv1.QueryProposalRequest{{ProposalId: 101}}, recorder.proposalRequests)
 
-		result := decodeGovQueryJSON(t, output)
+		result := decodeGovQueryJSON(t, output.String())
 		require.Equal(t, "101", result["id"])
 		require.Equal(t, "Deterministic proposal", result["title"])
 		require.Equal(t, depositor.String(), result["proposer"])
+		messages, ok := result["messages"].([]interface{})
+		require.True(t, ok)
+		require.Len(t, messages, 1)
+		messageResult, ok := messages[0].(map[string]interface{})
+		require.True(t, ok)
+		require.Equal(t, "/cosmos.bank.v1beta1.MsgSend", messageResult["@type"])
+		require.Equal(t, depositor.String(), messageResult["from_address"])
+		require.Equal(t, voter.String(), messageResult["to_address"])
+		amounts, ok := messageResult["amount"].([]interface{})
+		require.True(t, ok)
+		require.Len(t, amounts, 1)
+		amount, ok := amounts[0].(map[string]interface{})
+		require.True(t, ok)
+		require.Equal(t, "uakt", amount["denom"])
+		require.Equal(t, "1234567", amount["amount"])
 	})
 
 	t.Run("filtered proposals", func(t *testing.T) {

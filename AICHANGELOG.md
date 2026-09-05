@@ -50,6 +50,18 @@
 
 ### Fixed
 
+- **Governance proposal inspection now shows the actions voters authorize**:
+  the compact proposal list reports each proposal's executable message count,
+  while `akt query gov proposal <id>` prints the exact metadata reference and
+  every on-chain message in execution order. Known messages include their
+  complete type URL and decoded JSON payload. A future message type that this
+  akt build cannot decode retains its type URL and base64 wire value instead of
+  disappearing from pretty output. The detail view also states whether the
+  proposal is expedited and pairs exact tally counts with vote percentages.
+  Highlighted payloads retain their commas and remain copy-pastable JSON.
+  JSON and YAML remain the complete protobuf representations, and command help
+  now points users to those lossless forms. (#96)
+
 - **Dual-rail contexts now keep chain and Console operations available at the
   same time**: The context's existing `auth-method` selects only the preferred
   `deploy`/`update`/`close` rail, with `--deploy-via chain|console` as the clear
