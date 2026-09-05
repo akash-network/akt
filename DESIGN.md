@@ -1115,6 +1115,13 @@ change that public behavior.
   parameters: explicit values are checked with the generated artifact's
   authoritative parser and linter before output. An internal invariant error
   is reserved for a built-in scaffold whose defaults fail that validation.
+  SDL CPU architecture follows that boundary exactly: scaffolds may add the
+  parser-supported `amd64` or `arm64` placement attribute to every compute
+  profile, but never invent an architecture when the user omitted it. Keeping
+  absence distinct from `amd64` preserves existing group specs, provider
+  matching, and byte-stable default scaffold output; the shared SDL parser,
+  rather than a parallel CLI enum, remains the source of truth for accepted
+  architecture values.
 - **Typed query responses remain external input**: a successful transport call
   must return the response object, and any nested object that the command
   promises to render, before command code dereferences it. Auth, staking, Wasm,

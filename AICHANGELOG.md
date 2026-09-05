@@ -4,6 +4,14 @@
 
 ### Changed
 
+- **SDL scaffolds can target CPU architecture without changing existing
+  defaults**: `akt sdl init` accepts an optional architecture for every
+  scaffold and applies it to every compute profile, including both services in
+  the multi-service scaffold. The Go SDL SDK now enforces the shared `amd64` /
+  `arm64` vocabulary during generation, direct offline validation, and deploy
+  parsing; unsupported values fail locally before broadcast. Omitting the
+  option still writes no CPU attribute and preserves the prior scaffold bytes.
+
 - **Console deployments are funded automatically; the deposit surface is gone
   from that rail (CON-890)**: Console abstracted escrow away: the platform
   funds every deployment from the account's credits, `POST /v1/deployments`
