@@ -263,6 +263,7 @@ func TestRenderProposalDetail(t *testing.T) {
 			p: &govv1.Proposal{
 				Id:              2,
 				Title:           "Community Pool Spend",
+				Expedited:       true,
 				Proposer:        "akash1proposer456",
 				Status:          govv1.StatusPassed,
 				SubmitTime:      &submitTime,
