@@ -1351,6 +1351,24 @@ small void rendering API cannot hide a broken stdout behind that API.
   rendering alone applies the shared readable-unit conversion above; this
   keeps `1000000uakt` machine-readable as such while displaying it as `1 AKT`.
 
+Governance proposal output separates discovery from inspection. The proposal
+list stays compact and reports how many executable messages each proposal
+contains. The single-proposal view is the audit view: it shows the exact
+on-chain metadata value and every message in execution order. Each message
+includes its complete type URL and its decoded JSON payload using the
+invocation's interface registry. If this version of akt does not recognize a
+future message type, the renderer preserves the type URL and base64 wire value
+instead of hiding the action. Machine JSON and YAML remain the lossless
+protobuf representations. Syntax highlighting changes only JSON token styles;
+it preserves every delimiter so removing ANSI styling leaves valid,
+copy-pastable JSON.
+
+Metadata can name content outside the chain, such as an IPFS document. Querying
+a proposal prints that reference but does not fetch it. The executable messages
+are the authoritative statement of what the proposal will do, while automatic
+metadata retrieval would make a chain query depend on mutable, untrusted
+content.
+
 ### 5.6 Multi-Endpoint Failover
 
 Each context can define multiple endpoints per transport type (RPC, API, gRPC). The client layer implements automatic failover:

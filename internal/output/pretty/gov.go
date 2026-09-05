@@ -1,6 +1,7 @@
 package pretty
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
 	"math/big"
@@ -28,7 +29,7 @@ func formatProposalStatus(status govv1.ProposalStatus) string {
 // RenderProposalList renders a proposals list as a styled string.
 func RenderProposalList(res *govv1.QueryProposalsResponse) string {
 	var buf strings.Builder
-	headers := []string{"ID", "TITLE", "STATUS", "YES", "NO", "ABSTAIN", "VETO", "VOTING END"}
+	headers := []string{"ID", "TITLE", "MESSAGES", "STATUS", "YES", "NO", "ABSTAIN", "VETO", "VOTING END"}
 	rows := make([][]string, 0, len(res.Proposals))
 	for _, p := range res.Proposals {
 		votingEnd := "-"
@@ -39,6 +40,7 @@ func RenderProposalList(res *govv1.QueryProposalsResponse) string {
 		rows = append(rows, []string{
 			Bold(fmt.Sprintf("%d", p.Id)),
 			truncateString(p.Title, 40),
+			fmt.Sprintf("%d", len(p.Messages)),
 			ColorState(formatProposalStatus(p.Status)),
 			yes, no, abstain, veto,
 			votingEnd,
@@ -81,7 +83,7 @@ func formatProposalsList(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg
 }
 
 // RenderProposalDetail renders a proposal detail as a styled string.
-func RenderProposalDetail(p *govv1.Proposal) string {
+func RenderProposalDetail(cctx sdkclient.Context, p *govv1.Proposal) string {
 	var buf strings.Builder
 	fmt.Fprintln(&buf, Section("Proposal"))
 	KV(&buf, "ID", Bold(fmt.Sprintf("%d", p.Id)))
@@ -91,9 +93,43 @@ func RenderProposalDetail(p *govv1.Proposal) string {
 	if p.Summary != "" {
 		KV(&buf, "Summary", p.Summary)
 	}
-	if p.Expedited {
-		KV(&buf, "Expedited", "yes")
+	if p.Metadata != "" {
+		KV(&buf, "Metadata", p.Metadata)
 	}
+	expedited := "no"
+	if p.Expedited {
+		expedited = "yes"
+	}
+	KV(&buf, "Expedited", expedited)
+
+	Newline(&buf)
+	fmt.Fprintln(&buf, Section("Messages"))
+	if len(p.Messages) == 0 {
+		fmt.Fprintln(&buf, Dim("(no executable messages)"))
+	}
+	for i, packed := range p.Messages {
+		if i > 0 {
+			Newline(&buf)
+		}
+		fmt.Fprintln(&buf, Section(fmt.Sprintf("Message %d", i+1)))
+		if packed == nil {
+			KV(&buf, "Status", Dim("message is absent"))
+			continue
+		}
+
+		KV(&buf, "Type", packed.TypeUrl)
+		message, ok := unpackTxMessage(cctx, packed)
+		if ok && cctx.Codec != nil {
+			payload, err := cctx.Codec.MarshalJSON(message)
+			if err == nil {
+				_ = WriteHighlightedJSON(&buf, payload)
+				continue
+			}
+		}
+
+		KV(&buf, "Raw Value (base64)", base64.StdEncoding.EncodeToString(packed.Value))
+	}
+
 	Newline(&buf)
 	fmt.Fprintln(&buf, Section("Timeline"))
 	if p.SubmitTime != nil {
@@ -118,10 +154,11 @@ func RenderProposalDetail(p *govv1.Proposal) string {
 	if p.FinalTallyResult != nil {
 		Newline(&buf)
 		fmt.Fprintln(&buf, Section("Tally"))
-		KV(&buf, "Yes", p.FinalTallyResult.YesCount)
-		KV(&buf, "No", p.FinalTallyResult.NoCount)
-		KV(&buf, "Abstain", p.FinalTallyResult.AbstainCount)
-		KV(&buf, "No With Veto", p.FinalTallyResult.NoWithVetoCount)
+		yes, no, abstain, veto := formatTallyPercentages(p.FinalTallyResult)
+		KV(&buf, "Yes", formatTallyCount(p.FinalTallyResult.YesCount, yes))
+		KV(&buf, "No", formatTallyCount(p.FinalTallyResult.NoCount, no))
+		KV(&buf, "Abstain", formatTallyCount(p.FinalTallyResult.AbstainCount, abstain))
+		KV(&buf, "No With Veto", formatTallyCount(p.FinalTallyResult.NoWithVetoCount, veto))
 	}
 	if p.FailedReason != "" {
 		Newline(&buf)
@@ -130,9 +167,16 @@ func RenderProposalDetail(p *govv1.Proposal) string {
 	return buf.String()
 }
 
-func formatProposalDetail(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	_, err := fmt.Fprint(w, RenderProposalDetail(msg.(*govv1.Proposal)))
+func formatProposalDetail(w io.Writer, _ *cobra.Command, cctx sdkclient.Context, msg proto.Message) error {
+	_, err := fmt.Fprint(w, RenderProposalDetail(cctx, msg.(*govv1.Proposal)))
 	return err
+}
+
+func formatTallyCount(count, percentage string) string {
+	if percentage == "-" {
+		return count
+	}
+	return fmt.Sprintf("%s (%s)", count, percentage)
 }
 
 // truncateString truncates a string to maxLen characters, appending "..." if truncated.

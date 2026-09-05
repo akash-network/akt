@@ -5892,6 +5892,7 @@ and bypasses the shared micro-unit formatter.
 |--------|--------|--------|
 | ID | `Proposal.Id` | Bold |
 | TITLE | `Proposal.Title` | Up to 40 characters, with `...` when truncated |
+| MESSAGES | `len(Proposal.Messages)` | Decimal count |
 | STATUS | `Proposal.Status` | Color-coded |
 | YES | `Proposal.FinalTallyResult.YesCount` | Percentage of votes cast, or `-` when no tally exists |
 | NO | `Proposal.FinalTallyResult.NoCount` | Percentage of votes cast, or `-` when no tally exists |
@@ -5899,7 +5900,27 @@ and bypasses the shared micro-unit formatter.
 | VETO | `Proposal.FinalTallyResult.NoWithVetoCount` | Percentage of votes cast, or `-` when no tally exists |
 | VOTING END | `Proposal.VotingEndTime` | ISO date |
 
-**Single proposal** (detail): Sections for Proposal (ID, title, status, type, description), Timeline (submit, deposit end, voting start, voting end), and Tally (yes/no/abstain/no_with_veto with percentages).
+**Single proposal** (detail): Sections for Proposal (ID, title, status,
+proposer, summary, exact metadata value when present, expedited yes/no, and a
+failure reason when present), Messages, Timeline, Deposit, and Tally. Messages
+are rendered in execution order. Every message shows its 1-based position,
+complete protobuf type URL, and full decoded JSON payload. Addresses and
+payload fields are never shortened or omitted. When the invocation's interface
+registry cannot decode a message, pretty output shows the complete type URL and
+base64-encoded wire value so an unknown future action is still inspectable.
+An absent message is reported explicitly rather than dereferenced.
+Highlighted decoded payloads preserve all JSON delimiters; stripping ANSI
+styling from the rendered payload MUST produce valid JSON.
+
+The Tally section prints each exact count and its percentage of all recorded
+vote options. A missing, malformed, negative, or all-zero tally has no valid
+percentage denominator and prints only the exact returned counts.
+
+The metadata field is chain data, but it may be only an external URI or CID.
+The command never fetches that external content implicitly. JSON and YAML keep
+the complete protobuf proposal, including default-valued fields, pagination on
+the plural response, expanded registered `Any` messages, and their exact
+machine values.
 
 #### Escrow
 

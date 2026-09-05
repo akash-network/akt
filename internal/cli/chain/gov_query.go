@@ -59,8 +59,9 @@ proposal-id by running "%s query gov proposals".
 
 Example:
 $ %s query gov proposal 1
+$ %s query gov proposal 1 --output json
 `,
-				version.AppName, version.AppName,
+				version.AppName, version.AppName, version.AppName,
 			),
 		),
 		PersistentPreRunE: QueryPersistentPreRunE,
@@ -104,8 +105,9 @@ $ %s query gov proposals --depositor akash1skjwj5whet0lpe65qaq4rpq03hjxlwd9nf39l
 $ %s query gov proposals --voter akash1skjwj5whet0lpe65qaq4rpq03hjxlwd9nf39lk
 $ %s query gov proposals --status (DepositPeriod|VotingPeriod|Passed|Rejected)
 $ %s query gov proposals --page=2 --limit=100
+$ %s query gov proposals --output json
 `,
-				version.AppName, version.AppName, version.AppName, version.AppName,
+				version.AppName, version.AppName, version.AppName, version.AppName, version.AppName,
 			),
 		),
 		PersistentPreRunE: QueryPersistentPreRunE,
