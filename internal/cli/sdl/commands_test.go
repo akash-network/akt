@@ -4,8 +4,10 @@ import (
 	flagdefs "pkg.akt.dev/akt/internal/flags"
 
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
+	gosdl "pkg.akt.dev/go/sdl"
 
 	"pkg.akt.dev/akt/internal/cliutil"
 	clioutput "pkg.akt.dev/akt/internal/output"
@@ -137,6 +140,66 @@ func TestInitRoundTripAllScaffolds(t *testing.T) {
 			require.Contains(t, valOut, "0 warning(s)")
 		})
 	}
+}
+
+func TestInitDefaultOutputRemainsByteIdentical(t *testing.T) {
+	wantHashes := map[string]string{
+		"web":           "689fceebca0ef155a497834da0f2eacb5d4bddf23bdae93188faec850c810c59",
+		"gpu":           "a2838adffe575b57db1f3a11a70bf7af7185865c092dc480cf0a0a116ff1bf70",
+		"multi-service": "a00b4f0803f5a4c7f1e950b2b8a336c543409d6e1a087344992e33881183e591",
+		"ip-lease":      "9ea3a006ddacdaf22f8bcec374b3c3ede38efaa9c4f0ae57918601314eef6f9d",
+	}
+
+	for scaffold, wantHash := range wantHashes {
+		t.Run(scaffold, func(t *testing.T) {
+			stdout, _, err := runSDL(t, "", "init", scaffold)
+			require.NoError(t, err)
+			require.Equal(t, wantHash, fmt.Sprintf("%x", sha256.Sum256([]byte(stdout))))
+			require.NotContains(t, stdout, "arch:")
+		})
+	}
+}
+
+func TestInitArchitectureAppliesToEveryComputeProfile(t *testing.T) {
+	wantProfiles := map[string]int{
+		"web":           1,
+		"gpu":           1,
+		"multi-service": 2,
+		"ip-lease":      1,
+	}
+
+	for scaffold, count := range wantProfiles {
+		t.Run(scaffold, func(t *testing.T) {
+			stdout, _, err := runSDL(t, "", "init", scaffold, "--architecture", "arm64")
+			require.NoError(t, err)
+
+			doc, err := gosdl.Read([]byte(stdout))
+			require.NoError(t, err)
+			groups, err := doc.DeploymentGroups()
+			require.NoError(t, err)
+
+			resources := 0
+			for _, group := range groups {
+				for _, resource := range group.Resources {
+					resources++
+					require.NotNil(t, resource.CPU)
+					require.Len(t, resource.CPU.Attributes, 1)
+					require.Equal(t, "arch", resource.CPU.Attributes[0].Key)
+					require.Equal(t, "arm64", resource.CPU.Attributes[0].Value)
+				}
+			}
+			require.Equal(t, count, resources)
+		})
+	}
+}
+
+func TestInitUnsupportedArchitectureIsUsageError(t *testing.T) {
+	stdout, _, err := runSDL(t, "", "init", "web", "--architecture", "sparc64")
+	require.Error(t, err)
+	require.Equal(t, cliutil.ExitUsage, cliutil.ExitCode(err))
+	require.Contains(t, err.Error(), "--architecture")
+	require.Contains(t, err.Error(), `unsupported cpu architecture "sparc64"`)
+	require.Empty(t, stdout, "no SDL must be emitted for invalid input")
 }
 
 func TestInitWebShape(t *testing.T) {
@@ -424,6 +487,31 @@ func TestValidateValidFile(t *testing.T) {
 	stdout, _, err := runSDL(t, "", "validate", path)
 	require.NoError(t, err)
 	require.Contains(t, stdout, "valid: 1 service(s), 1 group(s), 0 warning(s)")
+}
+
+func TestValidateSupportedCPUArchitectures(t *testing.T) {
+	for _, architecture := range []string{"amd64", "arm64"} {
+		t.Run(architecture, func(t *testing.T) {
+			stdout, _, err := runSDL(t, withCPUArchitecture(validSDL, architecture), "validate", "-")
+			require.NoError(t, err)
+			require.Contains(t, stdout, "valid: 1 service(s), 1 group(s), 0 warning(s)")
+		})
+	}
+}
+
+func TestValidateUnsupportedCPUArchitecture(t *testing.T) {
+	_, stderr, err := runSDL(t, withCPUArchitecture(validSDL, "sparc64"), "validate", "-")
+	require.Error(t, err)
+	require.Equal(t, cliutil.ExitGeneral, cliutil.ExitCode(err))
+	require.Contains(t, stderr, `unsupported cpu architecture "sparc64"`)
+}
+
+func withCPUArchitecture(input, architecture string) string {
+	return strings.Replace(input,
+		"        cpu:\n          units: 0.5",
+		fmt.Sprintf("        cpu:\n          units: 0.5\n          attributes:\n            arch: %s", architecture),
+		1,
+	)
 }
 
 func TestValidateStructuredOutput(t *testing.T) {

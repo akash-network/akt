@@ -56,8 +56,8 @@ require (
 	gopkg.in/yaml.v3 v3.0.1
 	k8s.io/apimachinery v0.33.3
 	k8s.io/client-go v0.32.1
-	pkg.akt.dev/go v0.4.2
-	pkg.akt.dev/go/sdl v0.4.2
+	pkg.akt.dev/go v0.4.5-rc0
+	pkg.akt.dev/go/sdl v0.4.5-rc0
 )
 
 replace (

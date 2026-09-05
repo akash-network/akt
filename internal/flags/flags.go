@@ -24,6 +24,7 @@ const (
 	FlagAPIMaxOpenConnections       = "api.max-open-connections"
 	FlagAPISwagger                  = "api.swagger"
 	FlagAppendMode                  = "append"
+	FlagArchitecture                = "architecture"
 	FlagASCII                       = "ascii"
 	FlagAs                          = "as"
 	FlagAssetDenom                  = "asset-denom"

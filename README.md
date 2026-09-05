@@ -111,8 +111,8 @@ Core engine with 3-level definition resolution (per-context > global > embedded)
 Transport-independent SDL scaffolding, generation, and linting. Every `akt sdl` subcommand runs entirely locally: no context, no key, no RPC endpoint, and the group declares no capability requirements.
 
 - **`akt sdl scaffolds`** -- list the built-in scaffolds (`web`, `gpu`, `multi-service`, `ip-lease`) and the flags each honors.
-- **`akt sdl init <scaffold>`** -- print a deployable SDL to stdout, self-checked against the validator before it is printed. Flags (`--image`, `--cpu`, `--memory`, `--gpu-model`, `--price`, ...) are generation parameters with per-scaffold defaults, so the zero-flag invocation always produces valid output. Pipe it into `akt sdl validate -`, or redirect it to a file for `akt deploy` / `akt console deployment create`.
-- **`akt sdl validate <file>`** -- validate offline (`-` reads stdin). Parsing uses `pkg.akt.dev/go/sdl`, the same parser behind `akt deploy` and the chain tx commands, followed by lint rules.
+- **`akt sdl init <scaffold>`** -- print a deployable SDL to stdout, self-checked against the validator before it is printed. Flags (`--image`, `--cpu`, `--architecture`, `--memory`, `--gpu-model`, `--price`, ...) are generation parameters with per-scaffold defaults, so the zero-flag invocation always produces valid output. `--architecture` accepts `amd64` or `arm64`; omitting it writes no CPU architecture. Pipe the result into `akt sdl validate -`, or redirect it to a file for `akt deploy` / `akt console deployment create`.
+- **`akt sdl validate <file>`** -- validate offline (`-` reads stdin). Parsing uses `pkg.akt.dev/go/sdl`, the same parser behind `akt deploy` and the chain tx commands, followed by lint rules. Unsupported CPU architectures fail here before deployment.
 
 Lint rules: an unpinned image is an **error** -- every service image must carry an explicit tag or `@sha256:` digest, so untagged images and `:latest` are rejected as non-reproducible. For pricing, `uact` passes on both rails. `uakt` is a **warning** because it requires an explicitly matching `--deposit <amount>uakt` on chain; any other denom is an error. Exit 0 when valid, 1 when not. See [SPEC.md §2.11](SPEC.md#211-sdl-commands).
 
@@ -345,6 +345,9 @@ akt sdl scaffolds
 
 # Generate a web service SDL
 akt sdl init web --image nginx:1.27 > deploy.yaml
+
+# Generate an SDL that providers match to arm64 inventory
+akt sdl init web --architecture arm64 > deploy-arm64.yaml
 
 # GPU workload with a specific model
 akt sdl init gpu --gpu-model h100 --image myorg/model:1.0 > gpu.yaml
