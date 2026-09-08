@@ -4571,8 +4571,9 @@ effect, so `akt` resolves the deployment first (§2.9).
 
 A limit is at most 48 hours on a deployment that has none yet, and each extension
 may raise the existing total by at most 48 hours; send the new total, not the
-increment. Lowering a limit is not supported. `data.autoTopUpEnabled` also exists
-but an explicit `false` is rejected under always-on funding, so `akt` never sends it.
+increment. Resending the current total is not an extension and may be rejected;
+lowering a limit is not supported. `data.autoTopUpEnabled` also exists but an
+explicit `false` is rejected under always-on funding, so `akt` never sends it.
 
 ### 7.4 Workflow Engine Integration
 
@@ -7730,8 +7731,10 @@ discovery, runtime-limit and close requests, and terminal escrow,
 account reconciliation, and cleanup observation. No discovery loop or single
 subprocess may consume the final observation reserve. When a create outcome is
 ambiguous, cleanup finds only post-baseline deployments carrying the run's
-unique SDL hash; once it finds one, it caps its runtime limit before attempting
-close.
+unique SDL hash. Before attempting close, cleanup reads the current deployment
+settings and sets the one-hour limit only when no limit exists. It MUST NOT
+resend an already bounded total or try to lower a larger limit; a larger limit
+fails the cleanup invariant, but cleanup still attempts close.
 The ambiguous-create discovery allowance MUST be no shorter than the normal
 post-create indexer-observation allowance. The current 90-second cleanup
 reserve assigns up to 30 seconds to discovery, retains 40 seconds for

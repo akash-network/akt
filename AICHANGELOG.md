@@ -58,6 +58,14 @@
 
 ### Fixed
 
+- **Protected Console cleanup no longer repeats a runtime-limit update**: The
+  managed-wallet lifecycle set its one-hour safety limit twice, then cleanup
+  tried the same update again. Console rejects non-increasing limit updates, so
+  the otherwise successful sandbox run failed with HTTP 400. The lifecycle now
+  reads the existing limit after provider operations, and cleanup inspects the
+  current setting before deciding whether a missing limit needs to be capped.
+  An already capped deployment proceeds directly to close.
+
 - **Dual-rail contexts now keep chain and Console operations available at the
   same time**: The context's existing `auth-method` selects only the preferred
   `deploy`/`update`/`close` rail, with `--deploy-via chain|console` as the clear

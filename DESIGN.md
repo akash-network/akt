@@ -2056,16 +2056,19 @@ so SDK zero values cannot masquerade as a healthy dynamic response.
 Mutation time and cleanup time have separate deadlines. The lifecycle context
 expires before the overall test deadline, leaving a fixed cleanup reserve.
 Cleanup subdivides that reserve so discovery or one close request cannot consume
-the time needed to disable auto top-up, verify terminal state, and observe final
-escrow accounting. Cleanup starts before the first write is issued and retains both the
+the time needed to inspect or cap the runtime limit, verify terminal state, and
+observe final escrow accounting. Cleanup starts before the first write is issued and retains both the
 pre-state DSEQ set and unique SDL hashes so an ambiguous create can be found
 without closing another run's deployment.
 The discovery phase is at least as long as normal create-state observation;
 cleanup therefore cannot abandon an accepted create merely because the
 Console indexer exposes it after the ordinary success path would still wait.
-The fixed reserve separately retains forty seconds for disabling auto top-up
-and closing after discovery, then twenty seconds for terminal-state and final
-escrow and account-reconciliation observation.
+The fixed reserve separately retains forty seconds for reading deployment
+settings, setting the one-hour runtime limit only when none exists, and closing
+after discovery, then twenty seconds for terminal-state and final escrow and
+account-reconciliation observation. Cleanup skips the settings mutation when
+the deployment already has a one-hour limit because Console rejects
+non-increasing runtime-limit updates.
 
 **Current live-suite boundary (2026-08-14):** the opt-in managed-wallet suite
 implements the raw Console observer, attempted-request and exact

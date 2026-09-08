@@ -1414,6 +1414,19 @@ func consoleCleanupPhaseDeadlines(now, overall time.Time) (time.Time, time.Time)
 	return discoveryDeadline, mutationDeadline
 }
 
+func consoleCleanupShouldSetRuntimeLimit(hours *int) (bool, error) {
+	if hours == nil {
+		return true, nil
+	}
+	if *hours < 1 {
+		return false, fmt.Errorf("runtime limit is invalid: %dh", *hours)
+	}
+	if *hours > consoleLifecycleRuntimeLimitHours {
+		return false, fmt.Errorf("runtime limit is %dh, above the %dh cleanup bound", *hours, consoleLifecycleRuntimeLimitHours)
+	}
+	return false, nil
+}
+
 func listAllConsoleDeployments(ctx context.Context, t *testing.T, home string) ([]consoleDeploymentObservation, error) {
 	t.Helper()
 
@@ -2122,24 +2135,38 @@ func (tracker *consoleResourceTracker) cleanup() {
 			tracker.t.Errorf("Console cleanup could not establish pre-cleanup state for %s: %v", dseq, terminalErr)
 		}
 		if !terminal {
-			settingsDeadline, ok := consoleBoundedDeadline(mutationCtx, time.Now().Add(8*time.Second))
+			settingsDeadline, ok := consoleBoundedDeadline(mutationCtx, time.Now().Add(5*time.Second))
 			if !ok {
-				tracker.t.Errorf("Console cleanup had no time left to cap the runtime limit for %s", dseq)
+				tracker.t.Errorf("Console cleanup had no time left to inspect the runtime limit for %s", dseq)
 			} else {
 				settingsCtx, cancelSettings := context.WithDeadline(mutationCtx, settingsDeadline)
-				settingsResult := runConsoleAkt(settingsCtx, tracker.t, tracker.home, "console", "deployment", "settings", dseq, strconv.Itoa(consoleLifecycleRuntimeLimitHours))
+				settings, settingsErr := tracker.observer.getDeploymentSettings(settingsCtx, dseq)
 				cancelSettings()
-				if settingsResult.Exit != 0 || settingsResult.Err != nil || settingsResult.CredentialLeak || settingsResult.StdoutTruncated || settingsResult.StderrTruncated {
-					tracker.t.Errorf("Console cleanup could not cap the runtime limit for %s (%s)", dseq, consoleCommandDiagnostic(settingsResult))
-				} else if verifyDeadline, ok := consoleBoundedDeadline(mutationCtx, time.Now().Add(5*time.Second)); ok {
-					verifyCtx, cancelVerify := context.WithDeadline(mutationCtx, verifyDeadline)
-					settings, verifyErr := tracker.observer.getDeploymentSettings(verifyCtx, dseq)
-					cancelVerify()
-					if verifyErr != nil || settings.DSeq.String() != dseq || settings.RuntimeLimitHours == nil || *settings.RuntimeLimitHours > consoleLifecycleRuntimeLimitHours {
-						tracker.t.Errorf("Console cleanup could not independently verify a capped runtime limit for %s", dseq)
+				if settingsErr != nil {
+					tracker.t.Errorf("Console cleanup could not inspect the runtime limit for %s: %v", dseq, settingsErr)
+				} else if shouldSet, decisionErr := consoleCleanupShouldSetRuntimeLimit(settings.RuntimeLimitHours); decisionErr != nil {
+					tracker.t.Errorf("Console cleanup found an unsafe runtime limit for %s: %v", dseq, decisionErr)
+				} else if shouldSet {
+					setDeadline, ok := consoleBoundedDeadline(mutationCtx, time.Now().Add(8*time.Second))
+					if !ok {
+						tracker.t.Errorf("Console cleanup had no time left to cap the runtime limit for %s", dseq)
+					} else {
+						setCtx, cancelSet := context.WithDeadline(mutationCtx, setDeadline)
+						settingsResult := runConsoleAkt(setCtx, tracker.t, tracker.home, "console", "deployment", "settings", dseq, strconv.Itoa(consoleLifecycleRuntimeLimitHours))
+						cancelSet()
+						if settingsResult.Exit != 0 || settingsResult.Err != nil || settingsResult.CredentialLeak || settingsResult.StdoutTruncated || settingsResult.StderrTruncated {
+							tracker.t.Errorf("Console cleanup could not cap the runtime limit for %s (%s)", dseq, consoleCommandDiagnostic(settingsResult))
+						} else if verifyDeadline, ok := consoleBoundedDeadline(mutationCtx, time.Now().Add(5*time.Second)); ok {
+							verifyCtx, cancelVerify := context.WithDeadline(mutationCtx, verifyDeadline)
+							settings, verifyErr := tracker.observer.getDeploymentSettings(verifyCtx, dseq)
+							cancelVerify()
+							if verifyErr != nil || settings.DSeq.String() != dseq || settings.RuntimeLimitHours == nil || *settings.RuntimeLimitHours > consoleLifecycleRuntimeLimitHours {
+								tracker.t.Errorf("Console cleanup could not independently verify a capped runtime limit for %s", dseq)
+							}
+						} else {
+							tracker.t.Errorf("Console cleanup had no time left to verify the capped runtime limit for %s", dseq)
+						}
 					}
-				} else {
-					tracker.t.Errorf("Console cleanup had no time left to verify the capped runtime limit for %s", dseq)
 				}
 			}
 		}
