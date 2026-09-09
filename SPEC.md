@@ -3423,6 +3423,15 @@ flag, so the documented `AKT_KEYRING_BACKEND` / `AKT_KEYRING_DIR` environment
 variables never reached a `tx` invocation, and its non-empty `os` default
 stood ready to override the context's persisted backend.
 
+Transaction commands resolve broadcast mode through Viper with precedence
+`--broadcast-mode` > `AKT_BROADCAST_MODE` > `defaults.broadcast-mode` > `sync`.
+The resolved value initializes both the transaction flag and SDK client context
+before downstream transaction hooks run. Applying a default MUST NOT mark the
+flag explicitly changed. Invalid environment or config values fail with a
+configuration error before transaction execution; an explicit valid flag may
+override them. An empty environment variable is treated as unset. Read-only
+commands without the broadcast-mode flag remain unaffected.
+
 `--sign-mode` and `--broadcast-mode` are closed enums: values outside their
 advertised sets are usage errors. For online construction, simulation, and
 broadcast, an explicit `--chain-id` must agree with the selected context.
