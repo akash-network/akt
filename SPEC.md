@@ -3431,6 +3431,8 @@ flag explicitly changed. Invalid environment or config values fail with a
 configuration error before transaction execution; an explicit valid flag may
 override them. An empty environment variable is treated as unset. Read-only
 commands without the broadcast-mode flag remain unaffected.
+Binding occurs only after checking that the flag exists; mode validation,
+not an unreachable nil-flag binding error, handles invalid configuration.
 
 `--sign-mode` and `--broadcast-mode` are closed enums: values outside their
 advertised sets are usage errors. For online construction, simulation, and

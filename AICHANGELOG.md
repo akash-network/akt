@@ -101,6 +101,8 @@
   The resolved mode reaches the SDK client context instead of leaving its
   hard-coded default in place. Regression tests cover precedence, invalid
   defaults, and preserving explicit-flag semantics without broadcasting.
+  Removed the unreachable nil-flag binding error branch that blocked #100's
+  changed-line coverage gate; validation and coverage requirements are unchanged.
 
 - **Prepare the sandbox account's Fair Use Policy acceptance before deployment
   E2E**: Console now rejects trial deployment creation when the account has not
