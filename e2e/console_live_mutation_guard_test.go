@@ -1092,6 +1092,35 @@ func TestConsoleCleanupPhaseDeadlinesClampWithoutStealingFinalObservation(t *tes
 	}
 }
 
+func TestConsoleCleanupRuntimeLimitDecision(t *testing.T) {
+	tests := []struct {
+		name      string
+		present   bool
+		hours     int
+		wantPatch bool
+		wantErr   bool
+	}{
+		{name: "absent limit", wantPatch: true},
+		{name: "already bounded", present: true, hours: consoleLifecycleRuntimeLimitHours},
+		{name: "cannot lower", present: true, hours: consoleLifecycleRuntimeLimitHours + 1, wantErr: true},
+		{name: "invalid limit", present: true, hours: 0, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			settings := consoleSettingsObservation{}
+			if tt.present {
+				settings.RuntimeLimitHours = &tt.hours
+			}
+
+			gotPatch, err := consoleCleanupNeedsRuntimeLimitPatch(settings)
+			if gotPatch != tt.wantPatch || (err != nil) != tt.wantErr {
+				t.Fatalf("cleanup decision = patch %t, error %v; want patch %t, error %t", gotPatch, err, tt.wantPatch, tt.wantErr)
+			}
+		})
+	}
+}
+
 func TestConsoleAPIObserverReadsStateWithoutLeakingBodies(t *testing.T) {
 	const apiKey = "akt_observer_secret"
 	var authenticatedRequests atomic.Int32
