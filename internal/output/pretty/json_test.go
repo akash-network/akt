@@ -1,11 +1,13 @@
 package pretty
 
 import (
+	"encoding/json"
 	"errors"
 	"io"
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/charmbracelet/x/exp/golden"
 )
 
@@ -29,6 +31,19 @@ func TestWriteHighlightedJSON(t *testing.T) {
 			}
 			golden.RequireEqual(t, buf.String())
 		})
+	}
+}
+
+func TestWriteHighlightedJSONPreservesValidJSON(t *testing.T) {
+	input := []byte(`{"name":"test","count":10,"tags":["alpha","beta"],"nested":{"flag":true,"nothing":null}}`)
+
+	var buf strings.Builder
+	if err := WriteHighlightedJSON(&buf, input); err != nil {
+		t.Fatalf("WriteHighlightedJSON returned error: %v", err)
+	}
+	rendered := []byte(ansi.Strip(buf.String()))
+	if !json.Valid(rendered) {
+		t.Fatalf("highlighted JSON is invalid after stripping ANSI styling:\n%s", rendered)
 	}
 }
 

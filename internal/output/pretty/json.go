@@ -80,34 +80,22 @@ func colorizeJSONLine(line string) string {
 
 // colorizeJSONValue applies color to a JSON value string.
 func colorizeJSONValue(val string) string {
-	val = strings.TrimSuffix(strings.TrimSpace(val), ",")
-	trailing := ""
-	if strings.HasSuffix(strings.TrimSpace(val), ",") {
-		trailing = ","
-	}
-
-	// Re-check after trimming.
 	raw := strings.TrimSpace(val)
-	hasComma := strings.HasSuffix(strings.TrimSpace(strings.TrimSuffix(val, ",")+trailing), ",")
-	if hasComma {
-		trailing = ","
-	}
-
-	// Remove trailing comma for inspection.
-	clean := strings.TrimSuffix(raw, ",")
+	trailing := ""
 	if strings.HasSuffix(raw, ",") {
 		trailing = ","
+		raw = strings.TrimSuffix(raw, ",")
 	}
 
 	switch {
-	case clean == "null":
-		return StyleGray.Render(clean) + trailing
-	case clean == "true" || clean == "false":
-		return StyleMagenta.Render(clean) + trailing
-	case len(clean) > 0 && clean[0] == '"':
-		return StyleGreen.Render(clean) + trailing
-	case len(clean) > 0 && (clean[0] >= '0' && clean[0] <= '9' || clean[0] == '-'):
-		return StyleYellow.Render(clean) + trailing
+	case raw == "null":
+		return StyleGray.Render(raw) + trailing
+	case raw == "true" || raw == "false":
+		return StyleMagenta.Render(raw) + trailing
+	case len(raw) > 0 && raw[0] == '"':
+		return StyleGreen.Render(raw) + trailing
+	case len(raw) > 0 && (raw[0] >= '0' && raw[0] <= '9' || raw[0] == '-'):
+		return StyleYellow.Render(raw) + trailing
 	default:
 		return val
 	}
