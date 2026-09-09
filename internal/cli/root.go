@@ -26,6 +26,7 @@ import (
 	"pkg.akt.dev/akt/internal/bootstrap"
 	"pkg.akt.dev/akt/internal/capability"
 	chaincli "pkg.akt.dev/akt/internal/cli/chain"
+	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 
 	cliconsole "pkg.akt.dev/akt/internal/cli/console"
 	clicontext "pkg.akt.dev/akt/internal/cli/context"
@@ -74,6 +75,8 @@ func newRootCmd(bi BuildInfo, runBootstrap func(string) error) *cobra.Command {
 	v.SetEnvPrefix("AKT")
 	v.AutomaticEnv()
 	v.SetDefault("defaults.interactive", true)
+	v.SetDefault("defaults.broadcast-mode", cflags.BroadcastSync)
+	_ = v.BindEnv("defaults.broadcast-mode", "AKT_BROADCAST_MODE")
 
 	encCfg := aktcodec.MakeEncodingConfig()
 
@@ -300,6 +303,9 @@ the deployment is created.`,
 					cmd.SetContext(withConsoleDefaultOwnerResolver(cmd.Context(), rc))
 				}
 			}
+			if err := applyBroadcastModeDefault(cmd, v); err != nil {
+				return err
+			}
 			if resolved && cmd.Flags().Lookup(flagdefs.FlagOffline) != nil {
 				if err := chaincli.ValidateTxInvocation(cmd); err != nil {
 					return err
@@ -512,6 +518,26 @@ the deployment is created.`,
 	})
 
 	return root
+}
+
+// applyBroadcastModeDefault keeps flag and client-context defaults in sync.
+func applyBroadcastModeDefault(cmd *cobra.Command, v *viper.Viper) error {
+	flag := cmd.Flags().Lookup(flagdefs.FlagBroadcastMode)
+	if flag == nil {
+		return nil
+	}
+	if err := v.BindPFlag("defaults.broadcast-mode", flag); err != nil {
+		return err
+	}
+	mode := v.GetString("defaults.broadcast-mode")
+	// Use the registered enum validator without marking a default as an
+	// explicit flag. Downstream hooks must receive the same resolved value.
+	if err := flag.Value.Set(mode); err != nil {
+		return ErrConfig(fmt.Sprintf("invalid broadcast mode: %v", err),
+			"Set defaults.broadcast-mode or AKT_BROADCAST_MODE to sync, async, or block; override with --broadcast-mode.")
+	}
+	cctx := chaincli.GetClientContextFromCmd(cmd).WithBroadcastMode(mode)
+	return chaincli.SetCmdClientContext(cmd, cctx)
 }
 
 // applyTransactionDefaults resolves transaction economics without marking
