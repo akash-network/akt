@@ -242,6 +242,12 @@ func TestLocalIdentityModes(t *testing.T) {
 		}
 	}
 
+	faucet := &cobra.Command{Use: "faucet"}
+	root.AddCommand(faucet)
+	if got := localIdentityMode(faucet); got != aktclient.LocalIdentityOnDemand {
+		t.Errorf("faucet mode = %v, want on demand", got)
+	}
+
 	mcp := &cobra.Command{Use: "mcp"}
 	mcp.Flags().Bool(flagdefs.FlagEnableWrites, false, "")
 	root.AddCommand(mcp)

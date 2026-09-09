@@ -66,6 +66,7 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			grpc, _ := cmd.Flags().GetStringSlice(flagdefs.FlagGRPCEndpoint)
 			gasPrices, _ := cmd.Flags().GetString(flagdefs.FlagGasPrices)
 			gasAdjustment, _ := cmd.Flags().GetString(flagdefs.FlagGasAdjustment)
+			faucet, _ := cmd.Flags().GetString(flagdefs.FlagFaucet)
 
 			net := aktctx.Network{
 				Name:          name,
@@ -73,6 +74,7 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 				Endpoints:     aktctx.Endpoints{RPC: rpc, API: api, GRPC: grpc},
 				GasPrices:     gasPrices,
 				GasAdjustment: gasAdjustment,
+				Faucet:        faucet,
 			}
 
 			return m.CreateNetwork(net)
@@ -86,6 +88,7 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd.Flags().StringSlice(flagdefs.FlagGRPCEndpoint, nil, "gRPC endpoint URLs")
 	cmd.Flags().String(flagdefs.FlagGasPrices, "0.025uakt", "Default gas prices")
 	cmd.Flags().String(flagdefs.FlagGasAdjustment, "1.5", "Gas estimation multiplier")
+	cmd.Flags().String(flagdefs.FlagFaucet, "", "Faucet URL (test networks only)")
 
 	return cmd
 }
@@ -130,6 +133,10 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 					n.GasAdjustment, _ = cmd.Flags().GetString(flagdefs.FlagGasAdjustment)
 				}
 
+				if cmd.Flags().Changed(flagdefs.FlagFaucet) {
+					n.Faucet, _ = cmd.Flags().GetString(flagdefs.FlagFaucet)
+				}
+
 				return nil
 			})
 		},
@@ -141,6 +148,7 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd.Flags().StringSlice(flagdefs.FlagGRPCEndpoint, nil, "gRPC endpoint URLs")
 	cmd.Flags().String(flagdefs.FlagGasPrices, "", "Default gas prices")
 	cmd.Flags().String(flagdefs.FlagGasAdjustment, "", "Gas estimation multiplier")
+	cmd.Flags().String(flagdefs.FlagFaucet, "", "Faucet URL (test networks only)")
 
 	return cmd
 }

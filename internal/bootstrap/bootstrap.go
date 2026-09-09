@@ -63,6 +63,9 @@ type metaJSON struct {
 			Address string `json:"address"`
 		} `json:"grpc"`
 	} `json:"apis"`
+	Faucets []struct {
+		URL string `json:"url"`
+	} `json:"faucets"`
 }
 
 // Run performs first-run initialization.
@@ -846,6 +849,10 @@ func metaToNetwork(dirName string, meta *metaJSON) aktctx.Network {
 	}
 
 	n.GasAdjustment = "1.5"
+
+	if len(meta.Faucets) > 0 && meta.Faucets[0].URL != "" {
+		n.Faucet = meta.Faucets[0].URL
+	}
 
 	return n
 }
