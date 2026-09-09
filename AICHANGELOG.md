@@ -88,6 +88,15 @@
 
 ### Fixed
 
+- **Prepare the sandbox account's Fair Use Policy acceptance before deployment
+  E2E**: Console now rejects trial deployment creation when the account has not
+  recorded acceptance. The owner-authorized, opted-in mutation fixture accepts
+  only when needed and verifies the timestamp through the API before creating
+  resources. Acceptance failures still fail the test; normal CLI commands and
+  read-only tests never accept automatically. Regression coverage checks
+  idempotency, rejected requests, redirects, and missing confirmation without
+  exposing credentials or response bodies.
+
 - **The live Console lifecycle repeated an unchanged runtime-limit PATCH**:
   the sandbox API rejects an equal total because it is not an extension, so the
   otherwise successful protected job failed late in its lifecycle and cleanup

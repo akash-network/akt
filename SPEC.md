@@ -7775,6 +7775,13 @@ Live credentials follow these rules:
   temporary child key cannot coexist with an inherited, unscanned parent key;
 - never mutate production by default; production canaries are read-only unless
   a human authorizes one bounded run;
+- prepare the dedicated sandbox account for the owner-authorized mutation
+  lifecycle by reading `GET /v1/user/me` and, only when acceptance is absent,
+  calling `POST /v1/user/acceptFairUsePolicy`. Require HTTP 204 and an independent
+  read-back of a valid `fairUsePolicyAcceptedAt` timestamp before deployment
+  creation. This idempotent fixture setup runs only behind the mutation opt-in
+  and non-production endpoint guards, never in the read-only suite or normal
+  CLI commands. Acceptance persists across runs and is not undone by cleanup;
 - serialize mutations that share an account and tag every resource with a
   unique run identifier where the API permits it;
 - enforce maximum deployment count, attempted USD request total, duration, and

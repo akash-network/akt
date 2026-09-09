@@ -1994,6 +1994,14 @@ accepts `production` keys. The harness checks that public environment segment
 against the selected first-party host before network access, without reporting
 the credential itself.
 
+The owner-authorized sandbox mutation fixture also prepares the account's
+Fair Use Policy acceptance before creating a deployment. It reads the current
+user, accepts through Console's authenticated endpoint only when needed, and
+independently verifies the recorded timestamp. This setup shares the bounded,
+redirect-rejecting HTTP client but is not a CLI action or evidence that a CLI
+mutation worked. It runs only after the mutation and sandbox guards, persists
+across test runs, and never changes normal CLI or read-only-suite behavior.
+
 Live catalog assertions follow the upstream data model rather than fixture
 convenience. Console unwraps the template response to a category array. An
 individual category MAY have no templates, while aggregate catalog health
