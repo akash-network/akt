@@ -4,6 +4,16 @@
 
 ### Changed
 
+- **SDL scaffolds can target CPU architecture without changing existing
+  defaults**: `akt sdl init` accepts an optional architecture for every
+  scaffold and applies it to every compute profile, including both services in
+  the multi-service scaffold. The Go SDL SDK now enforces the shared `amd64` /
+  `arm64` vocabulary during generation, direct offline validation, and deploy
+  parsing; unsupported values fail locally before broadcast. Omitting the
+  option still writes no CPU attribute and preserves the prior scaffold bytes.
+  Integration with current `main` preserves the faucet options, governance
+  details, terminal styling, and Console timeout and runtime-limit fixes.
+
 - **Console deployments are funded automatically; the deposit surface is gone
   from that rail (CON-890)**: Console abstracted escrow away: the platform
   funds every deployment from the account's credits, `POST /v1/deployments`
@@ -77,6 +87,15 @@
   and the matching `akt context log --type faucet` filter.
 
 ### Fixed
+
+- **Prepare the sandbox account's Fair Use Policy acceptance before deployment
+  E2E**: Console now rejects trial deployment creation when the account has not
+  recorded acceptance. The owner-authorized, opted-in mutation fixture accepts
+  only when needed and verifies the timestamp through the API before creating
+  resources. Acceptance failures still fail the test; normal CLI commands and
+  read-only tests never accept automatically. Regression coverage checks
+  idempotency, rejected requests, redirects, and missing confirmation without
+  exposing credentials or response bodies.
 
 - **The live Console lifecycle repeated an unchanged runtime-limit PATCH**:
   the sandbox API rejects an equal total because it is not an extension, so the

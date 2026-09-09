@@ -3032,6 +3032,15 @@ List the built-in SDL scaffolds (alias: `akt sdl templates`, matching the refere
 
 Generate SDL YAML on stdout, pipeable into `akt sdl validate -` or redirected to a file for `akt deploy`. The output is self-checked against the validator before printing. Flags are generation parameters with per-scaffold defaults — not positional-argument twins — so the zero-flag invocation always produces a deployable SDL. Every explicitly set generation parameter is checked with the same parser and lint rules as `akt sdl validate` before stdout is written. A value that would make the generated SDL invalid exits 2, names the changed flag(s) and validation reason, and emits no SDL. The post-generation self-check reports an internal invariant failure only when a built-in scaffold with its defaults is invalid. Pricing defaults to a 10000 uact/block ceiling (100000 for `gpu`) so bids arrive.
 
+CPU architecture is an optional placement requirement, never an inferred
+default. `--architecture amd64` or `--architecture arm64` writes
+`cpu.attributes.arch` into every compute profile produced by the selected
+scaffold; for `multi-service`, that means both the `app` and `db` profiles.
+Omitting the flag writes no CPU attributes and leaves each scaffold's output
+byte-identical to its pre-architecture form. The SDL parser owns the accepted
+architecture set, so generation and standalone validation accept and reject
+the same values without a second CLI-only whitelist.
+
 This command is a raw-document generator: stdout is always the deployable YAML
 document. An explicitly supplied `--output`/`-o` is rejected as a usage error,
 including `-o yaml`, rather than being ignored or wrapping the document. The
@@ -3044,6 +3053,7 @@ default output setting in configuration does not alter the generated document.
 | `--port`      | int         | Container port, 1-65535 (default 80; 8080 for `gpu`)      |
 | `--as`        | int         | External port, 1-65535 (default 80)                       |
 | `--cpu`       | string      | CPU units, e.g. `0.5` or `500m`                           |
+| `--architecture` | string   | Optional CPU architecture: `amd64` or `arm64`             |
 | `--memory`    | string      | Memory size, e.g. `512Mi`, `2Gi`                          |
 | `--storage`   | string      | Storage size, e.g. `1Gi` (sizes the persistent volume for `multi-service`) |
 | `--count`     | int         | Replica count, minimum 1 (default 1)                      |
@@ -3054,7 +3064,7 @@ default output setting in configuration does not alter the generated document.
 
 #### `akt sdl validate <file>`
 
-Validate an SDL offline (`-` reads stdin). Parsing and schema/relational validation use `pkg.akt.dev/go/sdl` — the same parser behind `akt deploy` and the chain tx commands — followed by lint rules ported from the reference:
+Validate an SDL offline (`-` reads stdin). Parsing and schema/relational validation use `pkg.akt.dev/go/sdl` — the same parser behind `akt deploy` and the chain tx commands — followed by lint rules ported from the reference. CPU architecture is optional; when present, the parser accepts only `amd64` and `arm64` and reports its native `unsupported cpu architecture` error for any other value. Omission remains omission: validation does not synthesize an architecture or alter any derived deployment output.
 
 - **Unpinned image** (error): every service image must carry an explicit tag or `@sha256:` digest; untagged images and `:latest` are rejected as non-reproducible.
 - **Pricing denom**: `uact` passes, since it is the deployment pricing denom on **both** rails. `uakt` produces a **warning**, not an error: `akt` auto-resolves the deployment deposit to `uact` on the chain rail (`DetectDeploymentDeposit`), and the console rail funds in `uact` too, and the chain requires the group price denom to equal the deposit denom (`Mismatched denominations (uact != uakt)`), so a `uakt`-priced SDL fails at `ValidateBasic()` before broadcast. It stays a warning rather than an error only because passing an explicitly matching `--deposit <amount>uakt` is a legitimate escape hatch; the reference hard-rejects anything but `uact`. Any other denom is an error, matching the reference.
@@ -3089,6 +3099,9 @@ warnings: []
 # Generate, self-check, and validate
 akt sdl init web --image nginx:1.27 > deploy.yaml
 akt sdl validate deploy.yaml
+
+# Require arm64 provider inventory
+akt sdl init web --architecture arm64 > deploy-arm64.yaml
 
 # Pipe without touching disk
 akt sdl init gpu --gpu-model h100 | akt sdl validate -
@@ -4697,8 +4710,9 @@ effect, so `akt` resolves the deployment first (§2.9).
 
 A limit is at most 48 hours on a deployment that has none yet, and each extension
 may raise the existing total by at most 48 hours; send the new total, not the
-increment. Lowering a limit is not supported. `data.autoTopUpEnabled` also exists
-but an explicit `false` is rejected under always-on funding, so `akt` never sends it.
+increment. Resending the current total is not an extension and may be rejected;
+lowering a limit is not supported. `data.autoTopUpEnabled` also exists but an
+explicit `false` is rejected under always-on funding, so `akt` never sends it.
 
 ### 7.4 Workflow Engine Integration
 
@@ -7819,6 +7833,13 @@ Live credentials follow these rules:
   temporary child key cannot coexist with an inherited, unscanned parent key;
 - never mutate production by default; production canaries are read-only unless
   a human authorizes one bounded run;
+- prepare the dedicated sandbox account for the owner-authorized mutation
+  lifecycle by reading `GET /v1/user/me` and, only when acceptance is absent,
+  calling `POST /v1/user/acceptFairUsePolicy`. Require HTTP 204 and an independent
+  read-back of a valid `fairUsePolicyAcceptedAt` timestamp before deployment
+  creation. This idempotent fixture setup runs only behind the mutation opt-in
+  and non-production endpoint guards, never in the read-only suite or normal
+  CLI commands. Acceptance persists across runs and is not undone by cleanup;
 - serialize mutations that share an account and tag every resource with a
   unique run identifier where the API permits it;
 - enforce maximum deployment count, attempted USD request total, duration, and
@@ -7897,8 +7918,10 @@ discovery, runtime-limit and close requests, and terminal escrow,
 account reconciliation, and cleanup observation. No discovery loop or single
 subprocess may consume the final observation reserve. When a create outcome is
 ambiguous, cleanup finds only post-baseline deployments carrying the run's
-unique SDL hash; once it finds one, it caps its runtime limit before attempting
-close.
+unique SDL hash. Before attempting close, cleanup reads the current deployment
+settings and sets the one-hour limit only when no limit exists. It MUST NOT
+resend an already bounded total or try to lower a larger limit; a larger limit
+fails the cleanup invariant, but cleanup still attempts close.
 The ambiguous-create discovery allowance MUST be no shorter than the normal
 post-create indexer-observation allowance. The current 90-second cleanup
 reserve assigns up to 30 seconds to discovery, retains 40 seconds for

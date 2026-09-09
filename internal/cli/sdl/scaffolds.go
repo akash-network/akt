@@ -28,18 +28,19 @@ const (
 // produces a deployable SDL. Pointer fields distinguish "flag not set" from
 // an explicit zero.
 type Options struct {
-	Name     string
-	Image    string
-	Port     *int
-	As       *int
-	CPU      string
-	Memory   string
-	Storage  string
-	Count    *int
-	Price    *int // max price per block, in uact
-	Env      []string
-	GPU      *int
-	GPUModel string
+	Name         string
+	Image        string
+	Port         *int
+	As           *int
+	CPU          string
+	Architecture string
+	Memory       string
+	Storage      string
+	Count        *int
+	Price        *int // max price per block, in uact
+	Env          []string
+	GPU          *int
+	GPUModel     string
 }
 
 // Scaffold is one built-in SDL shape `akt sdl init` can generate.
@@ -108,7 +109,7 @@ func Marshal(doc *yaml.Node) ([]byte, error) {
 var webScaffold = Scaffold{
 	Name:        "web",
 	Description: "Single web service with one HTTP port exposed to the internet.",
-	Params:      []string{"--name", "--image", "--port", "--as", "--cpu", "--memory", "--storage", "--count", "--price", "--env"},
+	Params:      []string{"--name", "--image", "--port", "--as", "--cpu", "--architecture", "--memory", "--storage", "--count", "--price", "--env"},
 	Build: func(o Options) *yaml.Node {
 		name := orStr(o.Name, "web")
 
@@ -137,7 +138,7 @@ var webScaffold = Scaffold{
 var gpuScaffold = Scaffold{
 	Name:        "gpu",
 	Description: "GPU workload (ML/inference) with an nvidia model requirement.",
-	Params:      []string{"--name", "--image", "--gpu", "--gpu-model", "--port", "--as", "--cpu", "--memory", "--storage", "--count", "--price", "--env"},
+	Params:      []string{"--name", "--image", "--gpu", "--gpu-model", "--port", "--as", "--cpu", "--architecture", "--memory", "--storage", "--count", "--price", "--env"},
 	Build: func(o Options) *yaml.Node {
 		name := orStr(o.Name, "app")
 
@@ -173,7 +174,7 @@ var gpuScaffold = Scaffold{
 var multiServiceScaffold = Scaffold{
 	Name:        "multi-service",
 	Description: "App + database with a persistent volume and service-to-service networking.",
-	Params:      []string{"--image", "--port", "--as", "--cpu", "--memory", "--storage", "--count", "--price", "--env"},
+	Params:      []string{"--image", "--port", "--as", "--cpu", "--architecture", "--memory", "--storage", "--count", "--price", "--env"},
 	Build: func(o Options) *yaml.Node {
 		app := mapNode(
 			pair("image", strNode(orStr(o.Image, "nginx:1.27"))),
@@ -199,7 +200,7 @@ var multiServiceScaffold = Scaffold{
 		)
 
 		dbResources := mapNode(
-			pair("cpu", mapNode(pair("units", cpuUnitsNode("0.5")))),
+			pair("cpu", cpuResource("0.5", o.Architecture)),
 			pair("memory", mapNode(pair("size", strNode("1Gi")))),
 			pair("storage", seqNode(
 				mapNode(pair("size", strNode("1Gi"))),
@@ -243,7 +244,7 @@ var multiServiceScaffold = Scaffold{
 var ipLeaseScaffold = Scaffold{
 	Name:        "ip-lease",
 	Description: "Service with a dedicated public IP (endpoints + expose to ip).",
-	Params:      []string{"--name", "--image", "--port", "--as", "--cpu", "--memory", "--storage", "--count", "--price", "--env"},
+	Params:      []string{"--name", "--image", "--port", "--as", "--cpu", "--architecture", "--memory", "--storage", "--count", "--price", "--env"},
 	Build: func(o Options) *yaml.Node {
 		name := orStr(o.Name, "web")
 		const endpoint = "appip"
@@ -277,10 +278,19 @@ var ipLeaseScaffold = Scaffold{
 // from the options plus per-scaffold defaults.
 func computeResources(o Options, defCPU, defMemory, defStorage string) *yaml.Node {
 	return mapNode(
-		pair("cpu", mapNode(pair("units", cpuUnitsNode(orStr(o.CPU, defCPU))))),
+		pair("cpu", cpuResource(orStr(o.CPU, defCPU), o.Architecture)),
 		pair("memory", mapNode(pair("size", strNode(orStr(o.Memory, defMemory))))),
 		pair("storage", mapNode(pair("size", strNode(orStr(o.Storage, defStorage))))),
 	)
+}
+
+func cpuResource(units, architecture string) *yaml.Node {
+	cpu := mapNode(pair("units", cpuUnitsNode(units)))
+	if architecture != "" {
+		appendPair(cpu, "attributes", mapNode(pair("arch", strNode(architecture))))
+	}
+
+	return cpu
 }
 
 // placementNode prices every given compute profile at the same uact ceiling

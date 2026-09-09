@@ -1188,6 +1188,55 @@ func (observer *consoleAPIObserver) username(ctx context.Context) (string, error
 	return identity.Username, nil
 }
 
+func (observer *consoleAPIObserver) fairUsePolicyAccepted(ctx context.Context) (bool, error) {
+	var identity struct {
+		AcceptedAt *string `json:"fairUsePolicyAcceptedAt"`
+	}
+	if err := observer.getData(ctx, "/v1/user/me", &identity); err != nil {
+		return false, err
+	}
+	if identity.AcceptedAt == nil {
+		return false, nil
+	}
+	acceptedAt, err := time.Parse(time.RFC3339Nano, *identity.AcceptedAt)
+	if err != nil || acceptedAt.IsZero() {
+		return false, errors.New("Console Fair Use Policy acceptance timestamp is invalid")
+	}
+	return true, nil
+}
+
+// This is owner-authorized sandbox fixture setup, not a CLI action. The live
+// caller must pass the mutation opt-in and sandbox guards before reaching it.
+func acceptConsoleSandboxFairUsePolicy(ctx context.Context, observer *consoleAPIObserver) error {
+	accepted, err := observer.fairUsePolicyAccepted(ctx)
+	if err != nil || accepted {
+		return err
+	}
+	request, err := http.NewRequestWithContext(ctx, http.MethodPost, observer.baseURL+"/v1/user/acceptFairUsePolicy", nil)
+	if err != nil {
+		return errors.New("build sandbox Fair Use Policy acceptance request failed")
+	}
+	request.Header.Set("x-api-key", observer.apiKey)
+	response, err := observer.client.Do(request)
+	if err != nil {
+		// Transport errors can contain credential-bearing URLs. Never copy
+		// them, redirect targets, or response bodies into test diagnostics.
+		return errors.New("sandbox Fair Use Policy acceptance request failed (transport, cancellation, timeout, or redirect)")
+	}
+	_ = response.Body.Close()
+	if response.StatusCode != http.StatusNoContent {
+		return fmt.Errorf("sandbox Fair Use Policy acceptance returned HTTP %d", response.StatusCode)
+	}
+	accepted, err = observer.fairUsePolicyAccepted(ctx)
+	if err != nil {
+		return err
+	}
+	if !accepted {
+		return errors.New("Console did not record the sandbox Fair Use Policy acceptance")
+	}
+	return nil
+}
+
 func listConsoleAPIKeys(ctx context.Context, t *testing.T, home string) []consoleAPIKeyObservation {
 	t.Helper()
 

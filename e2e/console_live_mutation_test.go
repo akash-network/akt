@@ -144,6 +144,10 @@ func TestConsoleLiveManagedWalletLifecycle(t *testing.T) {
 	}
 	assertConsoleActions(t, home, contextName, "")
 
+	if err := acceptConsoleSandboxFairUsePolicy(lifecycleCtx, observer); err != nil {
+		t.Fatalf("prepare sandbox account for deployment: %v", err)
+	}
+
 	initialSDL := consoleLifecycleSDL(runID, "initial")
 	updatedSDL := consoleLifecycleSDL(runID, "updated")
 	initialHash, err := consoleSDLVersionHash(initialSDL)
@@ -158,7 +162,7 @@ func TestConsoleLiveManagedWalletLifecycle(t *testing.T) {
 	initialSDLPath := writeConsoleSDL(t, sdlDir, "initial.yaml", initialSDL)
 	updatedSDLPath := writeConsoleSDL(t, sdlDir, "updated.yaml", updatedSDL)
 
-	// Register cleanup before the first write. The tracker knows the unique
+	// Register cleanup before the first deployment write. The tracker knows the unique
 	// SDL hashes as well as the returned dseq, so it can recover an ambiguous
 	// create without closing another runner's deployment.
 	tracker := newConsoleResourceTracker(
