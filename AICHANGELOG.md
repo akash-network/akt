@@ -4,6 +4,13 @@
 
 ### Changed
 
+- **Select Console sandbox CI by changed files**: documentation and isolated
+  BME pretty-renderer changes can skip the paid Console lifecycle and its live
+  report. Shared code, dependencies, CI, and unknown paths still require it.
+  The final CI gate validates the selection result before accepting a skip;
+  hermetic tests, coverage, environment approval, and sandbox limits remain
+  unchanged. Tests cover path selection, renames, and final-gate failures.
+
 - **SDL scaffolds can target CPU architecture without changing existing
   defaults**: `akt sdl init` accepts an optional architecture for every
   scaffold and applies it to every compute profile, including both services in
