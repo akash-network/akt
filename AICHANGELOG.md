@@ -87,6 +87,27 @@
   limit, and reports a higher limit instead of attempting the unsupported
   operation of lowering it.
 
+- **Console deployment mutations timed out before the API could finish valid
+  work**: the client used one 30-second deadline for reads and transaction-backed
+  writes even though lease creation can spend 57 seconds in Console's manifest
+  retry path after broadcasting. GET and HEAD attempts remain bounded at 30
+  seconds, while POST, PUT, PATCH, and DELETE attempts receive two minutes.
+  Lease POST failures and close transport or malformed-response outcomes are
+  not replayed automatically; both receive a full 30-second authoritative
+  read-back window, record unresolved outcomes as pending, and provide exact
+  recovery commands.
+
+- **Pretty query output lost all terminal styling after checked write
+  accounting was added**: terminal detection received the `CheckedWriter`
+  wrapper instead of Cobra's original stdout, so a real TTY was classified as
+  a non-terminal and every ANSI sequence was stripped. Query, transaction,
+  simulation, deployment-group, store-status, and store-sync output now detect
+  the original destination before adding the checked boundary. PTY regression
+  tests cover terminal styling, redirected output, `NO_COLOR`, destination
+  failures, and short writes.
+  Resolved the changelog overlap with the merged faucet work, retaining both
+  features and the shared Console lifecycle correction.
+
 - **Governance proposal inspection now shows the actions voters authorize**:
   the compact proposal list reports each proposal's executable message count,
   while `akt query gov proposal <id>` prints the exact metadata reference and
@@ -98,8 +119,8 @@
   Highlighted payloads retain their commas and remain copy-pastable JSON.
   JSON and YAML remain the complete protobuf representations, and command help
   now points users to those lossless forms. (#96)
-  Resolved the changelog overlap with the merged faucet work, retaining both
-  features and the shared Console lifecycle correction.
+  Reconciled with the merged CLI styling and Console timeout fixes, preserving
+  all changelog entries and the complete governance message output.
 
 - **Dual-rail contexts now keep chain and Console operations available at the
   same time**: The context's existing `auth-method` selects only the preferred

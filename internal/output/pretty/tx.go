@@ -48,6 +48,9 @@ func PrintTxResult(cmd *cobra.Command, cctx sdkclient.Context, resp interface{})
 	}
 
 	if sim, ok := resp.(*txtypes.SimulateResponse); ok {
+		if output != cflags.OutputJSON && output != cflags.OutputYAML {
+			checked = clioutput.NewCheckedTerminalWriter(cmd.OutOrStdout())
+		}
 		return checked.Complete(printSimulationResult(checked, cmd, output, sim))
 	}
 
@@ -99,7 +102,9 @@ func PrintTxResult(cmd *cobra.Command, cctx sdkclient.Context, resp interface{})
 		return checked.Complete(cctx.PrintObjectLegacy(resp))
 	}
 
-	w := clioutput.TerminalAwareWriter(checked)
+	checked = clioutput.NewCheckedTerminalWriter(cmd.OutOrStdout())
+	cctx = cctx.WithOutput(checked)
+	w := io.Writer(checked)
 
 	// Section 1: Common transaction summary.
 	renderTxSummaryWithCodec(w, cctx, txResp)
