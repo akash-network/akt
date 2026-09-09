@@ -526,9 +526,7 @@ func applyBroadcastModeDefault(cmd *cobra.Command, v *viper.Viper) error {
 	if flag == nil {
 		return nil
 	}
-	if err := v.BindPFlag("defaults.broadcast-mode", flag); err != nil {
-		return err
-	}
+	_ = v.BindPFlag("defaults.broadcast-mode", flag) // Non-nil flags always bind successfully.
 	mode := v.GetString("defaults.broadcast-mode")
 	// Use the registered enum validator without marking a default as an
 	// explicit flag. Downstream hooks must receive the same resolved value.
