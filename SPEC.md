@@ -6153,6 +6153,14 @@ carries; the raw gRPC/ABCI status must never reach the user verbatim.
 
 #### BME
 
+Vault-state pretty output lists one token per line within Balances, Total
+Burned, Total Minted, and Remint Credits. Labels appear only on the first line
+of each field. Amounts are right-aligned across the section, and continuation
+lines use the same value column. Retain the response order, zero-valued coins,
+and comma separators between tokens; format each coin through `FormatCoin`.
+The shared renderer supplies identical CLI and monitor output. JSON/YAML and
+other commands' compact coin formatting are unchanged.
+
 **Status/Vault**: Key-value sections with amounts. The collateral ratio and the
 warn/halt thresholds are `LegacyDec` ratios, not coins: they render through
 the ratio formatter (`1.5`, not `1.500000000000000000`), matching the oracle

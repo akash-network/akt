@@ -1389,6 +1389,12 @@ small void rendering API cannot hide a broken stdout behind that API.
   rendering alone applies the shared readable-unit conversion above; this
   keeps `1000000uakt` machine-readable as such while displaying it as `1 AKT`.
 
+Vault-state output uses one token per line with a shared right-aligned amount
+column across balances, burned, minted, and remint-credit fields. Its shared
+renderer owns the layout for both CLI and monitor consumers. Each coin still
+uses the standard readable-unit formatter; the general compact coin formatter
+and machine JSON/YAML representations remain unchanged.
+
 Governance proposal output separates discovery from inspection. The proposal
 list stays compact and reports how many executable messages each proposal
 contains. The single-proposal view is the audit view: it shows the exact

@@ -102,17 +102,38 @@ func RenderBMEVaultState(res *types.QueryVaultStateResponse) string {
 
 	fmt.Fprintln(&buf, Section("Vault State"))
 
-	if len(s.Balances) > 0 {
-		KV(&buf, "Balances", FormatCoins(s.Balances))
+	type coinRow struct{ label, amount, denom string }
+	var rows []coinRow
+	amountWidth := 0
+	for _, field := range []struct {
+		label string
+		coins sdk.Coins
+	}{
+		{"Balances", s.Balances},
+		{"Total Burned", s.TotalBurned},
+		{"Total Minted", s.TotalMinted},
+		{"Remint Credits", s.RemintCredits},
+	} {
+		for i, coin := range field.coins {
+			amount, denom, _ := strings.Cut(FormatCoin(coin), " ")
+			label := ""
+			if i == 0 {
+				label = field.label
+			}
+			if i < len(field.coins)-1 {
+				denom += ","
+			}
+			rows = append(rows, coinRow{label, amount, denom})
+			amountWidth = max(amountWidth, len(amount))
+		}
 	}
-	if len(s.TotalBurned) > 0 {
-		KV(&buf, "Total Burned", FormatCoins(s.TotalBurned))
-	}
-	if len(s.TotalMinted) > 0 {
-		KV(&buf, "Total Minted", FormatCoins(s.TotalMinted))
-	}
-	if len(s.RemintCredits) > 0 {
-		KV(&buf, "Remint Credits", FormatCoins(s.RemintCredits))
+	for _, row := range rows {
+		value := fmt.Sprintf("%*s %s", amountWidth, row.amount, row.denom)
+		if row.label != "" {
+			KV(&buf, row.label, value)
+		} else {
+			fmt.Fprintln(&buf, strings.Repeat(" ", KVKeyWidth+3)+value)
+		}
 	}
 	return buf.String()
 }
