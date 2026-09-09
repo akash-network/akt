@@ -2,8 +2,10 @@ package console
 
 import (
 	"encoding/json"
+	"net/http"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestValidateCreateDeploymentResultRequiresCompleteReceipt(t *testing.T) {
@@ -87,5 +89,22 @@ func TestValidateDeploymentUpdateResultRejectsHashMismatch(t *testing.T) {
 	err := validateDeploymentUpdateResult(result, "42", "expected-hash")
 	if err == nil || !strings.Contains(err.Error(), `SDL hash "unexpected-hash", want "expected-hash"`) {
 		t.Fatalf("hash mismatch error = %v", err)
+	}
+}
+
+func TestMutationRequestAndReconciliationPolicy(t *testing.T) {
+	if requestTimeout(http.MethodGet) != 30*time.Second {
+		t.Fatalf("GET request timeout = %s, want 30s", requestTimeout(http.MethodGet))
+	}
+	for _, method := range []string{http.MethodPost, http.MethodPut, http.MethodPatch, http.MethodDelete} {
+		if requestTimeout(method) != 2*time.Minute {
+			t.Fatalf("%s request timeout = %s, want 2m", method, requestTimeout(method))
+		}
+	}
+	if mutationReconciliationWindow != 30*time.Second {
+		t.Fatalf("mutation reconciliation window = %s, want 30s", mutationReconciliationWindow)
+	}
+	if mutationReconciliationPollInterval != 2*time.Second {
+		t.Fatalf("mutation reconciliation poll interval = %s, want 2s", mutationReconciliationPollInterval)
 	}
 }

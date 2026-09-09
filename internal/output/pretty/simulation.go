@@ -92,7 +92,7 @@ func printSimulationResult(w io.Writer, cmd *cobra.Command, format string, sim *
 	}
 
 	checked := clioutput.NewCheckedWriter(w)
-	RenderSimulation(clioutput.TerminalAwareWriter(checked), result)
+	RenderSimulation(checked, result)
 	return checked.Err()
 }
 

@@ -4,6 +4,10 @@
   [38;2;113;113;122mStatus:[m              [38;2;234;179;8mvoting_period[m
   [38;2;113;113;122mProposer:[m            akash1proposer123
   [38;2;113;113;122mSummary:[m             Proposal to enable IBC transfers on the network.
+  [38;2;113;113;122mExpedited:[m           no
+
+[1;4;4mM[m[1;4;4me[m[1;4;4ms[m[1;4;4ms[m[1;4;4ma[m[1;4;4mg[m[1;4;4me[m[1;4;4ms[m
+[38;2;161;161;170m(no executable messages)[m
 
 [1;4;4mT[m[1;4;4mi[m[1;4;4mm[m[1;4;4me[m[1;4;4ml[m[1;4;4mi[m[1;4;4mn[m[1;4;4me[m
   [38;2;113;113;122mSubmit Time:[m         2026-01-01 12:00:00 UTC
@@ -15,7 +19,7 @@
   [38;2;113;113;122mTotal Deposit:[m       [1m50000 AKT[m
 
 [1;4;4mT[m[1;4;4ma[m[1;4;4ml[m[1;4;4ml[m[1;4;4my[m
-  [38;2;113;113;122mYes:[m                 1000000
-  [38;2;113;113;122mNo:[m                  200000
-  [38;2;113;113;122mAbstain:[m             50000
-  [38;2;113;113;122mNo With Veto:[m        10000
+  [38;2;113;113;122mYes:[m                 1000000 (79.4%)
+  [38;2;113;113;122mNo:[m                  200000 (15.9%)
+  [38;2;113;113;122mAbstain:[m             50000 (4%)
+  [38;2;113;113;122mNo With Veto:[m        10000 (0.8%)

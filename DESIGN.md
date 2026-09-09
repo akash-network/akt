@@ -877,18 +877,35 @@ baseline.
 
 The same no-replay rule applies to every non-idempotent method, including HTTP
 429 responses. A non-idempotent lease POST is reconciled by reading the
-deployment back and checking that every exact requested lease is active.
+deployment back for a full, context-cancellable 30-second observation window
+and checking that every exact requested lease is active. A submitted close
+whose response is lost or unusable is reconciled over the same window; the
+deployment becoming closed or absent proves the idempotent close reached its
+terminal state. The lease POST and a close with a lost or unusable response are
+not replayed automatically; close responses with HTTP 429 or 5xx retain the
+existing bounded idempotent retry policy. An unresolved lease or close records
+`pending` and names the exact read command the user can run before deciding
+whether to retry or clean up.
+
+Console request budgets reflect the work behind each endpoint instead of using
+one deadline for unrelated operations. Read-only requests have a 30-second
+per-attempt deadline. POST, PUT, PATCH, and DELETE requests have a two-minute
+per-attempt deadline. The longer non-read budget is required
+because lease creation synchronously broadcasts the chain transaction and may
+then spend up to 57 seconds in the Console's provider-manifest retry path before
+performing its final deployment read. Both budgets are bounded by an earlier
+caller deadline and stop immediately on cancellation. A mutation request
+deadline expiring does not consume or replace the separate post-submit
+observation window.
+
 An accepted create response is usable only when its DSEQ and managed-wallet
 transaction receipt are present, its transaction code is zero, and its hash is
-nonblank. Close requires a present `success: true` acknowledgement. A
-missing, malformed, or stale acknowledgement, including an ambiguous transport
-response, falls back to independent GET observations for a context-cancellable
-30-second propagation window without replaying the request. This remains exact while an active lease
-settles concurrently; an unproved outcome remains pending. One-time API-key
-creation likewise requires
-its nonblank ID, requested name, and secret, while JWT minting requires a
-nonblank token. An ambiguous one-time-secret response is pending because the
-request cannot safely be replayed and the missing secret cannot be recovered.
+nonblank. A direct close response requires a present `success: true`
+acknowledgement; closed or absent read-back state may independently prove an
+ambiguous close. One-time API-key creation likewise requires its nonblank ID,
+requested name, and secret, while JWT minting requires a nonblank token. An
+ambiguous one-time-secret response is pending because the request cannot safely
+be replayed and the missing secret cannot be recovered.
 Deployment updates are idempotent, so the Console's specific transient
 manifest-version rejection is retried within the normal three-attempt bound.
 After any failed update response, the client compares the deployment's
@@ -1348,7 +1365,11 @@ Pretty output is styled only at an interactive terminal. Writers strip all ANSI
 styling (including bold and underline, not only color) when stdout is redirected
 or `NO_COLOR` is present. This decision is made at the final write boundary so
 shared renderers remain byte-identical between the CLI and monitor while files,
-pipes, and test buffers remain plain text.
+pipes, and test buffers remain plain text. Terminal detection inspects the
+original Cobra destination before any accounting wrapper can hide its file
+descriptor. The renderer writes to a checked writer whose destination is that
+terminal-aware decorator; reversing those layers makes a real terminal look
+like an in-memory writer and incorrectly removes styling.
 
 Every public output entry point writes through the Cobra command's configured
 writer and one checked boundary. Pretty query and transaction formatters,
@@ -1367,6 +1388,24 @@ small void rendering API cannot hide a broken stdout behind that API.
   the node to replace a micro denomination with display metadata first. Pretty
   rendering alone applies the shared readable-unit conversion above; this
   keeps `1000000uakt` machine-readable as such while displaying it as `1 AKT`.
+
+Governance proposal output separates discovery from inspection. The proposal
+list stays compact and reports how many executable messages each proposal
+contains. The single-proposal view is the audit view: it shows the exact
+on-chain metadata value and every message in execution order. Each message
+includes its complete type URL and its decoded JSON payload using the
+invocation's interface registry. If this version of akt does not recognize a
+future message type, the renderer preserves the type URL and base64 wire value
+instead of hiding the action. Machine JSON and YAML remain the lossless
+protobuf representations. Syntax highlighting changes only JSON token styles;
+it preserves every delimiter so removing ANSI styling leaves valid,
+copy-pastable JSON.
+
+Metadata can name content outside the chain, such as an IPFS document. Querying
+a proposal prints that reference but does not fetch it. The executable messages
+are the authoritative statement of what the proposal will do, while automatic
+metadata retrieval would make a chain query depend on mutable, untrusted
+content.
 
 ### 5.6 Multi-Endpoint Failover
 
@@ -1429,8 +1468,9 @@ multi-message receipt must provide indexed logs or `msg_index` attributes;
 otherwise event-derived fields stay absent instead of leaking across message
 sections.
 
-The pretty transaction path owns one checked writer beneath terminal-aware
-styling. Header, summary, formatter, nested formatter, and fallback JSON writes
+The pretty transaction path owns one checked writer in front of the
+terminal-aware destination decorator constructed from the original Cobra
+writer. Header, summary, formatter, nested formatter, and fallback JSON writes
 all contribute to the command result. A destination error or short write makes
 the command fail, and a formatter error remains discoverable through
 `errors.Is` rather than being replaced by a later rendering failure.
