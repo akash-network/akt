@@ -57,6 +57,7 @@ func NetworkTemplates() map[string]Network {
 			},
 			GasPrices:     "0.025uakt",
 			GasAdjustment: "1.5",
+			Faucet:        "http://faucet.sandbox-2.aksh.pw/",
 		},
 	}
 }

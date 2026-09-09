@@ -40,6 +40,7 @@ type Network struct {
 	Endpoints     Endpoints `yaml:"endpoints"                 json:"endpoints"`
 	GasPrices     string    `yaml:"gas-prices,omitempty"      json:"gas_prices,omitempty"`
 	GasAdjustment string    `yaml:"gas-adjustment,omitempty"  json:"gas_adjustment,omitempty"`
+	Faucet        string    `yaml:"faucet,omitempty"          json:"faucet,omitempty"`
 }
 
 // Keyring defines wallet storage configuration.

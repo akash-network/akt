@@ -327,10 +327,13 @@ func listCmd(mgr func() *aktctx.Manager) *cobra.Command {
 
 func currentCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	return &cobra.Command{
-		Use:     "show",
-		Short:   "Show the active context with full details",
-		Args:    cobra.NoArgs,
-		Example: `  akt context show`,
+		Use:   "show",
+		Short: "Show the active context with full details",
+		Args:  cobra.NoArgs,
+		Example: `  akt context show
+
+  # On a test network, request faucet funds for the active account
+  akt faucet`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			m := mgr()
 
@@ -956,7 +959,7 @@ func reconcilePendingTransactions(
 
 func validActionType(value string) bool {
 	switch actionlog.ActionType(value) {
-	case "", actionlog.TypeTx, actionlog.TypeWorkflow, actionlog.TypeProvider, actionlog.TypeContext, actionlog.TypeConsole, actionlog.TypeError:
+	case "", actionlog.TypeTx, actionlog.TypeWorkflow, actionlog.TypeProvider, actionlog.TypeContext, actionlog.TypeConsole, actionlog.TypeFaucet, actionlog.TypeError:
 		return true
 	default:
 		return false
