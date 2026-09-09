@@ -11,6 +11,8 @@
   `arm64` vocabulary during generation, direct offline validation, and deploy
   parsing; unsupported values fail locally before broadcast. Omitting the
   option still writes no CPU attribute and preserves the prior scaffold bytes.
+  Integration with the merged faucet work preserves its network options and
+  uses the shared Console runtime-limit tests now maintained on `main`.
 
 - **Console deployments are funded automatically; the deposit surface is gone
   from that rail (CON-890)**: Console abstracted escrow away: the platform
@@ -56,15 +58,44 @@
   contract spec was re-vendored from the live Console API, and SPEC/DESIGN/README
   were updated first per the spec-first rule.
 
+### Added
+
+- **`akt faucet`**: a new top-level command shows how to request test funds
+  from the active context's network faucet. Networks now carry an optional
+  `faucet` URL, populated from the upstream `akash-network/net` registry's
+  `meta.json` `faucets[0].url` during first-run bootstrap and `--template`
+  network creation (the sandbox template ships with
+  `http://faucet.sandbox-2.aksh.pw/`; mainnet and testnet have none upstream
+  today) and settable directly via `--faucet` on `akt context network
+  create`/`edit`. `akt faucet` resolves the active context's default account
+  address best-effort and prints it beside the faucet URL, or explains why
+  there is no faucet: a Console-managed wallet has no chain faucet, a
+  network-less context has nothing to point at, and a live network (mainnet)
+  or a test network without a configured faucet each get a specific remedy.
+- **`akt faucet --send`**: requests the funds automatically instead of only
+  displaying the URL. It posts `address` (form-encoded) to the faucet's
+  `/faucet` endpoint over an unauthenticated HTTP request and prints the
+  transaction hash the faucet returns; the deployed sandbox/test faucets
+  accept this without a login and broadcast a `MsgSend`. `--send` is refused
+  on a network that resolves as mainnet, even if `faucet` was set manually,
+  and requires a resolvable default account since it needs a concrete
+  address to submit. A non-2xx faucet response (including the faucet's own
+  per-address rate limit, roughly one grant per day) surfaces as an error
+  carrying the faucet's response body. Being state-changing, `--send`
+  records a new `type=faucet` action-log entry on both success and failure;
+  the display-only path still records nothing. Added `actionlog.TypeFaucet`
+  and the matching `akt context log --type faucet` filter.
+
 ### Fixed
 
-- **Protected Console cleanup no longer repeats a runtime-limit update**: The
-  managed-wallet lifecycle set its one-hour safety limit twice, then cleanup
-  tried the same update again. Console rejects non-increasing limit updates, so
-  the otherwise successful sandbox run failed with HTTP 400. The lifecycle now
-  reads the existing limit after provider operations, and cleanup inspects the
-  current setting before deciding whether a missing limit needs to be capped.
-  An already capped deployment proceeds directly to close.
+- **The live Console lifecycle repeated an unchanged runtime-limit PATCH**:
+  the sandbox API rejects an equal total because it is not an extension, so the
+  otherwise successful protected job failed late in its lifecycle and cleanup
+  repeated the same rejected request. The lifecycle now writes its one-hour
+  bound once before paid operations and uses GET for later coverage. Cleanup
+  reads settings first, skips an already bounded deployment, sets an absent
+  limit, and reports a higher limit instead of attempting the unsupported
+  operation of lowering it.
 
 - **Dual-rail contexts now keep chain and Console operations available at the
   same time**: The context's existing `auth-method` selects only the preferred

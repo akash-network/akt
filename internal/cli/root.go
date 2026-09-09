@@ -470,6 +470,7 @@ the deployment is created.`,
 	for _, wfCmd := range cliworkflow.CommandsWithManager(homeFn, ctxNameFn, mgrFn) {
 		root.AddCommand(wfCmd)
 	}
+	root.AddCommand(faucetCmd(mgrFn, mainnetChainIDFn))
 	root.AddCommand(versionCmd(bi))
 	root.AddCommand(completionCmd())
 	enforceGroupInputValidation(root)
@@ -763,6 +764,11 @@ func localIdentityMode(cmd *cobra.Command) aktclient.LocalIdentityMode {
 	// transport actually needs it. Console execution therefore remains
 	// prompt-free while chain execution can still sign locally.
 	case cmd.Annotations[capability.AnnotationKey] == string(capability.ChainTx)+"|"+string(capability.Console):
+		return aktclient.LocalIdentityOnDemand
+	// The faucet address is a best-effort convenience: resolving it must
+	// never fail the command or force a keyring open when there is nothing
+	// to resolve.
+	case strings.HasPrefix(path, "akt faucet"):
 		return aktclient.LocalIdentityOnDemand
 	// Provider status is the gateway's public endpoint. Protected provider
 	// operations still preflight their signing identity before network work.

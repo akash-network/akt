@@ -1093,29 +1093,29 @@ func TestConsoleCleanupPhaseDeadlinesClampWithoutStealingFinalObservation(t *tes
 }
 
 func TestConsoleCleanupRuntimeLimitDecision(t *testing.T) {
-	oneHour := consoleLifecycleRuntimeLimitHours
-	tooHigh := consoleLifecycleRuntimeLimitHours + 1
-	invalid := 0
 	tests := []struct {
 		name      string
-		hours     *int
-		wantSet   bool
-		wantError bool
+		present   bool
+		hours     int
+		wantPatch bool
+		wantErr   bool
 	}{
-		{name: "missing limit", wantSet: true},
-		{name: "already capped", hours: &oneHour},
-		{name: "above cleanup bound", hours: &tooHigh, wantError: true},
-		{name: "invalid limit", hours: &invalid, wantError: true},
+		{name: "absent limit", wantPatch: true},
+		{name: "already bounded", present: true, hours: consoleLifecycleRuntimeLimitHours},
+		{name: "cannot lower", present: true, hours: consoleLifecycleRuntimeLimitHours + 1, wantErr: true},
+		{name: "invalid limit", present: true, hours: 0, wantErr: true},
 	}
 
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			gotSet, err := consoleCleanupShouldSetRuntimeLimit(tc.hours)
-			if gotSet != tc.wantSet {
-				t.Fatalf("set runtime limit = %t, want %t", gotSet, tc.wantSet)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			settings := consoleSettingsObservation{}
+			if tt.present {
+				settings.RuntimeLimitHours = &tt.hours
 			}
-			if (err != nil) != tc.wantError {
-				t.Fatalf("error = %v, want error %t", err, tc.wantError)
+
+			gotPatch, err := consoleCleanupNeedsRuntimeLimitPatch(settings)
+			if gotPatch != tt.wantPatch || (err != nil) != tt.wantErr {
+				t.Fatalf("cleanup decision = patch %t, error %v; want patch %t, error %t", gotPatch, err, tt.wantPatch, tt.wantErr)
 			}
 		})
 	}

@@ -17,6 +17,9 @@ func RenderNetworkShow(net aktctx.Network, usedBy []string) string {
 	KV(&buf, "Chain ID", net.ChainID)
 	KV(&buf, "Gas Prices", net.GasPrices)
 	KV(&buf, "Gas Adjustment", net.GasAdjustment)
+	if net.Faucet != "" {
+		KV(&buf, "Faucet", net.Faucet)
+	}
 
 	Newline(&buf)
 	KVHeader(&buf, "RPC Endpoints")

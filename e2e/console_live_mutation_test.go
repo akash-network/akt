@@ -536,8 +536,14 @@ func TestConsoleLiveManagedWalletLifecycle(t *testing.T) {
 	}
 	assertConsoleActions(t, home, contextName, dseq, expectedActions...)
 
-	// Console rejects non-increasing runtime-limit updates, so verify that the
-	// original bound still holds instead of resending the same total.
+	// Verify the existing settings through read-only paths. Sending the same
+	// total again is not an extension, and the Console API rejects it.
+	settingsObserveCtx, cancelSettingsObserve = context.WithTimeout(lifecycleCtx, 15*time.Second)
+	if err := waitForConsoleRuntimeLimit(settingsObserveCtx, observer, dseq); err != nil {
+		cancelSettingsObserve()
+		t.Fatalf("the runtime limit was not independently observable for dseq %s: %v", dseq, err)
+	}
+	cancelSettingsObserve()
 	assertConsoleRuntimeLimitRead(lifecycleCtx, t, home, dseq)
 	assertConsoleActions(t, home, contextName, dseq, expectedActions...)
 
