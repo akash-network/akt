@@ -59,4 +59,5 @@ pkg.akt.dev/akt/internal/workflow	active	true
 pkg.akt.dev/akt/internal/workflow/adapters	active	true
 pkg.akt.dev/akt/internal/workflow/builtin	active	true
 pkg.akt.dev/akt/internal/workflow/steps	active	true
+pkg.akt.dev/akt/tools/changelog	tooling	false
 pkg.akt.dev/akt/tools/coverage	tooling	false

@@ -60,22 +60,6 @@
 
 ### Added
 
-- **README binary installation and public docs links**: added Homebrew install
-  and upgrade commands, a platform-specific release archive guide, checksum
-  verification, and PATH installation instructions. Linked the official akt
-  CLI documentation and installation guide on akash.network. Corrected the
-  first-run example to use `akt context list`, since `akt version` verifies
-  the binary without launching setup.
-
-- **Portable akt operating skill for agents**: added `.agents/skills/akt-cli/`
-  with context and rail selection, positional syntax, structured execution,
-  deployment recipes, and partial-failure recovery guidance. The package works
-  without a source checkout and includes optional Codex metadata and MCP setup
-  instructions. GoReleaser publishes the canonical files as a versioned,
-  checksummed `akt_<version>_skill.zip`; offline E2E checks validate the actual
-  Markdown examples against the CLI. SPEC.md and DESIGN.md define the package
-  contract, and README.md documents installation.
-
 - **`akt faucet`**: a new top-level command shows how to request test funds
   from the active context's network faucet. Networks now carry an optional
   `faucet` URL, populated from the upstream `akash-network/net` registry's
