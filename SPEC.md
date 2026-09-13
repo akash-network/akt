@@ -3303,6 +3303,42 @@ The README links directly to the public akt CLI documentation at
 guide. Package names follow the release configuration; examples avoid pinning
 the README to one release version.
 
+### 2.16 Contributor changelog fragments
+
+Every ordinary PR adds a uniquely named Markdown fragment under `.changelog/`
+instead of editing `AICHANGELOG.md`. Names have the form
+`<pr-number-or-descriptive-slug>.<category>.md`, where category is `added`,
+`changed`, `fixed`, `deprecated`, `removed`, or `security`. A PR number is
+optional so contributors can write entries before opening a PR. Each fragment
+contains Markdown bullets describing the change and its implementation.
+Contributors MUST NOT modify or remove fragments already merged into the base
+branch. AGENTS.md and the Spec Kit constitution use this same contract.
+
+`make changelog-check` validates all pending fragments. With
+`CHANGELOG_BASE=<base-commit>`, it also checks the PR diff: ordinary changes
+MUST add a fragment and leave the archive and existing fragments untouched.
+The sole archive-edit exception is a release-preparation diff containing only
+the deterministic assembly of the base branch's fragments and their removal.
+CI runs this check against the pull request's base commit, without exemptions
+based on labels or commit messages.
+
+Before tagging a release, a maintainer runs `make changelog-assemble`. The
+standard-library Go tool at `tools/changelog` groups fragments by category and
+sorts them by filename, inserts their contents under `## Unreleased`, and
+preserves the existing archive contents. It writes the archive atomically
+before deleting consumed fragments. Each inserted entry records its fragment
+filename so an interrupted deletion can be retried without duplicating notes;
+a reused filename with different contents is rejected. No commits or tags are
+created by the tool. The maintainer reviews and merges the assembly as a
+release-preparation PR before tagging the tested commit.
+
+`make changelog-release-check` rejects pending fragments. Tagged release
+quality checks and the publication preflight require it; manual snapshots
+and dry runs may retain pending fragments. GitHub release notes continue to
+use GoReleaser's existing commit-based configuration. Historical archive
+entries remain intact, while unmerged PRs migrate their own additions into
+fragments when adopting this workflow.
+
 ## 3. Flag Specification
 
 Every statically declared flag name is defined once as a constant in

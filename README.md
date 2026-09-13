@@ -318,6 +318,23 @@ akt context network list
 
 Everything is stored under `.cache/run/test/.akt` -- delete that directory to start fresh.
 
+## Contributing changelog entries
+
+Every PR adds a Markdown fragment such as `.changelog/104.added.md` with
+bullets describing the change. A descriptive slug also works before a PR
+number exists. Categories are `added`, `changed`, `fixed`, `deprecated`,
+`removed`, and `security`.
+
+```bash
+GOWORK=off make changelog-check CHANGELOG_BASE=origin/main
+```
+
+Before tagging a release, a maintainer runs `GOWORK=off make changelog-assemble`
+and merges the archive update and fragment removals in a release-preparation
+PR. Ordinary PRs leave `AICHANGELOG.md` alone so concurrent changes do not edit
+the same lines. See the [fragment workflow](.changelog/README.md) for examples
+and migration instructions.
+
 ## Usage
 
 ### First Run

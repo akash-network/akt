@@ -2238,6 +2238,26 @@ prebuilt binary in isolated homes, asserts their results, and checks the
 syntax of live recipes without invoking them. This keeps operating examples
 reviewable and checked without maintaining a second command implementation.
 
+### 5.10 Contributor changelog workflow
+
+Concurrent PRs record changes in separate `.changelog/<slug>.<category>.md`
+files. This removes the shared insertion point in `AICHANGELOG.md` while
+keeping a change record mandatory. Contributor instructions and the Spec Kit
+constitution require fragments; CI validates their format and requires a new
+fragment for each ordinary PR. Existing fragments and the archive are only
+consumed by a release-preparation change whose output matches the assembler.
+
+A small Go development tool validates and assembles fragments using the
+standard library. Before tagging, the maintainer runs `make changelog-assemble`
+and merges the resulting archive update and fragment removals. Assembly sorts
+entries deterministically, preserves the existing archive, and records source
+filenames to make retries after interrupted cleanup safe. It writes the
+archive before removing fragments and never commits or tags. Both tagged
+release validation and publication preflight reject pending fragments.
+Assembly happens before the release commit is tested, so publication does not
+mutate that commit. GoReleaser's commit-based GitHub release notes remain a
+separate output.
+
 ## 6. Implementation Phases
 
 ### Phase 1: Foundation (Context + Core CLI)

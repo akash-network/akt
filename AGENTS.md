@@ -85,7 +85,20 @@ All commit messages MUST follow the [Conventional Commits](https://www.conventio
 
 ### Changelog
 
-Every change MUST include a corresponding entry in `AICHANGELOG.md`. Each entry should describe the feature or issue addressed and the fix or implementation applied. Do not skip this step, even for small changes.
+Every ordinary PR MUST add a uniquely named `.changelog/<slug>.<category>.md`
+fragment describing the feature or issue and its implementation. Categories
+are `added`, `changed`, `fixed`, `deprecated`, `removed`, and `security`. Use
+Markdown bullets and a PR number or descriptive slug; a PR number is optional.
+Do not edit `AICHANGELOG.md` or another PR's fragments during ordinary work.
+Run `GOWORK=off make changelog-check CHANGELOG_BASE=origin/main` before review.
+
+Before tagging a release, run `GOWORK=off make changelog-assemble` in a separate
+release-preparation PR and commit the resulting archive update and consumed
+fragment deletions together. Merge that PR before tagging. CI checks ordinary
+PRs for new fragments and accepts archive edits only when they exactly match
+assembly of the base branch's fragments. See [.changelog/README.md](.changelog/README.md)
+for examples and migration instructions. This requirement applies to small
+changes too.
 
 ### Problem-Solving
 

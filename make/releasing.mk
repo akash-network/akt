@@ -3,7 +3,17 @@
 # goreleaser is run from the goreleaser-cross container image rather than as a
 # local binary: the darwin targets need osxcross and the linux targets need the
 # gnu cross toolchains, and we do not want either as a developer prerequisite.
-# Docker is therefore required for every release-* target below.
+# Docker is required for GoReleaser targets; changelog targets use local Go.
+
+.PHONY: changelog-check changelog-assemble changelog-release-check
+changelog-check:
+	$(GO) run ./tools/changelog check $(if $(CHANGELOG_BASE),"$(CHANGELOG_BASE)")
+
+changelog-assemble:
+	$(GO) run ./tools/changelog assemble
+
+changelog-release-check:
+	$(GO) run ./tools/changelog release-check
 
 # goreleaser-cross publishes one image per Go patch release, but not for every
 # patch -- there is no v1.26.1 image even though go.mod pins go 1.26.1. Keep the
@@ -170,7 +180,7 @@ release-dry-run: release-libs release-workspace-check $(GORELEASER_DOCKER_CONFIG
 # GoReleaser starts, so GitHub assets cannot be published before the Homebrew
 # update discovers that it has no credential.
 .PHONY: release-publish-preflight
-release-publish-preflight: release-workspace-check
+release-publish-preflight: release-workspace-check changelog-release-check
 	@if [ -z "$${GITHUB_TOKEN}" ]; then \
 		echo "GITHUB_TOKEN is required to publish a release"; \
 		exit 1; \
