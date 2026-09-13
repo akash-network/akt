@@ -3254,6 +3254,55 @@ same payload shape as the display path.
 
 ---
 
+### 2.14 Agent skill distribution
+
+The repository ships a portable `akt-cli` agent skill at
+`.agents/skills/akt-cli/`. Its `SKILL.md` defines the selection description,
+the CLI's operating model, context and rail selection, positional identifiers,
+machine-readable execution, and recovery after partial mutations. Focused
+references cover setup, deployment recipes, and troubleshooting. Optional
+`agents/openai.yaml` supplies Codex UI metadata with implicit selection enabled.
+
+The skill MUST work with an installed `akt` binary without a source checkout.
+It MUST NOT require agents operating the CLI to read the contributor's
+AGENTS.md, SPEC.md, or DESIGN.md. Examples use the installed binary's version
+and relevant command help to resolve syntax and configuration-dependent
+capabilities. The skill preserves the user's authorized context, resource,
+provider, and spending scope; `--yes` is only an execution option for an
+already authorized operation. It documents existing read-only MCP setup as an
+optional interface without requiring MCP or enabling write tools on install.
+
+GoReleaser produces `akt_<version>_skill.zip` from this canonical directory,
+with one `akt-cli/` root containing the skill, references, UI metadata, and
+repository license. The archive joins the existing release checksum manifest.
+Its version identifies the akt release whose binary passed example validation;
+users install the skill from the same release as their binary. Repository
+copies track their checkout. No independently maintained distribution copy or
+automatic changes to an agent's personal configuration are introduced.
+
+Offline E2E validation reads the actual Markdown examples and executes the
+local discovery, SDL generation/validation, context inspection, and deployment
+preview recipes against the built binary with isolated configuration. It
+asserts their semantic results and preserves the no-broadcast boundary.
+Network-dependent and mutating recipes receive command/argument/flag syntax
+validation without executing their actions. These checks run in the existing
+offline CI and release test lanes.
+
+### 2.15 Installation documentation
+
+README.md provides binary installation instructions before the feature catalog:
+the `akash-network/tap` Homebrew formula, macOS universal and Linux amd64/arm64
+release archives, Linux native packages, checksum verification, and a PATH
+installation step. Source builds remain documented separately. `akt version`
+verifies installation without requiring configuration; interactive onboarding
+starts when a configuration-dependent command such as `akt context list` runs
+without a config file.
+
+The README links directly to the public akt CLI documentation at
+`https://akash.network/docs/developers/deployment/akt/` and its installation
+guide. Package names follow the release configuration; examples avoid pinning
+the README to one release version.
+
 ## 3. Flag Specification
 
 Every statically declared flag name is defined once as a constant in
