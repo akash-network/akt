@@ -23,6 +23,21 @@ env:
   AKT_DEVCACHE_LIB: ${{ github.workspace }}/.cache/lib
 
 jobs:
+  changelog:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Validate changelog fragments and PR changes
+        env:
+          CHANGELOG_BASE: ${{ github.event.pull_request.base.sha }}
+        run: make changelog-check
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -604,13 +619,14 @@ jobs:
   required-ci:
     name: required-ci
     if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'push') }}
-    needs: [lint, build-and-unit, race-active, coverage-report, e2e-console-sandbox, coverage-live-report, codecov-upload]
+    needs: [changelog, lint, build-and-unit, race-active, coverage-report, e2e-console-sandbox, coverage-live-report, codecov-upload]
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - name: Require every blocking quality gate
         env:
+          CHANGELOG_RESULT: ${{ needs.changelog.result }}
           LINT_RESULT: ${{ needs.lint.result }}
           BUILD_RESULT: ${{ needs.build-and-unit.result }}
           RACE_RESULT: ${{ needs.race-active.result }}
@@ -621,6 +637,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           CONSOLE_REQUIRED: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' }}
         run: |
+          test "$CHANGELOG_RESULT" = success || { echo "changelog result: $CHANGELOG_RESULT" >&2; exit 1; }
           test "$LINT_RESULT" = success || { echo "lint result: $LINT_RESULT" >&2; exit 1; }
           test "$BUILD_RESULT" = success || { echo "build-and-unit result: $BUILD_RESULT" >&2; exit 1; }
           test "$RACE_RESULT" = success || { echo "race-active result: $RACE_RESULT" >&2; exit 1; }

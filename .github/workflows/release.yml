@@ -43,6 +43,11 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version-file: go.mod
+      - name: Validate changelog fragments
+        run: make changelog-check
+      - name: Require changelog assembly before tagging
+        if: github.event_name == 'push'
+        run: make changelog-release-check
       - name: Resolve release identity and coverage base
         env:
           EVENT_NAME: ${{ github.event_name }}
