@@ -4,6 +4,9 @@
 
 Unified CLI for the [Akash Network](https://akash.network).
 
+[Documentation](https://akash.network/docs/developers/deployment/akt/) |
+[Installation](#installation) | [Build from source](#build)
+
 ## Overview
 
 `akt` replaces the user-facing CLI functionality currently spread across `akash-network/node` (`akash`), `akash-network/provider` (`provider-services`), and `akash-network/chain-sdk/go/cli` with a single binary. It adds a context system for managing multiple networks/accounts, a local deployment store, offline SDL authoring, Akash Console integration, and `akt monitor` -- a hub-based real-time monitoring tool for network state, provider fleet health, and BME state (incorporating [`aktop`](https://github.com/cloud-j-luna/aktop) functionality).
@@ -23,6 +26,63 @@ akt console usage 2026-01-01 2026-01-31
 The duplicated identity and filter flags (`--owner`, `--dseq`, `--gseq`, `--oseq`, `--state`, `--provider`, and the Console positional twins such as `--from`/`--to` on `console usage`) are **disabled during a UX trial** (2026-07): they are commented out in code behind `FEEDBACK(2026-07)` markers and can be restored wholesale if feedback calls for it. While the trial runs, the positional form is the only form. Transaction flags (`--from`, `--gas`, `--fees`, ...) are unaffected.
 
 See [DESIGN.md](DESIGN.md) for architecture and [SPEC.md](SPEC.md) for the full technical specification.
+
+## Installation
+
+### Homebrew (macOS and Linux)
+
+```bash
+brew tap akash-network/tap
+brew install akash-network/tap/akt
+akt version
+```
+
+To update an existing installation:
+
+```bash
+brew update
+brew upgrade akash-network/tap/akt
+```
+
+### Release packages
+
+Download a package from the [latest release](https://github.com/akash-network/akt/releases/latest)
+for your operating system and CPU architecture:
+
+| Platform | ZIP archive |
+| --- | --- |
+| macOS, Apple Silicon or Intel | `akt_<version>_darwin_all.zip` |
+| Linux, x86-64 | `akt_<version>_linux_amd64.zip` |
+| Linux, ARM64 | `akt_<version>_linux_arm64.zip` |
+
+Also download `akt_<version>_checksums.txt` from the same release. Compute your
+package's SHA-256 with `shasum -a 256` on macOS or `sha256sum` on Linux and
+compare it with the matching entry in that file before installing.
+
+Extract the `akt` executable from the ZIP. From the extracted directory, install
+it into a directory on your PATH and verify it:
+
+```bash
+sudo install -m 0755 ./akt /usr/local/bin/akt
+akt version
+```
+
+Linux releases also provide `.deb` and `.rpm` packages for amd64 and arm64;
+install the matching package with your distribution's package manager.
+On Windows, use WSL2 and follow the Linux instructions. To compile akt yourself,
+see [Build](#build).
+
+The [installation guide](https://akash.network/docs/developers/deployment/akt/installation/)
+has detailed download, package-manager, and shell-completion instructions.
+After installation, continue with [First Run](#first-run). `akt version` works
+without a configured context.
+
+### Documentation
+
+The [akt CLI documentation](https://akash.network/docs/developers/deployment/akt/)
+covers contexts, deployments, Console integration, queries, transactions,
+monitoring, and MCP. Use `akt <command> --help` for the commands and flags
+available in your installed release.
 
 ## Status
 
@@ -129,6 +189,30 @@ Full command group for the [Akash Console](https://console.akash.network) manage
 - **Live lease operations** -- `logs <dseq> [service]` and `events <dseq>` (both `--follow`), `status <dseq>` (`--watch`, `--interval`), and `shell <dseq> <service> [-- command]` (exec is the same command with an explicit command). Each resolves the deployment's active lease, looks up the provider's gateway URI, and mints a scoped JWT via the Console, so **managed contexts reach providers with no wallet and no local key**. One-shot calls use a 300 s token; streaming and interactive modes use 3600 s.
 
 The API key is stored per context at `contexts/<name>/console-api-key` (mode 0600, never written to `config.yaml`, never printed) and resolved `--console-api-key` flag > `AKT_CONSOLE_API_KEY` env var > stored credential, so switching context switches Console identity. Write it with `akt console login` or `akt context edit <context> --console-api-key <key>`; `akt context rename` moves it and `akt context delete` removes it. The first-run bootstrap offers Console onboarding, and state-changing Console calls are recorded in the action log. [SPEC.md §7.8](SPEC.md#78-console-compatibility-matrix) tracks coverage of every Console capability.
+
+## Agent skill
+
+The [akt-cli skill](.agents/skills/akt-cli/SKILL.md) teaches agents how to select
+contexts, use chain and Console workflows, consume structured output, and
+recover from partial deployment failures. It includes setup, deployment, and
+troubleshooting references and works with an installed binary.
+
+Codex discovers the skill automatically in this checkout. For another project,
+copy the complete `.agents/skills/akt-cli/` folder into that project's
+`.agents/skills/`. For user-wide Codex use, install it under
+`~/.agents/skills/akt-cli/`. Other agents can load the same folder from their
+supported skill location. Keep `SKILL.md`, `references/`, and `agents/` together.
+
+Releases include `akt_<version>_skill.zip` alongside the binary packages.
+Download it from the same release as `akt version`, verify it against
+`akt_<version>_checksums.txt`, and extract its `akt-cli/` folder into the chosen
+skill directory. Repository copies track the checkout; release packages track
+the CLI version whose examples passed the release tests. Installation does not
+change akt contexts or credentials.
+
+Invoke it in Codex with `$akt-cli`, for example: "Use $akt-cli to inspect my
+deployment in the staging context." MCP is optional; the setup reference
+describes connecting to the existing read-only-by-default `akt mcp` server.
 
 ## Build
 
@@ -238,13 +322,17 @@ Everything is stored under `.cache/run/test/.akt` -- delete that directory to st
 
 ### First Run
 
-On first launch, `akt` bootstraps interactively -- fetching available networks and prompting you to select which ones to configure:
+In a terminal, run a command that needs configuration to start interactive
+setup when no config exists. For example:
 
 ```bash
-akt version
+akt context list
 ```
 
-If no config exists, the bootstrap wizard runs automatically before any command.
+The setup wizard fetches available networks, helps create the first context,
+and offers Console onboarding. Configuration is stored under `~/.config/akt`
+by default; set `AKT_HOME` to use another directory. Commands such as
+`akt version`, help, and offline SDL authoring work without running setup.
 
 ### Context Management
 

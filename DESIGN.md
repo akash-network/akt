@@ -31,7 +31,14 @@
 | `akash-network/provider`         | Provider binary (`provider-services`). Imports chain-sdk CLI, adds provider gateway + operator commands. | **Keeps** only provider-operator commands: `run`, `operator *`, `tools *`, `migrate`. Stops exporting user-facing CLI.                                      |
 | `ovrclk/akt` (pre-rewrite)       | MVP CLI prototype. Config system, account/network/deploy commands.                                       | Design reference. Concepts (profiles, git-like config) evolved into the context system. Replaced in place by the rewrite below.                             |
 | `cloud-j-luna/aktop`             | Community TUI for monitoring Akash consensus state, validator voting, and provider operations.           | Design reference and prior art for TUI. Its consensus/validator/provider monitoring views inform the TUI design. Functionality subsumed by `akt monitor`. |
-| **`akash-network/akt`**          | **New.** This repository, and the rewrite that replaced the prototype above.                             | The unified user CLI. Transferred from `ovrclk/akt`, which now redirects here; releases and the Homebrew cask publish under this name.                       |
+| **`akash-network/akt`**          | **New.** This repository, and the rewrite that replaced the prototype above.                             | The unified user CLI. Transferred from `ovrclk/akt`, which now redirects here; releases and the Homebrew formula publish under this name.                    |
+
+The README introduces binary installation through `akash-network/tap` and
+GitHub release packages, with source builds documented separately. Public
+operating documentation lives at
+[akt CLI](https://akash.network/docs/developers/deployment/akt/). Installation
+verification uses the configuration-independent `akt version` command;
+interactive context onboarding is a subsequent operation.
 
 ### 1.4 The `monitor` Command
 
@@ -2197,6 +2204,29 @@ dual-chain, testnetify, Console, monitor, fault, fuzz, and mutation lanes
 already satisfy the target release matrix.
 
 ---
+
+### 5.9 Agent operating guidance
+
+The `akt-cli` skill in `.agents/skills/akt-cli/` supplies agent-facing operating
+guidance alongside the executable CLI. Its short entrypoint teaches contexts,
+the chain and Console rails, positional identifiers, explicit structured
+output, and recovery from partial deployment failure. Setup, deployment, and
+troubleshooting references are loaded only when needed. The package is
+self-contained so agents can operate an installed binary without loading the
+repository's contributor instructions or architecture documents.
+
+Command behavior remains owned by Cobra, workflow definitions, and transport
+adapters. The skill uses installed-version help for discovery and recommends
+the shared deployment workflows. Existing `akt mcp` supplies optional typed
+tools with its existing read-only default; the skill neither adds an execution
+adapter nor enables mutations through installation.
+
+GoReleaser packages the canonical skill folder as a separate, checksummed
+`akt_<version>_skill.zip` release asset. Versioning follows the CLI release.
+The existing offline E2E lane executes selected Markdown recipes using the
+prebuilt binary in isolated homes, asserts their results, and checks the
+syntax of live recipes without invoking them. This keeps operating examples
+reviewable and checked without maintaining a second command implementation.
 
 ## 6. Implementation Phases
 
