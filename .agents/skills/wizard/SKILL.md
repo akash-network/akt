@@ -137,7 +137,7 @@ When code throws inside a transaction, ALL changes in that transaction are rolle
 
 **Test Strategy by Complexity**:
 
-Run the tests for every package you changed and every package that imports it. For cross-cutting, store, keyring, or signing changes, run the full unit suite (`GOWORK=off go test $(go list ./... | grep -v /e2e)`); run `e2e/` after `GOWORK=off make akt` when command behavior or output changed.
+Run the tests for every package you changed and every package that imports it. For cross-cutting, store, keyring, or signing changes, run the full unit suite (`GOWORK=off go test $(GOWORK=off go list ./... | grep -v /e2e)`); run `e2e/` after `GOWORK=off make akt` when command behavior or output changed.
 
 **If tests fail**:
 1. Analyze the failure — don't guess
@@ -235,4 +235,3 @@ After completing all phases, provide:
 5. **GitHub issue status**: Updated acceptance criteria
 6. **PR status**: Quality checks resolved, ready for merge
 7. **Next steps**: Any follow-up work identified
-
