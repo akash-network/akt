@@ -23,6 +23,30 @@ env:
   AKT_DEVCACHE_LIB: ${{ github.workspace }}/.cache/lib
 
 jobs:
+  console-changes:
+    # No secrets or environment approval are needed to select the live lane.
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      required: ${{ steps.changes.outputs.required }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - name: Select Console coverage from the exact PR changes
+        id: changes
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          required=false
+          if test "$EVENT_NAME" = pull_request; then
+            required=$(bash script/ci-console-required.sh "$BASE_SHA" "$HEAD_SHA")
+          fi
+          printf 'required=%s\n' "$required" >> "$GITHUB_OUTPUT"
+          printf 'Console E2E required by changed files: %s\n' "$required" >> "$GITHUB_STEP_SUMMARY"
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -293,8 +317,9 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.pull_request.base.ref == 'main' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.user.login != 'dependabot[bot]'
-    needs: coverage-report
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      needs.console-changes.outputs.required == 'true'
+    needs: [coverage-report, console-changes]
     environment: console-sandbox
     concurrency:
       group: console-sandbox
@@ -354,8 +379,9 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.pull_request.base.ref == 'main' &&
       github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.user.login != 'dependabot[bot]'
-    needs: [coverage-report, e2e-console-sandbox]
+      github.event.pull_request.user.login != 'dependabot[bot]' &&
+      needs.console-changes.outputs.required == 'true'
+    needs: [coverage-report, e2e-console-sandbox, console-changes]
     runs-on: ubuntu-latest
     permissions:
       actions: read
@@ -604,7 +630,7 @@ jobs:
   required-ci:
     name: required-ci
     if: ${{ always() && (github.event_name == 'pull_request' || github.event_name == 'push') }}
-    needs: [lint, build-and-unit, race-active, coverage-report, e2e-console-sandbox, coverage-live-report, codecov-upload]
+    needs: [lint, build-and-unit, race-active, coverage-report, e2e-console-sandbox, coverage-live-report, codecov-upload, console-changes]
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -615,16 +641,23 @@ jobs:
           BUILD_RESULT: ${{ needs.build-and-unit.result }}
           RACE_RESULT: ${{ needs.race-active.result }}
           COVERAGE_RESULT: ${{ needs.coverage-report.result }}
+          CHANGES_RESULT: ${{ needs.console-changes.result }}
+          CONSOLE_CHANGED: ${{ needs.console-changes.outputs.required }}
           CONSOLE_RESULT: ${{ needs.e2e-console-sandbox.result }}
           LIVE_REPORT_RESULT: ${{ needs.coverage-live-report.result }}
           CODECOV_MAIN_RESULT: ${{ needs.codecov-upload.result }}
           EVENT_NAME: ${{ github.event_name }}
-          CONSOLE_REQUIRED: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' }}
+          CONSOLE_REQUIRED: ${{ github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'main' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.user.login != 'dependabot[bot]' && needs.console-changes.outputs.required == 'true' }}
         run: |
           test "$LINT_RESULT" = success || { echo "lint result: $LINT_RESULT" >&2; exit 1; }
           test "$BUILD_RESULT" = success || { echo "build-and-unit result: $BUILD_RESULT" >&2; exit 1; }
           test "$RACE_RESULT" = success || { echo "race-active result: $RACE_RESULT" >&2; exit 1; }
           test "$COVERAGE_RESULT" = success || { echo "coverage-report result: $COVERAGE_RESULT" >&2; exit 1; }
+          test "$CHANGES_RESULT" = success || { echo "console-changes result: $CHANGES_RESULT" >&2; exit 1; }
+          case "$CONSOLE_CHANGED" in
+            true|false) ;;
+            *) echo "invalid Console change-selection result" >&2; exit 1 ;;
+          esac
           if test "$EVENT_NAME" = pull_request; then
             test "$CODECOV_MAIN_RESULT" = skipped || { echo "unexpected codecov-upload result: $CODECOV_MAIN_RESULT" >&2; exit 1; }
           else

@@ -1668,8 +1668,18 @@ state-independent reads before mutation; it does not invoke the optional
 existing-deployment diagnostic that is expected to skip on a clean tenant.
 
 The Console job and live report generation are required inputs to `required-ci`
-for eligible pull requests. Raw live counters remain separate from the
-hermetic active union, so live execution cannot cover a missing hermetic
+for eligible pull requests with changes that may affect Console. A secretless
+change-selection job owns one conservative decision shared by those jobs and
+the final gate. It skips only documented safe paths: documentation and the
+chain-only BME pretty renderer, its tests, and golden fixtures. Everything else,
+including shared startup/config, dependencies, build/CI, and unknown files,
+requires the sandbox. The selector uses the exact PR base/head three-dot diff,
+NUL-delimited filenames, and no rename detection. Invalid diffs fail closed;
+empty diffs request the sandbox. The final gate rejects missing or malformed
+decisions, failed selection, and unexpected skipped jobs. This optimization
+does not change hermetic coverage or the sandbox trust and resource safeguards.
+Raw live counters remain separate from the hermetic active union, so live
+execution cannot cover a missing hermetic
 assertion. A verified `union-live` report is retained as an informational
 pull-request artifact.
 The managed-wallet path still requires its independent sandbox endpoint and

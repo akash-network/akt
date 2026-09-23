@@ -7356,9 +7356,24 @@ repository before the sandbox lane can run. The workflow MUST NOT use
 secrets to a fork's `pull_request` run, and executing that code through
 `pull_request_target` would cross the trust boundary before review.
 
-The Console test job is a required input to `required-ci` for every eligible
-same-repository pull request. A separate mutation opt-in and non-production API
-URL are still required before the lifecycle can write. Every sandbox run MUST
+The Console test job and live report are required inputs to `required-ci` for
+eligible same-repository pull requests whose changes may affect Console.
+A secretless `console-changes` job compares the exact PR base and head commits
+using a three-dot, NUL-delimited Git diff with rename detection disabled, so
+both sides of a rename are classified. It skips Console only when every changed
+path belongs to the explicit documentation or chain-only BME pretty-renderer
+allowlist in `script/ci-console-required.sh`. Shared CLI/config, Console,
+workflow/transport, provider, SDL, dependencies, build/CI, and unknown paths
+require Console E2E. An empty diff also requires it; an invalid revision or
+failed diff fails the decision job rather than authorizing a skip.
+`required-ci` MUST require a successful decision job and a valid boolean output.
+It accepts skipped Console and live-report jobs only when that decision says
+they are unnecessary or the event is ineligible. Unit, race, offline/localnet
+E2E, and hermetic coverage requirements are unchanged. The workflow itself
+always runs; path filters MUST NOT suppress the required final status.
+
+A separate mutation opt-in and non-production API URL are still required
+before the lifecycle can write. Every sandbox run MUST
 share one serialized concurrency group. Every pull-request workflow run MUST
 disable automatic cancellation, including a currently ineligible run, because
 retargeting can otherwise let a later event cancel an earlier lifecycle while
