@@ -392,7 +392,7 @@ e2e/                               # End-to-end tests
 - [ ] T127 [P] Documentation updates (user guide, quickstart) in docs/
 - [ ] T128 Code cleanup and refactoring across all packages
 - [ ] T129 [P] Security audit: verify no keys in config, MCP write tool gating (--enable-writes), destructive action guards (--yes vs --force semantics), plugin trust warnings
-- [ ] T130 [P] AICHANGELOG.md entries for all implemented tasks
+- [ ] T130 [P] Changelog fragments in `.changelog/` for all implemented tasks
 
 ---
 

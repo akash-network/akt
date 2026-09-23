@@ -158,6 +158,24 @@ archives:
       - LICENSE
       - README.md
 
+  # One portable skill package per CLI version, built from its canonical source.
+  - id: akt-skill
+    meta: true
+    name_template: "akt_{{ .Version }}_skill"
+    wrap_in_directory: akt-cli
+    formats:
+      - zip
+    files:
+      - LICENSE
+      - src: .agents/skills/akt-cli/SKILL.md
+        strip_parent: true
+      - src: .agents/skills/akt-cli/references/*.md
+        dst: references
+        strip_parent: true
+      - src: .agents/skills/akt-cli/agents/*.yaml
+        dst: agents
+        strip_parent: true
+
 checksum:
   name_template: "akt_{{ .Version }}_checksums.txt"
   algorithm: sha256

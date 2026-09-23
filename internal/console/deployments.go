@@ -172,7 +172,7 @@ func (c *Client) reconcileCreatedDeployment(
 }
 
 const (
-	deploymentCollectionPageSize   = 1000
+	deploymentCollectionPageSize   = 100
 	maxDeploymentCollectionPages   = 100
 	maxDeploymentCollectionRecords = 10_000
 )

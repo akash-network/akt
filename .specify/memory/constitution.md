@@ -1,13 +1,10 @@
 <!-- Sync Impact Report
-  Version change: (none) -> 1.0.0
-  Modified principles: N/A (initial ratification)
-  Added sections:
-    - Core Principles (7): Spec-First Development, No Global State,
-      Test-First, Flag-Minimal Operation, Pretty/TUI Visual Parity,
-      Stream Separation & CLI UX, Simplicity & YAGNI
-    - Technology & Safety Constraints
-    - Development Workflow & Quality Gates
-    - Governance
+  Version change: 1.0.0 -> 1.1.0
+  Modified sections: Development Workflow & Quality Gates, changelog discipline
+  Rationale: separate PR fragments remove the shared archive insertion point.
+  Migration: unmerged PRs move their own archive additions to .changelog/;
+    existing history is preserved and releases assemble pending fragments.
+  Added sections: none
   Removed sections: N/A
   Templates requiring updates:
     - .specify/templates/plan-template.md: no update needed
@@ -214,16 +211,22 @@ code changes are made.
 4. Verify tests pass.
 5. Refactor while green.
 
-**Changelog discipline**: Every change MUST include a corresponding
-entry in `AICHANGELOG.md` describing the feature/fix and the
-implementation approach.
+**Changelog discipline**: Every ordinary PR MUST add a uniquely named
+`.changelog/<slug>.<category>.md` fragment describing the feature/fix and
+implementation approach. Categories are `added`, `changed`, `fixed`,
+`deprecated`, `removed`, and `security`; contents are Markdown bullets.
+Ordinary PRs MUST NOT edit `AICHANGELOG.md` or existing base-branch fragments.
+Before tagging, a separate release-preparation PR runs
+`GOWORK=off make changelog-assemble` and commits the archive and consumed
+fragment deletions together. The archive MUST exactly match assembly of the
+base branch's fragments. See `.changelog/README.md` for the workflow.
 
 **Quality gates** (all MUST pass before a change is considered
 complete):
 - `make akt` builds successfully.
 - `go test ./...` passes.
 - SPEC.md/DESIGN.md are updated to reflect the change.
-- AICHANGELOG.md entry is present.
+- `GOWORK=off make changelog-check CHANGELOG_BASE=origin/main` passes.
 - No unexplained `init()` or package-level `var` introduced.
 
 **No guessing**: If something is not working and the cause is not
@@ -255,4 +258,4 @@ these principles. Complexity MUST be justified per Principle VII.
 **Runtime guidance**: Use AGENTS.md for day-to-day development
 guidance that supplements (but does not override) this constitution.
 
-**Version**: 1.0.0 | **Ratified**: 2025-07-18 | **Last Amended**: 2025-07-18
+**Version**: 1.1.0 | **Ratified**: 2025-07-18 | **Last Amended**: 2026-09-12

@@ -23,7 +23,7 @@ saw_change=false
 while IFS= read -r -d '' changed_path; do
   saw_change=true
   case "$changed_path" in
-    README.md|AGENTS.md|AICHANGELOG.md|DESIGN.md|SPEC.md|CONTRIBUTING.md|LICENSE|docs/*.md)
+    README.md|AGENTS.md|AICHANGELOG.md|DESIGN.md|SPEC.md|CONTRIBUTING.md|LICENSE|docs/*.md|.changelog/*.md)
       ;;
     internal/output/pretty/bme.go|internal/output/pretty/bme*_test.go|internal/output/pretty/testdata/TestRenderBME*/*.golden)
       # These render chain BME responses, not Console responses. Do not extend

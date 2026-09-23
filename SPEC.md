@@ -3254,6 +3254,91 @@ same payload shape as the display path.
 
 ---
 
+### 2.14 Agent skill distribution
+
+The repository ships a portable `akt-cli` agent skill at
+`.agents/skills/akt-cli/`. Its `SKILL.md` defines the selection description,
+the CLI's operating model, context and rail selection, positional identifiers,
+machine-readable execution, and recovery after partial mutations. Focused
+references cover setup, deployment recipes, and troubleshooting. Optional
+`agents/openai.yaml` supplies Codex UI metadata with implicit selection enabled.
+
+The skill MUST work with an installed `akt` binary without a source checkout.
+It MUST NOT require agents operating the CLI to read the contributor's
+AGENTS.md, SPEC.md, or DESIGN.md. Examples use the installed binary's version
+and relevant command help to resolve syntax and configuration-dependent
+capabilities. The skill preserves the user's authorized context, resource,
+provider, and spending scope; `--yes` is only an execution option for an
+already authorized operation. It documents existing read-only MCP setup as an
+optional interface without requiring MCP or enabling write tools on install.
+
+GoReleaser produces `akt_<version>_skill.zip` from this canonical directory,
+with one `akt-cli/` root containing the skill, references, UI metadata, and
+repository license. The archive joins the existing release checksum manifest.
+Its version identifies the akt release whose binary passed example validation;
+users install the skill from the same release as their binary. Repository
+copies track their checkout. No independently maintained distribution copy or
+automatic changes to an agent's personal configuration are introduced.
+
+Offline E2E validation reads the actual Markdown examples and executes the
+local discovery, SDL generation/validation, context inspection, and deployment
+preview recipes against the built binary with isolated configuration. It
+asserts their semantic results and preserves the no-broadcast boundary.
+Network-dependent and mutating recipes receive command/argument/flag syntax
+validation without executing their actions. These checks run in the existing
+offline CI and release test lanes.
+
+### 2.15 Installation documentation
+
+README.md provides binary installation instructions before the feature catalog:
+the `akash-network/tap` Homebrew formula, macOS universal and Linux amd64/arm64
+release archives, Linux native packages, checksum verification, and a PATH
+installation step. Source builds remain documented separately. `akt version`
+verifies installation without requiring configuration; interactive onboarding
+starts when a configuration-dependent command such as `akt context list` runs
+without a config file.
+
+The README links directly to the public akt CLI documentation at
+`https://akash.network/docs/developers/deployment/akt/` and its installation
+guide. Package names follow the release configuration; examples avoid pinning
+the README to one release version.
+
+### 2.16 Contributor changelog fragments
+
+Every ordinary PR adds a uniquely named Markdown fragment under `.changelog/`
+instead of editing `AICHANGELOG.md`. Names have the form
+`<pr-number-or-descriptive-slug>.<category>.md`, where category is `added`,
+`changed`, `fixed`, `deprecated`, `removed`, or `security`. A PR number is
+optional so contributors can write entries before opening a PR. Each fragment
+contains Markdown bullets describing the change and its implementation.
+Contributors MUST NOT modify or remove fragments already merged into the base
+branch. AGENTS.md and the Spec Kit constitution use this same contract.
+
+`make changelog-check` validates all pending fragments. With
+`CHANGELOG_BASE=<base-commit>`, it also checks the PR diff: ordinary changes
+MUST add a fragment and leave the archive and existing fragments untouched.
+The sole archive-edit exception is a release-preparation diff containing only
+the deterministic assembly of the base branch's fragments and their removal.
+CI runs this check against the pull request's base commit, without exemptions
+based on labels or commit messages.
+
+Before tagging a release, a maintainer runs `make changelog-assemble`. The
+standard-library Go tool at `tools/changelog` groups fragments by category and
+sorts them by filename, inserts their contents under `## Unreleased`, and
+preserves the existing archive contents. It writes the archive atomically
+before deleting consumed fragments. Each inserted entry records its fragment
+filename so an interrupted deletion can be retried without duplicating notes;
+a reused filename with different contents is rejected. No commits or tags are
+created by the tool. The maintainer reviews and merges the assembly as a
+release-preparation PR before tagging the tested commit.
+
+`make changelog-release-check` rejects pending fragments. Tagged release
+quality checks and the publication preflight require it; manual snapshots
+and dry runs may retain pending fragments. GitHub release notes continue to
+use GoReleaser's existing commit-based configuration. Historical archive
+entries remain intact, while unmerged PRs migrate their own additions into
+fragments when adopting this workflow.
+
 ## 3. Flag Specification
 
 Every statically declared flag name is defined once as a constant in
@@ -4803,9 +4888,11 @@ in §7.3. HTTP 429 and 5xx responses retain the method-aware retry policy above.
 Deployment creation adds a stronger ambiguity protocol. Before POSTing, the
 client validates the SDL, derives its base64 version hash and rendered
 manifest, and snapshots every existing deployment DSEQ through the paginated
-list endpoint. A complete list traversal is limited to 100 pages and 10,000
-deployment records. If `hasMore` remains true after the page limit or a response
-would cross the record limit, the client returns a local pagination-limit error.
+list endpoint. Collection reads request at most 100 deployments per page to
+respect the Console API cap, including state-filtered lists. A complete list
+traversal is limited to 100 pages and 10,000 deployment records. If `hasMore`
+remains true after the page limit or a response would cross the record limit,
+the client returns a local pagination-limit error.
 It does not retain the excess records or submit a create request from an
 incomplete baseline. It then submits exactly one POST. Transport errors, 429,
 5xx, and a success response without a usable DSEQ are ambiguous: the client
@@ -7362,11 +7449,14 @@ A secretless `console-changes` job compares the exact PR base and head commits
 using a three-dot, NUL-delimited Git diff with rename detection disabled, so
 both sides of a rename are classified. It skips Console only when every changed
 path belongs to the explicit documentation or chain-only BME pretty-renderer
-allowlist in `script/ci-console-required.sh`. Shared CLI/config, Console,
+allowlist in `script/ci-console-required.sh`. Markdown files under `.changelog/`
+are documentation, so a changelog fragment does not force Console E2E for an
+otherwise safe change. Shared CLI/config, Console,
 workflow/transport, provider, SDL, dependencies, build/CI, and unknown paths
 require Console E2E. An empty diff also requires it; an invalid revision or
 failed diff fails the decision job rather than authorizing a skip.
-`required-ci` MUST require a successful decision job and a valid boolean output.
+`required-ci` MUST require a successful decision job, a valid boolean output,
+and successful changelog validation even when Console E2E is skipped.
 It accepts skipped Console and live-report jobs only when that decision says
 they are unnecessary or the event is ineligible. Unit, race, offline/localnet
 E2E, and hermetic coverage requirements are unchanged. The workflow itself
