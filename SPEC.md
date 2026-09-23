@@ -4888,9 +4888,11 @@ in §7.3. HTTP 429 and 5xx responses retain the method-aware retry policy above.
 Deployment creation adds a stronger ambiguity protocol. Before POSTing, the
 client validates the SDL, derives its base64 version hash and rendered
 manifest, and snapshots every existing deployment DSEQ through the paginated
-list endpoint. A complete list traversal is limited to 100 pages and 10,000
-deployment records. If `hasMore` remains true after the page limit or a response
-would cross the record limit, the client returns a local pagination-limit error.
+list endpoint. Collection reads request at most 100 deployments per page to
+respect the Console API cap, including state-filtered lists. A complete list
+traversal is limited to 100 pages and 10,000 deployment records. If `hasMore`
+remains true after the page limit or a response would cross the record limit,
+the client returns a local pagination-limit error.
 It does not retain the excess records or submit a create request from an
 incomplete baseline. It then submits exactly one POST. Transport errors, 429,
 5xx, and a success response without a usable DSEQ are ambiguous: the client

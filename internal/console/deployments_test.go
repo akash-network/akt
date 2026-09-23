@@ -67,7 +67,7 @@ func TestCreateDeployment(t *testing.T) {
 		switch r.Method {
 		case http.MethodGet:
 			assert.Equal(t, "/v1/deployments", r.URL.Path)
-			_, _ = w.Write([]byte(`{"data":{"deployments":[],"pagination":{"total":0,"skip":0,"limit":1000,"hasMore":false}}}`))
+			_, _ = w.Write([]byte(`{"data":{"deployments":[],"pagination":{"total":0,"skip":0,"limit":100,"hasMore":false}}}`))
 		case http.MethodPost:
 			assert.Equal(t, "/v1/deployments", r.URL.Path)
 			data := decodeDataBody(t, r)
@@ -100,13 +100,13 @@ func TestCreateDeploymentReconcilesAmbiguousResponseWithoutReplayingPost(t *test
 		switch r.Method {
 		case http.MethodGet:
 			if !submitted.Load() {
-				_, _ = w.Write([]byte(`{"data":{"deployments":[{"deployment":{"id":{"owner":"akash1old","dseq":"100"},"hash":"old"},"leases":[]}],"pagination":{"total":1,"skip":0,"limit":1000,"hasMore":false}}}`))
+				_, _ = w.Write([]byte(`{"data":{"deployments":[{"deployment":{"id":{"owner":"akash1old","dseq":"100"},"hash":"old"},"leases":[]}],"pagination":{"total":1,"skip":0,"limit":100,"hasMore":false}}}`))
 				return
 			}
 			_, _ = w.Write([]byte(`{"data":{"deployments":[` +
 				`{"deployment":{"id":{"owner":"akash1old","dseq":"100"},"hash":"old"},"leases":[]},` +
 				`{"deployment":{"id":{"owner":"akash1new","dseq":"12345"},"hash":"` + expectedHash + `"},"leases":[]}` +
-				`],"pagination":{"total":2,"skip":0,"limit":1000,"hasMore":false}}}`))
+				`],"pagination":{"total":2,"skip":0,"limit":100,"hasMore":false}}}`))
 		case http.MethodPost:
 			posts.Add(1)
 			submitted.Store(true)
@@ -186,7 +186,11 @@ func TestCreateDeploymentSnapshotsMultipleDeploymentPages(t *testing.T) {
 		switch r.Method {
 		case http.MethodGet:
 			gets.Add(1)
-			assert.Equal(t, "1000", r.URL.Query().Get("limit"))
+			limit, err := strconv.Atoi(r.URL.Query().Get("limit"))
+			if err != nil || limit < 1 || limit > 100 {
+				http.Error(w, "limit must be between 1 and 100", http.StatusBadRequest)
+				return
+			}
 
 			switch r.URL.Query().Get("skip") {
 			case "0":

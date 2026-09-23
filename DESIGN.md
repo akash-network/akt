@@ -875,9 +875,10 @@ client reads the paginated deployment collection back and accepts success only
 when exactly one new DSEQ has the expected version hash. Zero or multiple
 matches produce an explicit outcome-unknown error and a `pending` action-log
 entry containing the SDL hash, so the user can investigate without accidentally
-creating another deployment. Snapshot and reconciliation reads stop after 100
-pages or 10,000 deployment records. A traversal that still advertises another
-page after 100 responses, or that would collect more than 10,000 records,
+creating another deployment. Collection reads request at most 100 deployments
+per page to respect the Console API cap. Snapshot and reconciliation reads stop
+after 100 pages or 10,000 deployment records. A traversal that still advertises
+another page after 100 responses, or that would collect more than 10,000 records,
 produces a local pagination-limit error. The client neither accumulates an
 unbounded collection nor proceeds to the create request without a complete
 baseline.
