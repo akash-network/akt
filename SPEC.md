@@ -7449,11 +7449,14 @@ A secretless `console-changes` job compares the exact PR base and head commits
 using a three-dot, NUL-delimited Git diff with rename detection disabled, so
 both sides of a rename are classified. It skips Console only when every changed
 path belongs to the explicit documentation or chain-only BME pretty-renderer
-allowlist in `script/ci-console-required.sh`. Shared CLI/config, Console,
+allowlist in `script/ci-console-required.sh`. Markdown files under `.changelog/`
+are documentation, so a changelog fragment does not force Console E2E for an
+otherwise safe change. Shared CLI/config, Console,
 workflow/transport, provider, SDL, dependencies, build/CI, and unknown paths
 require Console E2E. An empty diff also requires it; an invalid revision or
 failed diff fails the decision job rather than authorizing a skip.
-`required-ci` MUST require a successful decision job and a valid boolean output.
+`required-ci` MUST require a successful decision job, a valid boolean output,
+and successful changelog validation even when Console E2E is skipped.
 It accepts skipped Console and live-report jobs only when that decision says
 they are unnecessary or the event is ineligible. Unit, race, offline/localnet
 E2E, and hermetic coverage requirements are unchanged. The workflow itself

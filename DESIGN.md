@@ -1678,8 +1678,10 @@ existing-deployment diagnostic that is expected to skip on a clean tenant.
 The Console job and live report generation are required inputs to `required-ci`
 for eligible pull requests with changes that may affect Console. A secretless
 change-selection job owns one conservative decision shared by those jobs and
-the final gate. It skips only documented safe paths: documentation and the
-chain-only BME pretty renderer, its tests, and golden fixtures. Everything else,
+the final gate. It skips only documented safe paths: documentation, including
+Markdown files under `.changelog/`, and the chain-only BME pretty renderer,
+its tests, and golden fixtures. Changelog validation remains required even
+when the sandbox is skipped. Everything else,
 including shared startup/config, dependencies, build/CI, and unknown files,
 requires the sandbox. The selector uses the exact PR base/head three-dot diff,
 NUL-delimited filenames, and no rename detection. Invalid diffs fail closed;

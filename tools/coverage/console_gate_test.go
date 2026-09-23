@@ -24,7 +24,11 @@ func TestConsoleGateChangedFiles(t *testing.T) {
 		advanceBase bool
 	}{
 		{name: "documentation", paths: []string{"README.md", "SPEC.md", "docs/guide with spaces.md"}, want: "false"},
+		{name: "changelog documentation", paths: []string{".changelog/101.fixed.md", ".changelog/README.md"}, want: "false"},
 		{name: "vault PR", paths: []string{"AICHANGELOG.md", "DESIGN.md", "SPEC.md", "internal/output/pretty/bme.go", "internal/output/pretty/bme_layout_test.go", "internal/output/pretty/testdata/TestRenderBMEVaultState/WithBalances.golden"}, want: "false"},
+		{name: "vault PR with fragment", paths: []string{".changelog/101.fixed.md", "internal/output/pretty/bme.go"}, want: "false"},
+		{name: "runtime change with fragment", paths: []string{".changelog/104.fixed.md", "internal/console/client.go"}, want: "true"},
+		{name: "non-Markdown changelog file", paths: []string{".changelog/helper.go"}, want: "true"},
 		{name: "shared startup", paths: []string{"internal/cli/root.go"}, want: "true"},
 		{name: "shared formatting", paths: []string{"internal/output/pretty/helpers.go"}, want: "true"},
 		{name: "console", paths: []string{"internal/console/client.go"}, want: "true"},
@@ -114,6 +118,9 @@ func TestConsoleGateWorkflow(t *testing.T) {
 	if _, ok := workflow.Jobs["console-changes"]; !ok {
 		t.Fatal("missing secretless change-selection job")
 	}
+	if _, ok := workflow.Jobs["changelog"]; !ok {
+		t.Fatal("missing changelog validation job")
+	}
 	for _, name := range []string{"e2e-console-sandbox", "coverage-live-report", "required-ci"} {
 		job := workflow.Jobs[name]
 		var needs []string
@@ -122,6 +129,9 @@ func TestConsoleGateWorkflow(t *testing.T) {
 		}
 		if !slices.Contains(needs, "console-changes") {
 			t.Errorf("%s does not depend on the selection job", name)
+		}
+		if name == "required-ci" && !slices.Contains(needs, "changelog") {
+			t.Error("required-ci does not depend on changelog validation")
 		}
 		if name != "required-ci" && !strings.Contains(job.If, "needs.console-changes.outputs.required == 'true'") {
 			t.Errorf("%s ignores changed-file selection", name)
@@ -151,6 +161,8 @@ func TestConsoleGateWorkflow(t *testing.T) {
 	}{
 		{name: "all required jobs pass", pass: true},
 		{name: "intentional skip", env: []string{"CONSOLE_CHANGED=false", "CONSOLE_REQUIRED=false", "CONSOLE_RESULT=skipped", "LIVE_REPORT_RESULT=skipped"}, pass: true},
+		{name: "failed changelog with sandbox skipped", env: []string{"CHANGELOG_RESULT=failure", "CONSOLE_CHANGED=false", "CONSOLE_REQUIRED=false", "CONSOLE_RESULT=skipped", "LIVE_REPORT_RESULT=skipped"}},
+		{name: "skipped changelog", env: []string{"CHANGELOG_RESULT=skipped"}},
 		{name: "failed selection", env: []string{"CHANGES_RESULT=failure"}},
 		{name: "skipped selection", env: []string{"CHANGES_RESULT=skipped"}},
 		{name: "missing decision", env: []string{"CONSOLE_CHANGED="}},
@@ -165,7 +177,7 @@ func TestConsoleGateWorkflow(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", gate.Steps[0].Run)
-			cmd.Env = append(os.Environ(), "LINT_RESULT=success", "BUILD_RESULT=success", "RACE_RESULT=success", "COVERAGE_RESULT=success", "CHANGES_RESULT=success", "CONSOLE_CHANGED=true", "CONSOLE_REQUIRED=true", "CONSOLE_RESULT=success", "LIVE_REPORT_RESULT=success", "CODECOV_MAIN_RESULT=skipped", "EVENT_NAME=pull_request")
+			cmd.Env = append(os.Environ(), "CHANGELOG_RESULT=success", "LINT_RESULT=success", "BUILD_RESULT=success", "RACE_RESULT=success", "COVERAGE_RESULT=success", "CHANGES_RESULT=success", "CONSOLE_CHANGED=true", "CONSOLE_REQUIRED=true", "CONSOLE_RESULT=success", "LIVE_REPORT_RESULT=success", "CODECOV_MAIN_RESULT=skipped", "EVENT_NAME=pull_request")
 			cmd.Env = append(cmd.Env, tc.env...)
 			out, err := cmd.CombinedOutput()
 			if (err == nil) != tc.pass {
