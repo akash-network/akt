@@ -73,7 +73,7 @@ See visual-techniques.md for implementation patterns.
 ✅ Every command supports --help with usage and examples
 
 ❌ **Wrong exit codes** - Always returns 0, breaks scripting
-✅ 0 for success, 1 for errors
+✅ 0 for success, non-zero for failure — in `akt`, the categorized codes in SPEC.md §11.2
 
 ❌ **Color-only information** - Inaccessible without color support
 ✅ Always pair color with text/symbols, support --no-color
@@ -86,7 +86,7 @@ See visual-techniques.md for implementation patterns.
 When building CLI urgently, include these first (high impact, low effort):
 
 1. **--help flag** (2 minutes) - Include usage, examples, common flags
-2. **Exit codes** (1 minute) - 0=success, 1=error, enables CI/CD
+2. **Exit codes** (1 minute) - 0=success, non-zero=failure (SPEC.md §11.2 for `akt`), enables CI/CD
 3. **Clear errors** (5 minutes) - What happened + what's valid + how to fix
 4. **Progress feedback** (3 minutes) - Show activity during slow operations
 
