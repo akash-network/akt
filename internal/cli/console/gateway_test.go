@@ -805,6 +805,106 @@ func TestDefaultShellServiceCoversManifestBoundaries(t *testing.T) {
 	}
 }
 
+func TestScreenGPUModelRequest(t *testing.T) {
+	tests := []struct {
+		name   string
+		model  string
+		useSDL bool
+	}{
+		{name: "rtx5090", model: "rtx5090"},
+		{name: "a100", model: "a100"},
+		{name: "unknown model", model: "totally-fake-gpu"},
+		{name: "SDL override", model: "a100", useSDL: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			var req struct {
+				Resources []struct {
+					Resource struct {
+						GPU struct {
+							Units struct {
+								Val string `json:"val"`
+							} `json:"units"`
+							Attributes []aktconsole.Attribute `json:"attributes"`
+						} `json:"gpu"`
+					} `json:"resource"`
+				} `json:"resources"`
+			}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method != http.MethodPost || r.URL.Path != "/v1/bid-screening" {
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+				}
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Errorf("decode screening request: %v", err)
+					w.WriteHeader(http.StatusBadRequest)
+					return
+				}
+				writeJSON(t, w, `{"providers":[{"owner":"akash1prov"}]}`)
+			}))
+			defer srv.Close()
+
+			args := []string{"screen"}
+			if test.useSDL {
+				sdlPath := filepath.Join(t.TempDir(), "deploy.yaml")
+				if err := os.WriteFile(sdlPath, []byte(screenSDL), 0o600); err != nil {
+					t.Fatal(err)
+				}
+				args = append(args, sdlPath)
+			}
+			args = append(args, "--gpu", "3", "--gpu-model", test.model)
+			if _, err := execConsole(t, newTestManager(t), srv.URL, args...); err != nil {
+				t.Fatalf("screen: %v", err)
+			}
+			if len(req.Resources) != 1 {
+				t.Fatalf("resources length = %d, want 1", len(req.Resources))
+			}
+			gpu := req.Resources[0].Resource.GPU
+			if gpu.Units.Val != "3" {
+				t.Errorf("GPU units = %q, want 3", gpu.Units.Val)
+			}
+			want := []aktconsole.Attribute{{Key: "vendor/nvidia/model/" + test.model, Value: "true"}}
+			if !reflect.DeepEqual(gpu.Attributes, want) {
+				t.Errorf("GPU attributes = %#v, want %#v", gpu.Attributes, want)
+			}
+		})
+	}
+}
+
+func TestScreenEmptyOutput(t *testing.T) {
+	for _, format := range []string{"pretty", "json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				writeJSON(t, w, `{"providers":[]}`)
+			}))
+			defer srv.Close()
+
+			out, err := execConsole(t, newTestManager(t), srv.URL,
+				"screen", "--gpu-model", "totally-fake-gpu", "-o", format)
+			if err != nil {
+				t.Fatalf("screen: %v", err)
+			}
+			if format == "pretty" {
+				if want := "No providers matched the SDL's resource requirements.\n"; out != want {
+					t.Errorf("empty pretty output = %q, want %q", out, want)
+				}
+				return
+			}
+			var decoded any
+			if format == "json" {
+				err = json.Unmarshal([]byte(out), &decoded)
+			} else {
+				err = yaml.Unmarshal([]byte(out), &decoded)
+			}
+			if err != nil {
+				t.Fatalf("decode %s output: %v", format, err)
+			}
+			if providers, ok := decoded.([]any); !ok || len(providers) != 0 {
+				t.Errorf("empty %s output = %#v, want an empty array", format, decoded)
+			}
+		})
+	}
+}
+
 func TestScreeningRequestSupportsResourceFlagsWithoutSDL(t *testing.T) {
 	cmd := screenCmd(func() *aktctx.Manager { return nil })
 	for flag, value := range map[string]string{

@@ -2933,6 +2933,14 @@ one-shot read.
 | `akt console shell <dseq> [service] [-- command...]` | `--stdin`                                | Interactive shell in a lease container, default `/bin/sh`; when exactly one SDL service exists it is selected automatically. Multiple services require an explicit name and list the choices. Exec is the same operation with an explicit command (JWT scopes `shell,status`). |
 | `akt console screen [sdl-file]`                    | `--cpu`, `--memory`, `--storage`, `--gpu`, `--gpu-model`, `--count`, `--attribute`, `--signed-by`, `--reclamation-window` | Client-side bid screening from an SDL, resource flags, or both. Explicit flags override SDL-derived fields (public endpoint, no key needed). |
 
+`console screen --gpu-model <model>` MUST encode the model in each screened
+resource's `gpu.attributes` as
+`{"key":"vendor/nvidia/model/<model>","value":"true"}`. This applies both to
+resource-only requests and to GPU overrides of an SDL. The model name MUST NOT
+be sent as the value of a `vendor/nvidia/model` attribute, which does not constrain
+the API's provider selection. When no providers match, JSON and YAML output
+MUST be an empty array (`[]`); pretty output retains the no-match message.
+
 Per the positional-primary convention (§3.8), every console command takes its primary value(s) positionally; the equivalent flags remain as overrides and a positional value wins when both are given. (2026-07: the flag twins marked *disabled pending feedback* above are commented out in code for the positional-only UX trial — the positional form is the only way while the trial runs; the original flag definitions are preserved in `FEEDBACK(2026-07)` comments for restoration.) Default structured reads are indented JSON, while human acknowledgements and streams use the command-specific pretty forms described below. USD values at or above one cent render with two decimals. A nonzero sub-cent value renders with up to six decimals and trailing zeros stripped; a magnitude below one millionth of a dollar renders as `$<0.000001` (or `-$<0.000001`) rather than the false `$0.00`. Zero remains `$0.00`. State-changing calls are recorded in the context's action log as `type=console` entries (§5.6). No command ever prints a Console API key, except the one-time secret from `apikey create`.
 
 Console escrow `uact` values are micro-USD: amounts render as dollars and
@@ -4947,7 +4955,7 @@ Status of `akt` coverage for every Akash Console capability. "Covered" means the
 | Live lease status | `akt console status <dseq>` (`--watch`) | Reads the provider gateway directly using a Console-minted scoped JWT. |
 | Container logs / cluster events | `akt console logs <dseq> [service]`, `akt console events <dseq>` (`--follow`) | Same streaming paths as `akt provider lease-logs/lease-events`, authenticated by the Console JWT — no websocket relay needed. |
 | Exec / interactive shell | `akt console shell <dseq> <service> [-- command]` | Exec is the same command with an explicit command argument. |
-| Bid screening | `akt console screen <sdl-file>` | Public endpoint; resources are derived from the SDL. |
+| Bid screening | `akt console screen [sdl-file]` | Public endpoint; resources come from the SDL, resource flags, or both. GPU model filtering and empty output follow §2.9. |
 | Wallet balances & managed wallets | `akt console wallet balance/list` | Balances are µACT rendered as USD (1 ACT = 1 USD); wallet credits are dollar-scale. |
 | Auto Recharge | `akt console wallet settings [true\|false]` | Account-level card charging (`autoReloadEnabled`), the Console UI's "Auto Recharge". Distinct from per-deployment funding, which is always on and not configurable. |
 | Cost estimate & usage history | `akt console wallet cost`, `akt console usage [from] [to]` | Usage totals the requested range; the lifetime figure is reported separately. |
