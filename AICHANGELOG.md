@@ -104,12 +104,6 @@
   idempotency, rejected requests, redirects, and missing confirmation without
   exposing credentials or response bodies.
 
-- **Put each vault-state token on its own line (#99)**: the shared pretty
-  renderer now right-aligns amounts across the section and indents continuation
-  lines under the value column. It preserves zero values, token order, readable
-  units, and separators. CLI and monitor share the layout; JSON/YAML and other
-  commands' compact coin output are unchanged.
-
 - **The live Console lifecycle repeated an unchanged runtime-limit PATCH**:
   the sandbox API rejects an equal total because it is not an extension, so the
   otherwise successful protected job failed late in its lifecycle and cleanup
