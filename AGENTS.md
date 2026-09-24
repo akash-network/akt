@@ -4,12 +4,12 @@
 
 ### Required Context
 
-Before beginning any task in this repository, you MUST read the following files in full:
+Two documents are the **source of truth** for how the project should be built:
 
 1. **DESIGN.md** - Architecture design document covering the overall structure, goals, and design rationale.
 2. **SPEC.md** - Detailed technical specification covering configuration, CLI commands, flags, store, sync engine, TUI, plugin system, output formats, error handling, and the phased implementation plan.
 
-These documents are the **source of truth** for how the project should be built.
+Together they run to roughly 10,000 lines, so start each task from their tables of contents and read every section your change touches (and the sections those cross-reference) before planning. Code that contradicts them is wrong even if it compiles.
 
 ### Spec-First Development
 
@@ -105,6 +105,4 @@ changes too.
 - **Never guess or hack.** If something is not working, and you don't understand why, ask for instructions. Do not invent workarounds, nil-guards, or fallback paths to mask a problem you haven't fully traced.
 
 <!-- SPECKIT START -->
-For additional context about technologies to be used, project structure,
-shell commands, and other important information, read the current plan
 <!-- SPECKIT END -->
