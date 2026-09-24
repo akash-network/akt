@@ -364,6 +364,15 @@ The context is resolved once at application startup and propagated through the e
 3. Apply overrides: flags > env vars > network config > built-in defaults.
 4. Inject the resolved context into all services (client, provider gateway, sync engine, TUI).
 
+For transaction broadcast mode, root command initialization binds the existing
+transaction flag and `AKT_BROADCAST_MODE` to Viper's `defaults.broadcast-mode`
+key. The selected value is validated by the flag's existing enum and copied to
+the SDK client context before transaction hooks run. This avoids a pre-seeded
+`sync` value overriding the user's configured preference, while preserving
+explicit-flag precedence and the unchanged `sync` fallback.
+Flag binding happens after the missing-flag check; Viper's nil-flag binding
+error is therefore unreachable. Invalid mode values still fail validation.
+
 Transaction subtrees imported from Cosmos SDK or IBC modules are not exempt
 from this boundary. Before any transaction leaf constructs a message, queries
 an account, simulates, or broadcasts, akt installs the selected context's
