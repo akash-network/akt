@@ -615,7 +615,7 @@ func screenCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			}
 
 			if len(providers) == 0 {
-				return printConsoleText(cmd, "No providers matched the SDL's resource requirements.\n")
+				return printConsoleResult(cmd, "No providers matched the SDL's resource requirements.", []console.ScreenedProvider{})
 			}
 
 			return printJSON(cmd, providers)
@@ -703,7 +703,7 @@ func screeningRequestFromResources(cmd *cobra.Command, args []string, raw json.R
 			}
 			gpuValue := map[string]any{"units": map[string]any{"val": strconv.FormatUint(uint64(gpu), 10)}}
 			if model != "" {
-				gpuValue["attributes"] = []any{map[string]any{"key": "vendor/nvidia/model", "value": model}}
+				gpuValue["attributes"] = []any{map[string]any{"key": "vendor/nvidia/model/" + model, "value": "true"}}
 			}
 			resourceValue["gpu"] = gpuValue
 		}

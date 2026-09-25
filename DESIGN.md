@@ -529,6 +529,11 @@ API key, and explicit command groups keep their own transport boundaries.
   This prevents each surface from acquiring its own partial version of the
   same rules.
 
+Public Console bid screening translates `--gpu-model <model>` into the resource
+GPU attribute `vendor/nvidia/model/<model>=true`, matching the API's model
+selector format. A model with no matching providers yields an empty list in
+JSON/YAML and a human-readable message in pretty output.
+
 A context may use both credentials. `auth-method` remains the on-disk name for
 compatibility and records only which credential `akt deploy`, `akt update`,
 and `akt close` prefer. `akt context create/edit --deploy-via chain|console`
