@@ -2,6 +2,83 @@
 
 ## Unreleased
 
+### Added
+
+<!-- changelog: 104.added.md -->
+- Document binary installation in the README with Homebrew install and upgrade
+  commands, release archives, checksum verification, and PATH installation.
+  Link the official akt CLI docs and installation guide, and use
+  `akt context list` for the first-run example because `akt version` does not
+  launch setup.
+- Package the portable akt CLI agent skill with context and rail selection,
+  positional syntax, structured output, deployment recipes, and recovery
+  guidance. GoReleaser ships the canonical files in a checksummed skill ZIP;
+  offline E2E tests validate the Markdown examples against the binary.
+<!-- /changelog -->
+
+### Changed
+
+<!-- changelog: 104.changed.md -->
+- Replace shared AICHANGELOG.md edits with one changelog fragment per PR.
+  Update contributor instructions, validate fragments and PR diffs in CI,
+  and add deterministic release assembly with retry-safe cleanup. Reject
+  publication until pending fragments have been assembled before tagging.
+<!-- /changelog -->
+
+<!-- changelog: 105-agent-instructions.changed.md -->
+- **Agent instructions no longer carry dated or contradictory guidance**:
+  `AGENTS.md` and the `bootstrap` skill now ask agents to read the DESIGN.md
+  and SPEC.md sections a task touches instead of both documents in full
+  (~150K tokens) before every task, and the unfollowable "read the current
+  plan" line was removed from the spec-kit block. The `wizard` skill now
+  points at `AGENTS.md` instead of a nonexistent `CLAUDE.md`, defers git
+  writes to the user as the `guidelines` skill requires, exempts
+  trial-disabled flags from dead-code removal, replaces generic
+  exception/test-class advice with Go package-level test guidance, and drops
+  all-caps pressure lines. The `cli-design` skill defers to the exit codes in
+  SPEC.md §11.2 instead of prescribing 0/1 only.
+<!-- /changelog -->
+
+### Fixed
+
+<!-- changelog: 100.fixed.md -->
+- **Honor the configured transaction broadcast mode (#95)**: transaction
+  startup now resolves the flag, `AKT_BROADCAST_MODE`, and
+  `defaults.broadcast-mode` in that order before falling back to `sync`.
+  The resolved mode reaches the SDK client context instead of leaving its
+  hard-coded default in place. Regression tests cover precedence, invalid
+  defaults, and preserving explicit-flag semantics without broadcasting.
+  Removed the unreachable nil-flag binding error branch that blocked #100's
+  changed-line coverage gate; validation and coverage requirements are unchanged.
+<!-- /changelog -->
+
+<!-- changelog: 101.fixed.md -->
+- **Put each vault-state token on its own line (#99)**: the shared pretty
+  renderer now right-aligns amounts across the section and indents continuation
+  lines under the value column. It preserves zero values, token order, readable
+  units, and separators. CLI and monitor share the layout; JSON/YAML and other
+  commands' compact coin output are unchanged.
+<!-- /changelog -->
+
+<!-- changelog: changelog-console-gating.fixed.md -->
+- Treat changelog Markdown files as documentation when selecting Console
+  sandbox tests. Keep changelog validation required alongside change selection,
+  including when sandbox tests are skipped.
+<!-- /changelog -->
+
+<!-- changelog: console-deployment-page-limit.fixed.md -->
+- Respect the Console API's 100-record page limit when listing all deployments
+  for creation, response reconciliation, and state filtering. This prevents
+  deployment creation from failing with HTTP 400 during its preliminary read.
+<!-- /changelog -->
+
+<!-- changelog: console-screen-gpu-model.fixed.md -->
+- Fix Console bid screening GPU model filters by sending the model in the
+  resource attribute key with value `true`, including when overriding an SDL.
+  Return an empty array in JSON/YAML when no providers match, while preserving
+  the pretty output message. Add request and empty-output regression tests.
+<!-- /changelog -->
+
 ### Changed
 
 - **Select Console sandbox CI by changed files**: documentation and isolated
