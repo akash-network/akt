@@ -235,6 +235,59 @@ func TestCloseAlreadyClosedRecordedAsFailed(t *testing.T) {
 	}
 }
 
+func TestCloseDeploymentDisappearsAfterPreflight(t *testing.T) {
+	var gets, deletes atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/deployments/555" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		switch r.Method {
+		case http.MethodGet:
+			gets.Add(1)
+			if deletes.Load() > 0 {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"555"},"state":"active"}}}`))
+		case http.MethodDelete:
+			deletes.Add(1)
+			w.WriteHeader(http.StatusNotFound)
+		default:
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer srv.Close()
+
+	l := openTestLog(t)
+	err := New(srv.URL, "test-key").WithActionLog(l).CloseDeployment(context.Background(), "555")
+	if !errors.Is(err, ErrAlreadyClosed) {
+		t.Fatalf("CloseDeployment() = %v, want ErrAlreadyClosed", err)
+	}
+	if got := gets.Load(); got != 1 {
+		t.Errorf("GET requests = %d, want 1", got)
+	}
+	if got := deletes.Load(); got != 1 {
+		t.Errorf("DELETE requests = %d, want 1", got)
+	}
+
+	entries, readErr := l.Read(actionlog.Filter{Type: actionlog.TypeConsole})
+	if readErr != nil {
+		t.Fatalf("read action log: %v", readErr)
+	}
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 entry, got %d", len(entries))
+	}
+	if entries[0].Action != "close-deployment" || entries[0].Status != "failed" || entries[0].DSeq != 555 {
+		t.Errorf("already-closed entry wrong: %+v", entries[0])
+	}
+	if !strings.Contains(entries[0].Error, "already closed") {
+		t.Errorf("already-closed entry error = %q", entries[0].Error)
+	}
+}
+
 func TestRepeatedCloseRecordsTruthfulOutcomes(t *testing.T) {
 	var deletes atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

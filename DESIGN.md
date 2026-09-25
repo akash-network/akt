@@ -513,6 +513,9 @@ API key, and explicit command groups keep their own transport boundaries.
   (for example, "cannot be closed while leases are active") remains its
   original failed mutation. Already-closed attempts are failed action-log
   entries and never produce a green workflow step or mutation acknowledgement.
+  Regression coverage includes an active preflight followed by DELETE 404:
+  the client returns the typed already-closed error, records one failed action,
+  and sends neither a second DELETE nor a reconciliation GET.
 - A process-level Console key is sufficient for read-only MCP without creating
   configuration or running the first-run wizard. `--enable-writes` still
   requires an explicitly selected context because every mutation must have a
