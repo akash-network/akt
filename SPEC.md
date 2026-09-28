@@ -4763,9 +4763,14 @@ Returns updated deployment with leases and escrow.
 Returns `{ data: { success: boolean } }`.
 
 An absent or closed deployment discovered by the preflight is an
-already-closed error and sends no DELETE. After a DELETE has been submitted, a
-lost, malformed, or stale acknowledgement is ambiguous. The client MUST NOT
-replay that ambiguous request automatically. It reads the deployment back for
+already-closed error and sends no DELETE. If the preflight finds an active
+deployment but DELETE returns 404, the client returns `ErrAlreadyClosed` and
+records one failed close action. This definitive rejection triggers neither
+a retry nor a reconciliation GET. Regression tests MUST cover that sequence.
+
+After a DELETE has been submitted, a lost, malformed, or stale acknowledgement
+is ambiguous. The client MUST NOT replay that ambiguous request automatically.
+It reads the deployment back for
 a context-cancellable 30-second observation window and treats closed or absent
 state as success. If active state remains unproved at the deadline, the action
 is recorded as `pending` and the error names
