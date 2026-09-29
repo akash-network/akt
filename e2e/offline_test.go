@@ -14,7 +14,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -1069,8 +1068,8 @@ func TestBinaryReportsReleaseBuildTags(t *testing.T) {
 				t.Errorf("%s build tags %q are missing release tag %q", name, value, tag)
 			}
 		}
-		if slices.Contains(tags, "netgo") != (runtime.GOOS != "darwin") {
-			t.Errorf("%s build tags %q select the wrong DNS resolver for %s", name, value, runtime.GOOS)
+		if slices.Contains(tags, "netgo") {
+			t.Errorf("%s build tags %q must omit netgo to allow system DNS resolution", name, value)
 		}
 	}
 	reported := strings.Split(version.BuildTags, ",")

@@ -3148,10 +3148,11 @@ The long form is the form to include in bug reports: the build tags and
 platform determine which keyring backends and cgo-dependent features are
 compiled in.
 
-Darwin builds MUST omit `netgo` so hostname lookups use macOS system DNS
-routing, including VPN and split DNS configuration. Linux builds retain
-`netgo`. Local Make builds, GoReleaser artifacts installed by Homebrew, and
-coverage binaries MUST use the same tags for the same target platform.
+Darwin and Linux builds MUST omit `netgo` so Go can select the appropriate
+resolver, preserving macOS system DNS routing and Linux libc/NSS integration
+where required, including VPN and split DNS configuration. Local Make builds,
+GoReleaser artifacts installed by Homebrew, and coverage binaries MUST use the
+same tags across platforms.
 Both platforms retain cgo and `ledger` support; resolver selection MUST NOT
 disable hardware-wallet signing. Reported build tags MUST match compiler tags.
 
@@ -7386,7 +7387,7 @@ build metadata for the same platform (§2.12). Instrumentation may omit only
 linker or stripping options that are incompatible with coverage; it MUST NOT
 select a different source or dependency path. E2E asserts both reported tags
 and compiler build information for ordinary and instrumented binaries,
-including the platform's resolver tag and Ledger support.
+including the absence of `netgo` and the presence of Ledger support.
 
 Every raw counter shard is bound to the tracked environment recipes (`.env`,
 `.envrc`), the collection CI workflow, all Make recipes, and a canonical
@@ -7622,8 +7623,8 @@ code from the coverage contract.
 Every GoReleaser build used to validate the release-equivalent profile MUST
 identify `./cmd/akt` as its main package as well as carrying the canonical build
 tags for every explicitly declared target OS. Validation MUST reject `netgo`
-on Darwin and require it on other targets, including the local release-tag
-input. All remaining tags MUST match across platforms. A correctly tagged
+on every target, including the local release-tag input. All tags MUST match
+across platforms. A correctly tagged
 auxiliary binary is not evidence for the shipped `akt` denominator.
 
 Critical packages are packages that control money, credentials, persistent

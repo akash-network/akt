@@ -40,13 +40,12 @@ operating documentation lives at
 verification uses the configuration-independent `akt version` command;
 interactive context onboarding is a subsequent operation.
 
-macOS builds use the native system DNS resolver so RPC and other network
-requests honor macOS resolver routing, including VPN and split DNS settings.
-The `netgo` build tag is excluded on Darwin: it bypasses that routing and can
-time out against `/etc/resolv.conf` servers even when native lookups succeed.
-Linux retains `netgo`. Both platforms retain cgo and the `ledger` tag for
-hardware-wallet support. Local, release, and coverage builds use matching tags
-for the same platform, including their reported build metadata.
+macOS and Linux builds omit `netgo` so Go can select the appropriate DNS
+resolver. This preserves native macOS routing and Linux libc/NSS integration
+where required, including VPN and split DNS settings that direct queries to
+`/etc/resolv.conf` servers can bypass. Both platforms retain cgo and the
+`ledger` tag for hardware-wallet support. Local, release, and coverage builds
+use matching tags across platforms, including their reported build metadata.
 
 ### 1.4 The `monitor` Command
 
@@ -1935,11 +1934,10 @@ composite-literal fields.
 Release-profile validation also pins every GoReleaser build's main package to
 `cmd/akt`; matching tags on a different executable cannot validate the shipped
 CLI denominator.
-It validates every declared target OS, permitting only the resolver-tag
-difference between platforms: Darwin excludes `netgo`, while other targets
-retain it. The local release tags must satisfy the same resolver policy.
+Every target uses the same tags, and validation rejects `netgo` in local
+release tags and every GoReleaser build. Build targets must declare their OS.
 Binary E2E checks inspect compiler build information as well as reported tags,
-so incorrect version metadata cannot hide a Darwin binary built with `netgo`.
+so incorrect version metadata cannot hide a binary built with `netgo`.
 CI resolves the event's actual comparison revision and runs that patch gate on
 both pull requests and default-branch pushes, including multi-commit pushes.
 For local use, the same gate compares the base with the complete worktree,

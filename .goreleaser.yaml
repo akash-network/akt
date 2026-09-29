@@ -92,7 +92,7 @@ builds:
       - CXX=x86_64-linux-gnu-g++
     flags:
       - -mod=readonly
-      - -tags=osusergo,netgo,ledger,muslc,gcc,nolink_libwasmvm
+      - -tags=osusergo,ledger,muslc,gcc,nolink_libwasmvm
       - -trimpath
     ldflags:
       - -s -w
@@ -102,7 +102,7 @@ builds:
       - -extldflags "-Wl,-z,muldefs -lm -lrt -lc"
       - -X github.com/cosmos/cosmos-sdk/version.Name=akt
       - -X github.com/cosmos/cosmos-sdk/version.AppName=akt
-      - -X github.com/cosmos/cosmos-sdk/version.BuildTags=osusergo,netgo,ledger,muslc,gcc,nolink_libwasmvm
+      - -X github.com/cosmos/cosmos-sdk/version.BuildTags=osusergo,ledger,muslc,gcc,nolink_libwasmvm
       - -X github.com/cosmos/cosmos-sdk/version.Version={{ .Version }}
       - -X github.com/cosmos/cosmos-sdk/version.Commit={{ .FullCommit }}
       - -X main.version={{ .Version }}
@@ -121,7 +121,7 @@ builds:
       - CXX=aarch64-linux-gnu-g++
     flags:
       - -mod=readonly
-      - -tags=osusergo,netgo,ledger,muslc,gcc,nolink_libwasmvm
+      - -tags=osusergo,ledger,muslc,gcc,nolink_libwasmvm
       - -trimpath
     ldflags:
       - -s -w
@@ -129,7 +129,7 @@ builds:
       - -extldflags "-Wl,-z,muldefs -lm -lrt -lc"
       - -X github.com/cosmos/cosmos-sdk/version.Name=akt
       - -X github.com/cosmos/cosmos-sdk/version.AppName=akt
-      - -X github.com/cosmos/cosmos-sdk/version.BuildTags=osusergo,netgo,ledger,muslc,gcc,nolink_libwasmvm
+      - -X github.com/cosmos/cosmos-sdk/version.BuildTags=osusergo,ledger,muslc,gcc,nolink_libwasmvm
       - -X github.com/cosmos/cosmos-sdk/version.Version={{ .Version }}
       - -X github.com/cosmos/cosmos-sdk/version.Commit={{ .FullCommit }}
       - -X main.version={{ .Version }}

@@ -531,9 +531,6 @@ func TestRunValidateChecksRealTemporaryModule(t *testing.T) {
 	}, "\n"))
 	exceptionsFile := commandTestWriteFile(t, root, "coverage/exceptions.tsv", "package\tfile\tline\treason\towner\tevidence\treview_deadline\n")
 	releaseTags := "osusergo"
-	if runtime.GOOS != "darwin" {
-		releaseTags += ",netgo"
-	}
 	commandTestWriteFile(t, root, ".goreleaser.yaml", fmt.Sprintf("builds:\n  - id: sample\n    main: ./cmd/akt\n    goos: [%s]\n    flags:\n      - -tags=%s\n", runtime.GOOS, releaseTags))
 
 	stdout, err := commandTestCaptureStdout(t, func() error {

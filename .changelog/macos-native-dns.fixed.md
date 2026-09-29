@@ -1,3 +1,3 @@
-- Fix RPC DNS timeouts on macOS with VPN or split DNS configurations by using
-  the native resolver in local and Homebrew release builds. Preserve Ledger
-  support and enforce platform-specific tags in release and binary checks.
+- Fix RPC DNS failures with VPN or split DNS configurations on macOS and Linux
+  by removing `netgo` from local and release builds. Preserve Ledger support
+  and verify resolver tags in release and binary checks.
