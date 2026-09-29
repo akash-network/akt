@@ -40,6 +40,14 @@ operating documentation lives at
 verification uses the configuration-independent `akt version` command;
 interactive context onboarding is a subsequent operation.
 
+macOS builds use the native system DNS resolver so RPC and other network
+requests honor macOS resolver routing, including VPN and split DNS settings.
+The `netgo` build tag is excluded on Darwin: it bypasses that routing and can
+time out against `/etc/resolv.conf` servers even when native lookups succeed.
+Linux retains `netgo`. Both platforms retain cgo and the `ledger` tag for
+hardware-wallet support. Local, release, and coverage builds use matching tags
+for the same platform, including their reported build metadata.
+
 ### 1.4 The `monitor` Command
 
 `akt monitor` is a hub-based real-time monitoring tool. It is one of the most important tools in the Akash ecosystem for observing network health, provider fleet status, and BME state — especially during coordinated chain upgrades.
@@ -1639,8 +1647,8 @@ that the CLI validated, while Linux CI never asks Bubble Tea to register its
 non-interactive `/dev/null` input with epoll.
 
 Unit tests collect cross-package coverage. Subprocess tests build an
-instrumented `akt` binary with the same semantic build tags as the release and
-collect its counters through `GOCOVERDIR`.
+instrumented `akt` binary with the same semantic build tags as the release for
+the same platform and collect its counters through `GOCOVERDIR`.
 Statement profiles canonicalize repository-relative source identity before
 aggregation. An import path and absolute path that resolve to the same range
 are duplicates and fail rather than increasing its count twice.
@@ -1927,6 +1935,11 @@ composite-literal fields.
 Release-profile validation also pins every GoReleaser build's main package to
 `cmd/akt`; matching tags on a different executable cannot validate the shipped
 CLI denominator.
+It validates every declared target OS, permitting only the resolver-tag
+difference between platforms: Darwin excludes `netgo`, while other targets
+retain it. The local release tags must satisfy the same resolver policy.
+Binary E2E checks inspect compiler build information as well as reported tags,
+so incorrect version metadata cannot hide a Darwin binary built with `netgo`.
 CI resolves the event's actual comparison revision and runs that patch gate on
 both pull requests and default-branch pushes, including multi-commit pushes.
 For local use, the same gate compares the base with the complete worktree,

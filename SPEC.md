@@ -3141,12 +3141,19 @@ commit:     909f1735b99d83a9ab52a0e6bee32ca7e7402672
 built:      2026-07-27T04:20:51Z
 go:         go1.26.1
 platform:   darwin/arm64
-build tags: osusergo,netgo,ledger,muslc,gcc
+build tags: osusergo,ledger,muslc,gcc,nolink_libwasmvm
 ```
 
 The long form is the form to include in bug reports: the build tags and
 platform determine which keyring backends and cgo-dependent features are
 compiled in.
+
+Darwin builds MUST omit `netgo` so hostname lookups use macOS system DNS
+routing, including VPN and split DNS configuration. Linux builds retain
+`netgo`. Local Make builds, GoReleaser artifacts installed by Homebrew, and
+coverage binaries MUST use the same tags for the same target platform.
+Both platforms retain cgo and `ledger` support; resolver selection MUST NOT
+disable hardware-wallet signing. Reported build tags MUST match compiler tags.
 
 #### `akt completion <shell>`
 
@@ -7375,9 +7382,11 @@ GOCOVERDIR=<unique-shard-directory> <test-command>
 ```
 
 The instrumented binary MUST use the release binary's semantic build tags and
-build metadata. Instrumentation may omit only linker or stripping options that
-are incompatible with coverage; it MUST NOT select a different source or
-dependency path. E2E asserts the reported build tags.
+build metadata for the same platform (§2.12). Instrumentation may omit only
+linker or stripping options that are incompatible with coverage; it MUST NOT
+select a different source or dependency path. E2E asserts both reported tags
+and compiler build information for ordinary and instrumented binaries,
+including the platform's resolver tag and Ledger support.
 
 Every raw counter shard is bound to the tracked environment recipes (`.env`,
 `.envrc`), the collection CI workflow, all Make recipes, and a canonical
@@ -7612,8 +7621,10 @@ includes files omitted by build constraints, so adding a build tag cannot hide
 code from the coverage contract.
 Every GoReleaser build used to validate the release-equivalent profile MUST
 identify `./cmd/akt` as its main package as well as carrying the canonical build
-tags. A correctly tagged auxiliary binary is not evidence for the shipped
-`akt` denominator.
+tags for every explicitly declared target OS. Validation MUST reject `netgo`
+on Darwin and require it on other targets, including the local release-tag
+input. All remaining tags MUST match across platforms. A correctly tagged
+auxiliary binary is not evidence for the shipped `akt` denominator.
 
 Critical packages are packages that control money, credentials, persistent
 state, state-changing commands, action logs, workflow execution, or wire

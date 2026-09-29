@@ -69,6 +69,11 @@ endif
 # ledger HID bindings and the cosmos keyring.
 BUILD_TAGS             := osusergo netgo ledger muslc gcc nolink_libwasmvm
 
+ifeq ($(UNAME_OS),Darwin)
+# Native DNS honors macOS VPN/split DNS routing; netgo only reads resolv.conf.
+BUILD_TAGS             := $(filter-out netgo,$(BUILD_TAGS))
+endif
+
 ifneq (,$(findstring cgotrace,$(BUILD_OPTIONS)))
 	BUILD_TAGS += cgotrace
 endif

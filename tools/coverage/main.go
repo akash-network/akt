@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -753,7 +754,7 @@ func runValidate(args []string) error {
 	if err != nil {
 		return err
 	}
-	if err := validateGoreleaserReleaseTags(filepath.Join(root, ".goreleaser.yaml"), *releaseTags); err != nil {
+	if err := validateGoreleaserReleaseTags(filepath.Join(root, ".goreleaser.yaml"), *releaseTags, runtime.GOOS); err != nil {
 		return err
 	}
 	if err := validateTaxonomy(packages, exceptions, actual, releaseDependencies); err != nil {
@@ -1123,7 +1124,7 @@ func validateTaxonomy(
 	return nil
 }
 
-func validateGoreleaserReleaseTags(filename, releaseTags string) error {
+func validateGoreleaserReleaseTags(filename, releaseTags, releaseGOOS string) error {
 	contents, err := os.ReadFile(filename)
 	if err != nil {
 		return fmt.Errorf("read goreleaser configuration: %w", err)
@@ -1132,6 +1133,7 @@ func validateGoreleaserReleaseTags(filename, releaseTags string) error {
 		Builds []struct {
 			ID    string   `yaml:"id"`
 			Main  string   `yaml:"main"`
+			GOOS  []string `yaml:"goos"`
 			Flags []string `yaml:"flags"`
 		} `yaml:"builds"`
 	}
@@ -1145,6 +1147,11 @@ func validateGoreleaserReleaseTags(filename, releaseTags string) error {
 	if err != nil {
 		return fmt.Errorf("release tags: %w", err)
 	}
+	commonTags := strings.Split(want, ",")
+	if slices.Contains(commonTags, "netgo") != (releaseGOOS != "darwin") {
+		return fmt.Errorf("release tags for %s must have netgo=%t, got %q", releaseGOOS, releaseGOOS != "darwin", want)
+	}
+	commonTags = slices.DeleteFunc(commonTags, func(tag string) bool { return tag == "netgo" })
 	for index, build := range configuration.Builds {
 		label := build.ID
 		if label == "" {
@@ -1174,8 +1181,22 @@ func validateGoreleaserReleaseTags(filename, releaseTags string) error {
 		if err != nil {
 			return fmt.Errorf("goreleaser build %q -tags value: %w", label, err)
 		}
-		if got != want {
-			return fmt.Errorf("goreleaser build %q -tags %q do not match -release-tags %q", label, got, want)
+		if len(build.GOOS) == 0 {
+			return fmt.Errorf("goreleaser build %q must declare goos", label)
+		}
+		for _, goos := range build.GOOS {
+			if goos == "" {
+				return fmt.Errorf("goreleaser build %q must declare goos", label)
+			}
+			platformTags := slices.Clone(commonTags)
+			if goos != "darwin" {
+				platformTags = append(platformTags, "netgo")
+			}
+			slices.Sort(platformTags)
+			platformWant := strings.Join(platformTags, ",")
+			if got != platformWant {
+				return fmt.Errorf("goreleaser build %q -tags %q do not match -release-tags for %s %q", label, got, goos, platformWant)
+			}
 		}
 	}
 	return nil

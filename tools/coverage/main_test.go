@@ -1033,39 +1033,44 @@ func TestValidateReleaseTagsRequiresEveryGoreleaserBuildToMatch(t *testing.T) {
 
 	matching := writeTempFile(t, ".goreleaser.yaml", `builds:
   - main: ./cmd/akt
+    goos: [linux]
     flags:
       - -tags=netgo,ledger
   - main: ./cmd/akt
+    goos: [linux]
     flags:
       - -tags=netgo,ledger
 `)
-	if err := validateGoreleaserReleaseTags(matching, "ledger,netgo"); err != nil {
+	if err := validateGoreleaserReleaseTags(matching, "ledger,netgo", "linux"); err != nil {
 		t.Fatalf("matching release tags: %v", err)
 	}
 	splitFlag := writeTempFile(t, ".goreleaser.yaml", `builds:
   - main: ./cmd/akt
+    goos: [linux]
     flags:
       - -tags
       - netgo,ledger
 `)
-	if err := validateGoreleaserReleaseTags(splitFlag, "ledger,netgo"); err != nil {
+	if err := validateGoreleaserReleaseTags(splitFlag, "ledger,netgo", "linux"); err != nil {
 		t.Fatalf("split release tag flag: %v", err)
 	}
 
 	drifted := writeTempFile(t, ".goreleaser.yaml", `builds:
   - main: ./cmd/akt
+    goos: [linux]
     flags:
       - -tags=netgo,ledger
   - main: ./cmd/akt
+    goos: [linux]
     flags:
       - -tags=netgo,cgo
 `)
-	err := validateGoreleaserReleaseTags(drifted, "ledger,netgo")
+	err := validateGoreleaserReleaseTags(drifted, "ledger,netgo", "linux")
 	if err == nil || !strings.Contains(err.Error(), `build "2" -tags`) {
 		t.Fatalf("drifted release tags error = %v, want per-build rejection", err)
 	}
 
-	err = validateGoreleaserReleaseTags(matching, "netgo,cgo")
+	err = validateGoreleaserReleaseTags(matching, "netgo,cgo", "linux")
 	if err == nil || !strings.Contains(err.Error(), "do not match -release-tags") {
 		t.Fatalf("mismatched Make release tags error = %v, want parity rejection", err)
 	}
@@ -1073,15 +1078,17 @@ func TestValidateReleaseTagsRequiresEveryGoreleaserBuildToMatch(t *testing.T) {
 	missing := writeTempFile(t, ".goreleaser.yaml", `builds:
   - id: tagged
     main: ./cmd/akt
+    goos: [linux]
     flags:
       - -tags=netgo,ledger
   - id: untagged
     main: ./cmd/akt
+    goos: [linux]
     flags:
       - -trimpath
 # A comment is not a build flag: -tags=netgo,ledger
 `)
-	err = validateGoreleaserReleaseTags(missing, "ledger,netgo")
+	err = validateGoreleaserReleaseTags(missing, "ledger,netgo", "linux")
 	if err == nil || !strings.Contains(err.Error(), `build "untagged" must have exactly one -tags flag`) {
 		t.Fatalf("missing release tags error = %v, want untagged-build rejection", err)
 	}
@@ -1089,10 +1096,11 @@ func TestValidateReleaseTagsRequiresEveryGoreleaserBuildToMatch(t *testing.T) {
 	wrongMain := writeTempFile(t, ".goreleaser.yaml", `builds:
   - id: auxiliary
     main: ./cmd/helper
+    goos: [linux]
     flags:
       - -tags=netgo,ledger
 `)
-	err = validateGoreleaserReleaseTags(wrongMain, "ledger,netgo")
+	err = validateGoreleaserReleaseTags(wrongMain, "ledger,netgo", "linux")
 	if err == nil || !strings.Contains(err.Error(), `build "auxiliary" main package must be ./cmd/akt`) {
 		t.Fatalf("wrong main package error = %v, want shipped-binary rejection", err)
 	}
@@ -1114,8 +1122,53 @@ func TestValidateReleaseTagsRequiresEveryGoreleaserBuildToMatch(t *testing.T) {
 			if filename == "" {
 				filename = writeTempFile(t, ".goreleaser.yaml", test.contents)
 			}
-			if err := validateGoreleaserReleaseTags(filename, "ledger,netgo"); err == nil || !strings.Contains(err.Error(), test.want) {
+			if err := validateGoreleaserReleaseTags(filename, "ledger,netgo", "linux"); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("validateGoreleaserReleaseTags() error = %v, want containing %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestValidateReleaseTagsEnforcesPlatformResolvers(t *testing.T) {
+	t.Parallel()
+	const configuration = `builds:
+  - id: mac
+    main: ./cmd/akt
+    goos: [darwin]
+    flags: [-tags=ledger]
+  - id: linux
+    main: ./cmd/akt
+    goos: [linux]
+    flags: ["-tags=ledger,netgo"]
+`
+	for _, test := range []struct {
+		name, goos, tags, old, replacement, want string
+	}{
+		{name: "mac validates both targets", goos: "darwin", tags: "ledger"},
+		{name: "linux validates both targets", goos: "linux", tags: "netgo,ledger"},
+		{name: "local mac forces Go DNS", goos: "darwin", tags: "netgo,ledger", want: "release tags for darwin"},
+		{name: "local linux loses Go DNS", goos: "linux", tags: "ledger", want: "release tags for linux"},
+		{name: "release mac forces Go DNS", goos: "linux", tags: "netgo,ledger", old: "flags: [-tags=ledger]", replacement: "flags: [\"-tags=ledger,netgo\"]", want: `build "mac" -tags`},
+		{name: "release linux loses Go DNS", goos: "darwin", tags: "ledger", old: "flags: [\"-tags=ledger,netgo\"]", replacement: "flags: [-tags=ledger]", want: `build "linux" -tags`},
+		{name: "other tags must still match", goos: "darwin", tags: "ledger", old: "ledger,netgo", replacement: "netgo,osusergo", want: `build "linux" -tags`},
+		{name: "every target OS is checked", goos: "darwin", tags: "ledger", old: "goos: [darwin]", replacement: "goos: [darwin, linux]", want: `build "mac" -tags`},
+		{name: "explicit target required", goos: "darwin", tags: "ledger", old: "goos: [darwin]", replacement: "goos: []", want: "must declare goos"},
+		{name: "empty target rejected", goos: "darwin", tags: "ledger", old: "goos: [darwin]", replacement: "goos: [\"\"]", want: "must declare goos"},
+		{name: "empty release tags", goos: "darwin", want: "release tags:"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			contents := configuration
+			if test.old != "" {
+				contents = strings.Replace(contents, test.old, test.replacement, 1)
+			}
+			filename := writeTempFile(t, ".goreleaser.yaml", contents)
+			err := validateGoreleaserReleaseTags(filename, test.tags, test.goos)
+			if test.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want containing %q", err, test.want)
 			}
 		})
 	}
