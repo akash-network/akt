@@ -683,7 +683,7 @@ akt
 │       ├── export <name>                # Export private key (encrypted)
 │       ├── import <name> <keyfile>      # Import private key
 │       ├── list                         # List all keys
-│       ├── show <name|address>          # Show key details
+│       ├── show <name|address> [...]    # Show key details or a multisig preview
 │       ├── rename <old> <new>          # Rename key
 │       ├── mnemonic                     # Generate mnemonic
 │       └── parse <hex-or-bech32>        # Parse address formats
@@ -1377,24 +1377,58 @@ Bech32 account-address prefix to `SaveLedgerKey`. It MUST NOT hardcode either
 network. Tests MUST verify this call through a keyring boundary double and MUST
 NOT require physical Ledger hardware.
 
-#### `akt context keys show <name|address>`
+#### `akt context keys show <name|address> [name|address...]`
 
-Show key details. By default prints name, type, address, and public key. Use `--address` (short `-a`) to print only the bech32 address for scripting.
+Show key details using the current context's keyring. Restore the Akash node
+command's show flags and multiple-key form. By default print name, type,
+address, and the existing hexadecimal public key. Showing keys is read-only
+and MUST NOT write an action log entry or save an ephemeral multisig key.
 
-| Flag         | Short | Type | Default | Description                         |
-| ------------ | ----- | ---- | ------- | ----------------------------------- |
-| `--address`  | `-a`  | bool | `false` | Print only the bech32 address       |
+| Flag | Short | Type | Default | Description |
+| --- | --- | --- | --- | --- |
+| `--address` | `-a` | bool | `false` | Print only the selected bech32 address |
+| `--bech` | | string | `acc` | Address encoding: `acc`, `val`, or `cons`, using the SDK's configured account, validator-operator, or consensus prefix |
+| `--pubkey` | `-p` | bool | `false` | Print only the Protobuf JSON public key, matching `akash keys show -p` |
+| `--device` | `-d` | bool | `false` | Verify and display the account address on its Ledger device |
+| `--multisig-threshold` | | int | `1` | Required signatures for an ephemeral multisig from multiple positional key names or account addresses |
+| `--qrcode` | | bool | `false` | Prepend the address QR code when `--address` and pretty output are selected; ignored without `--address` |
 
 **Examples:**
 ```bash
 akt context keys show test1
 akt context keys show test1 --address
 akt context keys show test1 -a
+akt context keys show test1 -a --bech val
+akt context keys show test1 --pubkey
+akt context keys show test1 --device
+akt context keys show alice bob -a --multisig-threshold 2
 ```
 
 With `--output json|yaml`, the full form emits an object with `name`, `type`,
 `address`, and `pubkey`. The `--address` form emits a quoted scalar in machine
-formats and the unchanged raw address in pretty output.
+formats and the unchanged raw address in pretty output. `--bech` changes the
+address in both scalar and full output without changing key lookup or the
+underlying key. `--pubkey` emits raw Protobuf JSON in pretty output and that
+JSON text as a quoted scalar in JSON/YAML output. This preserves akt's scalar
+machine-output convention even though the node CLI rejects `--output` with
+`--address` or `--pubkey`. Full output retains its existing hexadecimal
+`pubkey` field for compatibility.
+
+`--address` and `--pubkey` are mutually exclusive. `--device` requires an
+account prefix, a Ledger record with a stored BIP44 path, and no `--pubkey`.
+It delegates address verification/display to the Cosmos SDK Ledger boundary,
+without signing or broadcasting a transaction. Device errors fail the command
+before printing successful key data. Tests inject the device boundary and
+MUST NOT require physical hardware. An active `--qrcode` with machine output
+is a usage error so terminal graphics cannot corrupt JSON/YAML.
+
+Multiple references produce the node-compatible legacy amino multisig
+public key, named `multi`, without persisting it. Its threshold must be between
+one and the number of references, and constituent keys retain positional order.
+Duplicate references retain node behavior:
+warn on stderr and include the repeated public key. Invalid flag combinations
+and thresholds fail before opening the keyring. Every output path, including
+QR rendering, propagates writer failures (§10.1.1).
 
 #### `akt context keys parse <hex-or-bech32>`
 

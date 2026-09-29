@@ -16,6 +16,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/crypto/hd"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/multisig"
+	"github.com/cosmos/cosmos-sdk/crypto/ledger"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/bech32"
@@ -134,7 +135,7 @@ func Commands(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) 
 		addCmd(getKeyring, recorder),
 		deleteCmd(getKeyring, recorder),
 		listCmd(getKeyring),
-		showCmd(getKeyring),
+		showCmd(getKeyring, ledger.ShowAddress),
 		exportCmd(getKeyring, recorder),
 		importCmd(getKeyring, recorder),
 		renameCmd(getKeyring, recorder),
@@ -520,76 +521,6 @@ func listCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 			return output.PrintData(cmd, columns, rows, data)
 		},
 	}
-}
-
-func showCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "show <name|address>",
-		Short: "Show key details",
-		Args:  cobra.ExactArgs(1),
-		Example: `  # Show full key details
-  akt context keys show alice
-
-  # Print only the bech32 address
-  akt context keys show alice -a`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			kr, err := getKeyring()
-			if err != nil {
-				return err
-			}
-
-			rec, err := fetchKey(kr, args[0])
-			if err != nil {
-				return err
-			}
-
-			addr, err := rec.GetAddress()
-			if err != nil {
-				return fmt.Errorf("get address: %w", err)
-			}
-
-			addressOnly, _ := cmd.Flags().GetBool(flagdefs.FlagAddress)
-			if addressOnly {
-				if output.FormatFromCmd(cmd) == output.FormatTable {
-					_, err := fmt.Fprintln(cmd.OutOrStdout(), addr.String())
-					return err
-				}
-
-				return output.Fprint(
-					cmd.OutOrStdout(),
-					output.FormatFromCmd(cmd),
-					quotedMachineScalar(addr.String()),
-				)
-			}
-
-			pk, err := rec.GetPubKey()
-			if err != nil {
-				return fmt.Errorf("get pubkey: %w", err)
-			}
-
-			details := keyDetails{
-				Name:    rec.Name,
-				Type:    rec.GetType().String(),
-				Address: addr.String(),
-				PubKey:  hex.EncodeToString(pk.Bytes()),
-			}
-			if output.FormatFromCmd(cmd) != output.FormatTable {
-				return output.Fprint(cmd.OutOrStdout(), output.FormatFromCmd(cmd), details)
-			}
-
-			checked := output.NewCheckedWriter(cmd.OutOrStdout())
-			_, writeErr := fmt.Fprintf(checked, "Name:      %s\n", details.Name)
-			_, _ = fmt.Fprintf(checked, "Type:      %s\n", details.Type)
-			_, _ = fmt.Fprintf(checked, "Address:   %s\n", details.Address)
-			_, _ = fmt.Fprintf(checked, "PubKey:    %s\n", details.PubKey)
-
-			return checked.Complete(writeErr)
-		},
-	}
-
-	cmd.Flags().BoolP(flagdefs.FlagAddress, "a", false, "Print only the bech32 address")
-
-	return cmd
 }
 
 func exportCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *cobra.Command {
