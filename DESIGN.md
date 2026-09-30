@@ -1200,6 +1200,15 @@ change that public behavior.
   malformed node response. They never panic or print a plausible zero value.
   Request construction, transport errors, and final output errors remain
   observable at the Cobra boundary.
+- **Contract queries accept the identifier users have**: `akt query contract`
+  (alias `contracts`) lists contract addresses, labels, and code IDs. A
+  positional address or exact label returns the existing contract detail view;
+  `akt query <address>` is a direct shortcut. Address lookups make one contract
+  query. Listing and label resolution enumerate all code and contract pages,
+  because Wasm exposes no global contract or label index. Labels are scoped to
+  the selected network and are not unique: ambiguous labels report every
+  matching address. Existing Wasm query paths remain available. All paths use
+  the selected query transport and height and produce no action log entries.
 - **Authz grants validate the concrete authorization before transaction
   generation**: send, deposit, generic, staking, contract, and store-code
   grants run the authorization type's SDK `ValidateBasic` contract after CLI
