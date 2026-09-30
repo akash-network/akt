@@ -45,6 +45,18 @@ func TestDashboardRendersNonEmpty(t *testing.T) {
 	}
 }
 
+func TestDashboardPreservesWalletAddress(t *testing.T) {
+	address := "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx"
+	d := views.NewDashboard(noopService{}, views.DashboardContext{Account: address}, keys.DefaultKeyMap())
+	d.SetSize(120, 60)
+	out := ansi.Strip(d.View().Content)
+	// The account also appears in the header. Require it in the wallet panel.
+	wallet := out[strings.Index(out, "WALLET"):]
+	if !strings.Contains(wallet, address) {
+		t.Fatalf("wallet omitted the full account address: %s", wallet)
+	}
+}
+
 func TestDashboardDefaultWidthWhenSmall(t *testing.T) {
 	d := newTestDashboard()
 	// Don't call SetSize — width stays 0, which is < 40, so View uses 80.

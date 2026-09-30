@@ -4,6 +4,7 @@ import (
 	flagdefs "pkg.akt.dev/akt/internal/flags"
 
 	"bytes"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -23,6 +24,32 @@ import (
 )
 
 const keysTestAddress = "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx"
+
+func TestListPreservesPublicKey(t *testing.T) {
+	kr := testKeyring(t)
+	record, err := kr.Key("alice")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key, err := record.GetPubKey()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := hex.EncodeToString(key.Bytes())
+	for _, format := range []string{"pretty", "json", "yaml"} {
+		t.Run(format, func(t *testing.T) {
+			for _, args := range [][]string{{"list", "-o", format}, {"show", "alice", "-o", format}} {
+				out, err := runKeysCommand(t, kr, args...)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if !strings.Contains(out, want) {
+					t.Errorf("%v omitted full public key %s: %s", args, want, out)
+				}
+			}
+		})
+	}
+}
 
 type ledgerPrefixKeyring struct {
 	sdkkeyring.Keyring

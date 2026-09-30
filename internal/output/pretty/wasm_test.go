@@ -1,11 +1,34 @@
 package pretty
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/CosmWasm/wasmd/x/wasm/types"
 	"github.com/charmbracelet/x/exp/golden"
 )
+
+func TestWasmChecksumsRemainDistinct(t *testing.T) {
+	first := bytes.Repeat([]byte{0xab}, 32)
+	second := bytes.Clone(first)
+	second[len(second)-1] = 0xcd
+	response := &types.QueryCodesResponse{CodeInfos: []types.CodeInfoResponse{
+		{CodeID: 1, DataHash: first},
+		{CodeID: 2, DataHash: second},
+	}}
+	list := RenderWasmCodeList(response)
+	for _, code := range response.CodeInfos {
+		checksum := code.DataHash.String()
+		if !strings.Contains(list, checksum) {
+			t.Errorf("code %d: list omitted full checksum %s: %s", code.CodeID, checksum, list)
+		}
+		detail := RenderWasmCodeInfo(&types.QueryCodeInfoResponse{CodeID: code.CodeID, Checksum: code.DataHash})
+		if !strings.Contains(detail, checksum) {
+			t.Errorf("code %d: detail omitted full checksum %s", code.CodeID, checksum)
+		}
+	}
+}
 
 func TestRenderWasmCodeList(t *testing.T) {
 	tests := map[string]struct {

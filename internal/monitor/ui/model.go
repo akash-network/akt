@@ -1028,7 +1028,7 @@ func (m *Model) rebuildProviderTableRows() {
 		}
 		rows[i] = table.Row{
 			fmt.Sprintf("%d", i+1),
-			formatProviderURL(p.HostURI, colWidthProvider-2),
+			p.HostURI,
 			p.AkashVersion,
 			formatResourceRatio(p.CPUAvailable/1000, p.CPUTotal/1000),
 			formatMemoryRatio(p.MemAvailable, p.MemTotal),
@@ -1036,8 +1036,7 @@ func (m *Model) rebuildProviderTableRows() {
 			country,
 		}
 	}
-	m.providerTable.SetRows(rows)
-	m.providerTable.UpdateViewport()
+	setTableRows(&m.providerTable, rows)
 }
 
 // rebuildValidatorTableRows rebuilds the validator table rows from current state.
@@ -1052,9 +1051,6 @@ func (m *Model) rebuildValidatorTableRows() {
 	rows := make([]table.Row, len(m.state.Validators))
 	for i, v := range m.state.Validators {
 		displayName := getValidatorDisplayName(v, m.monikers)
-		if len(displayName) > nameW {
-			displayName = displayName[:nameW-3] + "..."
-		}
 		power := formatPower(v.VotingPower)
 		pct := ""
 		if m.state.TotalVotingPower > 0 {
@@ -1071,8 +1067,7 @@ func (m *Model) rebuildValidatorTableRows() {
 			bar,
 		}
 	}
-	m.validatorTable.SetRows(rows)
-	m.validatorTable.UpdateViewport()
+	setTableRows(&m.validatorTable, rows)
 }
 
 // blockRowForTable holds data for a single block row in the table.
@@ -1147,8 +1142,7 @@ func (m *Model) rebuildBlockTableRows() {
 			fmt.Sprintf("%d/%d", blk.round, blk.step),
 		}
 	}
-	m.blockTable.SetRows(rows)
-	m.blockTable.UpdateViewport()
+	setTableRows(&m.blockTable, rows)
 }
 
 // rebuildNodeTableRows rebuilds the node table rows for provider detail.
@@ -1164,9 +1158,6 @@ func (m *Model) rebuildNodeTableRows() {
 		if nodeName == "" {
 			nodeName = fmt.Sprintf("node-%d", i+1)
 		}
-		if len(nodeName) > colWidthNodeName {
-			nodeName = nodeName[:colWidthNodeName-3] + "..."
-		}
 		cpuStr := formatResourceRatio(node.CPUAvailable/1000, node.CPUAllocatable/1000)
 		memStr := formatMemoryRatio(node.MemAvailable, node.MemAllocatable)
 		gpuStr := formatNodeGPU(node)
@@ -1178,8 +1169,29 @@ func (m *Model) rebuildNodeTableRows() {
 			gpuStr,
 		}
 	}
-	m.nodeTable.SetRows(rows)
-	m.nodeTable.UpdateViewport()
+	setTableRows(&m.nodeTable, rows)
+}
+
+// setTableRows grows columns so the table component cannot elide cell values.
+func setTableRows(t *table.Model, rows []table.Row) {
+	columns := t.Columns()
+	for _, row := range rows {
+		for i, cell := range row {
+			columns[i].Width = max(columns[i].Width, lipgloss.Width(cell)+2)
+		}
+	}
+	t.SetColumns(columns)
+	t.SetRows(rows)
+	setTableWidth(t, t.Width())
+}
+
+// setTableWidth retains the full row even when it exceeds the terminal width.
+func setTableWidth(t *table.Model, width int) {
+	rowWidth := 0
+	for _, column := range t.Columns() {
+		rowWidth += column.Width
+	}
+	t.SetWidth(max(width, rowWidth))
 }
 
 // updateGovParamView updates the governance parameter viewport content
@@ -2161,7 +2173,7 @@ func (m *Model) resizeComponents() {
 		validatorRows = max(validatorRows/2, 3)
 	}
 	m.validatorTable.SetHeight(validatorRows)
-	m.validatorTable.SetWidth(m.width)
+	setTableWidth(&m.validatorTable, m.width)
 	m.validatorTable.UpdateViewport()
 
 	blockRows := max(m.height-overviewOverhead, 3)
@@ -2169,17 +2181,17 @@ func (m *Model) resizeComponents() {
 		blockRows = max(blockRows/3, 2)
 	}
 	m.blockTable.SetHeight(blockRows)
-	m.blockTable.SetWidth(m.width)
+	setTableWidth(&m.blockTable, m.width)
 	m.blockTable.UpdateViewport()
 
 	providerRows := max(m.height-providerListOverhead, minVisibleProviders)
 	m.providerTable.SetHeight(providerRows)
-	m.providerTable.SetWidth(m.width)
+	setTableWidth(&m.providerTable, m.width)
 	m.providerTable.UpdateViewport()
 
 	nodeRows := max(m.height-nodeListOverhead, minVisibleNodes)
 	m.nodeTable.SetHeight(nodeRows)
-	m.nodeTable.SetWidth(m.width)
+	setTableWidth(&m.nodeTable, m.width)
 	m.nodeTable.UpdateViewport()
 
 	govHeight := m.height - governanceOverhead

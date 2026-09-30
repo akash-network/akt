@@ -32,11 +32,7 @@ func RenderWasmCodeList(res *types.QueryCodesResponse) string {
 	}
 	rows := make([][]string, 0, len(res.CodeInfos))
 	for _, ci := range res.CodeInfos {
-		checksum := ci.DataHash.String()
-		if len(checksum) > 16 {
-			checksum = checksum[:16] + "..."
-		}
-		rows = append(rows, []string{Bold(fmt.Sprintf("%d", ci.CodeID)), ci.Creator, checksum})
+		rows = append(rows, []string{Bold(fmt.Sprintf("%d", ci.CodeID)), ci.Creator, ci.DataHash.String()})
 	}
 	WriteTableColsOrEmpty(&buf, cols, rows, "(no codes)")
 	return buf.String()

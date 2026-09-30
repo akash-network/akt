@@ -302,7 +302,7 @@ func (d *Dashboard) View() tea.View {
 	}
 
 	row2 := lipgloss.JoinHorizontal(lipgloss.Top,
-		components.TitledPanelHeight("WALLET", walletContent, colW, maxLines), " ",
+		components.TitledPanelHeight("WALLET", walletContent, max(colW, lipgloss.Width(walletContent)+4), maxLines), " ",
 		components.TitledPanelHeight(fmt.Sprintf("ACTIVE · %d", len(d.deployments)), activeContent, colW, maxLines), " ",
 		components.TitledPanelHeight("NETWORK", networkContent, colW, maxLines))
 	sections = append(sections, row2)
@@ -446,14 +446,6 @@ func (d *Dashboard) walletContent(innerW int) string {
 	addr := d.account
 	if addr == "" {
 		addr = "—"
-	}
-	// Truncate address if too long for the panel
-	maxAddrLen := innerW - 10
-	if maxAddrLen < 6 {
-		maxAddrLen = 6
-	}
-	if len(addr) > maxAddrLen {
-		addr = addr[:maxAddrLen-1] + "…"
 	}
 	lines = append(lines, kvRight("address", lipgloss.NewStyle().Foreground(theme.Slate200).Render(addr), innerW))
 

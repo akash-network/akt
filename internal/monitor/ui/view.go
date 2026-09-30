@@ -40,12 +40,6 @@ const (
 	minVisibleProviders  = 5  // minimum visible rows for provider list
 )
 
-// Address display constants
-const (
-	addrPrefixLen = 8 // characters to show at start of truncated address
-	addrSuffixLen = 4 // characters to show at end of truncated address
-)
-
 // ProviderDetailState holds the state for provider detail view
 type ProviderDetailState struct {
 	Showing  bool
@@ -414,8 +408,6 @@ func renderConsensusSection(state *consensus.State) string {
 		elapsed = 0
 	}
 
-	proposerAddr := truncateAddress(state.ProposerAddress, 12)
-
 	content := fmt.Sprintf(
 		"%s %s  %s %s  %s %s\n%s %s  %s %s (index: %d)",
 		labelStyle.Render("Height:"),
@@ -427,18 +419,11 @@ func renderConsensusSection(state *consensus.State) string {
 		labelStyle.Render("Elapsed:"),
 		valueStyle.Render(fmt.Sprintf("%-14s", formatDuration(elapsed))),
 		labelStyle.Render("Proposer:"),
-		valueStyle.Render(proposerAddr),
+		valueStyle.Render(state.ProposerAddress),
 		state.ProposerIndex,
 	)
 
 	return header + "\n" + content
-}
-
-func truncateAddress(addr string, maxLen int) string {
-	if len(addr) <= maxLen {
-		return addr
-	}
-	return addr[:addrPrefixLen] + "..." + addr[len(addr)-addrSuffixLen:]
 }
 
 // consensusThreshold is the 2/3 threshold for consensus.
@@ -631,10 +616,7 @@ func renderExpandedValidators(votes []BlockValidatorVote, monikers map[string]st
 			name = stripEmojis(strings.TrimSpace(monikers[v.PubKey]))
 		}
 		if name == "" {
-			name = truncateAddress(v.Address, 12)
-		}
-		if len(name) > nameW {
-			name = name[:nameW-3] + "..."
+			name = v.Address
 		}
 
 		g := glyphs.G()
@@ -791,9 +773,6 @@ func renderValidatorRowWithSelection(v consensus.ValidatorStatus, monikers map[s
 
 func renderValidatorRowWithBlocks(v consensus.ValidatorStatus, monikers map[string]string, signHistory map[int][]bool, proposerHistory []int, totalPower int64, nameW, blocksW int, isSelected bool) string {
 	displayName := getValidatorDisplayName(v, monikers)
-	if len(displayName) > nameW {
-		displayName = displayName[:nameW-3] + "..."
-	}
 
 	power := formatPower(v.VotingPower)
 	pct := ""
@@ -840,13 +819,9 @@ func renderValidatorDetailPanel(v consensus.ValidatorStatus, monikers map[string
 
 	// Consensus pubkey
 	if v.PubKey != "" {
-		pk := v.PubKey
-		if len(pk) > 44 {
-			pk = pk[:44] + "..."
-		}
 		b.WriteString(fmt.Sprintf("  %s %s\n",
 			labelStyle.Render("PubKey:"),
-			mutedStyle.Render(pk)))
+			mutedStyle.Render(v.PubKey)))
 	}
 
 	// Voting power + percentage
@@ -986,7 +961,7 @@ func getValidatorDisplayName(v consensus.ValidatorStatus, monikers map[string]st
 		displayName = stripEmojis(strings.TrimSpace(monikers[v.PubKey]))
 	}
 	if displayName == "" {
-		displayName = truncateAddress(v.Address, 12)
+		displayName = v.Address
 	}
 	return displayName
 }
@@ -1119,8 +1094,6 @@ func countVersionMatches(providers []rpc.Provider, version string) int {
 }
 
 func renderProviderRow(p rpc.Provider, index int, selectedVersion string, isRowSelected bool) string {
-	displayURL := formatProviderURL(p.HostURI, colWidthProvider-2)
-
 	isVersionMatch := p.AkashVersion == selectedVersion
 	versionDisplay := formatVersionDisplay(p.AkashVersion, isVersionMatch)
 	marker := versionMarker(isVersionMatch)
@@ -1141,7 +1114,7 @@ func renderProviderRow(p rpc.Provider, index int, selectedVersion string, isRowS
 	}
 
 	indexStr := fmt.Sprintf("%-*d", colWidthIndex, index)
-	urlStr := fmt.Sprintf("%-*s", colWidthProvider, displayURL)
+	urlStr := fmt.Sprintf("%-*s", colWidthProvider, p.HostURI)
 	cpuFmt := fmt.Sprintf("%*s", colWidthCPU, cpuStr)
 	memFmt := fmt.Sprintf("%*s", colWidthMem, memStr)
 
@@ -1181,13 +1154,7 @@ func formatProviderGPU(p rpc.Provider) string {
 
 	// Add first model name if available
 	if len(p.GPUModels) > 0 {
-		model := p.GPUModels[0]
-		// Truncate model name if needed
-		maxModelLen := colWidthGPU - len(countStr) - 2
-		if len(model) > maxModelLen && maxModelLen > 3 {
-			model = model[:maxModelLen-2] + ".."
-		}
-		return fmt.Sprintf("%s %s", countStr, model)
+		return fmt.Sprintf("%s %s", countStr, p.GPUModels[0])
 	}
 
 	return countStr
@@ -1200,18 +1167,6 @@ func formatProviderGPUStyled(gpuStr string, isSelected bool) string {
 		return highlightStyle.Render(formatted)
 	}
 	return mutedStyle.Render(formatted)
-}
-
-func formatProviderURL(hostURI string, maxLen int) string {
-	url := strings.TrimPrefix(hostURI, "https://")
-	url = strings.TrimPrefix(url, "http://")
-	if idx := strings.LastIndex(url, ":"); idx > 0 {
-		url = url[:idx]
-	}
-	if len(url) > maxLen {
-		url = url[:maxLen-3] + "..."
-	}
-	return url
 }
 
 func formatVersionDisplay(version string, isSelected bool) string {
@@ -1246,9 +1201,8 @@ func renderProviderDetailView(ctx ViewContext) string {
 	b.WriteString("\n\n")
 
 	// Provider info
-	displayURL := formatProviderURL(p.HostURI, 50)
 	b.WriteString(fmt.Sprintf("%s %s\n", detailLabelStyle.Render("Name:"), detailValueStyle.Render(p.Name)))
-	b.WriteString(fmt.Sprintf("%s %s\n", detailLabelStyle.Render("URL:"), detailValueStyle.Render(displayURL)))
+	b.WriteString(fmt.Sprintf("%s %s\n", detailLabelStyle.Render("URL:"), detailValueStyle.Render(p.HostURI)))
 	b.WriteString(fmt.Sprintf("%s %s\n", detailLabelStyle.Render("Version:"), gridVotedStyle.Render(p.AkashVersion)))
 
 	country := p.Country
@@ -1342,11 +1296,6 @@ func formatGPUModel(gpu rpc.GPUInfo) string {
 
 	if gpu.MemorySize != "" {
 		result += " (" + gpu.MemorySize + ")"
-	}
-
-	// Truncate if too long
-	if len(result) > 28 {
-		result = result[:25] + "..."
 	}
 
 	return result

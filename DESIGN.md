@@ -1426,6 +1426,11 @@ small void rendering API cannot hide a broken stdout behind that API.
 - **List results**: Tabwriter-aligned tables with lipgloss-styled headers. State columns are color-coded (green=active/open, yellow=warning states, red=closed/lost, gray=invalid). Key identifiers (DSEQ, moniker) are bolded.
 - **Single-item results**: Grouped key-value pairs with lipgloss-styled section headers (e.g., "Deployment", "Groups", "Escrow"). Values are colorized where appropriate.
 - **Addresses**: Always displayed in full. Never truncated or shortened by default -- addresses are machine-parseable identifiers and truncation risks ambiguity. Users who need shorter output can pipe through `cut` or `jq`.
+- **Checksums and identifiers**: Checksums, hashes, public keys, resource IDs,
+  node names, GPU model names, and endpoint URLs retain their complete values in
+  CLI and monitor output. URLs retain their scheme, port, and path. Table widths
+  are minimums; columns and their viewports grow to fit complete values.
+  This also applies to the experimental TUI's resource tables and wallet address.
 - **Amounts and prices**: All micro-denominated values (`u`-prefixed denoms: uakt, uatom, uosmo, etc.) are scaled to the most readable unit. Thresholds: >= 1,000,000 micro → base denom (e.g., `5.3 AKT`); >= 1,000 micro → milli denom (e.g., `3 mAKT`); < 1,000 micro → micro denom (e.g., `500 uAKT`). Trailing zeros are always stripped. This applies uniformly to every pretty output: balances, prices, escrow amounts, staking tokens, rewards, fees, and any other monetary value. Non-micro denoms and IBC denoms are shown as-is.
 - **Canonical machine amounts**: Chain queries preserve the denomination and
   integer amount returned by state when producing JSON or YAML. They do not ask
