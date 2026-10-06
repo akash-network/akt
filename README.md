@@ -164,7 +164,7 @@ All commands support `--output pretty|json|yaml` with pretty formatting by defau
 
 ### Workflow Engine
 
-Core engine with 3-level definition resolution (per-context > global > embedded), Go template evaluation, 8 step types (tx, query, wait, prompt, provider, output, shell, check), and retry/error handling. Workflows support two execution modes: **interactive mode** (a progress display) and **JSONL mode** (`--output jsonl`, JSONL output for CI/CD and scripting). The built-in workflows (`akt deploy`, `akt update`, `akt close`) execute end-to-end with auth-aware routing: keyring contexts sign and broadcast locally, while console-api contexts route through the Console API (provider manifest steps are skipped -- Console submits manifests internally). Every step is recorded in the action log.
+Core engine with 3-level definition resolution (per-context > global > embedded), Go template evaluation, 8 step types (tx, query, wait, prompt, provider, output, shell, check), and retry/error handling. Workflows support two execution modes: **interactive mode** (a progress display) and **JSONL mode** (`--output jsonl`, JSONL output for CI/CD and scripting). The built-in workflows (`akt deploy`, `akt update`, `akt redeploy`, `akt close`) execute end-to-end with auth-aware routing: keyring contexts sign and broadcast locally, while console-api contexts route through the Console API (provider manifest steps are skipped -- Console submits manifests internally). Every step is recorded in the action log.
 
 ### SDL Authoring (`akt sdl`)
 
@@ -181,14 +181,63 @@ Lint rules: an unpinned image is an **error** -- every service image must carry 
 Full command group for the [Akash Console](https://console.akash.network) managed-wallet API:
 
 - **Authentication** -- `login` (validates the key, then stores it for the active context), `logout`, `whoami`.
-- **Deployment lifecycle** -- `deployment list/get/create/update/close/settings`. There is no deposit: the platform funds every deployment from your account credits, and `settings` sets an optional runtime limit in hours. See [How Funding Works](https://akash.network/docs/getting-started/how-funding-works/).
-- **Bids and leases** -- `bid list <dseq>` and `lease create <dseq> [provider]`, which defaults to the manifest cached per context by `deployment create`.
+- **Deployment lifecycle** -- `deployment list/get/sdl/create/update/close/settings`. There is no deposit: the platform funds every deployment from your account credits, and `settings` sets an optional runtime limit in hours. See [How Funding Works](https://akash.network/docs/getting-started/how-funding-works/).
+- **Bids and leases** -- `bid list <dseq>` and `lease create <dseq> [provider]`, which uses the saved deployment definition to generate the manifest server-side.
 - **Wallet and usage** -- `wallet list/balance/settings/cost` and `usage [from] [to]` spend history, all rendered in USD.
 - **Keyless marketplace** -- `provider list/get/regions/auditors`, `gpu`, `template list/get/sdl`, and `screen <sdl-file>` bid screening. These hit public endpoints and need neither an API key nor a configured context.
 - **Credentials** -- `apikey list/create/delete` (the secret is printed exactly once) and `jwt create` for short-lived provider-scoped tokens.
 - **Live lease operations** -- `logs <dseq> [service]` and `events <dseq>` (both `--follow`), `status <dseq>` (`--watch`, `--interval`), and `shell <dseq> <service> [-- command]` (exec is the same command with an explicit command). Each resolves the deployment's active lease, looks up the provider's gateway URI, and mints a scoped JWT via the Console, so **managed contexts reach providers with no wallet and no local key**. One-shot calls use a 300 s token; streaming and interactive modes use 3600 s.
 
 The API key is stored per context at `contexts/<name>/console-api-key` (mode 0600, never written to `config.yaml`, never printed) and resolved `--console-api-key` flag > `AKT_CONSOLE_API_KEY` env var > stored credential, so switching context switches Console identity. Write it with `akt console login` or `akt context edit <context> --console-api-key <key>`; `akt context rename` moves it and `akt context delete` removes it. The first-run bootstrap offers Console onboarding, and state-changing Console calls are recorded in the action log. [SPEC.md §7.8](SPEC.md#78-console-compatibility-matrix) tracks coverage of every Console capability.
+
+### Variables, secrets, and redeploy
+
+On Console contexts, put secret references in your SDL's environment values
+or registry `username`/`password`, for example `API_TOKEN=ac-secret://API_TOKEN`.
+Supply the values as a JSON or YAML string map in a separate file:
+
+```yaml
+API_TOKEN: "your-token"
+```
+
+```bash
+akt deploy deploy.yaml --secrets-file secrets.yaml
+akt console deployment sdl 12345 > deploy.yaml
+akt update deploy.yaml 12345 --secrets-file replacements.yaml
+akt redeploy 12345
+```
+
+Secret inputs are encrypted before submission. Saved SDL contains references;
+omitted secret values survive updates, and redeploy inherits them. Use
+`--secrets-file -` to read from stdin. Ordinary variables stay ordinary variables.
+Redeploy creates a new deployment and leaves the source open.
+
+For smaller edits, pass a patch file to `akt update changes.yaml 12345 --patch`:
+
+```yaml
+services:
+  web:
+    image: nginx:1.27-alpine
+    env:
+      LOG_LEVEL: debug
+      OLD_VARIABLE: null
+    args: []
+```
+
+Patches also support command, registry credentials, existing port numbers,
+and storage mounts. Null removes an environment variable or clears credentials,
+command, or args. Add or replace a secret by referencing its name and supplying
+its value; remove it by removing its reference. An empty patch plus a secrets
+file rotates values without editing the SDL. Resource changes require redeploy.
+Concurrent edits fail with a version conflict so you can fetch and review the
+latest definition before retrying.
+
+The chain rail supports ordinary SDL and patch edits. Patches need a recorded
+SDL path or `--base-sdl`; redeploy needs a recorded path or `--sdl-file`. After
+a chain patch, supply the resulting configuration explicitly for subsequent
+patch/redeploy operations. Console secret references require a Console context.
+See [SPEC.md §7.9](SPEC.md#79-deployment-variables-secrets-and-saved-definitions)
+for the patch format and failure recovery rules.
 
 ## Agent skill
 

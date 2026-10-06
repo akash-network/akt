@@ -69,10 +69,11 @@ func (e *HTTPError) Error() string {
 
 // Client interacts with the Akash Console API.
 type Client struct {
-	baseURL    string
-	apiKey     string
-	httpClient *http.Client
-	actionLog  *actionlog.Logger
+	baseURL         string
+	apiKey          string
+	httpClient      *http.Client
+	actionLog       *actionlog.Logger
+	sensitiveErrors bool
 }
 
 // New creates a Console API client. An empty baseURL selects DefaultBaseURL.
@@ -162,7 +163,10 @@ func envelope(v any) any {
 
 // doData executes a request whose response body is a {"data": X} envelope and
 // unmarshals X into result. A nil result discards the payload.
-func (c *Client) doData(ctx context.Context, method, path string, reqBody, result any) error {
+func (c *Client) doData(ctx context.Context, method, path string, reqBody, result any) (err error) {
+	if c.sensitiveErrors {
+		defer func() { err = sanitizeSecretError(err) }()
+	}
 	var env struct {
 		Data json.RawMessage `json:"data"`
 	}
@@ -231,7 +235,10 @@ func retryableStatus(method string, status int) bool {
 // retry with backoff (up to maxRetries attempts) on 429 and 5xx for idempotent
 // methods only (see retryableStatus). The response body is unmarshaled
 // into result as-is (no envelope handling); a nil result discards the body.
-func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, result any) error {
+func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, result any) (err error) {
+	if c.sensitiveErrors {
+		defer func() { err = sanitizeSecretError(err) }()
+	}
 	var payload []byte
 	if reqBody != nil {
 		data, err := json.Marshal(reqBody)
@@ -278,6 +285,14 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, resul
 		cancelRequest()
 		if err != nil {
 			return fmt.Errorf("console: read response: %w", err)
+		}
+		// Lease failures distinguish a refused preflight from a lease whose
+		// manifest was not delivered. Retain only the recognized code, never
+		// the provider's diagnostic, which may echo workload configuration.
+		if method == http.MethodPost && path == "/v1/leases" && resp.StatusCode >= 400 {
+			if code := leaseResponseCode(respBody); code != "" {
+				return &HTTPError{StatusCode: resp.StatusCode, Body: code}
+			}
 		}
 
 		switch {

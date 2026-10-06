@@ -49,25 +49,24 @@ type Transport interface {
 // NewChain creates the chain transport: workflow tx steps are built, signed,
 // and broadcast locally through the Akash node client, and queries run
 // against chain RPC/gRPC.
-func NewChain(cl aclient.Client) Transport {
-	return newChainTransport(adapters.NewChainClient(cl))
+func NewChain(cl aclient.Client, inputs ...*adapters.DeploymentInputs) Transport {
+	return newChainTransport(adapters.NewChainClient(cl, inputs...))
 }
 
 // NewConsole creates the console transport: workflow tx steps are mapped to
 // Console API REST calls (SPEC §7.5). chainQueries, when non-nil, handles
-// query steps directly against the chain; root/ctxName locate the
-// per-context manifest cache used to pass the deployment manifest from
-// create to lease.
-func NewConsole(cc *console.Client, chainQueries steps.ChainClient, root, ctxName string) Transport {
-	return newConsoleTransport(adapters.NewConsoleChainClient(cc, chainQueries, root, ctxName))
+// query steps directly against the chain. Deployment inputs hold the
+// invocation's secret reader without exposing values to workflow state.
+func NewConsole(cc *console.Client, chainQueries steps.ChainClient, root, ctxName string, inputs ...*adapters.DeploymentInputs) Transport {
+	return newConsoleTransport(adapters.NewConsoleChainClient(cc, chainQueries, root, ctxName, inputs...))
 }
 
 // NewProvider creates the provider-gateway client used by workflow provider
 // steps on the chain rail (JWT or mTLS auth). The console rail has no
 // provider client: the Console API submits manifests internally during lease
 // creation (SPEC §7.4).
-func NewProvider(cctx sdkclient.Context, authType string) steps.ProviderClient {
-	return adapters.NewProviderClient(cctx, authType)
+func NewProvider(cctx sdkclient.Context, authType string, inputs ...*adapters.DeploymentInputs) steps.ProviderClient {
+	return adapters.NewProviderClient(cctx, authType, inputs...)
 }
 
 // newChainTransport wraps an existing chain-rail steps.ChainClient. Split

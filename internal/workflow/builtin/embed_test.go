@@ -18,13 +18,21 @@ func TestEmbeddedWorkflowsParseAndExposeTheCompleteBuiltinActions(t *testing.T) 
 			workflow.StepProvider,
 			workflow.StepOutput,
 		},
+		"redeploy": {
+			workflow.StepTx,
+			workflow.StepWait,
+			workflow.StepPrompt,
+			workflow.StepTx,
+			workflow.StepProvider,
+			workflow.StepOutput,
+		},
 		"update": {workflow.StepTx, workflow.StepProvider, workflow.StepOutput},
 		"close":  {workflow.StepTx, workflow.StepOutput},
 	}
 
 	embedded := builtin.Workflows()
 	if len(embedded) != len(wantSteps) {
-		t.Fatalf("embedded workflows = %v, want deploy, update, and close", mapKeys(embedded))
+		t.Fatalf("embedded workflows = %v, want deploy, redeploy, update, and close", mapKeys(embedded))
 	}
 
 	for name, expectedTypes := range wantSteps {

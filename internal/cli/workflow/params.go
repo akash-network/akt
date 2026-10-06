@@ -8,6 +8,7 @@ import (
 
 	gosdl "pkg.akt.dev/go/sdl"
 
+	"pkg.akt.dev/akt/internal/deploymentconfig"
 	"pkg.akt.dev/akt/internal/transport"
 	wf "pkg.akt.dev/akt/internal/workflow"
 )
@@ -54,9 +55,15 @@ func validateWorkflowParams(def *wf.WorkflowDef, params map[string]any) error {
 				err = fmt.Errorf("duration must be greater than zero")
 			}
 		case wf.ParamFile:
-			err = validateReadableFile(value)
+			if name != "secrets-file" || value != "-" {
+				err = validateReadableFile(value)
+			}
 		case wf.ParamSDL:
-			err = validateSDLFile(value)
+			if patch, _ := params["patch"].(bool); patch && name == "sdl-file" {
+				err = validatePatchFile(value)
+			} else {
+				err = validateSDLFile(value)
+			}
 		case wf.ParamDeposit:
 			text, ok := value.(string)
 			if !ok {
@@ -81,6 +88,18 @@ func validateWorkflowParams(def *wf.WorkflowDef, params map[string]any) error {
 	}
 
 	return nil
+}
+
+func validatePatchFile(value any) error {
+	if err := validateReadableFile(value); err != nil {
+		return err
+	}
+	data, err := os.ReadFile(value.(string))
+	if err != nil {
+		return fmt.Errorf("read patch file: %w", err)
+	}
+	_, err = deploymentconfig.ParsePatch(data)
+	return err
 }
 
 func workflowParamEmpty(value any) bool {

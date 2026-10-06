@@ -88,7 +88,7 @@ func persistWorkflowOutcome(ctx context.Context, s sstore.Store, state *wf.RunSt
 	}
 
 	switch state.Workflow {
-	case "deploy":
+	case "deploy", "redeploy":
 		return persistDeploy(ctx, s, state, now)
 	case "update":
 		return persistUpdate(ctx, s, state, now)
@@ -304,6 +304,18 @@ func existingRunOwner(ctx context.Context, s sstore.Store, state *wf.RunState, d
 // leaves the hash empty rather than failing: the path is still worth keeping.
 func applySDL(rec *sstore.DeploymentRecord, state *wf.RunState) {
 	path := paramString(state, "sdl-file")
+	if patch, _ := state.Params["patch"].(bool); patch {
+		// The source file still contains the pre-patch configuration. Keeping
+		// its identity would let a later redeploy silently restore old values.
+		rec.SDLPath = ""
+		rec.SDLHash = ""
+		return
+	}
+	for _, name := range []string{"create-deployment", "update-deployment"} {
+		if source := workflowOutputString(state.Steps[name], "sdl_path"); source != "" {
+			path = source
+		}
+	}
 	if path == "" {
 		return
 	}
@@ -313,6 +325,10 @@ func applySDL(rec *sstore.DeploymentRecord, state *wf.RunState) {
 	if hash, err := sdlHash(path); err == nil {
 		rec.SDLHash = hash
 	}
+}
+
+func createsDeployment(name string) bool {
+	return name == "deploy" || name == "redeploy"
 }
 
 // sdlHash returns the SHA256 of an SDL file's contents (SPEC §6.6).

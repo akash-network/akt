@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"pkg.akt.dev/akt/internal/cliutil"
 	"pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
+	"pkg.akt.dev/akt/internal/deploymentconfig"
 	"pkg.akt.dev/akt/internal/output"
 	"pkg.akt.dev/akt/internal/transport"
 	wf "pkg.akt.dev/akt/internal/workflow"
@@ -262,6 +264,9 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 			if err != nil {
 				return err
 			}
+			if err := validatePreparedDeployment(cmd, rtDef.Name, params, resolveContext(mgrFn, ctxNameFn)); err != nil {
+				return err
+			}
 
 			if dryRun {
 				if jsonl {
@@ -337,17 +342,65 @@ func chainDryRunNeedsDepositQuery(raw string) bool {
 	return err == nil && parsed.Auto
 }
 
+// Validate derived chain definitions before printing a plan or starting a run.
+// Their source may come from the local store rather than the positional file.
+func validatePreparedDeployment(cmd *cobra.Command, name string, params map[string]any, rc *aktctx.Context) error {
+	patch, _ := params["patch"].(bool)
+	if base, _ := params["base-sdl"].(string); base != "" {
+		if !patch {
+			return fmt.Errorf("--base-sdl requires --patch")
+		}
+		if rc != nil && rc.AuthMethod == aktctx.AuthMethodConsoleAPI {
+			return fmt.Errorf("--base-sdl is only used on the chain rail; Console patches use the saved deployment definition")
+		}
+	}
+	if rc == nil || rc.AuthMethod == aktctx.AuthMethodConsoleAPI || name != "redeploy" && !patch {
+		return nil
+	}
+	inputs := adapters.NewDeploymentInputs(rc.Root, rc.Name, cmd.InOrStdin())
+	values := make(map[string]string)
+	for _, key := range []string{"dseq", "patch", "base-sdl", "secrets-file", "deposit"} {
+		if value, ok := params[key]; ok {
+			values[key] = fmt.Sprint(value)
+		}
+	}
+	values["sdl"], _ = params["sdl-file"].(string)
+	if name == "redeploy" {
+		values["source-dseq"] = values["dseq"]
+	}
+	return inputs.ValidateChain(cmd.Context(), "", values)
+}
+
 func resolveWorkflowParams(
 	cmd *cobra.Command,
 	params map[string]any,
 	mgrFn func() *aktctx.Manager,
 	ctxNameFn func() string,
 ) (map[string]any, error) {
+	rc := resolveContext(mgrFn, ctxNameFn)
+	if rc != nil && rc.AuthMethod != aktctx.AuthMethodConsoleAPI {
+		if path, _ := params["secrets-file"].(string); path != "" {
+			return nil, fmt.Errorf("--secrets-file requires a Console context; use `akt context edit %s --deploy-via console`", rc.Name)
+		}
+		patch, _ := params["patch"].(bool)
+		if path, _ := params["sdl-file"].(string); path != "" && !patch {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				return nil, fmt.Errorf("read SDL: %w", err)
+			}
+			refs, err := deploymentconfig.HasReferences(string(data))
+			if err != nil {
+				return nil, err
+			}
+			if refs {
+				return nil, fmt.Errorf("secret references require a Console context; use `akt context edit %s --deploy-via console`", rc.Name)
+			}
+		}
+	}
 	raw, ok := params[flagdefs.FlagDeposit].(string)
 	if !ok {
 		return params, nil
 	}
-	rc := resolveContext(mgrFn, ctxNameFn)
 	if rc == nil {
 		// Preserve the deprecated standalone Commands API, which intentionally
 		// has no rail. Production commands always have a resolved manager.
@@ -486,6 +539,7 @@ func executeWorkflow(
 	)
 
 	account := rc.DefaultAccount
+	inputs := adapters.NewDeploymentInputs(rc.Root, rc.Name, cmd.InOrStdin())
 
 	if rc.AuthMethod == aktctx.AuthMethodConsoleAPI {
 		if rc.ConsoleAPIKey == "" {
@@ -508,7 +562,7 @@ func executeWorkflow(
 			chainQueries = transport.NewChain(cl)
 		}
 
-		chainCl = transport.NewConsole(cc, chainQueries, rc.Root, rc.Name)
+		chainCl = transport.NewConsole(cc, chainQueries, rc.Root, rc.Name, inputs)
 
 		// Provider gateway steps are not supported on the Console rail:
 		// the Console API submits the manifest internally during lease
@@ -544,8 +598,8 @@ func executeWorkflow(
 		}
 
 		account = addr.String()
-		chainCl = transport.NewChain(cl)
-		providerCl = transport.NewProvider(cl.ClientContext(), rc.AuthType)
+		chainCl = transport.NewChain(cl, inputs)
+		providerCl = transport.NewProvider(cl.ClientContext(), rc.AuthType, inputs)
 	}
 
 	registry := steps.NewRegistry(chainCl, providerCl)
@@ -625,7 +679,7 @@ func enrichDeployCompletion(
 	cc *console.Client,
 	provider steps.ProviderClient,
 ) error {
-	if state == nil || state.Workflow != "deploy" || rc == nil {
+	if state == nil || !createsDeployment(state.Workflow) || rc == nil {
 		return nil
 	}
 	readyTimeoutValue, hasReadiness := state.Params["ready-timeout"]
@@ -1016,7 +1070,7 @@ func printResults(out io.Writer, state *wf.RunState, runErr error, recovery *wor
 }
 
 func renderDeployNext(rendered *strings.Builder, state *wf.RunState) {
-	if state == nil || state.Workflow != "deploy" {
+	if state == nil || !createsDeployment(state.Workflow) {
 		return
 	}
 	result := state.Steps["display-result"]
@@ -1080,7 +1134,7 @@ type workflowRecovery struct {
 }
 
 func deployRecoveryAdvice(state *wf.RunState, runErr error) *workflowRecovery {
-	if state == nil || runErr == nil || state.Workflow != "deploy" {
+	if state == nil || runErr == nil || !createsDeployment(state.Workflow) {
 		return nil
 	}
 

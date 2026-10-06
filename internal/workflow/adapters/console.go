@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"pkg.akt.dev/akt/internal/console"
+	"pkg.akt.dev/akt/internal/deploymentconfig"
 	"pkg.akt.dev/akt/internal/workflow/steps"
 )
 
@@ -21,20 +22,18 @@ import (
 type consoleChainClient struct {
 	cc           *console.Client
 	chainQueries steps.ChainClient
-	root         string
-	ctxName      string
+	inputs       *DeploymentInputs
 }
 
 // NewConsoleChainClient wraps a Console API client into the workflow
 // steps.ChainClient interface. chainQueries, when non-nil, handles query
-// steps directly against the chain; root/ctxName locate the per-context
-// manifest cache used to pass the deployment manifest from create to lease.
-func NewConsoleChainClient(cc *console.Client, chainQueries steps.ChainClient, root, ctxName string) steps.ChainClient {
+// steps directly against the chain. Inputs keep secret values outside workflow
+// state; Console owns saved definitions and provider manifests.
+func NewConsoleChainClient(cc *console.Client, chainQueries steps.ChainClient, root, ctxName string, inputs ...*DeploymentInputs) steps.ChainClient {
 	return &consoleChainClient{
 		cc:           cc,
 		chainQueries: chainQueries,
-		root:         root,
-		ctxName:      ctxName,
+		inputs:       selectDeploymentInputs(inputs, root, ctxName),
 	}
 }
 
@@ -96,30 +95,34 @@ func (c *consoleChainClient) Query(ctx context.Context, path string, params map[
 }
 
 // createDeployment maps deployment.MsgCreateDeployment to
-// POST /v1/deployments and caches the returned manifest for the subsequent
-// lease creation.
+// POST /v1/deployments, inheriting the source definition and secrets for redeploy.
 func (c *consoleChainClient) createDeployment(ctx context.Context, params map[string]string) (*steps.TxResult, error) {
-	sdlStr, err := sdlContent(params["sdl"])
+	sdlInput := params["sdl"]
+	source := params["source-dseq"]
+	if source != "" && sdlInput == "" {
+		definition, err := c.cc.GetDeploymentDefinition(ctx, source)
+		if err != nil {
+			return nil, fmt.Errorf("read source deployment definition: %w", err)
+		}
+		sdlInput = definition.SDL
+	}
+	sdlStr, err := sdlContent(sdlInput)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", msgCreateDeployment, err)
 	}
 
-	res, err := c.cc.CreateDeployment(ctx, sdlStr)
+	secrets, err := console.ReadSecretValuesFile(params["secrets-file"], c.inputs.input)
+	if err != nil {
+		return nil, err
+	}
+	res, err := c.cc.CreateDeployment(ctx, sdlStr, console.CreateDeploymentOptions{
+		Secrets: secrets, InheritSecretsFrom: source,
+	})
 	if err != nil {
 		return nil, err
 	}
 
 	dseq := res.DSeq.String()
-
-	// Cache the manifest only when the API actually returned one (mirroring
-	// the CLI twin): caching an empty file would make the later lease
-	// creation send an empty manifest instead of failing with the clear
-	// no-cached-manifest error.
-	if res.Manifest != "" {
-		if err := console.SaveManifest(c.root, c.ctxName, dseq, res.Manifest); err != nil {
-			return nil, fmt.Errorf("deployment %s was created via Console, but caching its manifest failed (lease creation needs it): %w", dseq, err)
-		}
-	}
 
 	return consoleTxResult(res.SignTx, map[string]string{
 		"dseq":        dseq,
@@ -129,7 +132,7 @@ func (c *consoleChainClient) createDeployment(ctx context.Context, params map[st
 }
 
 // updateDeployment maps deployment.MsgUpdateDeployment to
-// PUT /v1/deployments/{dseq}.
+// a service PATCH, or the legacy full-SDL path when no saved definition exists.
 func (c *consoleChainClient) updateDeployment(ctx context.Context, params map[string]string) (*steps.TxResult, error) {
 	dseq, err := requiredDSeqParam(params, msgUpdateDeployment)
 	if err != nil {
@@ -141,7 +144,20 @@ func (c *consoleChainClient) updateDeployment(ctx context.Context, params map[st
 		return nil, fmt.Errorf("%s: %w", msgUpdateDeployment, err)
 	}
 
-	if _, err := c.cc.UpdateDeployment(ctx, dseq, sdlStr); err != nil {
+	secrets, err := console.ReadSecretValuesFile(params["secrets-file"], c.inputs.input)
+	if err != nil {
+		return nil, err
+	}
+	if params["patch"] == "true" {
+		patch, err := deploymentconfig.ParsePatch([]byte(sdlStr))
+		if err != nil {
+			return nil, err
+		}
+		_, err = c.cc.PatchDeployment(ctx, dseq, patch, secrets)
+		if err != nil {
+			return nil, err
+		}
+	} else if _, err := c.cc.UpdateDeployment(ctx, dseq, sdlStr, console.UpdateDeploymentOptions{Secrets: secrets}); err != nil {
 		return nil, err
 	}
 
@@ -164,7 +180,7 @@ func (c *consoleChainClient) closeDeployment(ctx context.Context, params map[str
 }
 
 // createLease maps market.MsgCreateLease to POST /v1/leases, sending the
-// manifest cached at deployment creation.
+// server-derived manifest from the saved deployment definition.
 func (c *consoleChainClient) createLease(ctx context.Context, params map[string]string) (*steps.TxResult, error) {
 	dseq, err := requiredDSeqParam(params, msgCreateLease)
 	if err != nil {
@@ -186,12 +202,7 @@ func (c *consoleChainClient) createLease(ctx context.Context, params map[string]
 		return nil, fmt.Errorf("%s: %w", msgCreateLease, err)
 	}
 
-	manifest, err := console.LoadManifest(c.root, c.ctxName, dseq)
-	if err != nil {
-		return nil, fmt.Errorf("no cached manifest for deployment %s: the manifest is stored when the deployment is created with this context (e.g. `akt deploy`), and the Console API needs it to create the lease: %w", dseq, err)
-	}
-
-	_, err = c.cc.CreateLease(ctx, manifest, []console.LeaseRequest{{
+	_, err = c.cc.CreateLease(ctx, "", []console.LeaseRequest{{
 		DSeq:     dseq,
 		GSeq:     gseq,
 		OSeq:     oseq,

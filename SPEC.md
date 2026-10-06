@@ -882,15 +882,16 @@ akt
 │   ├── txs [events]                     # event list expr; --events override — **disabled pending feedback** (positional only, 2026-07)
 │   └── module-name-to-address <module>
 ├── deploy <sdl-file> [deposit]          # Workflow: full deployment lifecycle (deposit: chain rail only)
-├── update <sdl-file> [dseq]             # Workflow: update deployment + send manifest
+├── update <file> [dseq]                 # Workflow: SDL or --patch update + send manifest
+├── redeploy <dseq>                      # Workflow: new deployment from saved config; source stays open
 ├── close [dseq]                         # Workflow: close deployment
 ├── console                              # Akash Console managed-wallet API (§2.9)
 │   ├── login [key]                      # Validate + store per-context API key credential
 │   ├── logout                           # Remove stored credential
 │   ├── whoami                           # Authenticated user info
-│   ├── deployment                       # list | get | create | update | close | settings
+│   ├── deployment                       # list | get | sdl | create | update | close | settings
 │   ├── bid list <dseq>                  # Bids for a deployment's open orders
-│   ├── lease create <dseq> [provider]   # Accept a bid (uses cached manifest)
+│   ├── lease create <dseq> [provider]   # Accept a bid (uses saved definition)
 │   ├── wallet                           # list | balance | settings | cost
 │   ├── usage [from] [to]                # Daily spend history
 │   ├── provider                         # list | get | regions | auditors (public, no key)
@@ -1477,9 +1478,9 @@ the credential (§7.1). Addresses are recorded in full.
 
 ### 2.3 Workflow Engine
 
-Workflow commands (`akt deploy`, `akt update`, `akt close`) are driven by a **declarative workflow engine**. Instead of hardcoded command logic, each workflow is a YAML definition that the engine interprets step by step. Users can override built-in workflows or create custom ones.
+Workflow commands (`akt deploy`, `akt update`, `akt redeploy`, `akt close`) are driven by a **declarative workflow engine**. Instead of hardcoded command logic, each workflow is a YAML definition that the engine interprets step by step. Users can override built-in workflows or create custom ones.
 
-**Transports**: actions are defined once, as workflow definitions, and translated per transport by `internal/transport`. Each transport carries the same abstract steps onto its backing rail: the **chain** transport (keyring auth) signs and broadcasts transactions locally plus provider-gateway calls, while the **console** transport (console-api auth) maps the same steps onto Console API REST calls (§7.4–§7.5). Because the command surface (positionals and flags) is generated from the workflow definition and the transport is chosen per context at execution time, `akt deploy/update/close` accept identical arguments on both rails, and adding a new action never requires per-rail redesign. The deploy deposit is positional-first (`akt deploy <sdl-file> [deposit]`) with `--deposit` as an alternative; both forms use the same grammar and cannot be supplied together. The deposit applies to the chain rail only. Console deployments are funded automatically from account credits, so the console transport takes no deposit and rejects one at the transport boundary (§7.4).
+**Transports**: actions are defined once, as workflow definitions, and translated per transport by `internal/transport`. Each transport carries the same abstract steps onto its backing rail: the **chain** transport (keyring auth) signs and broadcasts transactions locally plus provider-gateway calls, while the **console** transport (console-api auth) maps the same steps onto Console API REST calls (§7.4–§7.5). Because the command surface (positionals and flags) is generated from the workflow definition and the transport is chosen per context at execution time, `akt deploy/update/redeploy/close` accept identical arguments on both rails, and adding a new action never requires per-rail redesign. The deploy deposit is positional-first (`akt deploy <sdl-file> [deposit]`) with `--deposit` as an alternative; both forms use the same grammar and cannot be supplied together. The deposit applies to the chain rail only. Console deployments are funded automatically from account credits, so the console transport takes no deposit and rejects one at the transport boundary (§7.4).
 
 #### 2.3.1 Workflow Definition Location
 
@@ -1488,9 +1489,9 @@ Workflow definitions are resolved in order:
 2. **Global user**: `<home>/workflows/<name>.yaml`
 3. **Embedded built-in**: compiled into the binary
 
-Top-level commands (`akt deploy`, `akt update`, `akt close`) are thin wrappers that load and run the corresponding workflow. CLI flags are **auto-generated** from the workflow's declared `params` section.
+Top-level commands (`akt deploy`, `akt update`, `akt redeploy`, `akt close`) are thin wrappers that load and run the corresponding workflow. CLI flags are **auto-generated** from the workflow's declared `params` section.
 
-**Dynamic surfacing**: Workflow commands are generated at CLI startup from the set of workflows returned by the loader. A top-level command exists **if and only if** a workflow with that name resolves. The embedded built-ins (`deploy`, `update`, `close`) always resolve and therefore always appear; user-defined workflows in the global or per-context directories add further top-level commands, and removing a user workflow removes its command. Help output reflects only the resolved set.
+**Dynamic surfacing**: Workflow commands are generated at CLI startup from the set of workflows returned by the loader. A top-level command exists **if and only if** a workflow with that name resolves. The embedded built-ins (`deploy`, `update`, `redeploy`, `close`) always resolve and therefore always appear; user-defined workflows in the global or per-context directories add further top-level commands, and removing a user workflow removes its command. Help output reflects only the resolved set.
 
 #### 2.3.2 Workflow Definition Format
 
@@ -1745,7 +1746,7 @@ On error:
 
 | Field      | Type     | Description                                                     |
 | ---------- | -------- | --------------------------------------------------------------- |
-| `workflow` | string   | Workflow name (e.g., `deploy`, `update`, `close`)               |
+| `workflow` | string   | Workflow name (e.g., `deploy`, `update`, `redeploy`, `close`)               |
 | `id`       | string   | Unique workflow run ID (generated at start, same for all steps) |
 | `step`     | string   | Step name from the workflow definition                          |
 | `result`   | string   | `planned` (dry-run), `completed`, `error`, or `skipped` (step skipped by its on-error policy) |
@@ -1775,11 +1776,22 @@ The `--output jsonl` and `--output json` values serve different purposes: `--out
 
 #### 2.3.9 Built-in Workflows
 
-Three workflows ship as embedded defaults:
+Four workflows ship as embedded defaults:
 
 - **deploy**: Full deployment lifecycle (create deployment -> wait bids -> select -> lease -> manifest -> active)
 - **update**: Update deployment (update tx -> send manifest to all providers with active leases)
 - **close**: Close deployment (close tx, returning remaining escrow balance)
+- **redeploy**: Create a new deployment from an existing deployment's definition,
+  then run the deploy bid/lease/manifest lifecycle. The source is never closed.
+  Console inherits its secrets server-side; the chain rail uses a supplied or
+  locally recorded SDL file. See §7.9.
+
+`deploy` and `update` accept `--secrets-file <file|->`. `update <file> <dseq>
+--patch` treats its primary file as a service patch instead of an SDL, with
+optional `--base-sdl` for the chain rail. `redeploy <dseq>` accepts optional
+`--sdl-file` and `--secrets-file`, and the same deposit, bid selection, timeout,
+and readiness options as deploy. These are shared workflow parameters; rail
+behavior belongs in the transport and adapters, never command handlers.
 
 The `update` and `close` workflows wrap the same on-chain transactions as `akt tx deployment update` and `akt tx deployment close`, but add orchestration (manifest re-send for update, confirmation prompts) and unified output modes (TUI progress or JSONL). Users who need only the raw transaction can use the `tx` commands directly.
 
@@ -2906,12 +2918,13 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | --------------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------- |
 | `akt console deployment list [active\|closed]`       | `--skip` (0), `--limit` (20)                   | List deployments with validated pagination and an optional state filter. Filtering traverses bounded pages before applying the requested page window. |
 | `akt console deployment get <dseq>`                 |                                                | Deployment with leases and escrow account.                                                     |
-| `akt console deployment create <sdl-file>` | | Create a deployment; prints `dseq` + tx hash. There is no deposit: the platform funds the deployment from the account's credits. It does not invent a deployment `state`; `deployment get` is authoritative for the later open/active transition. The returned manifest is cached at `contexts/<name>/manifests/<dseq>.json` for `lease create`. |
-| `akt console deployment update <dseq> <sdl-file>`   |                                                | Update a deployment's SDL; closed deployments are rejected before mutation.                     |
+| `akt console deployment create <sdl-file>` | | Create a deployment; prints `dseq` + tx hash. There is no deposit: the platform funds the deployment from the account's credits. It does not invent a deployment `state`; `deployment get` is authoritative for the later open/active transition. Secret values use `--secrets-file`; manifests are derived server-side at lease creation (§7.9). |
+| `akt console deployment update <dseq> <file>` | `--patch`, `--secrets-file <file or ->` | Apply an SDL diff or a partial configuration patch; closed deployments are rejected before mutation (§7.9). |
+| `akt console deployment sdl <dseq>` | | Print the saved SDL, with secret references preserved. |
 | `akt console deployment close <dseq>`               |                                                | Close an active deployment. A preflight rejects an already-closed or absent deployment with a clear non-zero error; the shared `akt close` workflow preserves that failure. A 2xx delete must acknowledge `success: true`. |
 | `akt console deployment settings <dseq> [hours\|none]` | | Show the deployment's funding record when no value is given; otherwise set its runtime limit in hours, or `none` to clear it and return to always-on funding. Reading resolves the deployment first, because `GET /v2/deployment-settings/{dseq}` is get-or-create and would otherwise mint a record for any dseq. Rejects mutations for a closed deployment. |
 | `akt console bid list <dseq>`                       |                                                | List bids for the deployment's open orders.                                                    |
-| `akt console lease create <dseq> [provider]`        | `--gseq` (1), `--oseq` (1), `--provider` (alternative to positional) — **disabled pending feedback** (positional only, 2026-07), `--manifest <file>` | Accept a bid; the manifest defaults to the one cached by `deployment create`. |
+| `akt console lease create <dseq> [provider]`        | `--gseq` (1), `--oseq` (1), `--provider` (alternative to positional) — **disabled pending feedback** (positional only, 2026-07), `--manifest <file>` | Accept a bid; the API derives the manifest from the saved definition. `--manifest` is a legacy override. |
 
 **Wallet and usage:**
 
@@ -3418,7 +3431,7 @@ Applied to every command via the root command's `PersistentFlags()`.
 | `--keyring-backend` |  | string | context's keyring `backend` | Keyring backend for this invocation: `os`, `file`, `test`, `kwallet`, `pass`, `memory` (overrides AKT_KEYRING_BACKEND) |
 | `--keyring-dir` |     | string | context's keyring `dir`  | Keyring directory for this invocation (overrides AKT_KEYRING_DIR) |
 | `--output`  | `-o`  | string | `"pretty"`               | Output format: `pretty`, `json`, `yaml`. For workflows, also accepts `jsonl` (see 2.3.8). |
-| `--interactive` | `-i` | bool | `false`              | Force interactive mode even when `defaults.interactive` is `false` in config or no TTY is detected. Has no effect when interactive mode is already enabled (the default). **Two effects**: (1) Workflow commands (`deploy`, `update`, `close`) use TUI progress display instead of JSONL. (2) Commands that auto-suppress prompts and spinners in non-TTY contexts will show them. Does **not** launch the root TUI application. |
+| `--interactive` | `-i` | bool | `false`              | Force interactive mode even when `defaults.interactive` is `false` in config or no TTY is detected. Has no effect when interactive mode is already enabled (the default). **Two effects**: (1) Workflow commands (`deploy`, `update`, `redeploy`, `close`) use TUI progress display instead of JSONL. (2) Commands that auto-suppress prompts and spinners in non-TTY contexts will show them. Does **not** launch the root TUI application. |
 | `--verbose` | `-v`  | count  | `0`                      | Increase output verbosity. Stacks: `-v` (level 1) shows operational detail (gas estimates, endpoint selection, config resolution); `-vv` (level 2) adds debug diagnostics (RPC request/response dumps, full stack traces). Default (no flag) shows progress/status messages. Mutually exclusive with `--quiet`. |
 | `--quiet`   | `-q`  | bool   | `false`                  | Suppress all informational output (progress messages, status lines, confirmations). Only data output (query results, transaction results) and errors are emitted. Useful for scripting. Mutually exclusive with `-v`. |
 
@@ -3443,7 +3456,7 @@ Two flags control confirmation and safety bypass behavior across the CLI. They s
 | `--yes` | `-y` | Skip interactive confirmation prompts. The operation proceeds as if the user answered "yes" to all prompts. The operation itself is unchanged. | `akt tx deployment close 12345 --yes` |
 | `--force` | | Override a safety guard that would otherwise prevent the operation. The operation may behave differently or bypass a check. | `akt context network delete mainnet --force` (deletes even if contexts reference it) |
 
-`--yes` / `-y` is **not a global flag**. It is added individually to commands that have confirmation prompts: all `tx` commands (via `AddTxFlagsToCmd()`, §3.2), workflow commands (`deploy`, `update`, `close`), and destructive context/store management commands (`context delete`, `store import --replace`). `context keys add` also accepts it as an explicit Cosmos CLI compatibility exception; because add refuses overwrites and has no confirmation prompt, the flag cannot bypass secret input or change key replacement behavior. `--force` is used sparingly on specific commands where a structural safety check exists (e.g., deleting a network that is referenced by contexts). Commands should never use `--force` as a synonym for `--yes`.
+`--yes` / `-y` is **not a global flag**. It is added individually to commands that have confirmation prompts: all `tx` commands (via `AddTxFlagsToCmd()`, §3.2), workflow commands (`deploy`, `update`, `redeploy`, `close`), and destructive context/store management commands (`context delete`, `store import --replace`). `context keys add` also accepts it as an explicit Cosmos CLI compatibility exception; because add refuses overwrites and has no confirmation prompt, the flag cannot bypass secret input or change key replacement behavior. `--force` is used sparingly on specific commands where a structural safety check exists (e.g., deleting a network that is referenced by contexts). Commands should never use `--force` as a synonym for `--yes`.
 
 ### 3.2 Transaction Flags
 
@@ -4450,7 +4463,7 @@ The action log records entries for the following command categories:
 |---|---|---|---|
 | `tx *` and MCP chain write tools | Always | `tx` | After broadcast (success or failure). On success: includes tx hash, plus height and gas used when the broadcast mode reports them. Status is `pending` when the transaction was accepted into the mempool but not yet included in a block (the default `sync` mode), and `success` once a height is known. `akt context log` reconciles displayed pending hashes and appends a terminal revision when the node reports inclusion. On failure: includes error message and result code. |
 | `query *` | Never by default | `query` | Read-only queries are not state changes and are not recorded by default (see verbose row below). |
-| Workflow commands (`deploy`, `update`, `close`) | Always | `workflow` | One entry per workflow step. Each entry includes the step name, step index, result, and workflow run ID, and `akt context log` renders the step and run in `SUMMARY` so the steps of a run stay distinguishable and a failed step is identifiable (§2.2). |
+| Workflow commands (`deploy`, `update`, `redeploy`, `close`) | Always | `workflow` | One entry per workflow step. Each entry includes the step name, step index, result, and workflow run ID, and `akt context log` renders the step and run in `SUMMARY` so the steps of a run stay distinguishable and a failed step is identifiable (§2.2). |
 | `provider *` and MCP provider writes (state-changing: `send-manifest`, `migrate-hostnames`, `migrate-endpoints`, `lease-shell`) | Always | `provider` | After the provider gateway operation completes (success or failure). Read-only provider queries (`status`, `lease-status`, `lease-logs`, `lease-events`, `get-manifest`) and MCP query tools are not recorded. |
 | `context *` | Always | `context` | After context management operation (switch, edit, create, delete). |
 | `context keys *` (state-changing: `add`, `add --recover`, `delete`, `rename`, `import`) | Always | `context` | After the keyring mutation returns (success or failure), under a dotted `keys.*` action. Secrets — mnemonics, BIP39 and armor passphrases, key material — are never recorded (§2.2.2). Read-only `list`, `show`, `parse`, and `mnemonic` are not recorded. |
@@ -4605,7 +4618,7 @@ On reconnection, the engine reconciles all blocks missed during the disconnectio
 
 ### 6.6 Workflow-to-Store Integration
 
-A workflow run (`akt deploy`, `akt update`, `akt close`) persists its own
+A workflow run (`akt deploy`, `akt update`, `akt redeploy`, `akt close`) persists its own
 outcome to the local store when the run finishes.
 
 Chain events alone cannot populate the store. A CLI invocation is one-shot: it
@@ -4630,10 +4643,10 @@ advice (§2.3.6) tells the user to close.
 
 | Workflow | Source step         | Store effect                                                                                                                                                          |
 | -------- | ------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `deploy` | `create-deployment` | `DeploymentRecord`, state `active`, `created_height` from the transaction height, `sdl_path` from the `sdl-file` parameter, `sdl_hash` = `sha256:<hex>` of the SDL file |
-| `deploy` | `wait-for-bids`     | One `BidRecord` per bid observed, with its price; the winning provider's bid is `matched`, every other bid is `lost`                                                     |
-| `deploy` | `create-lease`      | `LeaseRecord` for the won lease (full lease ID), state `active`, price from `select-bid`                                                                                 |
-| `update` | `update-deployment` | Existing `DeploymentRecord` updated with the new `sdl_path`/`sdl_hash` and `updated_at`                                                                                  |
+| `deploy` / `redeploy` | `create-deployment` | `DeploymentRecord`, state `active`, `created_height` from the transaction height, `sdl_path` from the `sdl-file` parameter, `sdl_hash` = `sha256:<hex>` of the SDL file |
+| `deploy` / `redeploy` | `wait-for-bids`     | One `BidRecord` per bid observed, with its price; the winning provider's bid is `matched`, every other bid is `lost`                                                     |
+| `deploy` / `redeploy` | `create-lease`      | `LeaseRecord` for the won lease (full lease ID), state `active`, price from `select-bid`                                                                                 |
+| `update` | `update-deployment` | Existing `DeploymentRecord` updated with the new `sdl_path`/`sdl_hash` and `updated_at`; patch mode clears the path/hash because its base file is stale                                                                                  |
 | `close`  | `close-deployment`  | `DeploymentRecord` set to `closed` with `closed_at`; that deployment's leases are set to `closed`                                                                        |
 
 Fields a workflow run cannot observe — escrow balance, transferred amount,
@@ -4777,6 +4790,8 @@ active.
 | Field           | Type   | Required | Description                           |
 | --------------- | ------ | -------- | ------------------------------------- |
 | `data.sdl`      | string | yes      | SDL content as string                 |
+| `data.sealedSecrets` | string | no | JWE containing secret replacements; akt sends an encrypted empty map for ordinary variables (§7.9). |
+| `data.inheritSecretsFrom` | string | no | Source DSEQ for redeploy secret inheritance. |
 
 Returns `{ data: { dseq: string, manifest: string } }`.
 
@@ -4796,9 +4811,20 @@ Returns paginated list of deployments with leases and escrow state.
 #### `GET /v1/deployments/{dseq}` -- Get Deployment
 
 Path parameter: `dseq` (deployment sequence ID). Returns deployment details,
-including the base64 deployment version `hash`, with leases and escrow.
+including the base64 deployment version `hash`, leases, escrow, name, and nullable
+`consoleSettings: {sdl, manifestVersion}`.
 
-#### `PUT /v1/deployments/{dseq}` -- Update Deployment
+#### `PATCH /v1/deployments/{dseq}` -- Update Deployment
+
+Applies service configuration changes, optional secret replacements, and an
+`ifManifestVersion` concurrency guard. See §7.9 for the complete contract.
+
+#### `GET /v1/sdl-secrets-context` -- Secret Sealing Context
+
+Returns `{data: {sub, kid, jwk, requiredClaims}}` for client-side JWE sealing
+(§7.9). The key is fetched fresh for each mutation.
+
+#### `PUT /v1/deployments/{dseq}` -- Legacy Update (deprecated)
 
 | Field      | Type   | Required | Description              |
 | ---------- | ------ | -------- | ------------------------ |
@@ -4832,20 +4858,22 @@ Query parameter: `dseq` (required). Returns array of bids with provider details,
 
 | Field      | Type     | Required | Description                              |
 | ---------- | -------- | -------- | ---------------------------------------- |
-| `manifest` | string   | yes      | Manifest JSON from deployment creation   |
+| `manifest` | string   | no       | Deprecated override; normally derived from saved definition |
 | `leases`   | []object | yes      | Array of `{ dseq, gseq, oseq, provider }` |
 
 Returns deployment with created leases and escrow state.
 
-`POST /v1/leases` is not replayed after an error because it is not
-idempotent. Instead, the client reads each referenced deployment back and
-treats the operation as successful only when every exact requested
-`dseq/gseq/oseq/provider` lease is present and active. Read-back continues for
-a context-cancellable 30-second observation window rather than a fixed number
-of rapid attempts. If the window does not prove that state, the action is
-recorded as `pending` and an outcome-unknown error retains the original POST
-error and names `akt console deployment get <dseq>`. The POST is issued exactly
-once.
+`POST /v1/leases` is not replayed after an error. For server-derived manifests,
+an active lease does not prove provider delivery. A lost or malformed response
+records `pending` and asks the user to inspect the deployment and retry the same
+lease request. Explicit `manifest_not_delivered` and `provider_unreachable`
+errors remain failures even if leases already exist. The former directs the
+user to retry the same lease request to complete manifest delivery.
+
+For legacy explicit-manifest requests without either delivery error, the client
+retains its bounded active-lease reconciliation: read each referenced deployment
+for up to 30 seconds and require every exact `dseq/gseq/oseq/provider` lease to be
+active. An unproved outcome records `pending`. The POST is issued once.
 
 #### `POST /v1/deposit-deployment` -- Add Deposit (deprecated)
 
@@ -4911,7 +4939,11 @@ fails locally and names both denominations. This preserves
 the valid explicit `uakt` escape hatch while preventing a dry-run from
 approving a message that `MsgCreateDeployment.ValidateBasic` will reject.
 
-**Manifest handling**: The Console API's `POST /v1/deployments` returns a `manifest` field in the response. The workflow engine stores this value and passes it to `POST /v1/leases` when creating leases, instead of calling the provider's `send-manifest` endpoint directly.
+**Manifest handling**: Console lease creation omits `manifest`; the API derives
+the provider manifest from its persisted deployment definition. Workflows do
+not cache the create response's unresolved manifest. Direct lease creation
+retains explicit `--manifest` input for legacy deployments without a saved
+definition. See §7.9.
 
 ### 7.5 Workflow and Command Routing
 
@@ -4919,14 +4951,14 @@ The Console adapter maps abstract workflow actions, not raw `akt tx` commands:
 
 | Workflow action / Console command | Console API Endpoint                 | Notes                                    |
 | --------------------------------- | ------------------------------------ | ---------------------------------------- |
-| deployment create                 | `POST /v1/deployments`               | SDL only; single-submit reconciliation below |
-| deployment update                 | `PUT /v1/deployments/{dseq}`         |                                          |
+| deployment create                 | `POST /v1/deployments`               | SDL, sealed secrets, optional inheritance (§7.9) |
+| deployment update                 | `PATCH /v1/deployments/{dseq}`       | Guarded saved-definition update; legacy PUT only without saved config/secrets |
 | deployment close                  | `DELETE /v1/deployments/{dseq}`      |                                          |
 | bid list                          | `GET /v1/bids?dseq=`                 |                                          |
-| lease create                      | `POST /v1/leases`                    | Requires manifest from deployment create |
+| lease create                      | `POST /v1/leases`                    | Manifest derived server-side |
 | deployment list/get               | `GET /v1/deployments`                | Paginated via `--skip`/`--limit`         |
 
-The mappings are reached through `akt deploy/update/close` and the dedicated
+The mappings are reached through `akt deploy/update/redeploy/close` and the dedicated
 `akt console` group. Every raw `akt tx` command uses the context's local
 keyring, including deployment, market, and escrow commands. It never maps a
 raw message to Console. Chain queries continue to use RPC directly whenever
@@ -4944,20 +4976,26 @@ identity boundary regardless of the preferred workflow rail.
 | 5xx         | Console API server error. Retry with backoff (max 3 attempts) for idempotent methods (GET/HEAD/PUT/DELETE) only. A non-idempotent request is never replayed: it may have been processed despite the error (e.g. a gateway 502 after a completed write), and replaying it could duplicate a deployment. |
 | 3xx         | Redirect refused. No second request is issued and the API key is not forwarded. |
 
-The Console may transiently reject an otherwise valid deployment PUT with
+For legacy deployments without saved definitions or secret input, the Console
+may transiently reject an otherwise valid deployment PUT with
 `422 manifest version validation failed`. Because PUT is idempotent, that exact
 response is retried within the same three-attempt bound. After any failed PUT,
 the client reads the deployment back and compares its base64 `hash` with the
 deterministic SDL version; a match proves success despite the failed response.
 All other 4xx responses remain terminal. A failed lease POST follows the
-read-back rule in §7.3 and is never replayed.
+manifest-delivery rule in §7.3 and is never replayed.
 
 Transport failures are not automatically retried, including for DELETE: the
 server may still have accepted a transaction before the response was lost.
 Lease and close transport failures use the exact post-state observation rules
 in §7.3. HTTP 429 and 5xx responses retain the method-aware retry policy above.
 
-Deployment creation adds a stronger ambiguity protocol. Before POSTing, the
+Saved-definition PATCH and sealed create use the stricter single-submit
+protocol in §7.9. Neither a saved version nor an unresolved SDL hash proves
+provider delivery.
+
+Legacy creation without secret sealing or inheritance retains its existing
+ambiguity protocol. Before POSTing, the
 client validates the SDL, derives its base64 version hash and rendered
 manifest, and snapshots every existing deployment DSEQ through the paginated
 list endpoint. Collection reads request at most 100 deployments per page to
@@ -4999,7 +5037,10 @@ Status of `akt` coverage for every Akash Console capability. "Covered" means the
 | Console capability | akt equivalent | Notes |
 |---|---|---|
 | Authenticate with API key | `akt console login/logout/whoami`; per-context credential (`akt context edit --console-api-key`) | Resolution: flag > `AKT_CONSOLE_API_KEY` > per-context file (§7.1). Switching context switches Console identity. |
-| Create deployment (managed wallet) | `akt console deployment create <sdl>`; `akt deploy` in a `console-api` context | No deposit: the platform funds the deployment from account credits. The manifest is cached per context for the follow-up lease. |
+| Create deployment (managed wallet) | `akt console deployment create <sdl>`; `akt deploy` in a `console-api` context | No deposit: the platform funds the deployment from account credits. Lease creation derives the manifest from the saved definition. |
+| Variables, secrets, and private registry credentials | `--secrets-file` on deploy/update/redeploy; `ac-secret://NAME` references | Encrypted inputs and reference-only saved SDL (§7.9). |
+| Edit saved configuration | `akt update <file> <dseq> --patch`; `akt console deployment sdl <dseq>` | Cross-device config reads, partial updates, and concurrency guards. |
+| Redeploy with secrets | `akt redeploy <dseq>` | Inherits saved secrets; optional SDL/replacement overrides; source stays open. |
 | List / inspect deployments | `akt console deployment list/get` | Pagination via `--skip`/`--limit`. |
 | Update / close deployment | `akt console deployment update/close`; `akt update`, `akt close` | Update and close reject an already-closed deployment with a non-zero result; close never turns an earlier terminal state into current-command success. |
 | Escrow deposit | none | Deployments are funded automatically; the deprecated `/v1/deposit-deployment` endpoint is not called. |
@@ -5032,11 +5073,125 @@ Status of `akt` coverage for every Akash Console capability. "Covered" means the
 #### Behavioral differences vs the reference CLI (intentional)
 
 - Output follows akt conventions (`-o json|yaml|pretty`) rather than TOON.
-- Credentials and the manifest cache are per-context (§7.1) rather than a single global config file, so several Console accounts can be used side by side.
+- Credentials and legacy manifest caches are per-context (§7.1) rather than a single global config file, so several Console accounts can be used side by side.
 - The composite `deploy` command is the existing `akt deploy` workflow with auth-aware routing (§7.4), not a separate code path.
 - Commands take their primary values positionally (§3.8); the reference CLI is flag-based.
 
 ---
+
+### 7.9 Deployment variables, secrets, and saved definitions
+
+The Console Variables & Secrets contract is implemented through the shared
+`deploy`, `update`, and `redeploy` workflows. The dedicated Console commands
+use the same client methods. The Console client exposes `consoleSettings`
+from deployment GET as nullable `{sdl, manifestVersion}` and exposes the
+deployment name. `akt console deployment sdl <dseq>` prints the saved SDL
+without a wrapper for editing or piping. A deployment without a saved
+definition reports an actionable error instead of an empty document.
+
+#### Inputs and sealing
+
+`--secrets-file` accepts one JSON or YAML object mapping secret names to string
+values. `-` reads stdin. Names follow `[A-Za-z_][A-Za-z0-9_]{0,63}`. Reject
+duplicate names, nonstring values, trailing documents, more than 100 names,
+values exceeding 16 KiB once JSON encoded, and oversized input. Errors never
+include values. Dry-run validates the source path but does not read secret
+values, consume stdin, seal, or mutate. Plaintext values and JWE tokens never
+enter workflow state, serialized output, action logs, or local caches.
+
+`GET /v1/sdl-secrets-context` returns `{data: {sub, kid, jwk, requiredClaims}}`. Seal
+the flat map with a maintained JOSE implementation using `RSA-OAEP-256` and
+`A256GCM`, binding the protected header to `sub`, `kid`, and a five-minute
+`exp`. Create seals additionally bind `sdlHash` to base64url SHA-256 of the
+exact submitted SDL. PATCH seals are unbound to SDL so identical retries do
+not depend on a previous document. Validate the returned public key and
+required claims before use. No private key is managed locally.
+
+Create accepts `data.sealedSecrets` and `data.inheritSecretsFrom`; PATCH
+accepts `data.sealedSecrets`. An explicitly supplied empty map is sealed too:
+upstream interprets a missing seal as permission to convert every written env
+value into a secret. The CLI sends an empty seal for ordinary variable edits
+on the new saved-definition path. SDL references remain `ac-secret://NAME`;
+registry `username` and `password` use the same scheme. Registry host is an
+ordinary string. Reads expose references, never retrieve secret values.
+
+The chain rail rejects Console references and secret-file inputs before
+signing, with a remedy to use a Console context. Explicit `akt tx deployment
+create/update` commands also reject Console references before signing.
+Ordinary variables and registry credentials remain normal SDL inputs on that
+rail.
+
+#### Partial updates
+
+`akt update <patch-file> <dseq> --patch` accepts a strict JSON/YAML object
+matching the API's inner `data` shape: `services`, optional `name`, and optional
+`ifManifestVersion`. Secret ciphertext is not a patch-file field; values come
+from `--secrets-file`. Services are keyed by service name and can change image,
+command, args, env, credentials, exposed ports, and storage mount options.
+Environment maps merge by name; null removes a variable. Null clears command,
+args, or credentials, while omitted fields preserve existing values. Expose
+changes are keyed by the existing container port; storage changes by existing
+volume name. Port kind, protocol, routing, service/resource sets, resource
+sizes, and replica counts cannot change through an update. Unknown fields and
+invalid shapes are errors, never silently ignored. An empty patch is valid
+only when a secret map is explicitly supplied for rotation.
+
+`akt update <sdl-file> <dseq>` and `akt console deployment update <dseq>
+<sdl-file>` fetch the saved definition and derive the same typed patch.
+Applying the derived patch must reproduce the entire requested SDL structure;
+unrepresentable changes fail before a write and suggest redeploy. Unchanged
+secret references preserve their stored values. Removing references removes
+their secrets upstream; supplied names replace or add only referenced values.
+For legacy deployments with no stored definition, the existing full-SDL PUT
+remains available only for an ordinary SDL without Console references or
+secret input; it cannot claim preservation of unknown secrets.
+
+PATCH includes the version read with the source definition as
+`ifManifestVersion`, unless the caller supplies an explicit expected version.
+A 409 definition conflict requires a fresh read and review; it is not silently
+rebased. A successful config-changing PATCH must return the requested DSEQ
+and a nonblank `manifestVersion` matching its returned chain deployment hash.
+A rename-only PATCH requires the requested identity and acknowledged name.
+It rejects an explicit `ifManifestVersion` because the API does not enforce
+that guard on name-only edits.
+The saved definition is persisted upstream before chain/provider work, so a
+GET showing it is not proof that the operation succeeded. An ambiguous PATCH
+is not automatically replayed or reconciled into success; record `pending`
+and give a concrete inspect/retry remedy. Definitive validation/conflict
+responses remain failures. Secret request errors must suppress untrusted
+bodies that might echo values or ciphertext.
+
+#### Redeploy and lease creation
+
+`redeploy <dseq>` on Console loads the source's saved SDL, optionally replaces
+it with `--sdl-file`, and creates using `inheritSecretsFrom`. The source may be
+closed. `--secrets-file` values override inherited names. The action then uses
+the ordinary deploy bid selection, lease creation, readiness, action logging,
+and local outcome recording. It never closes the source deployment.
+
+On the chain rail, redeploy uses `--sdl-file` or the source deployment's locally
+recorded readable SDL path. Patch mode similarly uses `--base-sdl` or that
+path. `--base-sdl` is rejected outside chain patch mode. Missing source files
+fail before a transaction. The prepared SDL is
+shared by transaction creation and provider delivery in memory; no plaintext
+temporary file or expanded SDL is added to workflow output. A successful chain
+patch clears the local record's SDL path/hash because the input file no longer
+represents the deployed configuration; the next patch/redeploy requires an
+explicit base/override file.
+
+`POST /v1/leases` requires only `leases`; the client manifest is optional and
+deprecated. New Console create/deploy/redeploy flows do not write a manifest
+cache or require the creating machine for subsequent lease creation.
+
+Create remains single-submit. With references, sealed secrets, or inheritance,
+an unresolved SDL hash cannot prove the resolved on-chain version. A valid
+create receipt proves success; an ambiguous response records `pending` and
+directs the user to deployment list/get without guessing a new DSEQ or replaying
+POST. Existing local-hash reconciliation applies only when the submitted SDL
+fully determines the deployed manifest. PATCH and create tests cover secret
+redaction, independent JOSE interoperability, preservation/rotation/removal,
+registry credentials, conflict handling, failed provider delivery, cross-device
+reads and leases, redeploy inheritance, and explicit chain rejection.
 
 ## 8. TUI Specification
 

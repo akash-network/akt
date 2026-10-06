@@ -477,7 +477,7 @@ command failed.
 #### 3.1.4 Authentication Methods
 
 Each context has an `auth-method` that selects the preferred rail for the
-shared `deploy`, `update`, and `close` workflows. It does not disable another
+shared `deploy`, `update`, `redeploy`, and `close` workflows. It does not disable another
 configured credential. A context may carry both a local keyring and a Console
 API key, and explicit command groups keep their own transport boundaries.
 
@@ -702,7 +702,7 @@ The diagram above is the target architecture. The TUI shell is currently **disab
 
 **Smart interactivity**: Commands auto-detect whether a TTY is attached. When interactive, they show prompts, spinners, and colored output. When piped, they output machine-readable formats silently. The `--interactive` and `--yes` flags override this behavior.
 
-**Workflow execution modes**: Workflow commands (`akt deploy`, `akt update`, `akt close`) support two output modes:
+**Workflow execution modes**: Workflow commands (`akt deploy`, `akt update`, `akt redeploy`, `akt close`) support two output modes:
 - **TUI mode** (default when TTY is attached): Interactive bubbletea UI with progress display, bid selection tables, spinners, and colored status output.
 - **JSONL mode** (`--output jsonl`): Emits one JSONL line per completed step to stdout. Each line is a self-contained JSON object with workflow name, unique run ID, step name, result status, errors, and transaction results. Designed for CI/CD pipelines, scripts, and programmatic consumption.
 
@@ -843,13 +843,57 @@ panic.
 
 ### 3.5 Transport Translation Layer
 
-An **action** (`deploy`, `update`, `close`, and every action added later) is defined exactly once, as workflow YAML in `internal/workflow/builtin/`, in terms of abstract steps: `tx`, `query`, `wait`, `prompt`, `provider`, `output`. The definition says *what* happens, never *how* it is carried. A **transport** (`internal/transport`) is the boundary that translates those abstract steps onto a concrete backing rail.
+#### Deployment variables, secrets, and saved configuration
+
+The shared deployment workflows support Console's persisted definitions and
+encrypted secrets. `deploy` accepts an optional `--secrets-file` containing a
+flat JSON/YAML name-to-string map. `update <file> <dseq>` accepts either an SDL
+or, with `--patch`, a service patch; `redeploy <dseq>` creates a new deployment
+without closing the source. Console redeploy reads the saved definition and
+inherits secrets server-side, with supplied values taking precedence.
+`--sdl-file` can override the redeploy definition. The chain rail needs that
+file, or a readable SDL path recorded for the source deployment; it cannot
+reconstruct an SDL from a chain hash. Chain patch mode takes `--base-sdl` or
+the recorded source path and applies the same service-patch transformation.
+
+Deployment configuration transformations live in `internal/deploymentconfig`.
+They preserve omitted, null, and empty patch values, and reject changes outside
+the patch contract. An SDL update against a saved Console definition is
+converted to a PATCH only when applying that patch reproduces the requested
+configuration. Resource or routing changes require redeployment. Console's
+stored `manifestVersion` is a concurrency token, distinct from proof that a
+chain update and provider delivery completed. The adapter supplies it as
+`ifManifestVersion` and never silently rebases a conflict.
+
+Secret values remain outside workflow parameters, results, local stores, and
+manifest caches. Only a file path travels through the workflow. `-` reads the
+command's input stream at execution time. The Console client seals values
+with the API's public key using standard JWE, including an encrypted empty
+map when the caller explicitly distinguishes ordinary variables from secrets.
+The API resolves `ac-secret://NAME` references in environment values and
+registry usernames/passwords. The chain rail rejects these Console-only
+references and secret-file inputs before broadcasting; it continues to accept
+ordinary SDL values and credentials. Secret-bearing request errors must not
+echo plaintext or ciphertext into diagnostics or action logs.
+
+Console lease creation omits the deprecated client manifest and lets the API
+derive it from its saved definition. Explicit legacy manifest input remains
+available for older deployments. Create/redeploy with references or inherited
+secrets cannot reconcile an ambiguous response using a locally computed hash:
+the client submits once and reports a pending outcome if no valid receipt
+arrives. PATCH success validates the requested identity and the returned
+manifest version against the returned chain hash. A failed PATCH remains
+failed or pending even when saved configuration or chain state appears updated,
+because neither proves provider delivery. A user retry performs fresh reads
+and sealing. SPEC §7.9 defines the wire and input contracts.
+
+An **action** (`deploy`, `update`, `redeploy`, `close`, and every action added later) is defined exactly once, as workflow YAML in `internal/workflow/builtin/`, in terms of abstract steps: `tx`, `query`, `wait`, `prompt`, `provider`, `output`. The definition says *what* happens, never *how* it is carried. A **transport** (`internal/transport`) is the boundary that translates those abstract steps onto a concrete backing rail.
 
 ```mermaid
 graph LR
   WF["Action definition\n(deploy.yaml)\n\nAbstract steps:\n- tx\n- query / wait\n- prompt\n- provider"] --> T{"Transport\nrail chosen per context\nat execution time"}
   T -->|"KindChain\npreferred rail: keyring"| CH["Chain adapter\n\n- build + sign + broadcast\n- chain RPC/gRPC queries"]
-  T -->|"KindConsole\npreferred rail: console-api"| CO["Console adapter\n\n- msg type maps to REST endpoint\n- manifest cache: create then lease\n- chain queries when available"]
+  T -->|"KindConsole\npreferred rail: console-api"| CO["Console adapter\n\n- msg type maps to REST endpoint\n- saved definition: create then lease\n- chain queries when available"]
   CH --> PG["Provider gateway\n(JWT / mTLS)"]
   CO --> API["Console API\n(managed wallet)"]
 ```
@@ -858,9 +902,9 @@ graph LR
 
 | Constructor | Rail | Carries steps by |
 |---|---|---|
-| `NewChain(client)` | `KindChain` | Building, signing, and broadcasting transactions locally through the Akash node client; queries run against chain RPC/gRPC. |
-| `NewConsole(consoleClient, chainQueries, root, ctxName)` | `KindConsole` | Mapping each message type to a Console API REST endpoint (SPEC §7.5). Query steps go straight to the chain when a chain client is available; without one, `market.bids` falls back to the Console bids endpoint. `root`/`ctxName` locate the per-context manifest cache that carries the manifest from deployment create to lease create. |
-| `NewProvider(clientCtx, authType)` | chain rail only | Provider gateway calls (JWT or mTLS). The console rail has **no** provider client: the Console API submits the manifest internally during lease creation, so provider steps are dropped from the run with a note on stderr rather than failing it. |
+| `NewChain(client, inputs)` | `KindChain` | Building, signing, and broadcasting transactions locally through the Akash node client; queries run against chain RPC/gRPC. |
+| `NewConsole(consoleClient, chainQueries, root, ctxName, inputs)` | `KindConsole` | Mapping each message type to a Console API REST endpoint (SPEC §7.5). Query steps go straight to the chain when a chain client is available; without one, `market.bids` falls back to the Console bids endpoint. `root`/`ctxName` identify the context; per-run deployment inputs carry secret input streams and prepared chain SDLs without storing their contents. |
+| `NewProvider(clientCtx, authType, inputs)` | chain rail only | Provider gateway calls (JWT or mTLS). The console rail has **no** provider client: the Console API submits the manifest internally during lease creation, so provider steps are dropped from the run with a note on stderr rather than failing it. |
 
 On the chain rail, an update's provider step queries every page of active
 leases for the deployment, de-duplicates and sorts their provider addresses,
@@ -950,16 +994,15 @@ ambiguous close. One-time API-key creation likewise requires its nonblank ID,
 requested name, and secret, while JWT minting requires a nonblank token. An
 ambiguous one-time-secret response is pending because the request cannot safely
 be replayed and the missing secret cannot be recovered.
-Deployment updates are idempotent, so the Console's specific transient
-manifest-version rejection is retried within the normal three-attempt bound.
-After any failed update response, the client compares the deployment's
-API-reported version hash with the deterministic hash of the SDL before deciding
-whether the update failed. Action logs record the reconciled outcome, not
-merely the first HTTP response.
+Legacy full-SDL PUT updates retain their idempotent retry and deterministic
+hash reconciliation for deployments without stored definitions or secrets.
+Saved-definition updates use PATCH with version concurrency checks and no
+automatic replay. A stored version or chain hash cannot prove provider
+manifest delivery after an ambiguous PATCH (§7.9).
 
 **Why a translation layer and not per-rail commands**: the alternative — a `deploy` that knows about keyrings and a separate Console `deploy` — means every new action is designed twice, and the two surfaces drift on flag names, defaults, argument order, and error text. Here, adding an action is a workflow definition plus (at most) a message mapping in the console adapter. Neither rail's command handler changes, and no rail-specific redesign is required.
 
-**One argument surface**: the CLI's argument surface is *generated* from the workflow definition (`internal/cli/workflow`). Positional arguments come from the definition's required file param, the built-in deploy workflow's optional `deposit` param, and workflow definitions' optional `dseq` param. Every non-file param also gets a flag carrying the definition's type, default, and description. `akt deploy <sdl-file> [deposit]` keeps the deposit in an optional trailing slot while retaining `--deposit` as an alternative; supplying both forms is an error. The deposit is meaningful on the chain rail only, since the console rail funds deployments itself, so on a console context the slot is simply left empty. Because the definition is shared, `akt deploy`, `akt update`, and `akt close` take **identical arguments on both rails**. The preferred rail is a property of the active context (`auth-method`, edited more clearly through `--deploy-via`), not of the workflow command line. Switching the preferred rail does not hide `akt tx` or `akt console` when their credentials remain configured.
+**One argument surface**: the CLI's argument surface is *generated* from the workflow definition (`internal/cli/workflow`). Positional arguments come from the definition's required file param, the built-in deploy workflow's optional `deposit` param, and workflow definitions' optional `dseq` param. Every non-file param also gets a flag carrying the definition's type, default, and description. `akt deploy <sdl-file> [deposit]` keeps the deposit in an optional trailing slot while retaining `--deposit` as an alternative; supplying both forms is an error. The deposit is meaningful on the chain rail only, since the console rail funds deployments itself, so on a console context the slot is simply left empty. Because the definition is shared, `akt deploy`, `akt update`, `akt redeploy`, and `akt close` take **identical arguments on both rails**. The preferred rail is a property of the active context (`auth-method`, edited more clearly through `--deploy-via`), not of the workflow command line. Switching the preferred rail does not hide `akt tx` or `akt console` when their credentials remain configured.
 
 **Cross-rail normalization**: rail-independent argument syntax is translated inside `Transport.BroadcastTx` before delegating to the adapter, so a cross-rail mistake fails at the transport boundary with a clear message rather than deep inside a rail's client — or, worse, on the wire. The concrete case is the deployment deposit, parsed in one place (`transport.ParseDeposit`) and rendered per rail by `Deposit.RailValue`:
 

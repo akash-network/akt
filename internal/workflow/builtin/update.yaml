@@ -4,6 +4,11 @@ long: |
   Update a deployment's SDL and send the revised manifest to every provider
   holding a lease on it.
 
+  Pass --patch to supply a JSON/YAML service patch instead of a complete SDL.
+  Omitted fields keep their current values. Console updates preserve stored
+  secrets; --secrets-file supplies replacements. Chain patches use --base-sdl
+  or the locally recorded SDL path.
+
   Changing the resource profile can close existing leases and re-open bidding;
   changing only the image or environment usually does not.
 example: |
@@ -12,17 +17,30 @@ example: |
 
     # Show what would change without broadcasting
     akt update deploy.yaml 12345 --dry-run
+
+    # Apply a service patch while preserving omitted configuration
+    akt update patch.yaml 12345 --patch
 version: 1
 
 params:
   sdl-file:
     type: sdl
     required: true
-    description: Path to updated SDL deployment file
+    description: Path to updated SDL, or a service patch with --patch
   dseq:
     type: int
     required: true
     description: Deployment sequence to update
+  secrets-file:
+    type: file
+    description: JSON or YAML secret values file, or - for stdin (Console only)
+  patch:
+    type: bool
+    default: "false"
+    description: Interpret the input file as a service patch
+  base-sdl:
+    type: sdl
+    description: Source SDL for a chain service patch (defaults to the recorded SDL path)
 
 steps:
   - name: update-deployment
@@ -31,6 +49,9 @@ steps:
     params:
       sdl: "{{ index .Params \"sdl-file\" }}"
       dseq: "{{ .Params.dseq }}"
+      secrets-file: "{{ with index .Params \"secrets-file\" }}{{ . }}{{ end }}"
+      patch: "{{ .Params.patch }}"
+      base-sdl: "{{ with index .Params \"base-sdl\" }}{{ . }}{{ end }}"
     on-error: abort
 
   - name: send-manifest

@@ -171,9 +171,20 @@ type DeploymentList struct {
 // update/lease-creation responses). EscrowAccount is kept raw; its state
 // carries funds/transferred details.
 type DeploymentDetail struct {
-	Deployment    Deployment      `json:"deployment"`
-	Leases        []Lease         `json:"leases"`
-	EscrowAccount json.RawMessage `json:"escrow_account,omitempty"`
+	Deployment      Deployment            `json:"deployment"`
+	Leases          []Lease               `json:"leases"`
+	EscrowAccount   json.RawMessage       `json:"escrow_account,omitempty"`
+	ConsoleSettings *DeploymentDefinition `json:"consoleSettings,omitempty"`
+	Name            *string               `json:"name,omitempty"`
+	ManifestVersion string                `json:"manifestVersion,omitempty"`
+}
+
+// DeploymentDefinition is Console's saved, reference-bearing configuration.
+// ManifestVersion is a concurrency token; it may precede an unsuccessful
+// deployment update and therefore does not establish the current chain state.
+type DeploymentDefinition struct {
+	SDL             string `json:"sdl"`
+	ManifestVersion string `json:"manifestVersion"`
 }
 
 // SignTx reports the broadcast result of a managed-wallet transaction.

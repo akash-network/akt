@@ -11,7 +11,6 @@ import (
 	mv1 "pkg.akt.dev/go/node/market/v1"
 	mtypes "pkg.akt.dev/go/node/market/v1beta5"
 	depositv1 "pkg.akt.dev/go/node/types/deposit/v1"
-	"pkg.akt.dev/go/sdl"
 )
 
 // buildCreateDeploymentMsg builds a MsgCreateDeployment from an SDL file,
@@ -27,9 +26,9 @@ func buildCreateDeploymentMsg(owner sdk.AccAddress, sdlPath string, dseq uint64,
 		return nil, fmt.Errorf("%s: dseq must be non-zero", msgCreateDeployment)
 	}
 
-	sdlManifest, err := sdl.ReadFile(sdlPath)
+	sdlManifest, err := readSDL([]byte(sdlPath))
 	if err != nil {
-		return nil, fmt.Errorf("read SDL file %q: %w", sdlPath, err)
+		return nil, fmt.Errorf("read deployment SDL: %w", err)
 	}
 
 	groups, err := sdlManifest.DeploymentGroups()
@@ -65,8 +64,11 @@ func buildCreateDeploymentMsg(owner sdk.AccAddress, sdlPath string, dseq uint64,
 // "dseq" params, mirroring `akt tx deployment update` (the version hash is
 // recomputed from the SDL). It also returns the SDL's group specs so the
 // caller can verify they match the existing on-chain deployment.
-func buildUpdateDeploymentMsg(owner sdk.AccAddress, params map[string]string) (*dv1beta.MsgUpdateDeployment, dv1beta.GroupSpecs, error) {
+func buildUpdateDeploymentMsg(owner sdk.AccAddress, params map[string]string, prepared ...string) (*dv1beta.MsgUpdateDeployment, dv1beta.GroupSpecs, error) {
 	sdlPath := params["sdl"]
+	if len(prepared) != 0 {
+		sdlPath = prepared[0]
+	}
 	if sdlPath == "" {
 		return nil, nil, fmt.Errorf("%s: required param %q missing", msgUpdateDeployment, "sdl")
 	}
@@ -76,9 +78,9 @@ func buildUpdateDeploymentMsg(owner sdk.AccAddress, params map[string]string) (*
 		return nil, nil, fmt.Errorf("%s: %w", msgUpdateDeployment, err)
 	}
 
-	sdlManifest, err := sdl.ReadFile(sdlPath)
+	sdlManifest, err := readSDL([]byte(sdlPath))
 	if err != nil {
-		return nil, nil, fmt.Errorf("read SDL file %q: %w", sdlPath, err)
+		return nil, nil, fmt.Errorf("read deployment SDL: %w", err)
 	}
 
 	hash, err := sdlManifest.Version()
