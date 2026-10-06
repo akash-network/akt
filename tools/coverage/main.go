@@ -25,6 +25,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -1132,6 +1133,7 @@ func validateGoreleaserReleaseTags(filename, releaseTags string) error {
 		Builds []struct {
 			ID    string   `yaml:"id"`
 			Main  string   `yaml:"main"`
+			GOOS  []string `yaml:"goos"`
 			Flags []string `yaml:"flags"`
 		} `yaml:"builds"`
 	}
@@ -1144,6 +1146,9 @@ func validateGoreleaserReleaseTags(filename, releaseTags string) error {
 	want, err := canonicalBuildTags(releaseTags)
 	if err != nil {
 		return fmt.Errorf("release tags: %w", err)
+	}
+	if slices.Contains(strings.Split(want, ","), "netgo") {
+		return errors.New("release tags must omit netgo to allow system DNS resolution")
 	}
 	for index, build := range configuration.Builds {
 		label := build.ID
@@ -1173,6 +1178,9 @@ func validateGoreleaserReleaseTags(filename, releaseTags string) error {
 		got, err := canonicalBuildTags(tagValues[0])
 		if err != nil {
 			return fmt.Errorf("goreleaser build %q -tags value: %w", label, err)
+		}
+		if len(build.GOOS) == 0 || slices.Contains(build.GOOS, "") {
+			return fmt.Errorf("goreleaser build %q must declare goos", label)
 		}
 		if got != want {
 			return fmt.Errorf("goreleaser build %q -tags %q do not match -release-tags %q", label, got, want)

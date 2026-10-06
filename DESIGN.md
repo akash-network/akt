@@ -40,6 +40,13 @@ operating documentation lives at
 verification uses the configuration-independent `akt version` command;
 interactive context onboarding is a subsequent operation.
 
+macOS and Linux builds omit `netgo` so Go can select the appropriate DNS
+resolver. This preserves native macOS routing and Linux libc/NSS integration
+where required, including VPN and split DNS settings that direct queries to
+`/etc/resolv.conf` servers can bypass. Both platforms retain cgo and the
+`ledger` tag for hardware-wallet support. Local, release, and coverage builds
+use matching tags across platforms, including their reported build metadata.
+
 ### 1.4 The `monitor` Command
 
 `akt monitor` is a hub-based real-time monitoring tool. It is one of the most important tools in the Akash ecosystem for observing network health, provider fleet status, and BME state — especially during coordinated chain upgrades.
@@ -1639,8 +1646,8 @@ that the CLI validated, while Linux CI never asks Bubble Tea to register its
 non-interactive `/dev/null` input with epoll.
 
 Unit tests collect cross-package coverage. Subprocess tests build an
-instrumented `akt` binary with the same semantic build tags as the release and
-collect its counters through `GOCOVERDIR`.
+instrumented `akt` binary with the same semantic build tags as the release for
+the same platform and collect its counters through `GOCOVERDIR`.
 Statement profiles canonicalize repository-relative source identity before
 aggregation. An import path and absolute path that resolve to the same range
 are duplicates and fail rather than increasing its count twice.
@@ -1927,6 +1934,10 @@ composite-literal fields.
 Release-profile validation also pins every GoReleaser build's main package to
 `cmd/akt`; matching tags on a different executable cannot validate the shipped
 CLI denominator.
+Every target uses the same tags, and validation rejects `netgo` in local
+release tags and every GoReleaser build. Build targets must declare their OS.
+Binary E2E checks inspect compiler build information as well as reported tags,
+so incorrect version metadata cannot hide a binary built with `netgo`.
 CI resolves the event's actual comparison revision and runs that patch gate on
 both pull requests and default-branch pushes, including multi-commit pushes.
 For local use, the same gate compares the base with the complete worktree,

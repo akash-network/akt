@@ -67,7 +67,8 @@ endif
 # VM is dead weight that would otherwise force static libwasmvm archives, cgo
 # cross-compilation and ~18 MB of binary. cgo itself is still needed, for the
 # ledger HID bindings and the cosmos keyring.
-BUILD_TAGS             := osusergo netgo ledger muslc gcc nolink_libwasmvm
+# Omit netgo so Go can use macOS system DNS and Linux libc/NSS when needed.
+BUILD_TAGS             := osusergo ledger muslc gcc nolink_libwasmvm
 
 ifneq (,$(findstring cgotrace,$(BUILD_OPTIONS)))
 	BUILD_TAGS += cgotrace
