@@ -857,6 +857,9 @@ reconstruct an SDL from a chain hash. Chain patch mode takes `--base-sdl` or
 the recorded source path and applies the same service-patch transformation.
 
 Deployment configuration transformations live in `internal/deploymentconfig`.
+Parsing establishes a JSON-compatible value tree. Internal serialization of
+that tree and decoding of already validated fields trust those invariants;
+validation remains at file, patch, API, and cryptographic boundaries.
 They preserve omitted, null, and empty patch values, and reject changes outside
 the patch contract. An SDL update against a saved Console definition is
 converted to a PATCH only when applying that patch reproduces the requested

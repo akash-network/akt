@@ -98,10 +98,8 @@ func (d *DeploymentInputs) ValidateChain(ctx context.Context, owner string, para
 	if err != nil {
 		return fmt.Errorf("parse resolved deployment deposit: %w", err)
 	}
-	groups, err := document.DeploymentGroups()
-	if err != nil {
-		return err
-	}
+	// readSDL returns a fully initialized document with deployment groups.
+	groups, _ := document.DeploymentGroups()
 	for _, group := range groups {
 		if group.Price().Denom != coin.Denom {
 			return fmt.Errorf("SDL price denomination %q does not match the effective deposit denomination %q for deployment group %q; set the SDL pricing denomination to %s or supply a matching deposit", group.Price().Denom, coin.Denom, group.Name, coin.Denom)

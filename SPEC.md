@@ -5192,6 +5192,11 @@ fully determines the deployed manifest. PATCH and create tests cover secret
 redaction, independent JOSE interoperability, preservation/rotation/removal,
 registry credentials, conflict handling, failed provider delivery, cross-device
 reads and leases, redeploy inheritance, and explicit chain rejection.
+The hermetic coverage gate also exercises malformed patch structures, YAML
+alias boundaries, missing source files and definitions, sealing-context
+failures, mismatched mutation acknowledgements, and value-safe diagnostics.
+Tests assert the rejected input or exact resulting configuration and whether
+a mutation was submitted; successful execution alone is insufficient.
 
 ## 8. TUI Specification
 

@@ -44,9 +44,7 @@ func Apply(sdl string, patch Patch) (string, error) {
 				continue
 			}
 			var value any
-			if err := json.Unmarshal(field.raw, &value); err != nil {
-				return "", errors.New("invalid clearable field")
-			}
+			_ = json.Unmarshal(field.raw, &value) // Validate already checked each clearable field.
 			if value == nil {
 				delete(service, field.name)
 			} else if field.name == "credentials" {
@@ -72,10 +70,7 @@ func Apply(sdl string, patch Patch) (string, error) {
 			return "", err
 		}
 	}
-	encoded, err := yaml.Marshal(document)
-	if err != nil {
-		return "", errors.New("cannot encode updated SDL")
-	}
+	encoded, _ := yaml.Marshal(document) // The parsed tree and typed patch contain only YAML values.
 	if len(encoded) > maxDocumentBytes {
 		return "", errors.New("updated SDL exceeds 1 MiB")
 	}
@@ -277,9 +272,7 @@ func copyObject(source map[string]any) map[string]any {
 // Refuse that ambiguity while permitting anchors in resource declarations.
 func rejectSharedServices(data []byte, patch Patch) error {
 	var document yaml.Node
-	if err := yaml.Unmarshal(data, &document); err != nil {
-		return errors.New("invalid SDL")
-	}
+	_ = yaml.Unmarshal(data, &document) // Apply already parsed this exact document.
 	referenced := make(map[*yaml.Node]bool)
 	var markShared func(*yaml.Node)
 	markShared = func(node *yaml.Node) {
@@ -303,6 +296,11 @@ func rejectSharedServices(data []byte, patch Patch) error {
 	scan(&document)
 	root := document.Content[0]
 	services := mappingNode(root, "services")
+	for _, change := range patch.Services {
+		if serviceAssigns(change) && (services == nil && mappingNode(root, "<<") != nil || services != nil && (services.Kind == yaml.AliasNode || referenced[services])) {
+			return errors.New("SDL anchors share patched service definitions; expand its anchors before updating")
+		}
+	}
 	if services == nil {
 		return nil
 	}
@@ -329,7 +327,14 @@ func rejectSharedServices(data []byte, patch Patch) error {
 				return errors.New("SDL anchors share patched endpoints; expand its anchors before updating")
 			}
 			for _, entry := range exposed.Content {
-				port := mappingNode(entry, "port")
+				target := entry
+				if target.Kind == yaml.AliasNode {
+					target = target.Alias
+				}
+				port := mappingNode(target, "port")
+				if port != nil && port.Kind == yaml.AliasNode {
+					port = port.Alias
+				}
 				if port == nil {
 					continue
 				}

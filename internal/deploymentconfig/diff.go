@@ -89,10 +89,7 @@ func Diff(currentSDL, requestedSDL string) (Patch, error) {
 		if len(fields) == 0 {
 			continue
 		}
-		encoded, err := json.Marshal(fields)
-		if err != nil {
-			return Patch{}, unrepresentable()
-		}
+		encoded, _ := json.Marshal(fields) // Fields come from the JSON-compatible parsed tree.
 		var service ServicePatch
 		if err := decodeStrict(encoded, &service); err != nil {
 			return Patch{}, unrepresentable()

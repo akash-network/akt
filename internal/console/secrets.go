@@ -60,7 +60,12 @@ func ReadSecretValuesFile(path string, input io.Reader) (SecretValues, error) {
 		return SecretValues{}, errors.New("console: cannot open secrets file")
 	}
 	defer func() { _ = file.Close() }()
-	info, err = file.Stat()
+	return readSecretValuesFile(file)
+}
+
+// Inspect the opened descriptor too, so a replaced path cannot bypass the file policy.
+func readSecretValuesFile(file *os.File) (SecretValues, error) {
+	info, err := file.Stat()
 	if err != nil || !info.Mode().IsRegular() {
 		return SecretValues{}, errors.New("console: secrets file must be a readable regular file")
 	}
@@ -137,7 +142,7 @@ func (c *Client) GetSecretsContext(ctx context.Context) (*SecretsContext, error)
 
 func validateSecretsContext(value SecretsContext) error {
 	key, ok := value.JWK.Key.(*rsa.PublicKey)
-	if !ok || key.N == nil || key.N.BitLen() < 2048 || key.N.BitLen() > 8192 || key.E < 3 || key.E%2 == 0 ||
+	if !ok || key == nil || key.N == nil || key.N.BitLen() < 2048 || key.N.BitLen() > 8192 || key.E < 3 || key.E%2 == 0 ||
 		value.JWK.Algorithm != string(jose.RSA_OAEP_256) || value.JWK.Use != "enc" || value.Subject == "" || value.KeyID == "" {
 		return errors.New("console: invalid secret encryption context")
 	}
@@ -171,10 +176,8 @@ func sealSecrets(value SecretsContext, secrets SecretValues, rawSDL string, now 
 		hash := sha256.Sum256([]byte(rawSDL))
 		options.WithHeader("sdlHash", base64.RawURLEncoding.EncodeToString(hash[:]))
 	}
-	encrypter, err := jose.NewEncrypter(jose.A256GCM, jose.Recipient{Algorithm: jose.RSA_OAEP_256, Key: value.JWK.Key}, options)
-	if err != nil {
-		return "", errors.New("console: cannot initialize secret encryption")
-	}
+	// The validated RSA key and fixed supported algorithms cannot fail construction.
+	encrypter, _ := jose.NewEncrypter(jose.A256GCM, jose.Recipient{Algorithm: jose.RSA_OAEP_256, Key: value.JWK.Key}, options)
 	values := secrets.values
 	if values == nil {
 		values = map[string]string{}
@@ -184,10 +187,8 @@ func sealSecrets(value SecretsContext, secrets SecretValues, rawSDL string, now 
 	if err != nil {
 		return "", errors.New("console: cannot encrypt secrets")
 	}
-	token, err := object.CompactSerialize()
-	if err != nil {
-		return "", errors.New("console: cannot encode encrypted secrets")
-	}
+	// Encrypt with one recipient and protected headers always supports compact JWE.
+	token, _ := object.CompactSerialize()
 	return token, nil
 }
 

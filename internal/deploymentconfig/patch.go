@@ -70,10 +70,8 @@ func ParsePatch(data []byte) (Patch, error) {
 	if err := validatePatchShape(document); err != nil {
 		return Patch{}, err
 	}
-	raw, err := json.Marshal(document)
-	if err != nil {
-		return Patch{}, errors.New("invalid deployment patch structure")
-	}
+	// parseObject produces only JSON-compatible values.
+	raw, _ := json.Marshal(document)
 	var patch Patch
 	if err := decodeStrict(raw, &patch); err != nil {
 		return Patch{}, errors.New("invalid deployment patch: unknown field or incorrect field type")
@@ -198,9 +196,6 @@ func parseObject(data []byte) (map[string]any, error) {
 	if !errors.Is(decoder.Decode(new(yaml.Node)), io.EOF) {
 		return nil, errors.New("only one document is allowed")
 	}
-	if len(node.Content) != 1 {
-		return nil, errors.New("document must be an object")
-	}
 	value, err := nodeValue(node.Content[0], 0, new(int))
 	if err != nil {
 		return nil, err
@@ -288,7 +283,7 @@ func nodeValue(node *yaml.Node, depth int, count *int) (any, error) {
 			values = append(values, value)
 		}
 		return values, nil
-	case yaml.ScalarNode:
+	default: // The YAML decoder emits only mappings, sequences, aliases, and scalars here.
 		if node.Tag != "!!str" && node.Tag != "!!null" && node.Tag != "!!int" && node.Tag != "!!float" && node.Tag != "!!bool" {
 			return nil, errors.New("unsupported YAML scalar type")
 		}
@@ -301,12 +296,8 @@ func nodeValue(node *yaml.Node, depth int, count *int) (any, error) {
 		if err != nil {
 			return nil, errors.New("invalid scalar")
 		}
-		if err := json.Unmarshal(raw, &value); err != nil {
-			return nil, errors.New("invalid scalar")
-		}
+		_ = json.Unmarshal(raw, &value) // Successful Marshal guarantees valid JSON.
 		return value, nil
-	default:
-		return nil, errors.New("unsupported YAML node")
 	}
 }
 

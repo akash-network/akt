@@ -90,3 +90,27 @@ func TestRawDeploymentTransactionsRejectConsoleReferencesBeforeClients(t *testin
 		}
 	}
 }
+
+func TestChainSDLReadFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name, content string
+		missing       bool
+	}{{"missing", "", true}, {"malformed", "services: [", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "deployment.yaml")
+			if !tc.missing {
+				require.NoError(t, os.WriteFile(path, []byte(tc.content), 0600))
+			}
+			_, err := readChainDeploymentSDL(path)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestChainSDLReadDelegatesSchemaValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "deployment.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("version: invalid\nservices: {}\n"), 0600))
+	document, err := readChainDeploymentSDL(path)
+	require.Error(t, err)
+	require.Nil(t, document)
+}
