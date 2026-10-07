@@ -7,6 +7,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"debug/buildinfo"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -15,6 +16,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -30,6 +32,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	aktcodec "pkg.akt.dev/akt/internal/codec"
+	"pkg.akt.dev/go/sdkutil"
 )
 
 // Deterministic BIP39 mnemonic used for recovery tests. The derived address
@@ -146,11 +149,15 @@ func TestKeysLifecycle(t *testing.T) {
 	}
 
 	// Node-compatible flags must survive the real context command wiring.
-	addressBytes, err := sdk.GetFromBech32(addr, "akash")
+	addressBytes, err := sdk.GetFromBech32(addr, sdkutil.Bech32PrefixAccAddr)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for flag, prefix := range map[string]string{"val": "akashvaloper", "cons": "akashvalcons"} {
+	for flag, prefix := range map[string]string{
+		"acc":  sdkutil.Bech32PrefixAccAddr,
+		"val":  sdkutil.Bech32PrefixValAddr,
+		"cons": sdkutil.Bech32PrefixConsAddr,
+	} {
 		out := mustRunAkt(t, home, "context", "keys", "show", "alice", "-a", "--bech", flag)
 		decoded, err := sdk.GetFromBech32(strings.TrimSpace(out), prefix)
 		if err != nil || !bytes.Equal(decoded, addressBytes) {
@@ -1073,10 +1080,6 @@ func TestConfigFreeCommandsSkipBootstrap(t *testing.T) {
 }
 
 func TestBinaryReportsReleaseBuildTags(t *testing.T) {
-	if os.Getenv("GOCOVERDIR") == "" {
-		t.Skip("release-tag assertion applies to coverage-instrumented E2E lanes")
-	}
-
 	home := t.TempDir()
 	stdout, stderr, exitCode := runAkt(t, home, "version", "--long", "--output", "json")
 	if exitCode != 0 {
@@ -1089,10 +1092,34 @@ func TestBinaryReportsReleaseBuildTags(t *testing.T) {
 	if err := json.Unmarshal([]byte(stdout), &version); err != nil {
 		t.Fatalf("decode version build metadata: %v\n%s", err, stdout)
 	}
-	for _, tag := range []string{"osusergo", "netgo", "ledger", "muslc", "gcc", "nolink_libwasmvm"} {
-		if !strings.Contains(","+version.BuildTags+",", ","+tag+",") {
-			t.Errorf("instrumented akt build tags %q are missing release tag %q", version.BuildTags, tag)
+	info, err := buildinfo.ReadFile(aktBinary(t))
+	if err != nil {
+		t.Fatalf("read akt compiler build information: %v", err)
+	}
+	settings := make(map[string]string)
+	for _, setting := range info.Settings {
+		settings[setting.Key] = setting.Value
+	}
+	if settings["CGO_ENABLED"] != "1" {
+		t.Error("release binary must retain cgo for Ledger support")
+	}
+	for name, value := range map[string]string{"reported": version.BuildTags, "compiler": settings["-tags"]} {
+		tags := strings.Split(value, ",")
+		for _, tag := range []string{"osusergo", "ledger", "muslc", "gcc", "nolink_libwasmvm"} {
+			if !slices.Contains(tags, tag) {
+				t.Errorf("%s build tags %q are missing release tag %q", name, value, tag)
+			}
 		}
+		if slices.Contains(tags, "netgo") {
+			t.Errorf("%s build tags %q must omit netgo to allow system DNS resolution", name, value)
+		}
+	}
+	reported := strings.Split(version.BuildTags, ",")
+	compiled := strings.Split(settings["-tags"], ",")
+	slices.Sort(reported)
+	slices.Sort(compiled)
+	if !slices.Equal(reported, compiled) {
+		t.Errorf("reported build tags %v differ from compiler tags %v", reported, compiled)
 	}
 }
 

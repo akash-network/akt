@@ -1430,6 +1430,11 @@ warn on stderr and include the repeated public key. Invalid flag combinations
 and thresholds fail before opening the keyring. Every output path, including
 QR rendering, propagates writer failures (§10.1.1).
 
+Offline key lifecycle tests MUST use chain-sdk's `sdkutil.Bech32PrefixAccAddr`,
+`sdkutil.Bech32PrefixValAddr`, and `sdkutil.Bech32PrefixConsAddr` constants for
+expected address prefixes. The `acc`, `val`, and `cons` CLI values remain
+literal assertions of the public interface (§12.1).
+
 #### `akt context keys parse <hex-or-bech32>`
 
 Parse an address and render its canonical uppercase hex form plus full bech32
@@ -3175,12 +3180,20 @@ commit:     909f1735b99d83a9ab52a0e6bee32ca7e7402672
 built:      2026-07-27T04:20:51Z
 go:         go1.26.1
 platform:   darwin/arm64
-build tags: osusergo,netgo,ledger,muslc,gcc
+build tags: osusergo,ledger,muslc,gcc,nolink_libwasmvm
 ```
 
 The long form is the form to include in bug reports: the build tags and
 platform determine which keyring backends and cgo-dependent features are
 compiled in.
+
+Darwin and Linux builds MUST omit `netgo` so Go can select the appropriate
+resolver, preserving macOS system DNS routing and Linux libc/NSS integration
+where required, including VPN and split DNS configuration. Local Make builds,
+GoReleaser artifacts installed by Homebrew, and coverage binaries MUST use the
+same tags across platforms.
+Both platforms retain cgo and `ledger` support; resolver selection MUST NOT
+disable hardware-wallet signing. Reported build tags MUST match compiler tags.
 
 #### `akt completion <shell>`
 
@@ -7409,9 +7422,11 @@ GOCOVERDIR=<unique-shard-directory> <test-command>
 ```
 
 The instrumented binary MUST use the release binary's semantic build tags and
-build metadata. Instrumentation may omit only linker or stripping options that
-are incompatible with coverage; it MUST NOT select a different source or
-dependency path. E2E asserts the reported build tags.
+build metadata for the same platform (§2.12). Instrumentation may omit only
+linker or stripping options that are incompatible with coverage; it MUST NOT
+select a different source or dependency path. E2E asserts both reported tags
+and compiler build information for ordinary and instrumented binaries,
+including the absence of `netgo` and the presence of Ledger support.
 
 Every raw counter shard is bound to the tracked environment recipes (`.env`,
 `.envrc`), the collection CI workflow, all Make recipes, and a canonical
@@ -7646,8 +7661,10 @@ includes files omitted by build constraints, so adding a build tag cannot hide
 code from the coverage contract.
 Every GoReleaser build used to validate the release-equivalent profile MUST
 identify `./cmd/akt` as its main package as well as carrying the canonical build
-tags. A correctly tagged auxiliary binary is not evidence for the shipped
-`akt` denominator.
+tags for every explicitly declared target OS. Validation MUST reject `netgo`
+on every target, including the local release-tag input. All tags MUST match
+across platforms. A correctly tagged
+auxiliary binary is not evidence for the shipped `akt` denominator.
 
 Critical packages are packages that control money, credentials, persistent
 state, state-changing commands, action logs, workflow execution, or wire

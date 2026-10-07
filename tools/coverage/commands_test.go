@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -529,10 +530,11 @@ func TestRunValidateChecksRealTemporaryModule(t *testing.T) {
 		"",
 	}, "\n"))
 	exceptionsFile := commandTestWriteFile(t, root, "coverage/exceptions.tsv", "package\tfile\tline\treason\towner\tevidence\treview_deadline\n")
-	commandTestWriteFile(t, root, ".goreleaser.yaml", "builds:\n  - id: sample\n    main: ./cmd/akt\n    flags:\n      - -tags=netgo\n")
+	releaseTags := "osusergo"
+	commandTestWriteFile(t, root, ".goreleaser.yaml", fmt.Sprintf("builds:\n  - id: sample\n    main: ./cmd/akt\n    goos: [%s]\n    flags:\n      - -tags=%s\n", runtime.GOOS, releaseTags))
 
 	stdout, err := commandTestCaptureStdout(t, func() error {
-		return run([]string{"validate", "-packages", packagesFile, "-exceptions", exceptionsFile, "-release-tags", "netgo"})
+		return run([]string{"validate", "-packages", packagesFile, "-exceptions", exceptionsFile, "-release-tags", releaseTags})
 	})
 	if err != nil {
 		t.Fatalf("run validate: %v", err)
@@ -543,10 +545,10 @@ func TestRunValidateChecksRealTemporaryModule(t *testing.T) {
 	if err := run([]string{"validate", "-packages", packagesFile, "-exceptions", exceptionsFile, "-release-tags=-bad"}); err == nil || !strings.Contains(err.Error(), "release tags: invalid build tag") {
 		t.Fatalf("validate invalid release tags error = %v", err)
 	}
-	if err := run([]string{"validate", "-packages", packagesFile, "-exceptions", filepath.Join(root, "missing-exceptions.tsv"), "-release-tags", "netgo"}); err == nil || !strings.Contains(err.Error(), "open exceptions") {
+	if err := run([]string{"validate", "-packages", packagesFile, "-exceptions", filepath.Join(root, "missing-exceptions.tsv"), "-release-tags", releaseTags}); err == nil || !strings.Contains(err.Error(), "open exceptions") {
 		t.Fatalf("validate missing exceptions error = %v", err)
 	}
-	if err := run([]string{"validate", "-packages", filepath.Join(root, "missing-packages.tsv"), "-exceptions", exceptionsFile, "-release-tags", "netgo"}); err == nil || !strings.Contains(err.Error(), "open package taxonomy") {
+	if err := run([]string{"validate", "-packages", filepath.Join(root, "missing-packages.tsv"), "-exceptions", exceptionsFile, "-release-tags", releaseTags}); err == nil || !strings.Contains(err.Error(), "open package taxonomy") {
 		t.Fatalf("validate missing packages error = %v", err)
 	}
 
@@ -558,7 +560,7 @@ func TestRunValidateChecksRealTemporaryModule(t *testing.T) {
 	if err := os.WriteFile(workflow, []byte("jobs:\n  test:\n    uses: owner/repo/.github/workflows/test.yml@main\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := run([]string{"validate", "-packages", packagesFile, "-exceptions", exceptionsFile, "-release-tags", "netgo"}); err == nil || !strings.Contains(err.Error(), "40-character commit SHA") {
+	if err := run([]string{"validate", "-packages", packagesFile, "-exceptions", exceptionsFile, "-release-tags", releaseTags}); err == nil || !strings.Contains(err.Error(), "40-character commit SHA") {
 		t.Fatalf("validate floating workflow action error = %v", err)
 	}
 	if err := os.Remove(workflow); err != nil {
@@ -572,7 +574,7 @@ func TestRunValidateChecksRealTemporaryModule(t *testing.T) {
 	if err := os.Symlink("go.mod", filepath.Join(nested, "go.mod")); err != nil {
 		t.Fatal(err)
 	}
-	if err := run([]string{"validate", "-packages", packagesFile, "-exceptions", exceptionsFile, "-release-tags", "netgo"}); err == nil || !strings.Contains(err.Error(), "inspect nested module") {
+	if err := run([]string{"validate", "-packages", packagesFile, "-exceptions", exceptionsFile, "-release-tags", releaseTags}); err == nil || !strings.Contains(err.Error(), "inspect nested module") {
 		t.Fatalf("validate source discovery error = %v", err)
 	}
 	if err := os.Remove(filepath.Join(nested, "go.mod")); err != nil {
@@ -587,7 +589,7 @@ func TestRunValidateChecksRealTemporaryModule(t *testing.T) {
 	if err := os.Rename(aktDirectory, hiddenDirectory); err != nil {
 		t.Fatal(err)
 	}
-	if err := run([]string{"validate", "-packages", packagesFile, "-exceptions", exceptionsFile, "-release-tags", "netgo"}); err == nil || !strings.Contains(err.Error(), "go list dependencies") {
+	if err := run([]string{"validate", "-packages", packagesFile, "-exceptions", exceptionsFile, "-release-tags", releaseTags}); err == nil || !strings.Contains(err.Error(), "go list dependencies") {
 		t.Fatalf("validate release dependency inventory error = %v", err)
 	}
 	if err := os.Rename(hiddenDirectory, aktDirectory); err != nil {
@@ -599,7 +601,7 @@ func TestRunValidateChecksRealTemporaryModule(t *testing.T) {
 	if err := os.WriteFile(packagesFile, []byte(withStalePackage), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := run([]string{"validate", "-packages", packagesFile, "-exceptions", exceptionsFile, "-release-tags", "netgo"}); err == nil || !strings.Contains(err.Error(), "stale package entry") {
+	if err := run([]string{"validate", "-packages", packagesFile, "-exceptions", exceptionsFile, "-release-tags", releaseTags}); err == nil || !strings.Contains(err.Error(), "stale package entry") {
 		t.Fatalf("validate taxonomy drift error = %v", err)
 	}
 	if err := os.WriteFile(packagesFile, []byte(validPackages), 0o600); err != nil {
@@ -609,7 +611,7 @@ func TestRunValidateChecksRealTemporaryModule(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, ".goreleaser.yaml"), []byte("builds: [\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := run([]string{"validate", "-packages", packagesFile, "-exceptions", exceptionsFile, "-release-tags", "netgo"}); err == nil || !strings.Contains(err.Error(), "parse goreleaser configuration") {
+	if err := run([]string{"validate", "-packages", packagesFile, "-exceptions", exceptionsFile, "-release-tags", releaseTags}); err == nil || !strings.Contains(err.Error(), "parse goreleaser configuration") {
 		t.Fatalf("validate malformed goreleaser error = %v", err)
 	}
 }

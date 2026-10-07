@@ -1033,39 +1033,44 @@ func TestValidateReleaseTagsRequiresEveryGoreleaserBuildToMatch(t *testing.T) {
 
 	matching := writeTempFile(t, ".goreleaser.yaml", `builds:
   - main: ./cmd/akt
+    goos: [linux]
     flags:
-      - -tags=netgo,ledger
+      - -tags=osusergo,ledger
   - main: ./cmd/akt
+    goos: [linux]
     flags:
-      - -tags=netgo,ledger
+      - -tags=osusergo,ledger
 `)
-	if err := validateGoreleaserReleaseTags(matching, "ledger,netgo"); err != nil {
+	if err := validateGoreleaserReleaseTags(matching, "ledger,osusergo"); err != nil {
 		t.Fatalf("matching release tags: %v", err)
 	}
 	splitFlag := writeTempFile(t, ".goreleaser.yaml", `builds:
   - main: ./cmd/akt
+    goos: [linux]
     flags:
       - -tags
-      - netgo,ledger
+      - osusergo,ledger
 `)
-	if err := validateGoreleaserReleaseTags(splitFlag, "ledger,netgo"); err != nil {
+	if err := validateGoreleaserReleaseTags(splitFlag, "ledger,osusergo"); err != nil {
 		t.Fatalf("split release tag flag: %v", err)
 	}
 
 	drifted := writeTempFile(t, ".goreleaser.yaml", `builds:
   - main: ./cmd/akt
+    goos: [linux]
     flags:
-      - -tags=netgo,ledger
+      - -tags=osusergo,ledger
   - main: ./cmd/akt
+    goos: [linux]
     flags:
-      - -tags=netgo,cgo
+      - -tags=osusergo,cgo
 `)
-	err := validateGoreleaserReleaseTags(drifted, "ledger,netgo")
+	err := validateGoreleaserReleaseTags(drifted, "ledger,osusergo")
 	if err == nil || !strings.Contains(err.Error(), `build "2" -tags`) {
 		t.Fatalf("drifted release tags error = %v, want per-build rejection", err)
 	}
 
-	err = validateGoreleaserReleaseTags(matching, "netgo,cgo")
+	err = validateGoreleaserReleaseTags(matching, "osusergo,cgo")
 	if err == nil || !strings.Contains(err.Error(), "do not match -release-tags") {
 		t.Fatalf("mismatched Make release tags error = %v, want parity rejection", err)
 	}
@@ -1073,15 +1078,17 @@ func TestValidateReleaseTagsRequiresEveryGoreleaserBuildToMatch(t *testing.T) {
 	missing := writeTempFile(t, ".goreleaser.yaml", `builds:
   - id: tagged
     main: ./cmd/akt
+    goos: [linux]
     flags:
-      - -tags=netgo,ledger
+      - -tags=osusergo,ledger
   - id: untagged
     main: ./cmd/akt
+    goos: [linux]
     flags:
       - -trimpath
-# A comment is not a build flag: -tags=netgo,ledger
+# A comment is not a build flag: -tags=osusergo,ledger
 `)
-	err = validateGoreleaserReleaseTags(missing, "ledger,netgo")
+	err = validateGoreleaserReleaseTags(missing, "ledger,osusergo")
 	if err == nil || !strings.Contains(err.Error(), `build "untagged" must have exactly one -tags flag`) {
 		t.Fatalf("missing release tags error = %v, want untagged-build rejection", err)
 	}
@@ -1089,10 +1096,11 @@ func TestValidateReleaseTagsRequiresEveryGoreleaserBuildToMatch(t *testing.T) {
 	wrongMain := writeTempFile(t, ".goreleaser.yaml", `builds:
   - id: auxiliary
     main: ./cmd/helper
+    goos: [linux]
     flags:
-      - -tags=netgo,ledger
+      - -tags=osusergo,ledger
 `)
-	err = validateGoreleaserReleaseTags(wrongMain, "ledger,netgo")
+	err = validateGoreleaserReleaseTags(wrongMain, "ledger,osusergo")
 	if err == nil || !strings.Contains(err.Error(), `build "auxiliary" main package must be ./cmd/akt`) {
 		t.Fatalf("wrong main package error = %v, want shipped-binary rejection", err)
 	}
@@ -1114,8 +1122,63 @@ func TestValidateReleaseTagsRequiresEveryGoreleaserBuildToMatch(t *testing.T) {
 			if filename == "" {
 				filename = writeTempFile(t, ".goreleaser.yaml", test.contents)
 			}
-			if err := validateGoreleaserReleaseTags(filename, "ledger,netgo"); err == nil || !strings.Contains(err.Error(), test.want) {
+			if err := validateGoreleaserReleaseTags(filename, "ledger,osusergo"); err == nil || !strings.Contains(err.Error(), test.want) {
 				t.Fatalf("validateGoreleaserReleaseTags() error = %v, want containing %q", err, test.want)
+			}
+		})
+	}
+}
+
+func TestValidateReleaseTagsAllowsLinuxSystemResolver(t *testing.T) {
+	filename := writeTempFile(t, ".goreleaser.yaml", `builds:
+  - id: linux
+    main: ./cmd/akt
+    goos: [linux]
+    flags: [-tags=ledger]
+`)
+	if err := validateGoreleaserReleaseTags(filename, "ledger"); err != nil {
+		t.Fatalf("Linux must allow system DNS resolution: %v", err)
+	}
+}
+
+func TestValidateReleaseTagsAllowsSystemResolvers(t *testing.T) {
+	t.Parallel()
+	const configuration = `builds:
+  - id: mac
+    main: ./cmd/akt
+    goos: [darwin]
+    flags: [-tags=ledger]
+  - id: linux
+    main: ./cmd/akt
+    goos: [linux]
+    flags: ["-tags=ledger"]
+`
+	for _, test := range []struct {
+		name, tags, old, replacement, want string
+	}{
+		{name: "matching targets", tags: "ledger"},
+		{name: "local build forces Go DNS", tags: "netgo,ledger", want: "release tags must omit netgo"},
+		{name: "release mac forces Go DNS", tags: "ledger", old: "flags: [-tags=ledger]", replacement: `flags: ["-tags=ledger,netgo"]`, want: `build "mac" -tags`},
+		{name: "release linux forces Go DNS", tags: "ledger", old: `flags: ["-tags=ledger"]`, replacement: `flags: ["-tags=ledger,netgo"]`, want: `build "linux" -tags`},
+		{name: "other tags must still match", tags: "ledger", old: `flags: ["-tags=ledger"]`, replacement: `flags: ["-tags=osusergo"]`, want: `build "linux" -tags`},
+		{name: "shared target tags", tags: "ledger", old: "goos: [darwin]", replacement: "goos: [darwin, linux]"},
+		{name: "explicit target required", tags: "ledger", old: "goos: [darwin]", replacement: "goos: []", want: "must declare goos"},
+		{name: "empty target rejected", tags: "ledger", old: "goos: [darwin]", replacement: "goos: [\"\"]", want: "must declare goos"},
+		{name: "empty release tags", want: "release tags:"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			contents := configuration
+			if test.old != "" {
+				contents = strings.Replace(contents, test.old, test.replacement, 1)
+			}
+			filename := writeTempFile(t, ".goreleaser.yaml", contents)
+			err := validateGoreleaserReleaseTags(filename, test.tags)
+			if test.want == "" {
+				if err != nil {
+					t.Fatal(err)
+				}
+			} else if err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("error = %v, want containing %q", err, test.want)
 			}
 		})
 	}
