@@ -1,10 +1,19 @@
 [1;38;2;244;244;245mProvider Details[m
 
 [38;2;113;113;122mName:[m            [38;2;228;228;231mProvider 0[m
-[38;2;113;113;122mURL:[m             [38;2;228;228;231mprovider0.example.com[m
+[38;2;113;113;122mURL:[m             [38;2;228;228;231mhttps://provider0.example.com:8443[m
 [38;2;113;113;122mVersion:[m         [38;2;34;197;94m0.6.4[m
 [38;2;113;113;122mLocation:[m        [38;2;228;228;231mUS[m
 [38;2;113;113;122mTotal:[m           CPU [38;2;228;228;231m8/16[m | Memory [38;2;228;228;231m16Gi/32Gi[m
 
 [1;38;2;244;244;245mNodes (3 total, 6/12 GPUs avail)[m
 [38;2;113;113;122mNode                [m[38;2;113;113;122mCPU           [m[38;2;113;113;122mMemory          [m[38;2;113;113;122mGPU                           [m
+[1;38;2;228;228;231mnode-0              8/16          32Gi/64Gi       2/4 NVIDIA H100 (80Gi)        [m
+node-1              16/32         64Gi/128Gi      2/4 NVIDIA H100 (80Gi)        
+node-2              24/48         96Gi/192Gi      2/4 NVIDIA H100 (80Gi)        
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                
+                                                                                

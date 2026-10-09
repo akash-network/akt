@@ -4,8 +4,33 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"pkg.akt.dev/akt/internal/tui/components"
 )
+
+func TestResourceTablePreservesIdentifiers(t *testing.T) {
+	values := []string{
+		"18446744073709551615",
+		"akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx",
+		"https://provider.example.com:8443/gateway",
+	}
+	for _, width := range []int{0, 8} {
+		tbl := components.NewResourceTable(components.ResourceTableConfig{Columns: []components.TableColumn{
+			{Header: "ID", Width: width},
+			{Header: "PROVIDER", Width: width},
+			{Header: "ENDPOINT", Width: width},
+		}})
+		tbl.SetSize(30, 10)
+		tbl.SetRows([]components.TableRow{{Cells: values}})
+		out := ansi.Strip(tbl.View())
+		for _, value := range values {
+			if !strings.Contains(out, value) {
+				t.Errorf("column width %d: full value %s missing: %s", width, value, out)
+			}
+		}
+	}
+}
 
 func TestResourceTableRender(t *testing.T) {
 	cfg := components.ResourceTableConfig{

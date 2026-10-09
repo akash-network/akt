@@ -236,8 +236,7 @@ func newTestBlockTableModel(state *consensus.State, history []BlockRecord) table
 			fmt.Sprintf("%d/%d", rec.Round, rec.Step),
 		})
 	}
-	t.SetRows(rows)
-	t.UpdateViewport()
+	setTableRows(&t, rows)
 	return t
 }
 
@@ -260,14 +259,10 @@ func newTestValidatorTableModel(state *consensus.State, monikers map[string]stri
 	if state == nil || len(state.Validators) == 0 {
 		return t
 	}
-	nameW := 28
 	blocksW := 40
 	rows := make([]table.Row, len(state.Validators))
 	for i, v := range state.Validators {
 		displayName := getValidatorDisplayName(v, monikers)
-		if len(displayName) > nameW {
-			displayName = displayName[:nameW-3] + "..."
-		}
 		power := formatPower(v.VotingPower)
 		pct := ""
 		if state.TotalVotingPower > 0 {
@@ -283,8 +278,7 @@ func newTestValidatorTableModel(state *consensus.State, monikers map[string]stri
 			bar,
 		}
 	}
-	t.SetRows(rows)
-	t.UpdateViewport()
+	setTableRows(&t, rows)
 	return t
 }
 
@@ -316,7 +310,7 @@ func newTestProviderTableModel(providers []rpc.Provider) table.Model {
 		}
 		rows[i] = table.Row{
 			fmt.Sprintf("%d", i+1),
-			formatProviderURL(p.HostURI, colWidthProvider-2),
+			p.HostURI,
 			p.AkashVersion,
 			formatResourceRatio(p.CPUAvailable/1000, p.CPUTotal/1000),
 			formatMemoryRatio(p.MemAvailable, p.MemTotal),
@@ -324,8 +318,7 @@ func newTestProviderTableModel(providers []rpc.Provider) table.Model {
 			country,
 		}
 	}
-	t.SetRows(rows)
-	t.UpdateViewport()
+	setTableRows(&t, rows)
 	return t
 }
 
@@ -358,8 +351,7 @@ func newTestNodeTableModel(nodes []rpc.ProviderNodeWithGPU) table.Model {
 			formatNodeGPU(node),
 		}
 	}
-	t.SetRows(rows)
-	t.UpdateViewport()
+	setTableRows(&t, rows)
 	return t
 }
 

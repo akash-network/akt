@@ -100,37 +100,6 @@ func TestFormatMemoryRatio(t *testing.T) {
 	}
 }
 
-func TestFormatProviderURL(t *testing.T) {
-	tests := map[string]struct {
-		hostURI string
-		maxLen  int
-	}{
-		"Short":         {"https://short.com:8443", 30},
-		"Long":          {"https://very-long-provider-name.example.com:8443", 20},
-		"HTTPSStripped": {"https://provider.akash.network:8443", 34},
-	}
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			golden.RequireEqual(t, formatProviderURL(tc.hostURI, tc.maxLen))
-		})
-	}
-}
-
-func TestTruncateAddress(t *testing.T) {
-	tests := map[string]struct {
-		addr   string
-		maxLen int
-	}{
-		"Short": {"ABCDEF", 12},
-		"Long":  {"ABCDEF1234567890ABCDEF", 12},
-	}
-	for name, tc := range tests {
-		t.Run(name, func(t *testing.T) {
-			golden.RequireEqual(t, truncateAddress(tc.addr, tc.maxLen))
-		})
-	}
-}
-
 func TestStripEmojis(t *testing.T) {
 	tests := map[string]struct {
 		input string
@@ -202,9 +171,9 @@ func TestFormatGPUModel(t *testing.T) {
 	tests := map[string]struct {
 		gpu rpc.GPUInfo
 	}{
-		"NVIDIA":        {rpc.GPUInfo{Vendor: "nvidia", Name: "H100", MemorySize: "80Gi"}},
-		"LongTruncated": {rpc.GPUInfo{Vendor: "nvidia", Name: "Very Long GPU Model Name That Exceeds Limits", MemorySize: "80Gi"}},
-		"WithMemory":    {rpc.GPUInfo{Vendor: "amd", Name: "MI300X", MemorySize: "192Gi"}},
+		"NVIDIA":     {rpc.GPUInfo{Vendor: "nvidia", Name: "H100", MemorySize: "80Gi"}},
+		"LongModel":  {rpc.GPUInfo{Vendor: "nvidia", Name: "Very Long GPU Model Name That Exceeds Limits", MemorySize: "80Gi"}},
+		"WithMemory": {rpc.GPUInfo{Vendor: "amd", Name: "MI300X", MemorySize: "192Gi"}},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {

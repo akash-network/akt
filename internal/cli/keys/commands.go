@@ -508,7 +508,7 @@ func listCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 					rec.Name,
 					rec.GetType().String(),
 					addr.String(),
-					pubkeyHex[:16] + "...",
+					pubkeyHex,
 				})
 				data = append(data, keyRow{
 					Name:    rec.Name,

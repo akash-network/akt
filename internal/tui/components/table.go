@@ -23,7 +23,7 @@ const (
 // TableColumn defines a single column in a ResourceTable.
 type TableColumn struct {
 	Header     string
-	Width      int                       // character width (0 = fill remaining space)
+	Width      int                       // minimum character width (0 = fill remaining space)
 	Align      Alignment                 // left or right alignment
 	RenderFunc func(value string) string // optional custom cell renderer (e.g., state tags)
 }
@@ -41,7 +41,7 @@ type ResourceTableConfig struct {
 }
 
 // ResourceTable is a reusable table component for list views. It renders
-// fixed-width columns using fmt.Sprintf("%-*s") to prevent row wrapping.
+// columns wide enough to retain complete cell values.
 type ResourceTable struct {
 	config   ResourceTableConfig
 	rows     []TableRow
@@ -153,6 +153,11 @@ func (t ResourceTable) View() string {
 
 	// Compute column widths
 	colWidths := t.computeColumnWidths(w)
+	rowWidth := 2 + len(colWidths) - 1
+	for _, width := range colWidths {
+		rowWidth += width
+	}
+	w = max(w, rowWidth)
 
 	// Header styles
 	headerStyle := lipgloss.NewStyle().Foreground(theme.Slate500)
@@ -235,7 +240,7 @@ func (t ResourceTable) View() string {
 				}
 				cellParts = append(cellParts, rendered)
 			} else {
-				// Standard cell: truncate + pad with fmt.Sprintf
+				// Standard cell: pad to the column's minimum width.
 				style := normalStyle
 				if isSelected {
 					style = selectedStyle
@@ -329,19 +334,10 @@ func (t *ResourceTable) applyFilterAndSort() {
 	t.ensureVisible()
 }
 
-// fmtCell formats a cell value to a fixed width, truncating with "…" if needed.
+// fmtCell pads a cell to its minimum width without shortening its value.
 func fmtCell(text string, width int, align Alignment) string {
 	if width <= 0 {
 		return text
-	}
-	// Truncate if text exceeds width
-	runes := []rune(text)
-	if len(runes) > width {
-		if width > 1 {
-			text = string(runes[:width-1]) + "…"
-		} else {
-			text = "…"
-		}
 	}
 	if align == AlignRight {
 		return fmt.Sprintf("%*s", width, text)
@@ -391,5 +387,13 @@ func (t ResourceTable) computeColumnWidths(totalWidth int) []int {
 		}
 	}
 
+	for i, col := range t.config.Columns {
+		widths[i] = max(widths[i], lipgloss.Width(col.Header))
+		for _, row := range t.filtered {
+			if i < len(row.Cells) {
+				widths[i] = max(widths[i], lipgloss.Width(row.Cells[i]))
+			}
+		}
+	}
 	return widths
 }

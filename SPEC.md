@@ -6023,9 +6023,9 @@ output into prose.
 ```
 Deployment
   DSEQ:       12345
-  Owner:      akash1abcdef...full
+  Owner:      akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx
   State:      active
-  Hash:       A1B2C3...
+  Hash:       A1B2C3D4E5F60718293A4B5C6D7E8F90123456789ABCDEF00123456789ABCDEF
   Created At: 1,234,567
 
 Group 1: "web"
@@ -6108,6 +6108,20 @@ This rule applies to every resource type that appears in both contexts: BME stat
 ### 10.9 Address Formatting
 
 Addresses are **always displayed in full**. Never truncated or shortened by default. Addresses are machine-parseable identifiers; truncation risks ambiguity and breaks copy-paste workflows. Users who need shorter output can pipe through `cut` or `jq`.
+
+The same rule applies to checksums, hashes, public keys, resource IDs, node
+names, GPU model names, and endpoint URLs. Their suffixes are significant: two
+values with the same prefix must remain distinguishable. Key lists print the
+same complete hex public key as key details. Provider URLs retain their scheme, port, and path,
+including IPv6 literals. Consensus proposers and validators without a moniker
+show their complete addresses; validator details show the complete public key.
+
+CLI, monitor, and experimental TUI tables treat column widths as minimums and
+grow them to fit complete values. Monitor table viewports retain the entire row
+when it exceeds the terminal width; a wider terminal reveals the wider table.
+The experimental wallet panel also retains the full account address. Human
+text previews (such as proposal titles and log summaries) and secret masking
+keep their existing behavior.
 
 | Context | Format | Example |
 |---------|--------|---------|
@@ -6287,7 +6301,9 @@ machine values.
 
 #### WASM
 
-**Code list**: Table with CODE ID, CREATOR, CHECKSUM.
+**Code list**: Table with CODE ID, CREATOR, CHECKSUM. CHECKSUM contains the full
+hex-encoded data hash, matching the checksum in code details. No prefix-only
+display or ellipsis is permitted.
 **Contract** (detail): Key-value with address, code ID, admin, label, created.
 **Contract state smart**: Pretty-printed JSON (results are arbitrary user-defined JSON).
 

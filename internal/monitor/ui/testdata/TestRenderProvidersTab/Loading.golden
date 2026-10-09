@@ -9,3 +9,17 @@
 
 [1;38;2;244;244;245mProviders (5 total, 2 on 0.6.4)[m
 [38;2;113;113;122m#   [m[38;2;113;113;122mProvider                            [m[38;2;113;113;122mVersion       [m[38;2;113;113;122mCPU         [m[38;2;113;113;122mMemory      [m[38;2;113;113;122mGPU               [m[38;2;113;113;122mLoc [m
+[1;38;2;228;228;231m1   https://provider0.example.com:8443  0.6.4         8/16        16Gi/32Gi   0/1 H100          US  [m
+2   https://provider1.example.com:8443  0.6.3         16/32       32Gi/64Gi   1/2 H100          DE  
+3   https://provider2.example.com:8443  0.6.2         24/48       48Gi/96Gi   2/3 H100          SG  
+4   https://provider3.example.com:8443  0.6.4         32/64       64Gi/128Gi  0/1 H100          JP  
+5   https://provider4.example.com:8443  0.6.3         40/80       80Gi/160Gi  1/2 H100          GB  
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
+                                                                                                    
