@@ -3,6 +3,8 @@ package transport
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +13,7 @@ import (
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	jose "github.com/go-jose/go-jose/v4"
 
 	"pkg.akt.dev/akt/internal/console"
 	"pkg.akt.dev/akt/internal/workflow/steps"
@@ -147,8 +150,20 @@ func TestChainTransportKindAndRouting(t *testing.T) {
 func TestConsoleTransportKindAndRouting(t *testing.T) {
 	var gotMethod, gotPath string
 	var gotData map[string]any
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/sdl-secrets-context" {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": console.SecretsContext{
+				Subject: "test-subject", KeyID: "test-key",
+				JWK:            jose.JSONWebKey{Key: &key.PublicKey, Algorithm: string(jose.RSA_OAEP_256), Use: "enc"},
+				RequiredClaims: []string{"sub", "kid", "exp"},
+			}})
+			return
+		}
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/deployments" {
 			_, _ = w.Write([]byte(`{"data":{"deployments":[],"pagination":{"hasMore":false}}}`))
 			return

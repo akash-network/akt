@@ -751,7 +751,11 @@ func TestShellWithoutCommandRejectsNonTerminalBeforeContextResolution(t *testing
 
 func TestShellWithoutServiceReturnsManifestSelectionFailure(t *testing.T) {
 	m := newAuthedManager(t)
-	_, err := execConsole(t, m, "", "shell", "777", "--", "echo", "ok")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeJSON(t, w, `{"data":{"deployment":{"id":{"dseq":"777"},"state":"active"}}}`)
+	}))
+	defer srv.Close()
+	_, err := execConsole(t, m, srv.URL, "shell", "777", "--", "echo", "ok")
 	if err == nil || !strings.Contains(err.Error(), "load manifest") {
 		t.Fatalf("shell error = %v, want manifest load guidance", err)
 	}

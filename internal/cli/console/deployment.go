@@ -20,6 +20,7 @@ import (
 	"pkg.akt.dev/akt/internal/cliutil"
 	"pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
+	"pkg.akt.dev/akt/internal/deploymentconfig"
 	sstore "pkg.akt.dev/akt/internal/store"
 	"pkg.akt.dev/akt/internal/store/bbolt"
 )
@@ -56,6 +57,7 @@ func deploymentCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd.AddCommand(
 		deploymentListCmd(mgrFn),
 		deploymentGetCmd(mgrFn),
+		deploymentSDLCmd(mgrFn),
 		deploymentCreateCmd(mgrFn),
 		deploymentUpdateCmd(mgrFn),
 		deploymentCloseCmd(mgrFn),
@@ -142,13 +144,13 @@ func deploymentCreateCmdWithTerminal(
 		Use:   "create <sdl-file>",
 		Short: "Create a deployment (managed wallet signs server-side)",
 		Long: "Create a deployment from an SDL file. There is no deposit: the platform funds the " +
-			"deployment from your account credits. The returned manifest " +
-			"is cached per-context so `akt console lease create` can send it without re-passing it. " +
+			"deployment from your account credits. Console stores its definition and derives " +
+			"the manifest when you create a lease, on any machine. " +
 			"For the complete lifecycle, use `akt deploy <sdl-file>`.",
 		Args:    cobra.ExactArgs(1),
 		Example: `  akt console deployment create deploy.yaml`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cl, rc, err := clientFromCmd(cmd, mgrFn, true)
+			cl, _, err := clientFromCmd(cmd, mgrFn, true)
 			if err != nil {
 				return err
 			}
@@ -164,30 +166,13 @@ func deploymentCreateCmdWithTerminal(
 				return fmt.Errorf("read SDL file: %w", err)
 			}
 
-			result, err := cl.CreateDeployment(cmd.Context(), string(sdl))
+			secrets, err := deploymentSecretsFromCmd(cmd)
+			if err != nil {
+				return err
+			}
+			result, err := cl.CreateDeployment(cmd.Context(), string(sdl), console.CreateDeploymentOptions{Secrets: secrets})
 			if err != nil {
 				return fmt.Errorf("create deployment: %w", err)
-			}
-
-			// Cache the manifest so `lease create` can default to it.
-			note := ""
-			// Emitted only when the manifest could not be cached. `lease
-			// create` needs the manifest Console rendered from the SDL, and it
-			// is returned exactly once, here -- telling the user to pass
-			// --manifest without handing them the file leaves a deployment
-			// that can be leased but never gets a workload, quietly burning
-			// escrow.
-			uncachedManifest := ""
-
-			switch {
-			case rc == nil:
-				note = "manifest not cached (no active context): save the manifest field below and pass it to `lease create --manifest`"
-				uncachedManifest = result.Manifest
-			case result.Manifest != "":
-				if err := console.SaveManifest(rc.Root, rc.Name, result.DSeq.String(), result.Manifest); err != nil {
-					note = fmt.Sprintf("manifest not cached (%v): save the manifest field below and pass it to `lease create --manifest`", err)
-					uncachedManifest = result.Manifest
-				}
 			}
 
 			txHash := ""
@@ -196,28 +181,25 @@ func deploymentCreateCmdWithTerminal(
 			}
 
 			return printJSON(cmd, struct {
-				DSeq     string `json:"dseq"`
-				TxHash   string `json:"txHash,omitempty"`
-				Note     string `json:"note,omitempty"`
-				Manifest string `json:"manifest,omitempty"`
+				DSeq   string `json:"dseq"`
+				TxHash string `json:"txHash,omitempty"`
 			}{
-				DSeq:     result.DSeq.String(),
-				TxHash:   txHash,
-				Note:     note,
-				Manifest: uncachedManifest,
+				DSeq:   result.DSeq.String(),
+				TxHash: txHash,
 			})
 		},
 	}
 
 	cmd.Flags().BoolP(flagdefs.FlagSkipConfirmation, "y", false, "Skip the deployment creation confirmation")
+	cmd.Flags().String("secrets-file", "", "JSON or YAML secret values file (- for stdin)")
 
 	return cmd
 }
 
 func deploymentUpdateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
-	return &cobra.Command{
-		Use:     "update <dseq> <sdl-file>",
-		Short:   "Update a deployment's SDL",
+	cmd := &cobra.Command{
+		Use:     "update <dseq> <file>",
+		Short:   "Update an SDL or apply service changes with --patch",
 		Args:    cobra.ExactArgs(2),
 		Example: `  akt console deployment update 12345 deploy.yaml`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -231,12 +213,54 @@ func deploymentUpdateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return fmt.Errorf("read SDL file: %w", err)
 			}
 
-			detail, err := cl.UpdateDeployment(cmd.Context(), args[0], string(sdl))
+			secrets, err := deploymentSecretsFromCmd(cmd)
+			if err != nil {
+				return err
+			}
+			var detail *console.DeploymentDetail
+			patchMode, _ := cmd.Flags().GetBool("patch")
+			if patchMode {
+				patch, parseErr := deploymentconfig.ParsePatch(sdl)
+				if parseErr != nil {
+					return parseErr
+				}
+				detail, err = cl.PatchDeployment(cmd.Context(), args[0], patch, secrets)
+			} else {
+				detail, err = cl.UpdateDeployment(cmd.Context(), args[0], string(sdl), console.UpdateDeploymentOptions{Secrets: secrets})
+			}
 			if err != nil {
 				return fmt.Errorf("update deployment %s: %w", args[0], err)
 			}
 
 			return printJSON(cmd, detail)
+		},
+	}
+	cmd.Flags().Bool("patch", false, "Apply a JSON or YAML service patch instead of an SDL")
+	cmd.Flags().String("secrets-file", "", "JSON or YAML secret replacements file (- for stdin)")
+	return cmd
+}
+
+func deploymentSecretsFromCmd(cmd *cobra.Command) (console.SecretValues, error) {
+	path, _ := cmd.Flags().GetString("secrets-file")
+	return console.ReadSecretValuesFile(path, cmd.InOrStdin())
+}
+
+func deploymentSDLCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
+	return &cobra.Command{
+		Use:     "sdl <dseq>",
+		Short:   "Print the saved SDL with secret references",
+		Args:    cobra.ExactArgs(1),
+		Example: "  akt console deployment sdl 12345 > deploy.yaml",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cl, _, err := clientFromCmd(cmd, mgrFn, true)
+			if err != nil {
+				return err
+			}
+			definition, err := cl.GetDeploymentDefinition(cmd.Context(), args[0])
+			if err != nil {
+				return err
+			}
+			return printConsoleText(cmd, definition.SDL)
 		},
 	}
 }
@@ -443,13 +467,13 @@ func leaseCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 		Use:   "create <dseq> [provider]",
 		Short: "Accept a bid by creating a lease and sending the manifest",
 		Long: "Accept a bid by creating a lease and sending the deployment manifest to the " +
-			"winning provider. The manifest defaults to the one cached by `deployment create`. " +
+			"winning provider. Console derives the manifest from its saved definition. " +
 			"Use `akt deploy <sdl-file>` to perform creation, bid selection, and lease creation together.",
 		Args: cobra.RangeArgs(1, 2),
 		Example: `  # Provider as positional argument (gseq/oseq default to 1)
   akt console lease create 12345 akash1provider...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cl, rc, err := clientFromCmd(cmd, mgrFn, true)
+			cl, _, err := clientFromCmd(cmd, mgrFn, true)
 			if err != nil {
 				return err
 			}
@@ -472,21 +496,11 @@ func leaseCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 			manifestFile, _ := cmd.Flags().GetString(flagdefs.FlagManifest)
 
 			var manifest string
-			switch {
-			case manifestFile != "":
+			if manifestFile != "" {
 				manifest, err = manifestFromFile(manifestFile)
 				if err != nil {
 					return err
 				}
-
-			case rc != nil:
-				manifest, err = console.LoadManifest(rc.Root, rc.Name, dseq)
-				if err != nil {
-					return fmt.Errorf("no cached manifest for deployment %s: pass --manifest <file>, or recreate with `akt console deployment create` (%w)", dseq, err)
-				}
-
-			default:
-				return fmt.Errorf("no cached manifest available without an active context: pass --manifest <file>")
 			}
 
 			detail, err := cl.CreateLease(cmd.Context(), manifest, []console.LeaseRequest{{
@@ -509,7 +523,7 @@ func leaseCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	// (use the positional form instead). Restore by uncommenting if users
 	// ask for the flag form back.
 	// create.Flags().String("provider", "", "Provider address; alternative to the positional argument")
-	create.Flags().String(flagdefs.FlagManifest, "", "Manifest file (defaults to the one cached by `deployment create`)")
+	create.Flags().String(flagdefs.FlagManifest, "", "Explicit manifest for a legacy deployment without a saved definition")
 
 	cmd.AddCommand(create)
 

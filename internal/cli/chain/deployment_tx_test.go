@@ -2,6 +2,8 @@ package cli
 
 import (
 	"bytes"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -55,4 +57,60 @@ func TestTxDeploymentUpdateRequiresDSeq(t *testing.T) {
 func TestTxDeploymentUpdateRejectsZeroDSeq(t *testing.T) {
 	err := execTxCmdArgsOnly(t, GetTxDeploymentUpdateCmd(), "does-not-exist.yaml", "0")
 	require.ErrorIs(t, err, errDSeqRequired)
+}
+
+func TestRawDeploymentTransactionsRejectConsoleReferencesBeforeClients(t *testing.T) {
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{name: "environment", value: "env:\n      - TOKEN=ac-secret://PRIVATE_NAME"},
+		{name: "registry", value: "credentials:\n      host: registry.example.test\n      username: account\n      password: ac-secret://PRIVATE_NAME"},
+	} {
+		for _, command := range []struct {
+			name  string
+			build func() *cobra.Command
+			args  []string
+		}{
+			{name: "create", build: GetTxDeploymentCreateCmd},
+			{name: "update", build: GetTxDeploymentUpdateCmd, args: []string{"42"}},
+		} {
+			t.Run(command.name+"/"+field.name, func(t *testing.T) {
+				path := filepath.Join(t.TempDir(), "deployment.yaml")
+				data := "version: '2.0'\nservices:\n  web:\n    image: nginx:1.27\n    " + field.value + "\n"
+				require.NoError(t, os.WriteFile(path, []byte(data), 0o600))
+				cmd := command.build()
+				// No client is installed. Reaching any query, certificate lookup,
+				// signer, or broadcaster would panic instead of returning this guard.
+				cmd.PersistentPreRunE = func(*cobra.Command, []string) error { return nil }
+				err := execTxCmdArgsOnly(t, cmd, append([]string{path}, command.args...)...)
+				require.ErrorContains(t, err, "Console workflow rail")
+				require.NotContains(t, err.Error(), "PRIVATE_NAME")
+			})
+		}
+	}
+}
+
+func TestChainSDLReadFailures(t *testing.T) {
+	for _, tc := range []struct {
+		name, content string
+		missing       bool
+	}{{"missing", "", true}, {"malformed", "services: [", false}} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "deployment.yaml")
+			if !tc.missing {
+				require.NoError(t, os.WriteFile(path, []byte(tc.content), 0600))
+			}
+			_, err := readChainDeploymentSDL(path)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestChainSDLReadDelegatesSchemaValidation(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "deployment.yaml")
+	require.NoError(t, os.WriteFile(path, []byte("version: invalid\nservices: {}\n"), 0600))
+	document, err := readChainDeploymentSDL(path)
+	require.Error(t, err)
+	require.Nil(t, document)
 }

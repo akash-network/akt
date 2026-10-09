@@ -370,11 +370,8 @@ func TestCreateRejectsMissingSDLBeforeCharging(t *testing.T) {
 	}
 }
 
-// TestCreateCachesManifestForLeaseCreate covers the manifest hand-off that
-// makes `lease create` work without re-passing the manifest: the manifest
-// returned by `deployment create` is written to the per-context cache with
-// owner-only permissions (it can carry private registry credentials).
-func TestCreateCachesManifestForLeaseCreate(t *testing.T) {
+// New Console deployments retain their definition server-side.
+func TestCreateDoesNotCacheManifest(t *testing.T) {
 	m := newAuthedManager(t)
 
 	sdlPath := filepath.Join(t.TempDir(), "deploy.yaml")
@@ -384,7 +381,7 @@ func TestCreateCachesManifestForLeaseCreate(t *testing.T) {
 
 	const manifest = `[{"name":"dcloud","services":[]}]`
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newDeploymentSecretsServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/deployments" {
 			writeJSON(t, w, `{"data":{"deployments":[],"pagination":{"hasMore":false}}}`)
 			return
@@ -422,30 +419,13 @@ func TestCreateCachesManifestForLeaseCreate(t *testing.T) {
 		t.Errorf("create output must not carry an auto-top-up notice; it named a command the API now refuses: %s", out)
 	}
 
-	cached, err := console.LoadManifest(m.Root(), "prod", "9911")
-	if err != nil {
-		t.Fatalf("manifest was not cached: %v", err)
-	}
-	if cached != manifest {
-		t.Errorf("cached manifest = %q, want %q", cached, manifest)
-	}
-
-	path, err := console.ManifestPath(m.Root(), "prod", "9911")
-	if err != nil {
-		t.Fatalf("ManifestPath: %v", err)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		t.Fatalf("stat cached manifest: %v", err)
-	}
-	if perm := info.Mode().Perm(); perm&0o077 != 0 {
-		t.Errorf("cached manifest mode = %o, want no group/other access", perm)
+	if _, err := console.LoadManifest(m.Root(), "prod", "9911"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("create wrote a manifest cache: %v", err)
 	}
 }
 
-// TestLeaseCreateUsesCachedManifest closes the loop: `lease create` must find
-// the manifest cached by `deployment create` and send it with the lease.
-func TestLeaseCreateUsesCachedManifest(t *testing.T) {
+// A stale local manifest must never override the saved Console definition.
+func TestLeaseCreateUsesServerDefinition(t *testing.T) {
 	m := newAuthedManager(t)
 
 	const manifest = `[{"name":"dcloud"}]`
@@ -465,8 +445,8 @@ func TestLeaseCreateUsesCachedManifest(t *testing.T) {
 		t.Fatalf("lease create: %v", err)
 	}
 
-	if !strings.Contains(gotBody, `dcloud`) {
-		t.Errorf("cached manifest not sent with the lease: %s", gotBody)
+	if strings.Contains(gotBody, `"manifest"`) {
+		t.Errorf("client manifest sent instead of server definition: %s", gotBody)
 	}
 	if !strings.Contains(gotBody, `"provider":"akash1provider"`) {
 		t.Errorf("provider not sent: %s", gotBody)
@@ -477,10 +457,8 @@ func TestLeaseCreateUsesCachedManifest(t *testing.T) {
 	}
 }
 
-// TestLeaseCreateRequiresProviderAndManifest covers the two guards that stop a
-// lease from being created against the wrong provider or with no manifest
-// (which would leave the lease paid-for but unserviced).
-func TestLeaseCreateRequiresProviderAndManifest(t *testing.T) {
+// Missing provider and an unreadable explicit legacy manifest fail locally.
+func TestLeaseCreateValidatesExplicitInputs(t *testing.T) {
 	m := newAuthedManager(t)
 
 	var requests int
@@ -496,10 +474,10 @@ func TestLeaseCreateRequiresProviderAndManifest(t *testing.T) {
 		t.Errorf("unexpected error: %v", err)
 	}
 
-	// Provider given, but nothing cached for this dseq.
-	if _, err := execConsole(t, m, srv.URL, "lease", "create", "4242", "akash1provider"); err == nil {
-		t.Error("lease create without a manifest must fail")
-	} else if !strings.Contains(err.Error(), "no cached manifest") {
+	// An explicitly supplied legacy file must exist.
+	if _, err := execConsole(t, m, srv.URL, "lease", "create", "4242", "akash1provider", "--manifest", filepath.Join(t.TempDir(), "missing.json")); err == nil {
+		t.Error("unreadable explicit manifest must fail")
+	} else if !strings.Contains(err.Error(), "read manifest") {
 		t.Errorf("unexpected error: %v", err)
 	}
 
@@ -557,7 +535,7 @@ func TestLogoutRemovesStoredCredential(t *testing.T) {
 		t.Errorf("logout should name the context, got %q", out)
 	}
 
-	if _, err := os.Stat(path); !os.IsNotExist(err) {
+	if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("credential file still present after logout (stat err = %v)", err)
 	}
 

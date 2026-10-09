@@ -16,6 +16,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
+	"gopkg.in/yaml.v3"
 	"k8s.io/apimachinery/pkg/api/resource"
 
 	mtypes "pkg.akt.dev/go/node/market/v1"
@@ -500,7 +501,7 @@ func shellCmdWithRunner(mgrFn func() *aktctx.Manager, run consoleLeaseShellRunne
 
 			dseq := args[0]
 			if service == "" {
-				service, err = defaultShellService(rc, dseq)
+				service, err = savedShellService(shellCtx, cl, rc, dseq)
 				if err != nil {
 					return err
 				}
@@ -553,6 +554,36 @@ func defaultShellService(rc *aktctx.Context, dseq string) (string, error) {
 	switch len(names) {
 	case 0:
 		return "", fmt.Errorf("deployment %s manifest contains no services", dseq)
+	case 1:
+		return names[0], nil
+	default:
+		return "", fmt.Errorf("deployment %s has multiple services (%s); pass one explicitly", dseq, strings.Join(names, ", "))
+	}
+}
+
+func savedShellService(ctx context.Context, cl *console.Client, rc *aktctx.Context, dseq string) (string, error) {
+	detail, err := cl.GetDeployment(ctx, dseq)
+	if err != nil {
+		return "", fmt.Errorf("read deployment %s configuration: %w; pass the service explicitly", dseq, err)
+	}
+	if detail.ConsoleSettings == nil {
+		// Deployments predating saved definitions may still have a local manifest.
+		return defaultShellService(rc, dseq)
+	}
+	var definition struct {
+		Services map[string]yaml.Node `yaml:"services"`
+	}
+	if err := yaml.Unmarshal([]byte(detail.ConsoleSettings.SDL), &definition); err != nil {
+		return "", fmt.Errorf("deployment %s has an invalid saved SDL; pass the service explicitly", dseq)
+	}
+	names := make([]string, 0, len(definition.Services))
+	for name := range definition.Services {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	switch len(names) {
+	case 0:
+		return "", fmt.Errorf("deployment %s saved SDL contains no services", dseq)
 	case 1:
 		return names[0], nil
 	default:

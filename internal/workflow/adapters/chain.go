@@ -53,13 +53,14 @@ var (
 // chainClient adapts the Akash node client to the workflow steps.ChainClient
 // interface.
 type chainClient struct {
-	cl aclient.Client
+	cl     aclient.Client
+	inputs *DeploymentInputs
 }
 
 // NewChainClient wraps an Akash node client into the narrow interface the
 // workflow step executors use to broadcast transactions and run queries.
-func NewChainClient(cl aclient.Client) steps.ChainClient {
-	return &chainClient{cl: cl}
+func NewChainClient(cl aclient.Client, inputs ...*DeploymentInputs) steps.ChainClient {
+	return &chainClient{cl: cl, inputs: selectDeploymentInputs(inputs, "", "")}
 }
 
 // BroadcastTx builds the sdk.Msg identified by msgType from the resolved
@@ -78,6 +79,10 @@ func (c *chainClient) BroadcastTx(ctx context.Context, msgType string, params ma
 
 	switch msgType {
 	case msgCreateDeployment:
+		rawSDL, sourcePath, err := c.inputs.prepareChain(ctx, owner.String(), params)
+		if err != nil {
+			return nil, err
+		}
 		dseq, err := c.deriveDSeq(ctx, params)
 		if err != nil {
 			return nil, err
@@ -88,7 +93,7 @@ func (c *chainClient) BroadcastTx(ctx context.Context, msgType string, params ma
 			return nil, err
 		}
 
-		m, err := buildCreateDeploymentMsg(owner, params["sdl"], dseq, dep)
+		m, err := buildCreateDeploymentMsg(owner, rawSDL, dseq, dep)
 		if err != nil {
 			return nil, err
 		}
@@ -98,9 +103,17 @@ func (c *chainClient) BroadcastTx(ctx context.Context, msgType string, params ma
 			"dseq":  strconv.FormatUint(dseq, 10),
 			"owner": owner.String(),
 		}
+		if sourcePath != "" {
+			data["sdl_path"] = sourcePath
+		}
+		c.inputs.remember(dseq, rawSDL)
 
 	case msgUpdateDeployment:
-		m, groups, err := buildUpdateDeploymentMsg(owner, params)
+		rawSDL, sourcePath, err := c.inputs.prepareChain(ctx, owner.String(), params)
+		if err != nil {
+			return nil, err
+		}
+		m, groups, err := buildUpdateDeploymentMsg(owner, params, rawSDL)
 		if err != nil {
 			return nil, err
 		}
@@ -114,6 +127,10 @@ func (c *chainClient) BroadcastTx(ctx context.Context, msgType string, params ma
 			"dseq":  strconv.FormatUint(m.ID.DSeq, 10),
 			"owner": owner.String(),
 		}
+		if sourcePath != "" && params["patch"] != "true" {
+			data["sdl_path"] = sourcePath
+		}
+		c.inputs.remember(m.ID.DSeq, rawSDL)
 
 	case msgCloseDeployment:
 		m, err := buildCloseDeploymentMsg(owner, params)

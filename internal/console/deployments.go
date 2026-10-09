@@ -16,17 +16,28 @@ import (
 )
 
 // CreateDeployment creates a deployment via the managed wallet. There is no
-// deposit: the platform funds the deployment from the account's credits. The
-// returned manifest should be cached (see SaveManifest) so that CreateLease
-// can send it after bid selection.
+// deposit: the platform funds the deployment from the account's credits.
+// An explicit options value seals new secrets, including an empty map for
+// ordinary variables. Lease creation then uses the server's saved definition.
+// Calls without options retain the legacy reconciliation contract.
 //
 // Wire: POST /v1/deployments, body {"data":{"sdl":...}}.
-func (c *Client) CreateDeployment(ctx context.Context, sdl string) (*CreateDeploymentResult, error) {
+func (c *Client) CreateDeployment(ctx context.Context, sdl string, options ...CreateDeploymentOptions) (*CreateDeploymentResult, error) {
+	if len(options) > 0 {
+		if len(options) != 1 {
+			return nil, errors.New("console: provide one deployment create options value")
+		}
+		return c.createDeploymentWithSecrets(ctx, sdl, options[0])
+	}
 	versionHash, manifest, err := deploymentArtifacts(sdl)
 	if err != nil {
 		wrapped := fmt.Errorf("prepare deployment SDL: %w", err)
 		c.recordOutcome("create-deployment", "", "failed", wrapped, nil)
 		return nil, wrapped
+	}
+	if err := rejectUnsealedReferences(sdl); err != nil {
+		c.record("create-deployment", "", err)
+		return nil, err
 	}
 
 	before, err := c.listAllDeployments(ctx)
@@ -345,9 +356,16 @@ func (c *Client) GetDeployment(ctx context.Context, dseq string) (*DeploymentDet
 
 // UpdateDeployment updates a deployment's SDL.
 //
-// Wire: PUT /v1/deployments/{dseq}, body {"data":{"sdl":...}}, data-enveloped
-// response.
-func (c *Client) UpdateDeployment(ctx context.Context, dseq, sdl string) (*DeploymentDetail, error) {
+// With options, saved definitions use PATCH to preserve existing secrets.
+// Ordinary legacy deployments without saved definitions retain the full-SDL
+// PUT contract. Calls without options preserve that legacy client behavior.
+func (c *Client) UpdateDeployment(ctx context.Context, dseq, sdl string, options ...UpdateDeploymentOptions) (*DeploymentDetail, error) {
+	if len(options) > 0 {
+		if len(options) != 1 {
+			return nil, errors.New("console: provide one deployment update options value")
+		}
+		return c.updateDeploymentDefinition(ctx, dseq, sdl, options[0])
+	}
 	if err := validateDSeq(dseq); err != nil {
 		c.record("update-deployment", dseq, err)
 		return nil, err
@@ -359,13 +377,20 @@ func (c *Client) UpdateDeployment(ctx context.Context, dseq, sdl string) (*Deplo
 		c.record("update-deployment", dseq, wrapped)
 		return nil, wrapped
 	}
+	if err := rejectUnsealedReferences(sdl); err != nil {
+		c.record("update-deployment", dseq, err)
+		return nil, err
+	}
 	if _, err := c.requireMutableDeployment(ctx, dseq); err != nil {
 		wrapped := fmt.Errorf("preflight deployment update: %w", err)
 		c.record("update-deployment", dseq, wrapped)
 		return nil, wrapped
 	}
+	return c.updateDeploymentSDL(ctx, dseq, sdl, expectedHash)
+}
 
-	body := envelope(map[string]any{"sdl": sdl})
+func (c *Client) updateDeploymentSDL(ctx context.Context, dseq, rawSDL, expectedHash string) (*DeploymentDetail, error) {
+	body := envelope(map[string]any{"sdl": rawSDL})
 
 	var lastErr error
 	for attempt := range maxRetries {
@@ -615,9 +640,9 @@ func (c *Client) CreateLease(ctx context.Context, manifest string, leases []Leas
 		}
 	}
 
-	body := map[string]any{
-		"manifest": manifest,
-		"leases":   leases,
+	body := map[string]any{"leases": leases}
+	if manifest != "" {
+		body["manifest"] = manifest
 	}
 
 	leaseDSeq := ""
@@ -626,11 +651,37 @@ func (c *Client) CreateLease(ctx context.Context, manifest string, leases []Leas
 	}
 
 	var out DeploymentDetail
-	err := c.doData(ctx, http.MethodPost, "/v1/leases", body, &out)
+	requestClient := c
+	if manifest == "" {
+		requestClient = c.sensitiveClient()
+	}
+	err := requestClient.doData(ctx, http.MethodPost, "/v1/leases", body, &out)
 	if err == nil && !requestedLeasesActive(out.Leases, leases) {
 		err = errors.New("console: create lease response omitted a requested active lease")
 	}
 	if err != nil {
+		var leaseError *HTTPError
+		if errors.As(err, &leaseError) {
+			switch leaseError.Body {
+			case "manifest_not_delivered":
+				err = fmt.Errorf("console: lease for deployment %s exists, but its manifest was not delivered; retry the same lease request or close the deployment to stop paying: %w", leaseDSeq, err)
+				c.record("create-lease", leaseDSeq, err)
+				return nil, err
+			case "provider_unreachable":
+				err = fmt.Errorf("console: provider could not be reached before lease creation; choose another bid: %w", err)
+				c.record("create-lease", leaseDSeq, err)
+				return nil, err
+			}
+		}
+		if manifest == "" {
+			if definitiveCreateFailure(err) {
+				c.record("create-lease", leaseDSeq, err)
+				return nil, err
+			}
+			unknown := fmt.Errorf("lease creation or manifest delivery outcome unknown after one submission (%w); inspect `akt console deployment get %s`, then retry the same lease request to complete delivery; the request was not replayed", err, leaseDSeq)
+			c.recordOutcome("create-lease", leaseDSeq, "pending", unknown, nil)
+			return nil, unknown
+		}
 		// Never replay this POST: the live API can return an error after the
 		// lease transaction succeeded. A definitive 4xx receives one exact
 		// read-back in case the response contradicted chain state; ambiguous
@@ -662,6 +713,21 @@ func (c *Client) CreateLease(ctx context.Context, manifest string, leases []Leas
 
 	c.record("create-lease", leaseDSeq, nil)
 	return &out, nil
+}
+
+func leaseResponseCode(body []byte) string {
+	var result struct {
+		Code string `json:"code"`
+	}
+	if json.Unmarshal(body, &result) != nil {
+		return ""
+	}
+	switch result.Code {
+	case "manifest_not_delivered", "provider_unreachable":
+		return result.Code
+	default:
+		return ""
+	}
 }
 
 func (c *Client) reconcileCreatedLeases(

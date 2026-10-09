@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	"pkg.akt.dev/akt/internal/deploymentconfig"
 	"pkg.akt.dev/akt/internal/output/pretty"
 	dv1 "pkg.akt.dev/go/node/deployment/v1"
 	dv1beta "pkg.akt.dev/go/node/deployment/v1beta4"
@@ -55,6 +56,10 @@ func GetTxDeploymentCreateCmd() *cobra.Command {
 		Args:              cobra.ExactArgs(1),
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			sdlManifest, err := readChainDeploymentSDL(args[0])
+			if err != nil {
+				return err
+			}
 			ctx := cmd.Context()
 			cl := MustClientFromContext(ctx)
 			cctx := cl.ClientContext()
@@ -66,11 +71,6 @@ func GetTxDeploymentCreateCmd() *cobra.Command {
 						"consider creating it as certificate required to submit manifest", cctx.FromAddress.String())
 				}
 
-				return err
-			}
-
-			sdlManifest, err := sdl.ReadFile(args[0])
-			if err != nil {
 				return err
 			}
 
@@ -226,6 +226,10 @@ func GetTxDeploymentUpdateCmd() *cobra.Command {
 		Example:           `akt tx deployment update deploy.yaml 12345`,
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			sdlManifest, err := readChainDeploymentSDL(args[0])
+			if err != nil {
+				return err
+			}
 			ctx := cmd.Context()
 			cl := MustClientFromContext(ctx)
 			cctx := cl.ClientContext()
@@ -244,11 +248,6 @@ func GetTxDeploymentUpdateCmd() *cobra.Command {
 			}
 			if id.DSeq == 0 {
 				return errDSeqRequired
-			}
-
-			sdlManifest, err := sdl.ReadFile(args[0])
-			if err != nil {
-				return err
 			}
 
 			hash, err := sdlManifest.Version()
@@ -302,6 +301,21 @@ func GetTxDeploymentUpdateCmd() *cobra.Command {
 	addDeploymentOwnerTxFlags(cmd)
 
 	return cmd
+}
+
+func readChainDeploymentSDL(path string) (sdl.SDL, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	references, err := deploymentconfig.HasReferences(string(data))
+	if err != nil {
+		return nil, errors.New("invalid deployment SDL; cannot inspect Console secret references")
+	}
+	if references {
+		return nil, errors.New("ac-secret:// references require the Console workflow rail; use `akt deploy` or `akt update` with a Console context")
+	}
+	return sdl.Read(data)
 }
 
 // addDeploymentOwnerTxFlags registers the deployment identity flags for the

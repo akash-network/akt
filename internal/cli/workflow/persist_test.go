@@ -509,9 +509,33 @@ func TestPersistUpdateRefreshesTheSDLIdentity(t *testing.T) {
 	}
 }
 
-// TestPersistIgnoresUnknownWorkflows keeps user-defined workflows out of the
-// store: their steps have no defined mapping onto the record types, and
-// guessing one would write nonsense.
+// TestPatchInvalidatesStoredSDL prevents subsequent patches or redeploys from
+// silently restoring the pre-patch configuration.
+func TestPatchInvalidatesStoredSDL(t *testing.T) {
+	ctx := context.Background()
+	s := openPersistStore(t)
+	if err := persistWorkflowOutcome(ctx, s, deployRunState(t, writeSDL(t)), 1700000000); err != nil {
+		t.Fatal(err)
+	}
+	state := wf.NewRunState("patch-run", "update", persistOwner, map[string]any{
+		"sdl-file": "changes.yaml", "base-sdl": "original.yaml", "patch": true, "dseq": 4649141,
+	})
+	state.SetStepResult("update-deployment", &wf.StepResult{
+		Name: "update-deployment", Status: "success",
+		Output: map[string]any{"dseq": "4649141", "owner": persistOwner},
+	})
+	if err := persistWorkflowOutcome(ctx, s, state, 1700005000); err != nil {
+		t.Fatal(err)
+	}
+	record, err := s.GetDeployment(ctx, persistOwner, 4649141)
+	if err != nil || record == nil {
+		t.Fatalf("read patched deployment: %v", err)
+	}
+	if record.SDLPath != "" || record.SDLHash != "" {
+		t.Fatalf("patch retained stale source identity: %+v", record)
+	}
+}
+
 func TestPersistIgnoresUnknownWorkflows(t *testing.T) {
 	ctx := context.Background()
 	s := openPersistStore(t)

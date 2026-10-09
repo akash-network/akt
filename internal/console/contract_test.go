@@ -11,7 +11,6 @@ package console_test
 // 400 that motivated this suite).
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"io"
@@ -38,13 +37,6 @@ func loadContractRouter(t *testing.T) routers.Router {
 	if err != nil {
 		t.Fatalf("read vendored spec: %v", err)
 	}
-
-	// Upstream escaping bug: 44 dseq patterns read "^d+$" (one or more
-	// literal 'd' characters) where "^\d+$" (digits) is clearly intended —
-	// the correctly escaped "^\\d+$" appears elsewhere in the same document.
-	// Restore the intended pattern so numeric dseq values validate. The
-	// vendored file itself is kept verbatim.
-	data = bytes.ReplaceAll(data, []byte(`"^d+$"`), []byte(`"^\\d+$"`))
 
 	loader := openapi3.NewLoader()
 	loader.IsExternalRefsAllowed = false

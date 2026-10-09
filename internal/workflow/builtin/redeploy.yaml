@@ -1,37 +1,25 @@
-name: deploy
-description: Create a deployment, wait for bids, select provider, create lease, send manifest
+name: redeploy
+description: Create a new deployment from an existing deployment without closing it
 long: |
-  Create a deployment, wait for provider bids, select one, open the lease, and
-  send the manifest to the winning provider.
-
-  Prints the deployment sequence number (dseq) on success. Every later command
-  that acts on this deployment takes that dseq.
-
-  Runs on whichever rail the active context uses: a keyring context signs and
-  broadcasts the transactions locally, a console-api context routes them through
-  the Console managed wallet.
-
-  Console deployments accept --secrets-file with a JSON/YAML map of values for
-  ac-secret://NAME references. Use --secrets-file - to read values from stdin.
+  Create a new deployment from an existing deployment's configuration.
+  The source may be closed and is never closed by this command. Console contexts
+  inherit stored secrets; chain contexts use --sdl-file or the recorded SDL path.
 example: |
-    # Deploy and choose a bid interactively
-    akt deploy deploy.yaml
+    # Redeploy with the saved definition and existing secrets
+    akt redeploy 12345
 
-    # Non-interactive: take the cheapest bid
-    akt deploy deploy.yaml --bid-select cheapest --yes
-
-    # Pin to a known provider
-    akt deploy deploy.yaml --bid-select provider=akash1...
-
-    # Show what would happen without broadcasting
-    akt deploy deploy.yaml --dry-run
+    # Override the definition and choose the cheapest bid
+    akt redeploy 12345 --sdl-file deploy.yaml --bid-select cheapest --yes
 version: 1
 
 params:
+  dseq:
+    type: int
+    required: true
+    description: Source deployment sequence to redeploy
   sdl-file:
     type: sdl
-    required: true
-    description: Path to SDL deployment file
+    description: Optional SDL override for the new deployment
   secrets-file:
     type: file
     description: JSON or YAML secret values file, or - for stdin (Console only)
@@ -61,7 +49,8 @@ steps:
     type: tx
     msg: deployment.MsgCreateDeployment
     params:
-      sdl: "{{ index .Params \"sdl-file\" }}"
+      sdl: "{{ with index .Params \"sdl-file\" }}{{ . }}{{ end }}"
+      source-dseq: "{{ .Params.dseq }}"
       secrets-file: "{{ with index .Params \"secrets-file\" }}{{ . }}{{ end }}"
       deposit: "{{ .Params.deposit }}"
     on-error: abort
@@ -101,7 +90,7 @@ steps:
     params:
       provider: "{{ (index .Steps \"select-bid\").provider }}"
       dseq: "{{ (index .Steps \"create-deployment\").dseq }}"
-      sdl: "{{ index .Params \"sdl-file\" }}"
+      sdl: "{{ with index .Params \"sdl-file\" }}{{ . }}{{ end }}"
     retry:
       max: 3
       delay: "5s"

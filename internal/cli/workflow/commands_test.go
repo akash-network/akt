@@ -84,7 +84,7 @@ func TestCommandsBuiltinsOnly(t *testing.T) {
 	cmds := Commands(homeFn, ctxNameFn)
 
 	got := commandNames(cmds)
-	want := []string{"close", "deploy", "update"}
+	want := []string{"close", "deploy", "redeploy", "update"}
 	if len(got) != len(want) {
 		t.Fatalf("Commands() returned %v, want exactly %v", got, want)
 	}
@@ -166,7 +166,7 @@ func TestCommandsSkipsMalformedWorkflow(t *testing.T) {
 		t.Fatalf("Commands() surfaced a command for malformed workflow %q", "bad")
 	}
 	got := commandNames(cmds)
-	want := []string{"close", "deploy", "update"}
+	want := []string{"close", "deploy", "redeploy", "update"}
 	if len(got) != len(want) {
 		t.Fatalf("Commands() returned %v, want exactly the built-ins %v", got, want)
 	}
@@ -640,22 +640,53 @@ func TestExecuteKeyringContextWithoutChainClient(t *testing.T) {
 }
 
 // TestExecuteConsoleDeployEndToEnd runs the built-in deploy workflow against
-// a fake Console API: create deployment (SDL + USD deposit), poll bids via
-// the Console fallback, auto-select the cheapest bid, create the lease with
-// the cached manifest, and skip the provider send-manifest step.
+// a fake Console API through create, bid selection, server-derived lease
+// manifests, readiness, and local recording. Redeploy inherits a closed source.
 func TestExecuteConsoleDeployEndToEnd(t *testing.T) {
+	for _, name := range []string{"deploy", "redeploy"} {
+		t.Run(name, func(t *testing.T) { testExecuteConsoleCreateWorkflow(t, name) })
+	}
+}
+
+func testExecuteConsoleCreateWorkflow(t *testing.T, workflowName string) {
 	home := t.TempDir()
 	t.Setenv(aktctx.EnvConsoleAPIKey, "secret-key")
 
+	sdlPath := writeValidWorkflowSDL(t)
+	sourceSDL, err := os.ReadFile(sdlPath)
+	if err != nil {
+		t.Fatal(err)
+	}
 	var leaseBody map[string]any
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newWorkflowSecretsServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/3131":
+			body, _ := json.Marshal(map[string]any{"data": map[string]any{
+				"deployment":      map[string]any{"id": map[string]any{"owner": "o", "dseq": "3131"}, "state": "closed"},
+				"consoleSettings": map[string]any{"sdl": string(sourceSDL), "manifestVersion": "source-version"},
+			}})
+			_, _ = w.Write(body)
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments/4242":
 			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"owner":"o","dseq":"4242"},"state":"active"},"leases":[{"id":{"owner":"o","dseq":"4242","gseq":1,"oseq":1,"provider":"akash1cheap"},"state":"active","status":{"services":{"web":{"available":1,"total":1,"uris":["web.example.test"]}}}}]}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/deployments":
 			_, _ = w.Write([]byte(`{"data":{"deployments":[],"pagination":{"hasMore":false}}}`))
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/deployments":
+			var request struct {
+				Data struct {
+					Inherit string `json:"inheritSecretsFrom"`
+					Seal    string `json:"sealedSecrets"`
+				} `json:"data"`
+			}
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Error(err)
+			}
+			if request.Data.Seal == "" {
+				t.Error("create did not explicitly seal its values")
+			}
+			if workflowName == "redeploy" && request.Data.Inherit != "3131" {
+				t.Errorf("inherit = %q", request.Data.Inherit)
+			}
 			_, _ = w.Write([]byte(`{"data":{"dseq":"4242","manifest":"[{\"name\":\"web\"}]","signTx":{"code":0,"transactionHash":"CREATEHASH"}}}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/bids":
 			_, _ = w.Write([]byte(`{"data":[
@@ -686,27 +717,29 @@ func TestExecuteConsoleDeployEndToEnd(t *testing.T) {
 		t.Fatalf("UpdateContext: %v", err)
 	}
 
-	sdlPath := writeValidWorkflowSDL(t)
-
 	cmds := CommandsWithManager(
 		func() string { return home },
 		func() string { return "console" },
 		func() *aktctx.Manager { return m },
 	)
 
-	cmd := findCommand(cmds, "deploy")
+	cmd := findCommand(cmds, workflowName)
 	if cmd == nil {
 		t.Fatal("CommandsWithManager() did not surface deploy")
 	}
 
-	out, err := executeCommand(t, cmd, sdlPath, "--bid-select", "cheapest")
+	primary := sdlPath
+	if workflowName == "redeploy" {
+		primary = "3131"
+	}
+	out, err := executeCommand(t, cmd, primary, "--bid-select", "cheapest")
 	if err != nil {
 		t.Fatalf("deploy execute: %v\noutput:\n%s", err, out)
 	}
 
-	// The cheapest bid's lease must be created with the cached manifest.
-	if leaseBody["manifest"] != `[{"name":"web"}]` {
-		t.Errorf("lease manifest = %v, want the cached create-deployment manifest", leaseBody["manifest"])
+	// Console derives the manifest from its saved definition.
+	if _, sent := leaseBody["manifest"]; sent {
+		t.Errorf("client manifest sent: %v", leaseBody)
 	}
 	leases, _ := leaseBody["leases"].([]any)
 	if len(leases) != 1 {
@@ -748,7 +781,7 @@ func TestExecuteConsoleDeployEndToEnd(t *testing.T) {
 		t.Fatal("a completed deploy left the local store empty")
 		return
 	}
-	if dep.State != "active" || dep.SDLPath != sdlPath {
+	if dep.State != "active" || (workflowName == "deploy" && dep.SDLPath != sdlPath) {
 		t.Errorf("stored deployment = %+v, want active with the deployed SDL path", dep)
 	}
 

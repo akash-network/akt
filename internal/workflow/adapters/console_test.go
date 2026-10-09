@@ -2,6 +2,8 @@ package adapters
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -12,6 +14,8 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+
+	jose "github.com/go-jose/go-jose/v4"
 
 	"pkg.akt.dev/akt/internal/console"
 	"pkg.akt.dev/akt/internal/workflow/steps"
@@ -53,11 +57,16 @@ deployment:
 `
 
 // newConsoleClient wires an httptest server into a console client backed
-// consoleChainClient with a temp manifest root.
+// consoleChainClient with an isolated context root.
 func newConsoleClient(t *testing.T, handler http.HandlerFunc) (steps.ChainClient, string) {
 	t.Helper()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && r.URL.Path == "/v1/sdl-secrets-context" {
+			_, sealingContext := testSecretsContext(t)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": sealingContext})
+			return
+		}
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/deployments" {
 			_, _ = w.Write([]byte(`{"data":{"deployments":[],"pagination":{"hasMore":false}}}`))
 			return
@@ -69,6 +78,19 @@ func newConsoleClient(t *testing.T, handler http.HandlerFunc) (steps.ChainClient
 	root := t.TempDir()
 
 	return NewConsoleChainClient(console.New(srv.URL, "test-key"), nil, root, testConsoleCtx), root
+}
+
+func testSecretsContext(t *testing.T) (*rsa.PrivateKey, console.SecretsContext) {
+	t.Helper()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return key, console.SecretsContext{
+		Subject: "test-subject", KeyID: "test-key",
+		JWK:            jose.JSONWebKey{Key: &key.PublicKey, Algorithm: string(jose.RSA_OAEP_256), Use: "enc"},
+		RequiredClaims: []string{"sub", "kid", "exp"},
+	}
 }
 
 // decodeEnvelope decodes a {"data": ...} request body.
@@ -140,6 +162,9 @@ func TestConsoleCreateDeployment(t *testing.T) {
 	if _, present := gotData["deposit"]; present {
 		t.Errorf("sent deposit = %v, want none: credits fund the deployment", gotData["deposit"])
 	}
+	if seal, ok := gotData["sealedSecrets"].(string); !ok || seal == "" {
+		t.Error("ordinary variables must carry an empty seal so they remain ordinary variables")
+	}
 
 	if res.TxHash != "HASH1" {
 		t.Errorf("TxHash = %q, want HASH1", res.TxHash)
@@ -156,13 +181,9 @@ func TestConsoleCreateDeployment(t *testing.T) {
 		t.Errorf("data = %v, want Console rail and daily auto-top-up metadata", data)
 	}
 
-	// The manifest must be cached for the subsequent lease creation.
-	manifest, err := console.LoadManifest(root, testConsoleCtx, "4242")
-	if err != nil {
-		t.Fatalf("LoadManifest: %v", err)
-	}
-	if manifest != `[{"name":"web"}]` {
-		t.Errorf("cached manifest = %q", manifest)
+	// Console derives the provider manifest from its saved definition.
+	if _, err := console.LoadManifest(root, testConsoleCtx, "4242"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("create wrote a local manifest cache: %v", err)
 	}
 }
 
@@ -206,10 +227,8 @@ func TestConsoleCreateDeploymentSignTxFailure(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected a non-zero signTx code to fail the step")
 	}
-	for _, want := range []string{"code 5", "insufficient fees", "DEADBEEF"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not surface %q", err.Error(), want)
-		}
+	if strings.Contains(err.Error(), "insufficient fees") {
+		t.Errorf("untrusted transaction diagnostics escaped secret redaction: %v", err)
 	}
 }
 
@@ -242,10 +261,9 @@ func TestConsoleSDLPathMissingIsError(t *testing.T) {
 	}
 }
 
-func TestConsoleCreateDeploymentDerivesMissingManifest(t *testing.T) {
-	// Console occasionally omits the manifest from a successful create
-	// response. The client derives the same manifest while hashing the SDL, so
-	// the workflow can still create its lease without replaying the create.
+func TestConsoleCreateDeploymentWithoutManifestNeedsNoCache(t *testing.T) {
+	// Lease creation uses the server's definition even when create returns no
+	// manifest. The workflow must not turn a local fallback into a cache.
 	c, root := newConsoleClient(t, func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = w.Write([]byte(`{"data":{"dseq":"4244","manifest":"","signTx":{"code":0,"transactionHash":"HASH-DERIVED","rawLog":""}}}`))
 	})
@@ -257,12 +275,8 @@ func TestConsoleCreateDeploymentDerivesMissingManifest(t *testing.T) {
 		t.Fatalf("BroadcastTx: %v", err)
 	}
 
-	manifest, err := console.LoadManifest(root, testConsoleCtx, "4244")
-	if err != nil {
-		t.Fatalf("derived manifest was not cached: %v", err)
-	}
-	if !json.Valid([]byte(manifest)) || !strings.Contains(manifest, `"name":"web"`) {
-		t.Errorf("derived manifest = %q, want valid manifest JSON for the web service", manifest)
+	if _, err := console.LoadManifest(root, testConsoleCtx, "4244"); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("create wrote a local manifest cache: %v", err)
 	}
 }
 
@@ -417,7 +431,7 @@ func TestConsoleUnsupportedMsg(t *testing.T) {
 	}
 }
 
-func TestConsoleCreateLeaseUsesCachedManifest(t *testing.T) {
+func TestConsoleCreateLeaseIgnoresLegacyManifestCache(t *testing.T) {
 	var gotPath string
 	var gotBody map[string]any
 
@@ -446,8 +460,8 @@ func TestConsoleCreateLeaseUsesCachedManifest(t *testing.T) {
 	if gotPath != "/v1/leases" {
 		t.Errorf("request path = %s, want /v1/leases", gotPath)
 	}
-	if gotBody["manifest"] != "[MANIFEST]" {
-		t.Errorf("sent manifest = %v, want cached manifest", gotBody["manifest"])
+	if _, present := gotBody["manifest"]; present {
+		t.Errorf("lease creation sent the legacy manifest cache")
 	}
 
 	leases, ok := gotBody["leases"].([]any)
@@ -466,14 +480,15 @@ func TestConsoleCreateLeaseUsesCachedManifest(t *testing.T) {
 	}
 }
 
-func TestConsoleCreateLeaseAcceptsExactReadBackWithoutReplayingPost(t *testing.T) {
-	var posts atomic.Int32
+func TestConsoleCreateLeaseRequiresDeliveryAcknowledgement(t *testing.T) {
+	var posts, reads atomic.Int32
 	c, root := newConsoleClient(t, func(w http.ResponseWriter, r *http.Request) {
 		switch r.Method {
 		case http.MethodPost:
 			posts.Add(1)
 			w.WriteHeader(http.StatusBadGateway)
 		case http.MethodGet:
+			reads.Add(1)
 			_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"900"},"state":"active"},"leases":[{"id":{"dseq":"900","gseq":2,"oseq":3,"provider":"akash1provider"},"state":"active"}]}}`))
 		default:
 			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
@@ -486,31 +501,28 @@ func TestConsoleCreateLeaseAcceptsExactReadBackWithoutReplayingPost(t *testing.T
 	res, err := c.BroadcastTx(context.Background(), msgCreateLease, map[string]string{
 		"dseq": "900", "gseq": "2", "oseq": "3", "provider": "akash1provider",
 	})
-	if err != nil {
-		t.Fatalf("BroadcastTx: %v", err)
+	if err == nil || !strings.Contains(err.Error(), "manifest delivery outcome unknown") {
+		t.Fatalf("expected ambiguous delivery error, got %v", err)
 	}
-	if res == nil || posts.Load() != 1 {
-		t.Fatalf("reconciled result = %+v, POST requests = %d", res, posts.Load())
+	if res != nil || posts.Load() != 1 || reads.Load() != 0 {
+		t.Fatalf("result = %+v, POST requests = %d, GET requests = %d", res, posts.Load(), reads.Load())
 	}
 }
 
-func TestConsoleCreateLeaseMissingManifest(t *testing.T) {
-	c, _ := newConsoleClient(t, func(w http.ResponseWriter, _ *http.Request) {
-		t.Error("no request expected when the manifest is missing")
-		w.WriteHeader(http.StatusInternalServerError)
-	})
-
-	_, err := c.BroadcastTx(context.Background(), msgCreateLease, map[string]string{
-		"dseq":     "901",
-		"provider": "akash1provider",
-	})
-	if err == nil {
-		t.Fatal("expected missing-manifest error")
-	}
-	for _, want := range []string{"no cached manifest", "901", "akt deploy"} {
-		if !strings.Contains(err.Error(), want) {
-			t.Errorf("error %q does not mention %q", err.Error(), want)
+func TestConsoleCreateLeaseWithoutLocalManifest(t *testing.T) {
+	var requests int
+	c, _ := newConsoleClient(t, func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		if r.Method != http.MethodPost || r.URL.Path != "/v1/leases" {
+			t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
 		}
+		_, _ = w.Write([]byte(`{"data":{"deployment":{"id":{"dseq":"901"},"state":"active"},"leases":[{"id":{"dseq":"901","gseq":1,"oseq":1,"provider":"akash1provider"},"state":"active"}]}}`))
+	})
+	_, err := c.BroadcastTx(context.Background(), msgCreateLease, map[string]string{
+		"dseq": "901", "provider": "akash1provider",
+	})
+	if err != nil || requests != 1 {
+		t.Fatalf("create lease without local state: requests=%d err=%v", requests, err)
 	}
 }
 

@@ -37,14 +37,16 @@ const (
 type providerClient struct {
 	cctx     sdkclient.Context
 	authType string
+	inputs   *DeploymentInputs
 }
 
 // NewProviderClient creates a workflow provider client. authType is "jwt"
 // (default when empty) or "mtls", matching internal/provider.NewGatewayClient.
-func NewProviderClient(cctx sdkclient.Context, authType string) steps.ProviderClient {
+func NewProviderClient(cctx sdkclient.Context, authType string, inputs ...*DeploymentInputs) steps.ProviderClient {
 	return &providerClient{
 		cctx:     cctx,
 		authType: authType,
+		inputs:   selectDeploymentInputs(inputs, "", ""),
 	}
 }
 
@@ -57,7 +59,7 @@ func (p *providerClient) SendManifest(ctx context.Context, provider string, dseq
 		return fmt.Errorf("send manifest: dseq is required")
 	}
 
-	mani, err := manifestFromSDL(sdlData)
+	mani, err := manifestFromSDL(p.inputs.providerSDL(dseq, sdlData))
 	if err != nil {
 		return err
 	}
@@ -79,7 +81,7 @@ func (p *providerClient) SendManifestToActiveLeases(ctx context.Context, dseq ui
 		return nil, fmt.Errorf("send manifest to active leases: owner address is required")
 	}
 
-	mani, err := manifestFromSDL(sdlData)
+	mani, err := manifestFromSDL(p.inputs.providerSDL(dseq, sdlData))
 	if err != nil {
 		return nil, err
 	}

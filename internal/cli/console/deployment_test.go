@@ -158,7 +158,7 @@ func TestDeploymentCreateSendsNoDeposit(t *testing.T) {
 	}
 
 	var body string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := newDeploymentSecretsServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet && r.URL.Path == "/v1/deployments" {
 			writeJSON(t, w, `{"data":{"deployments":[],"pagination":{"hasMore":false}}}`)
 			return
