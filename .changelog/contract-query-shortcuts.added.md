@@ -1,1 +1,0 @@
-- Add contract listing with labels and direct queries by address or exact label, with ambiguity errors for duplicate labels.

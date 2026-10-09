@@ -1,1 +1,0 @@
-- Show full Wasm checksums, public keys, addresses, provider URLs, node names, and GPU models; expand monitor and TUI table columns to preserve complete values.
