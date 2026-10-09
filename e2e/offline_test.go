@@ -8,6 +8,8 @@ import (
 	"bytes"
 	"context"
 	"debug/buildinfo"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -30,6 +32,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	aktcodec "pkg.akt.dev/akt/internal/codec"
+	"pkg.akt.dev/go/sdkutil"
 )
 
 // Deterministic BIP39 mnemonic used for recovery tests. The derived address
@@ -143,6 +146,45 @@ func TestKeysLifecycle(t *testing.T) {
 	}
 	if len(keyJSON) != 4 || keyJSON["name"] != "alice" || keyJSON["address"] != addr {
 		t.Fatalf("keys show JSON = %#v", keyJSON)
+	}
+
+	// Node-compatible flags must survive the real context command wiring.
+	addressBytes, err := sdk.GetFromBech32(addr, sdkutil.Bech32PrefixAccAddr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for flag, prefix := range map[string]string{
+		"acc":  sdkutil.Bech32PrefixAccAddr,
+		"val":  sdkutil.Bech32PrefixValAddr,
+		"cons": sdkutil.Bech32PrefixConsAddr,
+	} {
+		out := mustRunAkt(t, home, "context", "keys", "show", "alice", "-a", "--bech", flag)
+		decoded, err := sdk.GetFromBech32(strings.TrimSpace(out), prefix)
+		if err != nil || !bytes.Equal(decoded, addressBytes) {
+			t.Fatalf("--bech %s = %q, error %v", flag, out, err)
+		}
+	}
+	pubkey := mustRunAkt(t, home, "context", "keys", "show", "alice", "-p")
+	var publicKey struct {
+		Type string `json:"@type"`
+		Key  string `json:"key"`
+	}
+	if err := json.Unmarshal([]byte(pubkey), &publicKey); err != nil {
+		t.Fatal(err)
+	}
+	publicKeyBytes, err := base64.StdEncoding.DecodeString(publicKey.Key)
+	if err != nil || publicKey.Type != "/cosmos.crypto.secp256k1.PubKey" || hex.EncodeToString(publicKeyBytes) != keyJSON["pubkey"] {
+		t.Fatalf("--pubkey = %q, error %v", pubkey, err)
+	}
+	multi := mustRunAkt(t, home, "context", "keys", "show", "alice", "bob", "--multisig-threshold", "2", "-o", "json")
+	var preview map[string]string
+	if err := json.Unmarshal([]byte(multi), &preview); err != nil || preview["name"] != "multi" || preview["type"] != "multi" {
+		t.Fatalf("multisig preview = %q, error %v", multi, err)
+	}
+	keys := mustRunAkt(t, home, "context", "keys", "list", "-o", "json")
+	var records []map[string]string
+	if err := json.Unmarshal([]byte(keys), &records); err != nil || len(records) != 2 {
+		t.Fatalf("preview changed keyring: %q, error %v", keys, err)
 	}
 
 	yamlShow := mustRunAkt(t, home, "context", "keys", "show", "alice", "-o", "yaml")

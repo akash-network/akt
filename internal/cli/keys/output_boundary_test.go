@@ -12,7 +12,9 @@ import (
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
 
 	aktcodec "pkg.akt.dev/akt/internal/codec"
+	flagdefs "pkg.akt.dev/akt/internal/flags"
 	aktkeyring "pkg.akt.dev/akt/internal/keyring"
+	"pkg.akt.dev/akt/internal/output"
 )
 
 type keysFaultWriter struct {
@@ -64,6 +66,7 @@ func executeKeysBoundaryCommand(
 	t.Helper()
 
 	cmd := Commands(func() (sdkkeyring.Keyring, error) { return kr, nil }, nil)
+	cmd.PersistentFlags().VarP(output.NewFormatFlag("pretty"), flagdefs.FlagOutput, "o", "Output format")
 	cmd.SilenceErrors = true
 	cmd.SilenceUsage = true
 	cmd.SetIn(strings.NewReader(input))

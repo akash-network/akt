@@ -759,6 +759,18 @@ embedding a Cosmos or Akash prefix in the command. A command-level test captures
 that keyring boundary without requiring Ledger hardware, so a network-prefix
 regression fails before a device is contacted.
 
+`context keys show` preserves the node command's address-prefix, public-key,
+Ledger display, QR, and ephemeral multisig options. Prefixes come from the SDK
+configuration, and Protobuf public-key output uses the SDK's encoding. The
+command keeps akt's existing full-output fields and JSON/YAML scalar behavior.
+Multiple keys form an in-memory multisig record without changing the keyring
+or action log. Ledger address display is an injected boundary that defaults to
+the SDK's `ShowAddress`, allowing tests to verify the BIP44 path, public key,
+and prefix without hardware. Flag conflicts are checked before keyring access;
+device confirmation completes before successful output is emitted.
+Offline tests use chain-sdk's account, validator, and consensus address-prefix
+constants when decoding the binary's output.
+
 ### 3.4 Sync Engine
 
 The sync engine runs as a background goroutine during active CLI/TUI sessions. It keeps the local deployment store in sync with on-chain state.
