@@ -1,1 +1,0 @@
-- Restore Akash node-compatible `context keys show` flags: `--bech acc|val|cons`, `--pubkey/-p`, `--device/-d`, `--qrcode`, and `--multisig-threshold`. Support read-only multisig previews from multiple keys, preserve akt's JSON/YAML output, and propagate device and output errors.

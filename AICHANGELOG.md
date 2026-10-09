@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Added
+
+<!-- changelog: console-variables-secrets.added.md -->
+- console-variables-secrets: Add encrypted Console secrets, saved SDL reads,
+  partial deployment updates, and redeploy with secret inheritance.
+- Verify malformed inputs, encryption failures, and partial outcomes with
+  hermetic coverage of the deployment configuration workflows.
+- Reject patches that could mutate shared YAML endpoint or service definitions.
+<!-- /changelog -->
+
+<!-- changelog: contract-query-shortcuts.added.md -->
+- Add contract listing with labels and direct queries by address or exact label, with ambiguity errors for duplicate labels.
+<!-- /changelog -->
+
+### Fixed
+
+<!-- changelog: full-output-identifiers.fixed.md -->
+- Show full Wasm checksums, public keys, addresses, provider URLs, node names, and GPU models; expand monitor and TUI table columns to preserve complete values.
+<!-- /changelog -->
+
+<!-- changelog: keys-show-node-compatibility.fixed.md -->
+- Restore Akash node-compatible `context keys show` flags: `--bech acc|val|cons`, `--pubkey/-p`, `--device/-d`, `--qrcode`, and `--multisig-threshold`. Support read-only multisig previews from multiple keys, preserve akt's JSON/YAML output, and propagate device and output errors.
+<!-- /changelog -->
+
+<!-- changelog: macos-native-dns.fixed.md -->
+- Fix RPC DNS failures with VPN or split DNS configurations on macOS and Linux
+  by removing `netgo` from local and release builds. Preserve Ledger support
+  and verify resolver tags in release and binary checks.
+<!-- /changelog -->
+
 ### Fixed
 
 <!-- changelog: console-close-delete-404-coverage.fixed.md -->
