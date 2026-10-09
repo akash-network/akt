@@ -3,6 +3,8 @@ package cli
 import (
 	"context"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
+
 	flagdefs "pkg.akt.dev/akt/internal/flags"
 
 	"github.com/spf13/cobra"
@@ -11,6 +13,7 @@ import (
 	ibccore "github.com/cosmos/ibc-go/v10/modules/core"
 
 	"pkg.akt.dev/akt/internal/capability"
+	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	"pkg.akt.dev/akt/internal/cliutil"
 	aclient "pkg.akt.dev/go/node/client/discovery"
 )
@@ -50,10 +53,33 @@ func QueryPersistentPreRunE(cmd *cobra.Command, _ []string) error {
 
 func QueryCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:     "query",
+		Use:     "query [contract-address]",
 		Aliases: []string{"q"},
 		Short:   "Querying subcommands",
-		RunE:    ValidateCmd,
+		Example: "  akt q contracts\n  akt q contract \"my contract\"\n  akt q akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx",
+		Args: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return nil
+			}
+			if len(args) == 1 {
+				if _, err := sdk.AccAddressFromBech32(args[0]); err == nil {
+					return nil
+				}
+			}
+			return ValidateCmd(cmd, args)
+		},
+		PreRunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return nil
+			}
+			return QueryPersistentPreRunE(cmd, args)
+		},
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if len(args) == 0 {
+				return cmd.Help()
+			}
+			return queryContract(cmd, args)
+		},
 		// Capability gating: chain queries require a chain RPC endpoint.
 		Annotations: map[string]string{capability.AnnotationKey: string(capability.ChainQuery)},
 	}
@@ -80,6 +106,7 @@ func QueryCmd() *cobra.Command {
 		GetQueryUpgradeCmd(),
 		GetQueryAuditCmd(),
 		GetQueryCertCmd(),
+		GetQueryContractCmd(),
 		GetQueryDeploymentCmds(),
 		GetQueryMarketCmds(),
 		GetQueryEscrowCmd(),
@@ -91,6 +118,7 @@ func QueryCmd() *cobra.Command {
 	)
 
 	cmd.PersistentFlags().String(flagdefs.FlagChainID, "", "The network chain ID")
+	cflags.AddQueryFlagsToCmd(cmd)
 
 	return cmd
 }

@@ -802,6 +802,7 @@ akt
 │   │   ├── lease [filter] [state]       # [owner/]dseq[/gseq/oseq[/prov]] [state]; --by; --state — **disabled pending feedback** (positional only, 2026-07)
 │   │   └── params
 │   ├── provider [address]               # List or get (address → single); `list`/`get` remain as aliases
+│   ├── contract [address-or-label]      # Alias: contracts; no argument lists addresses, labels, and code IDs
 │   ├── cert [owner] [state]             # Owner or default account, plus [state]; --owner/--state flags — **disabled pending feedback** (positional only, 2026-07)
 │   ├── audit [owner]                    # Owner or default account; --auditor flag
 │   ├── escrow [filter]                  # [owner[/dseq]]; --state flag
@@ -6305,6 +6306,37 @@ machine values.
 hex-encoded data hash, matching the checksum in code details. No prefix-only
 display or ellipsis is permitted.
 **Contract** (detail): Key-value with address, code ID, admin, label, created.
+
+**Contract shortcuts**:
+
+- `akt q contracts` (also `akt q contract`) lists every contract on the selected
+  network with full ADDRESS, LABEL, and CODE ID columns.
+- `akt q contract <address>` and `akt q <address>` show the same metadata as
+  `akt q wasm contract <address>`, using one contract-info lookup.
+- `akt q contract <label>` resolves an exact, case-sensitive on-chain label;
+  quote labels containing spaces. A unique match shows its contract details.
+  A missing label is an error with a suggestion to run `akt q contracts`.
+  An ambiguous label is an error listing every matching full address and asking
+  the user to select an address. No first-match selection or fuzzy matching.
+- Bare `akt q` still prints help; unknown query commands still report a usage
+  error. The bare positional shortcut accepts only a valid Akash address;
+  labels use the explicit `contract` command so command typos cannot trigger
+  a network-wide search.
+
+Listing and label resolution follow all Wasm code pages and all contract pages
+for each code, then retrieve contract metadata. Duplicate addresses are queried
+once. Failed or malformed responses and repeated pagination keys fail the
+whole operation; no partial list is printed. Results are sorted by address.
+There is no persistent label cache. Standard query transport, height, and
+output flags apply to every request. These composite commands fetch the full
+list and do not expose partial-list pagination flags.
+
+List JSON/YAML is an array of records with `address`, `label`, and `code_id`
+(a decimal string, matching SDK ID encoding); an empty result is `[]`. Pretty
+empty output says `(no contracts)`. Contract details keep the existing SDK
+response schema and shared renderer. Queries are read-only and do not log
+actions. Existing `q wasm` commands retain their syntax and behavior.
+
 **Contract state smart**: Pretty-printed JSON (results are arbitrary user-defined JSON).
 
 #### Oracle
