@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
@@ -543,7 +544,7 @@ func TestStatusUsesPublicGatewayWithoutWallet(t *testing.T) {
 		"--provider-url", srv.URL,
 	})
 
-	if err := root.Execute(); err != nil {
+	if err := root.ExecuteContext(walletlessCommandContext()); err != nil {
 		t.Fatalf("walletless provider status: %v", err)
 	}
 	if requests != 1 {
@@ -569,7 +570,7 @@ func TestStatusTimeoutConfiguresGatewayBoundary(t *testing.T) {
 	})
 
 	started := time.Now()
-	err := root.Execute()
+	err := root.ExecuteContext(walletlessCommandContext())
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("provider status timeout error = %v, want deadline exceeded", err)
 	}
@@ -634,10 +635,16 @@ func TestStatusFailureIncludesExactChainFallback(t *testing.T) {
 	root.SetOut(&bytes.Buffer{})
 	root.SetErr(&bytes.Buffer{})
 	root.SetArgs([]string{"status", provider, "--provider-url", srv.URL})
-	err := root.Execute()
+	err := root.ExecuteContext(walletlessCommandContext())
 	if err == nil || !strings.Contains(err.Error(), "akt query provider "+provider) {
 		t.Fatalf("provider status error = %v", err)
 	}
+}
+
+// walletlessCommandContext installs the client context the root command always
+// seeds, with no account or keyring, as for a monitoring-only context.
+func walletlessCommandContext() context.Context {
+	return context.WithValue(context.Background(), sdkclient.ClientContextKey, &sdkclient.Context{})
 }
 
 func TestAuthenticatedGatewayRequiresDefaultAccountBeforeRequest(t *testing.T) {

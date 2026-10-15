@@ -580,6 +580,23 @@ use the resolved wallet identity, while public status remains unauthenticated.
 Console MCP tools likewise translate Console wire values into the semantic
 units promised by their schemas before returning them to a client.
 
+Provider REST clients for public status and wallet-authenticated operations
+verify the server certificate independently of the client's JWT or mTLS
+identity. They try standard PKI against the gateway hostname first, then use a
+query-capable chain context to verify an Akash self-signed certificate against
+its valid on-chain registration. An explicit gateway URL does not bypass that
+lookup. mTLS presents the selected account's certificate with the server name
+`mtls.<host>`; resolving the chain query context must preserve that account,
+including when the context identifies it by key name.
+
+Local TLS integration tests exercise manifest submission, manifest retrieval,
+and lease status through the provider commands with both JWT and mTLS. The
+mTLS fixture requires and verifies the client certificate. Tests assert the
+submitted manifest and returned data, and reject missing or revoked provider
+certificates before an HTTP operation reaches the gateway. These fixtures
+verify the client protocol and authentication wiring; they do not claim a live
+provider or Kubernetes deployment was exercised.
+
 Authenticated gRPC gateway construction carries the resolved provider identity
 separately from the wallet identity and gateway URL. A publicly trusted server
 certificate is bound to the resolved URL by normal hostname verification. When

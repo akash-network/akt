@@ -94,7 +94,9 @@ func HandleProviderStatus(cl v1beta3.LightClient) mcpserver.ToolHandlerFunc {
 			return marshal.ErrResultf("resolve provider gateway: %v", err), nil
 		}
 
-		rcl, err := aktprovider.NewPublicGatewayClient(ctx, nil, providerURL)
+		rcl, err := aktprovider.NewPublicGatewayClient(
+			ctx, nil, providerURL, aktprovider.NewOnChainCertQuerier(cl.ClientContext()),
+		)
 		if err != nil {
 			return marshal.ErrResultf("failed to create provider client: %v", err), nil
 		}

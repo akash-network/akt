@@ -95,11 +95,16 @@ func statusCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			queryCtx, err := providerQueryContext(cmd)
+			if err != nil {
+				return err
+			}
 
 			cl, err := aktprovider.NewPublicGatewayClient(
 				ctx,
 				providerAddr,
 				providerURL,
+				aktprovider.NewOnChainCertQuerier(queryCtx),
 				aktprovider.WithOneShotTimeout(timeout),
 			)
 			if err != nil {
@@ -757,20 +762,19 @@ func resolveProviderWithLookup(
 }
 
 // resolveGatewayAuth resolves the client context, account, and auth type both
-// gateway transports need. In mTLS mode it re-derives the context from the
-// provider query path so the account matches the presented certificate.
+// gateway transports need. The context always comes from the provider query
+// path: both auth modes verify the provider's certificate on chain. Preserve
+// the resolved account so mTLS can load its certificate for named accounts too.
 func resolveGatewayAuth(cmd *cobra.Command) (sdkclient.Context, sdk.AccAddress, string, error) {
-	cctx, accountAddr, authType, err := gatewayAuthenticationFromCmd(cmd)
+	_, accountAddr, authType, err := gatewayAuthenticationFromCmd(cmd)
 	if err != nil {
 		return sdkclient.Context{}, nil, "", err
 	}
-	if authType == "mtls" {
-		cctx, err = providerQueryContext(cmd)
-		if err != nil {
-			return sdkclient.Context{}, nil, "", err
-		}
-		accountAddr = cctx.GetFromAddress()
+	cctx, err := providerQueryContext(cmd)
+	if err != nil {
+		return sdkclient.Context{}, nil, "", err
 	}
+	cctx = cctx.WithFromAddress(accountAddr)
 	return cctx, accountAddr, authType, nil
 }
 

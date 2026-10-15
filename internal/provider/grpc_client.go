@@ -192,8 +192,8 @@ type onChainCertQuerier struct {
 	cctx sdkclient.Context
 }
 
-// NewOnChainCertQuerier builds the CertificateQuerier the gRPC gateway client
-// uses to authenticate a provider's self-signed certificate. cctx is a
+// NewOnChainCertQuerier builds the CertificateQuerier the REST and gRPC
+// gateway clients use to authenticate a provider's self-signed certificate. cctx is a
 // query-capable client context.
 func NewOnChainCertQuerier(cctx sdkclient.Context) atls.CertificateQuerier {
 	return onChainCertQuerier{cctx: cctx}
