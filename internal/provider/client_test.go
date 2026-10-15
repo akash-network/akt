@@ -3,12 +3,14 @@ package provider
 import (
 	"bytes"
 	"context"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -46,8 +48,12 @@ func (kr failingSignKeyring) SignByAddress(
 
 type certificateQueryServer struct {
 	ctypes.UnimplementedQueryServer
-	calls int
-	owner string
+	calls  int
+	owner  string
+	owners []string
+	// registered answers its owners' lookups with that certificate; any other
+	// owner gets a valid record without certificate data.
+	registered map[string]ctypes.Certificate
 }
 
 func (server *certificateQueryServer) Certificates(
@@ -56,8 +62,14 @@ func (server *certificateQueryServer) Certificates(
 ) (*ctypes.QueryCertificatesResponse, error) {
 	server.calls++
 	server.owner = request.Filter.Owner
+	server.owners = append(server.owners, request.Filter.Owner)
 	if request.Filter.Serial == "" {
 		return nil, errors.New("certificate query has no serial")
+	}
+	if cert, ok := server.registered[request.Filter.Owner]; ok {
+		return &ctypes.QueryCertificatesResponse{
+			Certificates: []ctypes.CertificateResponse{{Serial: request.Filter.Serial, Certificate: cert}},
+		}, nil
 	}
 	return &ctypes.QueryCertificatesResponse{
 		Certificates: []ctypes.CertificateResponse{{
@@ -145,7 +157,7 @@ func TestPublicGatewayClientDoesNotSendWalletAuthentication(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := NewPublicGatewayClient(context.Background(), nil, srv.URL)
+	client, err := NewPublicGatewayClient(context.Background(), nil, srv.URL, &recordingCertificateQuerier{})
 	if err != nil {
 		t.Fatalf("create public gateway client: %v", err)
 	}
@@ -163,6 +175,7 @@ func TestPublicGatewayClientRejectsNonPositiveOneShotTimeout(t *testing.T) {
 			context.Background(),
 			nil,
 			"https://provider.example.com:8443",
+			&recordingCertificateQuerier{},
 			WithOneShotTimeout(timeout),
 		)
 		if err == nil || !strings.Contains(err.Error(), "timeout must be greater than zero") {
@@ -299,10 +312,17 @@ func TestGatewayClientSendsVerifiableFullAccessJWT(t *testing.T) {
 	}
 }
 
-func TestMTLSGatewayClientsRequireAndLoadOnChainCertificate(t *testing.T) {
+// TestGatewayClientsVerifyProviderCertificateOnChain runs every REST gateway
+// client through a TLS handshake with a gateway presenting the provider's
+// self-signed certificate, as every provider does on mtls.<host> and a
+// provider without a publicly trusted certificate does everywhere.
+func TestGatewayClientsVerifyProviderCertificateOnChain(t *testing.T) {
 	kr, _, owner := newProviderTestIdentity(t)
-	providerAddress := sdk.AccAddress(bytes.Repeat([]byte{7}, 20))
-	query := &certificateQueryServer{}
+	fixture := newProviderCertificateFixture(t, "provider.example.com")
+	providerAddress := fixture.owner
+	query := &certificateQueryServer{registered: map[string]ctypes.Certificate{
+		providerAddress.String(): {State: ctypes.CertificateValid, Cert: fixture.certPEM, Pubkey: fixture.pubPEM},
+	}}
 	queryConn := newCertificateQueryConn(t, query)
 	home := t.TempDir()
 	cctx := sdkclient.Context{}.
@@ -319,64 +339,122 @@ func TestMTLSGatewayClientsRequireAndLoadOnChainCertificate(t *testing.T) {
 		t.Fatalf("generate client certificate: %v", err)
 	}
 
-	requests := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests++
-		if got := r.Header.Get("Authorization"); got != "" {
-			t.Errorf("mTLS request Authorization = %q, want none", got)
+	type gatewayRequest struct {
+		serverName    string
+		clientCN      string
+		authorization string
+	}
+	var (
+		mu       sync.Mutex
+		requests []gatewayRequest
+	)
+	srv := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		request := gatewayRequest{serverName: r.TLS.ServerName, authorization: r.Header.Get("Authorization")}
+		if len(r.TLS.PeerCertificates) == 1 {
+			request.clientCN = r.TLS.PeerCertificates[0].Subject.CommonName
 		}
+		mu.Lock()
+		requests = append(requests, request)
+		mu.Unlock()
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{}`))
 	}))
+	srv.TLS = &tls.Config{
+		Certificates: []tls.Certificate{{Certificate: [][]byte{fixture.der}, PrivateKey: fixture.key}},
+		ClientAuth:   tls.RequestClientCert,
+		MinVersion:   tls.VersionTLS13,
+	}
+	srv.StartTLS()
 	defer srv.Close()
 
+	deployment := ajwt.PermissionDeployment{
+		Scope:    ajwt.PermissionScopes{ajwt.PermissionScopeStatus},
+		DSeq:     42,
+		Services: []string{"web"},
+	}
 	clients := []struct {
-		name string
-		new  func() (rest.Client, error)
+		name       string
+		new        func() (rest.Client, error)
+		serverName string
+		clientCN   string
+		bearer     bool
 	}{
 		{
-			name: "gateway",
+			name: "mtls gateway",
 			new: func() (rest.Client, error) {
 				return NewGatewayClient(context.Background(), cctx, owner, srv.URL, "mtls", kr)
 			},
+			serverName: "mtls.127.0.0.1",
+			clientCN:   owner.String(),
 		},
 		{
-			name: "scoped gateway",
+			name: "mtls scoped gateway",
 			new: func() (rest.Client, error) {
 				return NewScopedGatewayClient(
-					context.Background(),
-					cctx,
-					owner,
-					srv.URL,
-					providerAddress,
-					ajwt.PermissionDeployment{
-						Scope:    ajwt.PermissionScopes{ajwt.PermissionScopeStatus},
-						DSeq:     42,
-						Services: []string{"web"},
-					},
-					"mtls",
-					kr,
+					context.Background(), cctx, owner, srv.URL, providerAddress, deployment, "mtls", kr,
 				)
+			},
+			serverName: "mtls.127.0.0.1",
+			clientCN:   owner.String(),
+		},
+		{
+			name: "jwt gateway",
+			new: func() (rest.Client, error) {
+				return NewGatewayClient(context.Background(), cctx, owner, srv.URL, "jwt", kr)
+			},
+			bearer: true,
+		},
+		{
+			name: "jwt scoped gateway",
+			new: func() (rest.Client, error) {
+				return NewScopedGatewayClient(
+					context.Background(), cctx, owner, srv.URL, providerAddress, deployment, "jwt", kr,
+				)
+			},
+			bearer: true,
+		},
+		{
+			name: "public status",
+			new: func() (rest.Client, error) {
+				return NewPublicGatewayClient(context.Background(), nil, srv.URL, NewOnChainCertQuerier(cctx))
 			},
 		},
 	}
 
-	for _, test := range clients {
+	for i, test := range clients {
 		t.Run(test.name, func(t *testing.T) {
 			client, err := test.new()
 			if err != nil {
-				t.Fatalf("create mTLS client: %v", err)
+				t.Fatalf("create gateway client: %v", err)
 			}
 			if _, err := client.Status(context.Background()); err != nil {
 				t.Fatalf("query provider status: %v", err)
 			}
+
+			mu.Lock()
+			defer mu.Unlock()
+			if len(requests) != i+1 {
+				t.Fatalf("provider requests = %d, want %d", len(requests), i+1)
+			}
+			got := requests[i]
+			if got.serverName != test.serverName || got.clientCN != test.clientCN {
+				t.Errorf("server name %q, client certificate %q; want %q, %q",
+					got.serverName, got.clientCN, test.serverName, test.clientCN)
+			}
+			if strings.HasPrefix(got.authorization, "Bearer ") != test.bearer ||
+				(!test.bearer && got.authorization != "") {
+				t.Errorf("Authorization = %q, want bearer=%t", got.authorization, test.bearer)
+			}
 		})
 	}
-	if query.calls != len(clients) || query.owner != owner.String() {
-		t.Fatalf("certificate queries=%d owner=%q, want %d for %q", query.calls, query.owner, len(clients), owner)
+
+	lookups := map[string]int{}
+	for _, lookedUp := range query.owners {
+		lookups[lookedUp]++
 	}
-	if requests != len(clients) {
-		t.Fatalf("provider requests = %d, want %d", requests, len(clients))
+	if lookups[providerAddress.String()] != len(clients) || lookups[owner.String()] != 2 {
+		t.Fatalf("certificate lookups = %v, want %d for provider %s and 2 for mTLS account %s",
+			lookups, len(clients), providerAddress, owner)
 	}
 
 	emptyHomeContext := sdkclient.Context{}.

@@ -309,7 +309,7 @@ func TestGatewayOneShotRejectsOversizedResponse(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := NewPublicGatewayClient(context.Background(), nil, srv.URL)
+	client, err := NewPublicGatewayClient(context.Background(), nil, srv.URL, &recordingCertificateQuerier{})
 	if err != nil {
 		t.Fatalf("create gateway client: %v", err)
 	}
@@ -335,7 +335,7 @@ func TestGatewayErrorSanitizesProviderControlledDetail(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := NewPublicGatewayClient(context.Background(), nil, srv.URL)
+	client, err := NewPublicGatewayClient(context.Background(), nil, srv.URL, &recordingCertificateQuerier{})
 	if err != nil {
 		t.Fatalf("create gateway client: %v", err)
 	}
@@ -365,7 +365,7 @@ func TestGatewayOneShotAppliesOverallDeadline(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := NewPublicGatewayClient(context.Background(), nil, srv.URL)
+	client, err := NewPublicGatewayClient(context.Background(), nil, srv.URL, &recordingCertificateQuerier{})
 	if err != nil {
 		t.Fatalf("create gateway client: %v", err)
 	}
@@ -1375,7 +1375,7 @@ func TestGatewayTypedReadsRejectMalformedResponses(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	client, err := NewPublicGatewayClient(context.Background(), nil, srv.URL)
+	client, err := NewPublicGatewayClient(context.Background(), nil, srv.URL, &recordingCertificateQuerier{})
 	if err != nil {
 		t.Fatalf("create gateway client: %v", err)
 	}
@@ -1484,7 +1484,7 @@ func TestGatewayOneShotBoundaryPropagatesLocalAndTransportFailures(t *testing.T)
 
 func TestGatewayConstructorsRejectMalformedProviderURL(t *testing.T) {
 	const malformedURL = "://missing-scheme"
-	if _, err := NewPublicGatewayClient(context.Background(), nil, malformedURL); err == nil {
+	if _, err := NewPublicGatewayClient(context.Background(), nil, malformedURL, &recordingCertificateQuerier{}); err == nil {
 		t.Fatal("public gateway accepted malformed URL")
 	}
 	if _, err := NewTokenGatewayClient(context.Background(), nil, malformedURL, "token"); err == nil {

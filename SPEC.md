@@ -2166,6 +2166,16 @@ Provider status remains public; lease status, service status, and manifest
 submission use the shared authenticated gateway boundary with JWT or mTLS as
 configured.
 
+**Gateway certificate trust.** Every provider gateway REST client (public
+status, JWT, and mTLS) trusts the gateway's certificate the way provider-services
+does. It first applies standard PKI against the URL hostname. Otherwise it
+accepts a single self-signed certificate whose subject is a bech32 account only
+if that certificate chains to the account's `valid` certificate in the cert
+module. Providers always present that on-chain certificate on their mTLS
+listener, which mTLS reaches with the server name `mtls.<host>`. A provider
+without a publicly trusted certificate presents it on every listener. Even with
+an explicit `--provider-url`, the client still looks the certificate up on chain.
+
 **Provider resolution for lease-scoped commands.** `--provider` names the
 gateway explicitly and always wins. When it is omitted, `akt` resolves the
 provider from the deployment's leases on chain: it queries the leases owned by

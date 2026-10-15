@@ -36,14 +36,16 @@ func WithOneShotTimeout(timeout time.Duration) GatewayClientOption {
 
 // NewPublicGatewayClient creates a provider gateway REST client without
 // attaching wallet authentication. It is only suitable for public endpoints
-// such as provider status.
+// such as provider status. certQuerier resolves the provider's on-chain
+// certificate when the gateway presents a self-signed one.
 func NewPublicGatewayClient(
 	ctx context.Context,
 	addr sdk.AccAddress,
 	providerURL string,
+	certQuerier atls.CertificateQuerier,
 	options ...GatewayClientOption,
 ) (rest.Client, error) {
-	client, err := rest.NewClient(ctx, addr, rest.WithProviderURL(providerURL))
+	client, err := rest.NewClient(ctx, addr, rest.WithProviderURL(providerURL), rest.WithCertQuerier(certQuerier))
 	if err != nil {
 		return nil, err
 	}
@@ -91,7 +93,9 @@ func NewTokenGatewayClient(
 }
 
 // NewGatewayClient creates a provider gateway REST client configured for the
-// given auth method. authType is "jwt" (default) or "mtls".
+// given auth method. authType is "jwt" (default) or "mtls". cctx must be able
+// to query the chain: as in provider-services, the client verifies a
+// self-signed gateway certificate against the provider's on-chain certificate.
 func NewGatewayClient(
 	ctx context.Context,
 	cctx sdkclient.Context,
@@ -106,6 +110,7 @@ func NewGatewayClient(
 
 	opts := []rest.ClientOption{
 		rest.WithProviderURL(providerURL),
+		rest.WithCertQuerier(NewOnChainCertQuerier(cctx)),
 	}
 	var (
 		authorization gatewayAuthorization
@@ -164,7 +169,10 @@ func NewScopedGatewayClient(
 		return nil, fmt.Errorf("provider gateway authentication requires a provider address")
 	}
 
-	opts := []rest.ClientOption{rest.WithProviderURL(providerURL)}
+	opts := []rest.ClientOption{
+		rest.WithProviderURL(providerURL),
+		rest.WithCertQuerier(NewOnChainCertQuerier(cctx)),
+	}
 	var (
 		authorization gatewayAuthorization
 		secrets       []string
