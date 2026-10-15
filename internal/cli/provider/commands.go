@@ -763,9 +763,8 @@ func resolveProviderWithLookup(
 
 // resolveGatewayAuth resolves the client context, account, and auth type both
 // gateway transports need. The context always comes from the provider query
-// path: both auth modes verify the provider's certificate on chain. In mTLS
-// mode the account is re-derived from it so it matches the presented
-// certificate.
+// path: both auth modes verify the provider's certificate on chain. Preserve
+// the resolved account so mTLS can load its certificate for named accounts too.
 func resolveGatewayAuth(cmd *cobra.Command) (sdkclient.Context, sdk.AccAddress, string, error) {
 	_, accountAddr, authType, err := gatewayAuthenticationFromCmd(cmd)
 	if err != nil {
@@ -775,11 +774,7 @@ func resolveGatewayAuth(cmd *cobra.Command) (sdkclient.Context, sdk.AccAddress, 
 	if err != nil {
 		return sdkclient.Context{}, nil, "", err
 	}
-	if authType == "mtls" {
-		accountAddr = cctx.GetFromAddress()
-	} else {
-		cctx = cctx.WithFromAddress(accountAddr)
-	}
+	cctx = cctx.WithFromAddress(accountAddr)
 	return cctx, accountAddr, authType, nil
 }
 
