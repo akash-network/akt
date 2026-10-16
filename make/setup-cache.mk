@@ -28,6 +28,15 @@ $(GOLANGCI_LINT_VERSION_FILE): $(AKT_DEVCACHE)
 	touch $@
 $(GOLANGCI_LINT): $(GOLANGCI_LINT_VERSION_FILE)
 
+$(BINST_VERSION_FILE): $(AKT_DEVCACHE)
+	@echo "installing binst $(BINST_VERSION) ..."
+	rm -f $(BINST)
+	GOBIN=$(AKT_DEVCACHE_BIN) go install github.com/binary-install/binstaller/cmd/binst@$(BINST_VERSION)
+	rm -rf "$(dir $@)"
+	mkdir -p "$(dir $@)"
+	touch $@
+$(BINST): $(BINST_VERSION_FILE)
+
 cache-clean:
 	rm -rf $(AKT_DEVCACHE)
 

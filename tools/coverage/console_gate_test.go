@@ -133,6 +133,9 @@ func TestConsoleGateWorkflow(t *testing.T) {
 		if name == "required-ci" && !slices.Contains(needs, "changelog") {
 			t.Error("required-ci does not depend on changelog validation")
 		}
+		if name == "required-ci" && !slices.Contains(needs, "installer") {
+			t.Error("required-ci does not depend on the install.sh drift check")
+		}
 		if name != "required-ci" && !strings.Contains(job.If, "needs.console-changes.outputs.required == 'true'") {
 			t.Errorf("%s ignores changed-file selection", name)
 		}
@@ -172,12 +175,14 @@ func TestConsoleGateWorkflow(t *testing.T) {
 		{name: "missing live report", env: []string{"LIVE_REPORT_RESULT=skipped"}},
 		{name: "failed live report", env: []string{"LIVE_REPORT_RESULT=failure"}},
 		{name: "coverage still required", env: []string{"COVERAGE_RESULT=failure"}},
+		{name: "stale install.sh", env: []string{"INSTALLER_RESULT=failure"}},
+		{name: "skipped install.sh drift check", env: []string{"INSTALLER_RESULT=skipped"}},
 		{name: "main remains secretless", env: []string{"EVENT_NAME=push", "CODECOV_MAIN_RESULT=success", "CONSOLE_CHANGED=false", "CONSOLE_REQUIRED=false", "CONSOLE_RESULT=skipped", "LIVE_REPORT_RESULT=skipped"}, pass: true},
 		{name: "ineligible PR remains secretless", env: []string{"CONSOLE_REQUIRED=false", "CONSOLE_RESULT=skipped", "LIVE_REPORT_RESULT=skipped"}, pass: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := exec.Command("bash", "-e", "-o", "pipefail", "-c", gate.Steps[0].Run)
-			cmd.Env = append(os.Environ(), "CHANGELOG_RESULT=success", "LINT_RESULT=success", "BUILD_RESULT=success", "RACE_RESULT=success", "COVERAGE_RESULT=success", "CHANGES_RESULT=success", "CONSOLE_CHANGED=true", "CONSOLE_REQUIRED=true", "CONSOLE_RESULT=success", "LIVE_REPORT_RESULT=success", "CODECOV_MAIN_RESULT=skipped", "EVENT_NAME=pull_request")
+			cmd.Env = append(os.Environ(), "CHANGELOG_RESULT=success", "INSTALLER_RESULT=success", "LINT_RESULT=success", "BUILD_RESULT=success", "RACE_RESULT=success", "COVERAGE_RESULT=success", "CHANGES_RESULT=success", "CONSOLE_CHANGED=true", "CONSOLE_REQUIRED=true", "CONSOLE_RESULT=success", "LIVE_REPORT_RESULT=success", "CODECOV_MAIN_RESULT=skipped", "EVENT_NAME=pull_request")
 			cmd.Env = append(cmd.Env, tc.env...)
 			out, err := cmd.CombinedOutput()
 			if (err == nil) != tc.pass {

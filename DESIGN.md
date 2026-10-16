@@ -2335,6 +2335,31 @@ repository-local `go.work` that the container can mount. Configuration checks
 accept GoReleaser's dedicated deprecated-property exit status only when the
 corresponding deprecation and issue-summary diagnostics are the only error
 diagnostics; a mixed validation failure remains fatal.
+
+Script installation is anchored to signed workflow identities. The binstaller
+configuration in `.config/binstaller.yml` is the single source for two
+outputs. The first is the committed repository-root `install.sh`, which CI
+keeps byte-identical to a pinned `binst` regeneration. It accepts any tag at
+run time, so it cannot embed checksums. The second is a per-release
+`install.sh` pinned to its tag with the release's archive digests embedded.
+The publishing job dry-runs that script against the just-published archives.
+It then creates one build-provenance attestation covering every checksummed
+asset, the checksum manifest, and the script, and only then uploads the
+script. A user who verifies the script with `gh attestation verify` against
+this repository's `release.yml` therefore transitively verifies the archive it
+installs. Manual modes produce the script as an unattested artifact.
+
+The root script is attested separately, by a dedicated workflow that runs only
+for pushes to `main` changing it. That workflow re-checks drift before signing,
+and users pin it with `--source-ref=refs/heads/main`. Its attestation proves
+the script's origin, not the archive's: the archive is trusted through the
+checksum manifest the script downloads. Attestation-writing permission exists
+only in the publishing job and that workflow. This keeps the signer identities
+that users must trust to two files, and a contract test rejects a third.
+Adopting a third-party reusable release workflow for its
+built-in attestations was rejected: it cannot run the goreleaser-cross
+toolchain or the exact-commit gates above, and its signer identity would not
+name this repository's workflow.
 This exact-commit gate does not imply that the still-missing provider,
 dual-chain, testnetify, Console, monitor, fault, fuzz, and mutation lanes
 already satisfy the target release matrix.
