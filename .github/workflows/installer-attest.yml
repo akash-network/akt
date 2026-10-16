@@ -1,0 +1,50 @@
+name: installer-attest
+
+# Signs the repository-root install.sh (SPEC §2.15, §12.7). Users verify it with
+#   gh attestation verify install.sh --repo=akash-network/akt \
+#     --signer-workflow=akash-network/akt/.github/workflows/installer-attest.yml \
+#     --source-ref=refs/heads/main
+# so only main may run this: no pull_request, branch, or manual trigger may
+# sign under its identity. The attestation vouches for the script, not the
+# archives it installs; those are checked against each release's manifest.
+on:
+  push:
+    branches: [main]
+    paths:
+      - install.sh
+
+permissions:
+  contents: read
+
+env:
+  GOWORK: off
+
+jobs:
+  attest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+      - name: Require install.sh to match .config/binstaller.yml
+        run: make installer-check
+      - name: Attest install.sh
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-path: install.sh
+      - name: Verify the attestation users check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          gh attestation verify install.sh --repo="$REPOSITORY" \
+            --signer-workflow="$REPOSITORY/.github/workflows/installer-attest.yml" \
+            --source-ref=refs/heads/main

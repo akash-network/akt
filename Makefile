@@ -29,12 +29,18 @@ SEMVER                    ?= $(AKT_ROOT)/script/semver.sh
 # (v2.3.0 is built with go1.24 and cannot run against go 1.26.1).
 GOLANGCI_LINT_VERSION        ?= v2.11.4
 GIT_CHGLOG_VERSION           ?= v0.15.
+# Generates install.sh from .config/binstaller.yml. Its output is committed and
+# checked byte-for-byte, so a version bump means `make installer` in the same
+# change.
+BINST_VERSION                ?= v0.12.0
 
 GIT_CHGLOG_VERSION_FILE          := $(AKT_DEVCACHE_VERSIONS)/git-chglog/$(GIT_CHGLOG_VERSION)
 GOLANGCI_LINT_VERSION_FILE       := $(AKT_DEVCACHE_VERSIONS)/golangci-lint/$(GOLANGCI_LINT_VERSION)
+BINST_VERSION_FILE               := $(AKT_DEVCACHE_VERSIONS)/binst/$(BINST_VERSION)
 
 GIT_CHGLOG                       := $(AKT_DEVCACHE_BIN)/git-chglog
 GOLANGCI_LINT                    := $(AKT_DEVCACHE_BIN)/golangci-lint
+BINST                            := $(AKT_DEVCACHE_BIN)/binst
 
 GOMOD                  ?= readonly
 

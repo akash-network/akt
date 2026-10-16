@@ -209,6 +209,45 @@ release: release-libs release-publish-preflight $(GORELEASER_DOCKER_CONFIG)/conf
 	GORELEASER_ACCESS_TOKEN="$${GORELEASER_ACCESS_TOKEN:-}" \
 	docker run $(GORELEASER_DOCKER_ARGS) -e GITHUB_TOKEN -e GORELEASER_ACCESS_TOKEN $(GORELEASER_IMAGE) release --clean $(GORELEASER_ARGS)
 
+# Script installation (SPEC §2.15, §12.7). .config/binstaller.yml is the only
+# installer source: install.sh at the repository root is binst's generic
+# output for it, and release-installer derives the per-release installer the
+# publish job attests -- pinned to one tag, with that release's archive
+# checksums embedded.
+BINSTALLER_CONFIG     := $(AKT_ROOT)/.config/binstaller.yml
+INSTALLER_SCRIPT      := $(AKT_ROOT)/install.sh
+# Fixed paths under the checkout, not $(AKT_DEVCACHE): `dist` in
+# .goreleaser.yaml and release.yml's attest and upload steps name them.
+GORELEASER_DIST       := $(AKT_ROOT)/.cache/goreleaser
+RELEASE_INSTALLER_DIR := $(AKT_ROOT)/.cache/installer
+# Tag the release installer must pin. Empty accepts the tag of the single
+# checksum manifest in GoReleaser's dist directory (snapshot and dry runs).
+RELEASE_TAG           ?=
+
+.PHONY: installer
+installer: $(BINST)
+	$(BINST) gen --config "$(BINSTALLER_CONFIG)" -o "$(INSTALLER_SCRIPT)" --quiet
+
+# Fails unless install.sh is exactly what the pinned binst generates from the
+# config, so neither can change without the other.
+.PHONY: installer-check
+installer-check: $(BINST)
+	@set -eu; \
+	generated="$(AKT_DEVCACHE)/installer-check/install.sh"; \
+	mkdir -p "$$(dirname "$$generated")"; \
+	$(BINST) gen --config "$(BINSTALLER_CONFIG)" -o "$$generated" --quiet; \
+	if ! diff -u "$(INSTALLER_SCRIPT)" "$$generated"; then \
+		echo "install.sh does not match .config/binstaller.yml; run 'make installer' and commit the result" >&2; \
+		exit 1; \
+	fi
+
+# Writes $(RELEASE_INSTALLER_DIR)/install.sh and attestation-subjects.txt from
+# the checksum manifest of the preceding GoReleaser run.
+.PHONY: release-installer
+release-installer: $(BINST)
+	"$(AKT_ROOT)/script/release-installer.sh" "$(BINST)" "$(BINSTALLER_CONFIG)" \
+		"$(GORELEASER_DIST)" "$(RELEASE_INSTALLER_DIR)" "$(RELEASE_TAG)"
+
 .PHONY: bins
 bins: $(AKT)
 

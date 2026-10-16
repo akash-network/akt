@@ -44,20 +44,88 @@ brew update
 brew upgrade akash-network/tap/akt
 ```
 
+### Installer script
+
+Releases after v1.0.2 include an `install.sh` pinned to that release, with the
+SHA-256 of every archive embedded, and a
+[GitHub artifact attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds)
+proving this repository's release workflow built it. Verifying the script with
+the [GitHub CLI](https://cli.github.com/) (run `gh auth login` first) therefore
+also verifies the archive it installs. It works on macOS and Linux, amd64 or
+arm64, and installs `akt` into `$BINSTALLER_BIN`, or `~/.local/bin` when that
+is unset; make sure that directory is on your PATH.
+
+```bash
+(
+  tmpfile=$(mktemp) || exit
+  trap 'rm -f "$tmpfile"' EXIT
+  curl -fsSL -o "$tmpfile" https://github.com/akash-network/akt/releases/latest/download/install.sh &&
+    gh attestation verify --repo=akash-network/akt \
+      --signer-workflow=akash-network/akt/.github/workflows/release.yml "$tmpfile" &&
+    sh "$tmpfile"
+)
+```
+
+The script runs only if the download and the attestation check succeed, and the
+command exits non-zero if any step fails. Run `akt version` afterwards to
+confirm the installation.
+
+To install a specific release, download the script from its tag. To install
+into another directory, pass `-b <dir>` to the script:
+
+```bash
+VERSION=vX.Y.Z # the release tag to install
+(
+  tmpfile=$(mktemp) || exit
+  trap 'rm -f "$tmpfile"' EXIT
+  curl -fsSL -o "$tmpfile" "https://github.com/akash-network/akt/releases/download/${VERSION}/install.sh" &&
+    gh attestation verify --repo=akash-network/akt \
+      --signer-workflow=akash-network/akt/.github/workflows/release.yml "$tmpfile" &&
+    sh "$tmpfile" -b "$HOME/bin"
+)
+```
+
+The `install.sh` at the repository root is generated from the same
+configuration and selects the release when it runs: pass a tag, or omit it for
+the latest release. It is attested from `main`, but that attestation covers the
+script only. The script checks the archive against the release's
+`akt_<version>_checksums.txt`, which it downloads at run time. Prefer the
+release installer above when a pinned version is acceptable.
+
+```bash
+VERSION=vX.Y.Z # optional: leave empty for the latest release
+(
+  tmpfile=$(mktemp) || exit
+  trap 'rm -f "$tmpfile"' EXIT
+  curl -fsSL -o "$tmpfile" https://raw.githubusercontent.com/akash-network/akt/main/install.sh &&
+    gh attestation verify --repo=akash-network/akt \
+      --signer-workflow=akash-network/akt/.github/workflows/installer-attest.yml \
+      --source-ref=refs/heads/main "$tmpfile" &&
+    sh "$tmpfile" ${VERSION:+"$VERSION"}
+)
+```
+
 ### Release packages
 
 Download a package from the [latest release](https://github.com/akash-network/akt/releases/latest)
 for your operating system and CPU architecture:
 
-| Platform | ZIP archive |
-| --- | --- |
-| macOS, Apple Silicon or Intel | `akt_<version>_darwin_all.zip` |
-| Linux, x86-64 | `akt_<version>_linux_amd64.zip` |
-| Linux, ARM64 | `akt_<version>_linux_arm64.zip` |
+| Platform                      | ZIP archive                     |
+| ----------------------------- | ------------------------------- |
+| macOS, Apple Silicon or Intel | `akt_<version>_darwin_all.zip`  |
+| Linux, x86-64                 | `akt_<version>_linux_amd64.zip` |
+| Linux, ARM64                  | `akt_<version>_linux_arm64.zip` |
 
 Also download `akt_<version>_checksums.txt` from the same release. Compute your
 package's SHA-256 with `shasum -a 256` on macOS or `sha256sum` on Linux and
 compare it with the matching entry in that file before installing.
+For releases after v1.0.2, you can instead verify any archive or package
+directly against its build attestation:
+
+```bash
+gh attestation verify akt_<version>_linux_amd64.zip --repo=akash-network/akt \
+    --signer-workflow=akash-network/akt/.github/workflows/release.yml
+```
 
 Extract the `akt` executable from the ZIP. From the extracted directory, install
 it into a directory on your PATH and verify it:
@@ -144,6 +212,7 @@ All `tx` and `query` commands from the Akash chain, clean-copied from `chain-sdk
 Hub-based real-time monitoring tool with three dashboards, navigable via Tab/Shift-Tab. Especially critical during coordinated chain upgrades when online block explorers become unreliable. Connects directly to an RPC endpoint via WebSocket for real-time vote streaming. Requires only an RPC endpoint (no keyring, no default account).
 
 Dashboards:
+
 - **Network** (default) -- consensus state, validator voting, governance parameters. Sub-tabs: `1` Overview (dual progress bar, block history), `2` Validators (signing history), `3` Governance (module parameters)
 - **Provider** -- provider fleet health, version distribution, per-provider resource utilization
 - **Oracle/BME** -- oracle aggregated prices + BME vault state, mint status, ledger
@@ -569,18 +638,21 @@ live URIs. Use `--ready-timeout` to change the bound or `--no-wait-active` to
 return immediately after manifest submission.
 
 **Interactive mode** (default) -- a per-workflow progress display:
+
 ```bash
 # Full deployment lifecycle with interactive bid selection
 akt deploy deployment.yaml
 ```
 
 **JSONL mode** (for CI/CD and scripting):
+
 ```bash
 # Automated deployment -- each step emits a JSONL line to stdout
 akt deploy deployment.yaml --bid-select cheapest --yes -o jsonl
 ```
 
 Output is one JSON object per line, one line per step (`create-deployment`, `wait-for-bids`, `select-bid`, `create-lease`, `send-manifest`, `display-result`):
+
 ```jsonl
 {"workflow":"deploy","id":"wf_a1b2c3","step":"create-deployment","result":"completed","errors":[],"txs":[{"hash":"ABCD...","height":12345,"gas_used":150000,"code":0}]}
 {"workflow":"deploy","id":"wf_a1b2c3","step":"wait-for-bids","result":"completed","errors":[],"txs":[]}
@@ -589,6 +661,7 @@ Output is one JSON object per line, one line per step (`create-deployment`, `wai
 ```
 
 Parse with `jq`:
+
 ```bash
 # Extract the deployment transaction hash
 akt deploy deployment.yaml --bid-select cheapest --yes -o jsonl \
