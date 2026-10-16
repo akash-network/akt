@@ -229,8 +229,8 @@ jobs:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
     permissions:
-      # goreleaser creates the GitHub release and uploads the archives,
-      # packages and checksums to it; the attested install.sh follows.
+      # GoReleaser publishes the GitHub release with the archives, packages,
+      # checksums and the attested install.sh.
       contents: write
       # Sigstore-signed build provenance for every release asset and the
       # release install.sh (SPEC §12.7). `gh attestation verify
@@ -287,13 +287,81 @@ jobs:
           sudo docker image prune --all --force >/dev/null 2>&1 || true
           echo "after:"; df -h / | tail -1
 
-      # Everything below shells out to `make`, which drives goreleaser inside
-      # ghcr.io/goreleaser/goreleaser-cross (see make/releasing.mk). Docker is
-      # preinstalled on the GitHub-hosted runners.
+      # Everything below shells out to `make`, which drives GoReleaser Pro
+      # inside ghcr.io/goreleaser/goreleaser-cross-pro (see
+      # make/releasing.mk). Docker is preinstalled on the GitHub-hosted runners.
+      #
+      # This repository's GitHub releases are immutable: once published, a
+      # release rejects every further asset, so everything it ships -- the
+      # attested install.sh included -- has to go out in GoReleaser's one
+      # publication (SPEC §12.7). GoReleaser therefore runs twice:
+      # `release --prepare` builds into .cache/goreleaser without touching
+      # GitHub, and `publish` uploads it all once the installer has been
+      # generated, dry-run and attested, then updates the Homebrew formula. A
+      # failure before publication leaves nothing on GitHub, so a rerun of the
+      # job starts clean.
+      - name: Prepare release
+        env:
+          EVENT_TAG: ${{ github.ref_name }}
+          TESTED_SHA: ${{ github.sha }}
+          GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
+          # Only the publication preflight reads these here, so a missing
+          # credential fails before the build; make hands neither to the
+          # prepare container.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GORELEASER_ACCESS_TOKEN: ${{ secrets.GORELEASER_ACCESS_TOKEN }}
+        run: |
+          set -euo pipefail
+          checked_out_commit="$(git rev-parse --verify 'HEAD^{commit}')"
+          tag_commit="$(git rev-parse --verify "refs/tags/$EVENT_TAG^{commit}")"
+          if test "$checked_out_commit" != "$TESTED_SHA" ||
+            test "$tag_commit" != "$TESTED_SHA"; then
+            echo "checked-out commit $checked_out_commit and event tag $EVENT_TAG ($tag_commit) must equal $TESTED_SHA" >&2
+            exit 1
+          fi
+          exact_tags="$(git tag --points-at "$TESTED_SHA" | LC_ALL=C sort)"
+          if test "$exact_tags" != "$EVENT_TAG"; then
+            echo "event tag must be the only tag selecting $TESTED_SHA immediately before GoReleaser" >&2
+            printf 'found tags:\n%s\n' "$exact_tags" >&2
+            exit 1
+          fi
+          make release-prepare
+
+      # The release install.sh is pinned to this tag with the prepared
+      # archives' checksums embedded, so verifying its attestation also
+      # vouches for the archive it installs. GoReleaser publishes it only
+      # after it is attested; an unattested installer is never published.
+      - name: Generate release installer
+        env:
+          EVENT_TAG: ${{ github.ref_name }}
+        run: make release-installer RELEASE_TAG="$EVENT_TAG"
+
+      - name: Dry-run release installer against prepared assets
+        # Keep the platform list in step with supported_platforms in
+        # .config/binstaller.yml. The release does not exist yet, so a curl
+        # stand-in serves its download URLs from .cache/goreleaser -- the
+        # bytes `publish` will upload. Each platform must verify its archive
+        # with an embedded checksum, not the fallback manifest.
+        env:
+          EVENT_TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          for platform in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
+            script/release-installer-dry-run.sh .cache/installer/install.sh "$platform" .cache/goreleaser "$REPOSITORY" "$EVENT_TAG"
+          done
+
+      - name: Attest release assets and installer
+        # One provenance attestation for every checksummed archive and
+        # package, the checksum manifest itself, and install.sh.
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
+        with:
+          subject-checksums: .cache/installer/attestation-subjects.txt
+
       - name: Publish release
         env:
           EVENT_TAG: ${{ github.ref_name }}
           TESTED_SHA: ${{ github.sha }}
+          GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           # Writes the Homebrew formula to akash-network/homebrew-tap, which
           # GITHUB_TOKEN cannot reach. Same secret node uses, but node only
@@ -311,54 +379,20 @@ jobs:
           fi
           exact_tags="$(git tag --points-at "$TESTED_SHA" | LC_ALL=C sort)"
           if test "$exact_tags" != "$EVENT_TAG"; then
-            echo "event tag must be the only tag selecting $TESTED_SHA immediately before publish" >&2
+            echo "event tag must be the only tag selecting $TESTED_SHA immediately before GoReleaser" >&2
             printf 'found tags:\n%s\n' "$exact_tags" >&2
             exit 1
           fi
-          make release
+          make release-publish
 
-      # The release install.sh is pinned to this tag with the archive
-      # checksums GoReleaser just published embedded, so verifying its
-      # attestation also vouches for the archive it installs. It is uploaded
-      # only after it is attested; a failure before then leaves the release
-      # without an installer rather than with an unattested one.
-      - name: Generate release installer
-        env:
-          EVENT_TAG: ${{ github.ref_name }}
-        run: make release-installer RELEASE_TAG="$EVENT_TAG"
-
-      - name: Dry-run release installer against published assets
-        # Keep the platform list in step with supported_platforms in
-        # .config/binstaller.yml. Each must fetch its archive from the release
-        # and verify it with an embedded checksum, not the fallback manifest.
+      - name: Dry-run release installer against the published release
+        # The same check from the public download URLs, as a user runs it.
+        # The release is sealed by now, so a failure cannot be repaired in
+        # place; it fails the job so the release gets looked at.
         run: |
           for platform in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
-            if ! log="$(BINSTALLER_OS="${platform%/*}" BINSTALLER_ARCH="${platform#*/}" BINSTALLER_NO_PROGRESS=1 \
-              sh .cache/installer/install.sh -n 2>&1)"; then
-              printf '%s\n' "$log" >&2
-              echo "$platform: release installer dry run failed" >&2
-              exit 1
-            fi
-            printf '%s\n' "$log"
-            if ! grep -qF 'Using embedded checksum for verification' <<<"$log"; then
-              echo "$platform: archive was not verified with an embedded checksum" >&2
-              exit 1
-            fi
+            script/release-installer-dry-run.sh .cache/installer/install.sh "$platform"
           done
-
-      - name: Attest release assets and installer
-        # One provenance attestation for every checksummed archive and
-        # package, the checksum manifest itself, and install.sh.
-        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4.2.2
-        with:
-          subject-checksums: .cache/installer/attestation-subjects.txt
-
-      - name: Upload attested installer
-        env:
-          EVENT_TAG: ${{ github.ref_name }}
-          GH_TOKEN: ${{ github.token }}
-          REPOSITORY: ${{ github.repository }}
-        run: gh release upload "$EVENT_TAG" .cache/installer/install.sh --clobber --repo "$REPOSITORY"
 
       - name: Verify published installer attestation
         # Exactly what the README asks users to run, against what they download.
@@ -425,6 +459,9 @@ jobs:
       - name: Manual run (${{ inputs.mode }})
         env:
           MODE: ${{ inputs.mode }}
+          # The GoReleaser Pro license: dry-run runs the publish job's prepare
+          # step, which needs it. Manual modes never receive a publishing token.
+          GORELEASER_KEY: ${{ secrets.GORELEASER_KEY }}
         run: |
           case "$MODE" in
             check|snapshot|dry-run) ;;
@@ -435,6 +472,22 @@ jobs:
       - name: Generate release installer (unattested)
         if: inputs.mode != 'check'
         run: make release-installer
+
+      - name: Dry-run release installer against built assets
+        # The publish job's pre-publication check, against this run's build.
+        if: inputs.mode != 'check'
+        env:
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # release-installer accepted exactly one checksum manifest; its name
+          # carries the version the installer is pinned to.
+          manifest=(.cache/goreleaser/akt_*_checksums.txt)
+          version="${manifest[0]##*/akt_}"
+          tag="v${version%_checksums.txt}"
+          for platform in darwin/amd64 darwin/arm64 linux/amd64 linux/arm64; do
+            script/release-installer-dry-run.sh .cache/installer/install.sh "$platform" .cache/goreleaser "$REPOSITORY" "$tag"
+          done
 
       - name: Upload artifacts
         if: inputs.mode != 'check'

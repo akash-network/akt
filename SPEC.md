@@ -3413,14 +3413,16 @@ an optional tag argument, only after `gh attestation verify
 --source-ref=refs/heads/main` succeeds. The README recommends the release
 installer whenever a pinned version is acceptable.
 
-Every release published after v1.0.2 also carries a release `install.sh`
+Every release published after v1.0.3 also carries a release `install.sh`
 (§12.7) pinned to its own tag with each archive's SHA-256 embedded. The README
 installs it from `releases/latest/download/` or a named tag, and runs it only
 after `gh attestation verify --repo=akash-network/akt
 --signer-workflow=akash-network/akt/.github/workflows/release.yml` succeeds;
 `-b <dir>` selects the installation directory. The same verification command
-applies to any release archive or package. v1.0.2 and earlier releases have
-neither an installer asset nor attestations.
+applies to any release archive or package. v1.0.3's archives, packages, and
+checksum manifest are attested, but it has no installer: publication sealed
+the immutable release before the installer upload. v1.0.2 and earlier
+releases have neither an installer asset nor attestations.
 
 ### 2.16 Contributor changelog fragments
 
@@ -3450,6 +3452,34 @@ filename so an interrupted deletion can be retried without duplicating notes;
 a reused filename with different contents is rejected. No commits or tags are
 created by the tool. The maintainer reviews and merges the assembly as a
 release-preparation PR before tagging the tested commit.
+
+`make tag-release` drives that sequence from a maintainer's clean checkout.
+The tag comes from `VERSION` (`make tag-release VERSION=v1.2.3`); when
+`VERSION` is unset the target prompts for it once and fails without a
+terminal. It fails before any other step unless `gh auth status` succeeds in
+its own environment. A `gh` wrapped by a shell function, such as the
+1Password shell plugin, is invisible to the script, so its token is passed
+as `GH_TOKEN=$(gh auth token) make tag-release`. The tag MUST be a lowercase-`v` semantic version greater than every
+existing release tag and absent locally and on `origin`; a missing `v` is
+rejected, not added. The fetch and push URLs configured for `origin` MUST name
+the repository in `.github/repo`, where `gh` opens the PR, so the branch and
+tag cannot land elsewhere. The target cuts `release/<tag>` from
+`origin/main`, runs `changelog-assemble`,
+`changelog-check CHANGELOG_BASE=origin/main`, and `changelog-release-check`,
+commits the result as `chore(release): prepare <tag>`, pushes the branch,
+opens the PR with `gh`, and returns to the starting branch. It polls the PR
+until it is merged and never merges it itself: CI and core approval stay with
+GitHub. It then runs `git fetch origin main --tags` and checks that the merge
+commit is reachable from `origin/main`, carries no pending fragments, and has
+no other tag (the release workflow rejects each), and that the tag is still
+greater than every release tag, since another release may have been
+published during the wait. Finally it runs
+`git tag -s <tag> <merge-commit> -m "Release <tag>"` and
+`git push origin <tag>`. When `origin/main` has no pending fragments,
+assembly changes nothing and there is no PR diff to check: the target runs
+only `changelog-release-check`, skips the PR, and tags the `origin/main` tip.
+A rerun with the same tag resumes from the `release/<tag>` PR: an open PR is
+awaited, a merged one is tagged, and a closed one aborts.
 
 `make changelog-release-check` rejects pending fragments. Tagged release
 quality checks and the publication preflight require it; manual snapshots
@@ -8160,6 +8190,8 @@ tagged commit and MUST reject a version tag whose commit is not reachable from
 `main`. Publishing MUST depend on that exact-commit job rather than assuming a
 prior branch run tested the same object. The GoReleaser container reference
 MUST include an immutable OCI digest; a version tag alone is insufficient.
+Releases use GoReleaser Pro from the `goreleaser-cross-pro` image, because
+publication is split into separate prepare and publish steps (below).
 Tag publication MUST also query the exact tagged commit and require successful
 Codecov project statuses for active-union, experimental-TUI, and tooling plus
 the active patch status. Regenerating profiles in the release job does not
@@ -8174,32 +8206,60 @@ modes use the same previous-release comparison rule.
 
 For a tag event, the event tag MUST peel to the tested commit and MUST be the
 only tag selecting that commit. The publishing job MUST repeat this check
-immediately before invoking GoReleaser, after its complete tag checkout, and
-must not infer the release identity with an ambiguous `git describe` result.
+immediately before each GoReleaser invocation, after its complete tag
+checkout, and must not infer the release identity with an ambiguous
+`git describe` result.
 All tag publications share one non-cancelling concurrency group across tag
 refs so two stable releases cannot race while updating the Homebrew formula.
-Manual modes run separately with `contents: read`, do not receive publishing
-secrets, and every checkout uses `persist-credentials: false`. Only the tag
-publishing job receives `contents: write`.
+Manual modes run separately with `contents: read`, and every checkout uses
+`persist-credentials: false`. Manual modes receive no publishing token; their
+only secret is the GoReleaser Pro license key `GORELEASER_KEY`, which the
+dry-run mode's prepare step requires. Only the tag publishing job receives
+`contents: write`.
 
 The tag publishing job alone also receives `id-token: write` and
-`attestations: write`. After GoReleaser publishes, `make release-installer`
-generates the release installer: GoReleaser's dist directory MUST contain
-exactly one `akt_<version>_checksums.txt`, and it MUST belong to the event
-tag. Its entries are embedded into a copy of `.config/binstaller.yml` (the
-committed file is never modified), and `install.sh` is generated with that
-tag as its only target version. Before anything is attested, the installer
-dry-runs (`-n`) against the published assets for every supported platform,
-and each run MUST verify its archive with an embedded checksum. One
-build-provenance attestation then covers every manifest entry, the manifest
-itself, and `install.sh`. Only after that attestation exists is `install.sh`
-uploaded to the release. The job then downloads the published copy, requires
-it to be byte-identical, and verifies it and one archive with the README's
-`gh attestation verify` command. A failure between GoReleaser publication and
-attestation leaves the archives unattested and the release without
-`install.sh`; an unattested release `install.sh` is never published. Manual
+`attestations: write`. The repository's GitHub releases are immutable: a
+release is sealed when it is published, after which no asset can be added,
+replaced, or removed. Publication therefore runs GoReleaser in two steps with
+the installer work between them. `make release-prepare` runs
+`goreleaser release --clean --prepare`, which builds, archives, packages, and
+checksums the release and renders the Homebrew formula into GoReleaser's dist
+directory without creating anything on GitHub. Its container receives the
+license key and no GitHub or tap token. `make release-installer` then
+generates the release installer: the dist directory MUST contain exactly one
+`akt_<version>_checksums.txt`, and it MUST belong to the event tag. Its
+entries are embedded into a copy of `.config/binstaller.yml` (the committed
+file is never modified), and `install.sh` is generated with that tag as its
+only target version. Before anything is attested,
+`script/release-installer-dry-run.sh` dry-runs (`-n`) the installer for every
+supported platform against the prepared files. A `curl` stand-in serves
+`https://github.com/<repository>/releases/download/<tag>/<asset>` from the
+dist directory and fails every other request, so each run fetches the bytes
+GoReleaser will upload from the URL they will have once published. Each run
+executes without `GITHUB_TOKEN` and MUST verify its archive with an embedded
+checksum. One build-provenance attestation then covers every manifest entry,
+the manifest itself, and `install.sh`. Only then does `make release-publish`
+run `goreleaser publish`, which uploads the prepared assets and `install.sh`
+(`release.extra_files`) in a single publication and afterwards updates the
+Homebrew formula, so the formula never names an unpublished release.
+`make release-publish` first requires, through `make
+release-installer-verify`, that the attestation subject list carries the
+digests of both the prepared checksum manifest and `install.sh`, so neither a
+missing installer nor one left from another release or edited since reaches
+GoReleaser. The Make target does not check attestation itself; the workflow's
+step order guarantees it. After
+publication the job dry-runs the installer again against the public release,
+downloads the published `install.sh`, requires it to be byte-identical, and
+verifies it and one archive with the README's `gh attestation verify`
+command. A failure before `goreleaser publish` leaves no GitHub release, so a
+rerun starts clean; a failure inside it can leave an unsealed draft, which a
+maintainer deletes before rerunning. No asset is ever added to a published
+release, and the workflow never publishes an unattested release `install.sh`.
+Manual
 snapshot and dry-run modes generate the same installer as an unattested
-artifact, and no manual mode attests.
+artifact and dry-run it against their own dist directory. The dry-run mode
+runs the same `release --prepare` step as publication, skipping only the
+clean-tree validation. No manual mode attests.
 
 The repository-root `install.sh` is attested by
 `.github/workflows/installer-attest.yml`. Its only trigger is a push to `main`
@@ -8212,10 +8272,12 @@ verifies it with the README's `gh attestation verify` command, including
 the only workflows that may hold `attestations: write`. A contract test fails
 when any other workflow is granted it.
 
-Before GoReleaser starts, publication MUST require `GITHUB_TOKEN`. A stable
-semantic version, meaning one with no prerelease component, MUST also require
-`GORELEASER_ACCESS_TOKEN`; discovering that omission after GitHub assets have
-started uploading is a partial-release failure. Release containers default to
+Before GoReleaser starts, publication MUST require `GITHUB_TOKEN` and
+`GORELEASER_KEY`. A stable semantic version, meaning one with no prerelease
+component, MUST also require `GORELEASER_ACCESS_TOKEN`; discovering that
+omission after the release is published is a partial-release failure. Both
+`make release-prepare` and `make release-publish` run this preflight, so a
+missing credential fails before the build. Release containers default to
 `GOWORK=off`. A non-off override is valid only when it names the existing
 repository-root `go.work` mounted at the corresponding container path.
 `goreleaser check` may tolerate the intentional `brews` deprecation only when

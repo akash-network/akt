@@ -36,7 +36,30 @@ assembly has a separate, exact-content check rather than a label-based bypass.
 
 ## Preparing a release
 
-On a release-preparation branch based on current `main`, run:
+From a clean checkout with an authenticated `gh` and a git signing key, run:
+
+```bash
+GOWORK=off make tag-release                 # prompts for the tag
+GOWORK=off make tag-release VERSION=v1.2.3  # no prompt
+```
+
+The target stops unless `gh auth status` succeeds inside it. If your `gh`
+is a shell function, as with the 1Password shell plugin, the script cannot
+see it; pass the token instead:
+
+```bash
+GH_TOKEN=$(gh auth token) GOWORK=off make tag-release VERSION=v1.2.3
+```
+
+It branches `release/<tag>` from `origin/main`, runs the assembly and checks
+below, commits `chore(release): prepare <tag>`, and opens the PR. Once CI is
+green and core has approved and merged the PR, it signs the tag on the merge
+commit and pushes it, which starts the release workflow. Interrupting the
+wait is safe: rerun with the same tag to resume. If `origin/main` has no
+pending fragments, it tags the `origin/main` tip without a PR.
+
+The manual equivalent, on a release-preparation branch based on current
+`main`, is:
 
 ```bash
 GOWORK=off make changelog-assemble
@@ -57,8 +80,10 @@ merge before tagging, assemble those in another preparation PR first. The
 tagged release quality check and publication preflight reject pending fragments.
 Manual snapshots and dry runs may retain them.
 
-These commands do not commit, tag, or publish. GitHub release notes continue
-to come from GoReleaser's commit-based configuration.
+The changelog commands do not commit, tag, or publish. `make tag-release`
+commits, opens the PR, and pushes the tag; the release workflow publishes.
+GitHub release notes continue to come from GoReleaser's commit-based
+configuration.
 
 ## Migrating an open PR
 

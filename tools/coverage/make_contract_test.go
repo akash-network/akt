@@ -319,6 +319,160 @@ func TestReleaseInstallerScript(t *testing.T) {
 	}
 }
 
+// fakeReleaseInstaller stands in for the binst-generated install.sh: it
+// checks the environment the dry-run script promises, optionally fetches
+// FAKE_URL with curl the way install.sh does, and reports embedded-checksum
+// verification unless FAKE_NO_EMBEDDED is set.
+const fakeReleaseInstaller = `#!/bin/sh
+set -e
+[ "$1" = -n ] || { echo "not a dry run: $*" >&2; exit 9; }
+[ -z "${GITHUB_TOKEN:-}" ] || { echo "GITHUB_TOKEN reached the installer" >&2; exit 9; }
+[ "${BINSTALLER_NO_PROGRESS:-}" = 1 ] || { echo "progress output is enabled" >&2; exit 9; }
+echo "platform $BINSTALLER_OS/$BINSTALLER_ARCH"
+if [ -n "${FAKE_URL:-}" ]; then
+  tmp=$(mktemp -d)
+  curl -fsSL -o "$tmp/asset" "$FAKE_URL"
+  echo "fetched $(cat "$tmp/asset")"
+  rm -rf "$tmp"
+fi
+[ -n "${FAKE_NO_EMBEDDED:-}" ] || echo "Using embedded checksum for verification"
+# install.sh logs the marker before comparing digests, then fails.
+[ -z "${FAKE_FAIL_AFTER_EMBEDDED:-}" ] || exit 3
+`
+
+// fakePublicCurl stands in for the system curl that public dry runs use.
+const fakePublicCurl = `#!/bin/sh
+out=''
+while [ $# -gt 0 ]; do
+  case "$1" in
+  -o) out=$2; shift 2 ;;
+  *) shift ;;
+  esac
+done
+printf 'public-download' > "$out"
+`
+
+func TestReleaseInstallerDryRunScript(t *testing.T) {
+	t.Parallel()
+
+	script, err := filepath.Abs(filepath.Join("..", "..", "script", "release-installer-dry-run.sh"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	const release = "https://github.com/akash-network/akt/releases/download/v1.2.3/"
+	local := func(platform string) []string {
+		return []string{platform, "DIST", "akash-network/akt", "v1.2.3"}
+	}
+
+	for _, tc := range []struct {
+		name      string
+		args      []string
+		env       []string
+		want      []string
+		wantError string
+	}{
+		{
+			name: "serves the release download URL from the dist directory",
+			args: local("linux/amd64"),
+			env:  []string{"FAKE_URL=" + release + "akt_1.2.3_linux_amd64.zip"},
+			want: []string{"platform linux/amd64", "fetched linux-amd64-archive", "Using embedded checksum"},
+		},
+		{
+			name:      "refuses another tag",
+			args:      local("linux/amd64"),
+			env:       []string{"FAKE_URL=https://github.com/akash-network/akt/releases/download/v1.2.4/akt_1.2.3_linux_amd64.zip"},
+			wantError: "curl stand-in: refusing",
+		},
+		{
+			name:      "refuses another repository",
+			args:      local("linux/amd64"),
+			env:       []string{"FAKE_URL=https://github.com/other/akt/releases/download/v1.2.3/akt_1.2.3_linux_amd64.zip"},
+			wantError: "curl stand-in: refusing",
+		},
+		{
+			name:      "refuses a path below the release",
+			args:      local("linux/amd64"),
+			env:       []string{"FAKE_URL=" + release + "nested/akt_1.2.3_linux_amd64.zip"},
+			wantError: "curl stand-in: refusing",
+		},
+		{
+			name:      "fails for an asset the release does not have",
+			args:      local("linux/arm64"),
+			env:       []string{"FAKE_URL=" + release + "akt_1.2.3_linux_arm64.zip"},
+			wantError: "akt_1.2.3_linux_arm64.zip is not in",
+		},
+		{
+			name:      "requires embedded checksum verification",
+			args:      local("darwin/arm64"),
+			env:       []string{"FAKE_NO_EMBEDDED=1"},
+			wantError: "darwin/arm64: archive was not verified with an embedded checksum",
+		},
+		{
+			name:      "fails when checksum verification fails after the marker",
+			args:      local("linux/amd64"),
+			env:       []string{"FAKE_FAIL_AFTER_EMBEDDED=1"},
+			wantError: "linux/amd64: release installer dry run failed",
+		},
+		{
+			name: "runs against the public release with the system curl",
+			args: []string{"darwin/amd64"},
+			env:  []string{"FAKE_URL=" + release + "akt_1.2.3_darwin_all.zip"},
+			want: []string{"platform darwin/amd64", "fetched public-download", "Using embedded checksum"},
+		},
+		{name: "rejects a platform without an architecture", args: []string{"linux"}, wantError: "platform must be OS/ARCH"},
+		{name: "rejects a partial local source", args: []string{"linux/amd64", "DIST"}, wantError: "usage:"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := t.TempDir()
+			installer := commandTestWriteFile(t, root, "install.sh", fakeReleaseInstaller)
+			dist := filepath.Join(root, "dist")
+			commandTestWriteFile(t, dist, "akt_1.2.3_linux_amd64.zip", "linux-amd64-archive")
+			// The "system" curl: public dry runs must use it, and the local
+			// stand-in must shadow it.
+			systemBin := filepath.Join(root, "system-bin")
+			commandTestWriteFile(t, systemBin, "curl", fakePublicCurl)
+			if err := os.Chmod(filepath.Join(systemBin, "curl"), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			args := []string{installer}
+			for _, arg := range tc.args {
+				if arg == "DIST" {
+					arg = dist
+				}
+				args = append(args, arg)
+			}
+
+			// Executed directly, as release.yml does, so a script committed
+			// without its executable bit fails here. GITHUB_TOKEN is set to
+			// prove the installer never sees it.
+			command := exec.Command(script, args...)
+			command.Env = append(append(os.Environ(),
+				"GITHUB_TOKEN=must-not-leak", "PATH="+systemBin+string(os.PathListSeparator)+os.Getenv("PATH")), tc.env...)
+			output, err := command.CombinedOutput()
+
+			if tc.wantError != "" {
+				if err == nil {
+					t.Fatalf("dry run succeeded, want error containing %q:\n%s", tc.wantError, output)
+				}
+				if !strings.Contains(string(output), tc.wantError) {
+					t.Fatalf("dry run error output does not contain %q:\n%s", tc.wantError, output)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("dry run: %v\n%s", err, output)
+			}
+			for _, want := range tc.want {
+				if !strings.Contains(string(output), want) {
+					t.Errorf("dry run output does not contain %q:\n%s", want, output)
+				}
+			}
+		})
+	}
+}
+
 type workflowContract struct {
 	Permissions map[string]string `yaml:"permissions"`
 	Jobs        map[string]struct {
@@ -328,10 +482,18 @@ type workflowContract struct {
 }
 
 type workflowStep struct {
-	If   string            `yaml:"if"`
-	Uses string            `yaml:"uses"`
-	Run  string            `yaml:"run"`
-	With map[string]string `yaml:"with"`
+	If              string            `yaml:"if"`
+	ContinueOnError string            `yaml:"continue-on-error"`
+	Uses            string            `yaml:"uses"`
+	Run             string            `yaml:"run"`
+	Env             map[string]string `yaml:"env"`
+	With            map[string]string `yaml:"with"`
+}
+
+// isInstallerDryRun reports whether step dry-runs the release installer; a
+// dry run against prepared files names GoReleaser's dist directory.
+func isInstallerDryRun(step workflowStep) bool {
+	return strings.Contains(step.Run, "script/release-installer-dry-run.sh")
 }
 
 func readWorkflowContract(t *testing.T, name string) workflowContract {
@@ -394,25 +556,32 @@ func TestReleaseWorkflowAttestsInstallerBeforePublishingIt(t *testing.T) {
 		}
 	}
 	steps := publish.Steps
-	release := workflowStepIndex(steps, func(step workflowStep) bool { return runsCommand(step, "make release") })
+	// Releases are immutable once published, so the installer must be
+	// generated, dry-run and attested between GoReleaser's prepare and
+	// publish steps, and nothing may be uploaded afterwards.
+	prepare := workflowStepIndex(steps, func(step workflowStep) bool { return runsCommand(step, "make release-prepare") })
 	generate := workflowStepIndex(steps, func(step workflowStep) bool {
 		return runsCommand(step, `make release-installer RELEASE_TAG="$EVENT_TAG"`)
 	})
-	dryRun := workflowStepIndex(steps, func(step workflowStep) bool {
-		return strings.Contains(step.Run, "BINSTALLER_OS=") && strings.Contains(step.Run, "Using embedded checksum")
+	localDryRun := workflowStepIndex(steps, func(step workflowStep) bool {
+		return isInstallerDryRun(step) && strings.Contains(step.Run, `.cache/goreleaser "$REPOSITORY" "$EVENT_TAG"`)
 	})
 	attest := workflowStepIndex(steps, func(step workflowStep) bool { return strings.HasPrefix(step.Uses, "actions/attest@") })
-	upload := workflowStepIndex(steps, func(step workflowStep) bool { return strings.Contains(step.Run, "gh release upload") })
+	release := workflowStepIndex(steps, func(step workflowStep) bool { return runsCommand(step, "make release-publish") })
+	publicDryRun := workflowStepIndex(steps, func(step workflowStep) bool {
+		return isInstallerDryRun(step) && !strings.Contains(step.Run, ".cache/goreleaser")
+	})
 	verify := workflowStepIndex(steps, func(step workflowStep) bool { return strings.Contains(step.Run, "gh attestation verify") })
 	order := []struct {
 		name  string
 		index int
 	}{
-		{"GoReleaser publication", release},
+		{"GoReleaser prepare", prepare},
 		{"installer generation for the event tag", generate},
-		{"installer dry run against published assets", dryRun},
+		{"installer dry run against the prepared assets", localDryRun},
 		{"attestation", attest},
-		{"installer upload", upload},
+		{"GoReleaser publication", release},
+		{"installer dry run against the published release", publicDryRun},
 		{"published installer verification", verify},
 	}
 	for position, step := range order {
@@ -423,14 +592,38 @@ func TestReleaseWorkflowAttestsInstallerBeforePublishingIt(t *testing.T) {
 		if position > 0 && order[position-1].index >= 0 && order[position-1].index >= step.index {
 			t.Errorf("%s must run after %s", step.name, order[position-1].name)
 		}
+		// Ordering only protects publication if every earlier step runs and
+		// stops the job when it fails.
+		if s := steps[step.index]; s.If != "" || s.ContinueOnError != "" {
+			t.Errorf("%s must always run and fail the job (if %q, continue-on-error %q)", step.name, s.If, s.ContinueOnError)
+		}
 	}
 	if attest >= 0 {
 		if got := steps[attest].With["subject-checksums"]; got != ".cache/installer/attestation-subjects.txt" {
 			t.Errorf("attestation subjects = %q, want the generated subject list", got)
 		}
 	}
-	if upload >= 0 && !strings.Contains(steps[upload].Run, ".cache/installer/install.sh") {
-		t.Error("publish job does not upload the attested installer")
+	for _, step := range steps {
+		if strings.Contains(step.Run, "gh release upload") || runsCommand(step, "make release") {
+			t.Errorf("publish job adds to the release outside GoReleaser's publication:\n%s", step.Run)
+		}
+	}
+	const licenseKey = "${{ secrets.GORELEASER_KEY }}"
+	if prepare >= 0 {
+		if got := steps[prepare].Env["GORELEASER_KEY"]; got != licenseKey {
+			t.Errorf("prepare step GORELEASER_KEY = %q, want %q", got, licenseKey)
+		}
+	}
+	if release >= 0 {
+		for name, want := range map[string]string{
+			"GORELEASER_KEY":          licenseKey,
+			"GITHUB_TOKEN":            "${{ secrets.GITHUB_TOKEN }}",
+			"GORELEASER_ACCESS_TOKEN": "${{ secrets.GORELEASER_ACCESS_TOKEN }}",
+		} {
+			if got := steps[release].Env[name]; got != want {
+				t.Errorf("publication step %s = %q, want %q", name, got, want)
+			}
+		}
 	}
 	if verify >= 0 {
 		for _, want := range []string{"cmp ", `--signer-workflow="$REPOSITORY/.github/workflows/release.yml"`} {
@@ -445,6 +638,28 @@ func TestReleaseWorkflowAttestsInstallerBeforePublishingIt(t *testing.T) {
 		t.Error("manual snapshot and dry-run modes do not generate the installer")
 	} else if manual[index].If != "inputs.mode != 'check'" {
 		t.Errorf("manual installer generation condition = %q", manual[index].If)
+	}
+	if index := workflowStepIndex(manual, func(step workflowStep) bool {
+		return isInstallerDryRun(step) && strings.Contains(step.Run, ".cache/goreleaser")
+	}); index < 0 {
+		t.Error("manual snapshot and dry-run modes do not dry-run the installer against their own build")
+	} else if manual[index].If != "inputs.mode != 'check'" {
+		t.Errorf("manual installer dry-run condition = %q", manual[index].If)
+	}
+	// Manual modes get the GoReleaser Pro license, which the dry-run's
+	// prepare step needs, and never a publishing token.
+	run := workflowStepIndex(manual, func(step workflowStep) bool { return strings.Contains(step.Run, `make "release-${MODE}"`) })
+	if run < 0 {
+		t.Error("manual job does not run the selected release mode")
+	} else {
+		if got := manual[run].Env["GORELEASER_KEY"]; got != licenseKey {
+			t.Errorf("manual run GORELEASER_KEY = %q, want %q", got, licenseKey)
+		}
+		for _, name := range []string{"GITHUB_TOKEN", "GORELEASER_ACCESS_TOKEN"} {
+			if _, ok := manual[run].Env[name]; ok {
+				t.Errorf("manual run receives publishing token %s", name)
+			}
+		}
 	}
 	artifacts := workflowStepIndex(manual, func(step workflowStep) bool { return strings.HasPrefix(step.Uses, "actions/upload-artifact@") })
 	if artifacts < 0 || !strings.Contains(manual[artifacts].With["path"], ".cache/installer/install.sh") {
@@ -512,6 +727,232 @@ func TestReleaseInstallerTargetUsesWorkflowLayout(t *testing.T) {
 	}
 }
 
+// makeDryRunRelease prints the commands `make target` would run, with the
+// GoReleaser knobs pinned so the developer's environment cannot change them.
+func makeDryRunRelease(t *testing.T, target string) (string, error) {
+	t.Helper()
+
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := exec.Command("make", "-n", "-s", "-C", root, target,
+		"AKT_ROOT="+root, "AKT_DEVCACHE="+filepath.Join(t.TempDir(), "cache"),
+		"GORELEASER_VERBOSE=false", "GORELEASER_SKIP=", "GORELEASER_MOUNT_CONFIG=false")
+	command.Env = append(os.Environ(), "GOWORK=off")
+	output, err := command.CombinedOutput()
+	return string(output), err
+}
+
+// dockerRunLine returns the single `docker run` command in make's output.
+func dockerRunLine(t *testing.T, target, output string) string {
+	t.Helper()
+
+	var lines []string
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, "docker run ") {
+			lines = append(lines, strings.Join(strings.Fields(line), " "))
+		}
+	}
+	if len(lines) != 1 {
+		t.Fatalf("make %s runs %d docker commands, want 1:\n%s", target, len(lines), output)
+	}
+	return lines[0]
+}
+
+func TestReleaseTargetsSplitPublication(t *testing.T) {
+	t.Parallel()
+
+	var config struct {
+		Dist string `yaml:"dist"`
+	}
+	if err := yaml.Unmarshal([]byte(commandTestReadFile(t, filepath.Join("..", "..", ".goreleaser.yaml"))), &config); err != nil {
+		t.Fatal(err)
+	}
+	const image = "ghcr.io/goreleaser/goreleaser-cross-pro:"
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, tc := range []struct {
+		target    string
+		suffix    string
+		preflight bool
+		tokens    bool
+	}{
+		{target: "release-dry-run", suffix: " release --clean --prepare --skip=validate"},
+		{target: "release-prepare", suffix: " release --clean --prepare", preflight: true},
+		{target: "release-publish", suffix: " publish --dist " + config.Dist, preflight: true, tokens: true},
+	} {
+		t.Run(tc.target, func(t *testing.T) {
+			t.Parallel()
+
+			output, err := makeDryRunRelease(t, tc.target)
+			if err != nil {
+				t.Fatalf("make -n %s: %v\n%s", tc.target, err, output)
+			}
+			docker := dockerRunLine(t, tc.target, output)
+			if !strings.HasSuffix(docker, tc.suffix) {
+				t.Errorf("make %s runs\n%s\nwant it to end with %q", tc.target, docker, tc.suffix)
+			}
+			if !strings.Contains(docker, " "+image) || !strings.Contains(docker, "@sha256:") {
+				t.Errorf("make %s does not run the digest-pinned GoReleaser Pro image:\n%s", tc.target, docker)
+			}
+			if !strings.Contains(docker, " -e GORELEASER_KEY ") {
+				t.Errorf("make %s does not pass the GoReleaser Pro license:\n%s", tc.target, docker)
+			}
+			for _, token := range []string{"GITHUB_TOKEN", "GORELEASER_ACCESS_TOKEN"} {
+				if got := strings.Contains(docker, " -e "+token+" "); got != tc.tokens {
+					t.Errorf("make %s passes %s to GoReleaser = %t, want %t:\n%s", tc.target, token, got, tc.tokens, docker)
+				}
+			}
+			for _, want := range []string{"GITHUB_TOKEN is required", "GORELEASER_KEY (the GoReleaser Pro license) is required"} {
+				if got := strings.Contains(output, want); got != tc.preflight {
+					t.Errorf("make %s runs the publication preflight check %q = %t, want %t", tc.target, want, got, tc.preflight)
+				}
+			}
+		})
+	}
+
+	// publish uploads release.extra_files, so the installer generated for
+	// this prepared release must be checked before GoReleaser creates it.
+	output, err := makeDryRunRelease(t, "release-publish")
+	if err != nil {
+		t.Fatalf("make -n release-publish: %v\n%s", err, output)
+	}
+	guard := strings.Index(output, `installer="`+root+`/.cache/installer/install.sh"`)
+	if guard < 0 || guard > strings.Index(output, "docker run ") {
+		t.Errorf("release-publish does not verify the installer before publishing:\n%s", output)
+	}
+
+	// No one-shot target may publish a release without its installer.
+	if output, err := makeDryRunRelease(t, "release"); err == nil || !strings.Contains(output, "No rule to make target") {
+		t.Errorf("make release still exists (err %v):\n%s", err, output)
+	}
+}
+
+func TestReleaseTargetsUseHostImageVariant(t *testing.T) {
+	t.Parallel()
+
+	// The GoReleaser image is a multi-arch index; Docker selects the host's
+	// variant, so no target may pin one.
+	for _, target := range []string{"release-check", "release-snapshot", "release-dry-run", "release-prepare", "release-publish"} {
+		t.Run(target, func(t *testing.T) {
+			t.Parallel()
+
+			output, err := makeDryRunRelease(t, target)
+			if err != nil {
+				t.Fatalf("make -n %s: %v\n%s", target, err, output)
+			}
+			if docker := dockerRunLine(t, target, output); strings.Contains(docker, "--platform") {
+				t.Errorf("make %s pins the image platform:\n%s", target, docker)
+			}
+		})
+	}
+}
+
+func TestReleaseInstallerVerifyBindsInstallerToPreparedRelease(t *testing.T) {
+	t.Parallel()
+
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := func(contents string) string {
+		digest := sha256.Sum256([]byte(contents))
+		return hex.EncodeToString(digest[:])
+	}
+	const manifest = "1111111111111111111111111111111111111111111111111111111111111111  akt_1.2.3_linux_amd64.zip\n"
+	const installer = "#!/bin/sh\n# pinned v1.2.3\n"
+	// What release-installer.sh writes for this manifest and installer.
+	subjects := manifest + sum(manifest) + "  akt_1.2.3_checksums.txt\n" + sum(installer) + "  install.sh\n"
+
+	for _, tc := range []struct {
+		name      string
+		manifests map[string]string
+		installer string
+		subjects  string
+		wantError string
+	}{
+		{name: "accepts the installer generated for the prepared release", installer: installer, subjects: subjects},
+		{name: "rejects an edited installer", installer: installer + "echo extra\n", subjects: subjects, wantError: "does not belong to the prepared release"},
+		{
+			name:      "rejects an installer generated for another release",
+			manifests: map[string]string{"akt_1.2.3_checksums.txt": strings.Replace(manifest, "1111", "2222", 1)},
+			installer: installer, subjects: subjects, wantError: "does not belong to the prepared release",
+		},
+		{name: "rejects a missing installer", subjects: subjects, wantError: "run make release-installer"},
+		{name: "rejects a missing subject list", installer: installer, wantError: "run make release-installer"},
+		{
+			name:      "rejects an ambiguous prepared release",
+			manifests: map[string]string{"akt_1.2.3_checksums.txt": manifest, "akt_1.2.4_checksums.txt": manifest},
+			installer: installer, subjects: subjects, wantError: "exactly one akt_<version>_checksums.txt",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			dir := t.TempDir()
+			dist := filepath.Join(dir, "dist")
+			out := filepath.Join(dir, "installer")
+			manifests := tc.manifests
+			if manifests == nil {
+				manifests = map[string]string{"akt_1.2.3_checksums.txt": manifest}
+			}
+			for name, contents := range manifests {
+				commandTestWriteFile(t, dist, name, contents)
+			}
+			if err := os.MkdirAll(out, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if tc.installer != "" {
+				commandTestWriteFile(t, out, "install.sh", tc.installer)
+			}
+			if tc.subjects != "" {
+				commandTestWriteFile(t, out, "attestation-subjects.txt", tc.subjects)
+			}
+
+			command := exec.Command("make", "-s", "-C", root, "release-installer-verify",
+				"AKT_ROOT="+root, "AKT_DEVCACHE="+filepath.Join(dir, "cache"),
+				"GORELEASER_DIST="+dist, "RELEASE_INSTALLER_DIR="+out)
+			command.Env = append(os.Environ(), "GOWORK=off")
+			output, err := command.CombinedOutput()
+			if tc.wantError == "" {
+				if err != nil {
+					t.Fatalf("release-installer-verify: %v\n%s", err, output)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(string(output), tc.wantError) {
+				t.Fatalf("release-installer-verify error = %v, want %q:\n%s", err, tc.wantError, output)
+			}
+		})
+	}
+}
+
+func TestGoreleaserPublishesReleaseInstaller(t *testing.T) {
+	t.Parallel()
+
+	var config struct {
+		Release struct {
+			Draft      bool `yaml:"draft"`
+			ExtraFiles []struct {
+				Glob string `yaml:"glob"`
+			} `yaml:"extra_files"`
+		} `yaml:"release"`
+	}
+	if err := yaml.Unmarshal([]byte(commandTestReadFile(t, filepath.Join("..", "..", ".goreleaser.yaml"))), &config); err != nil {
+		t.Fatal(err)
+	}
+	if config.Release.Draft {
+		t.Error("release.draft leaves publication to a later step that an immutable release would reject")
+	}
+	if len(config.Release.ExtraFiles) != 1 || config.Release.ExtraFiles[0].Glob != "./.cache/installer/install.sh" {
+		t.Errorf("release.extra_files = %+v, want only ./.cache/installer/install.sh", config.Release.ExtraFiles)
+	}
+}
+
 func TestReleaseInstallerDryRunCoversEverySupportedPlatform(t *testing.T) {
 	t.Parallel()
 
@@ -532,20 +973,32 @@ func TestReleaseInstallerDryRunCoversEverySupportedPlatform(t *testing.T) {
 		t.Fatal(".config/binstaller.yml lists no supported platforms")
 	}
 
-	steps := readWorkflowContract(t, "release.yml").Jobs["publish"].Steps
-	index := workflowStepIndex(steps, func(step workflowStep) bool { return strings.Contains(step.Run, "BINSTALLER_OS=") })
-	if index < 0 {
-		t.Fatal("publish job has no installer dry run")
-	}
-	match := regexp.MustCompile(`for platform in ([^;\n]+);`).FindStringSubmatch(steps[index].Run)
-	if match == nil {
-		t.Fatalf("installer dry run does not iterate a platform list:\n%s", steps[index].Run)
-	}
-	got := strings.Fields(match[1])
-	slices.Sort(got)
 	slices.Sort(want)
-	if !slices.Equal(got, want) {
-		t.Errorf("installer dry-run platforms = %v, want supported_platforms %v", got, want)
+
+	// Prepared assets and published release in the publish job, plus the
+	// manual job's own build.
+	workflow := readWorkflowContract(t, "release.yml")
+	runs := 0
+	for _, job := range []string{"publish", "manual"} {
+		for _, step := range workflow.Jobs[job].Steps {
+			if !isInstallerDryRun(step) {
+				continue
+			}
+			runs++
+			match := regexp.MustCompile(`for platform in ([^;\n]+);`).FindStringSubmatch(step.Run)
+			if match == nil {
+				t.Errorf("%s installer dry run does not iterate a platform list:\n%s", job, step.Run)
+				continue
+			}
+			got := strings.Fields(match[1])
+			slices.Sort(got)
+			if !slices.Equal(got, want) {
+				t.Errorf("%s installer dry-run platforms = %v, want supported_platforms %v", job, got, want)
+			}
+		}
+	}
+	if runs != 3 {
+		t.Errorf("release workflow has %d installer dry runs, want 3", runs)
 	}
 }
 

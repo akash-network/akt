@@ -1,9 +1,12 @@
 # Release tooling.
 #
-# goreleaser is run from the goreleaser-cross container image rather than as a
-# local binary: the darwin targets need osxcross and the linux targets need the
-# gnu cross toolchains, and we do not want either as a developer prerequisite.
-# Docker is required for GoReleaser targets; changelog targets use local Go.
+# GoReleaser Pro is run from the goreleaser-cross-pro container image rather
+# than as a local binary: the darwin targets need osxcross and the linux targets
+# need the gnu cross toolchains, and we do not want either as a developer
+# prerequisite. Docker is required for GoReleaser targets; changelog targets use
+# local Go. Pro is needed for the split prepare/publish release (SPEC §12.7):
+# release-dry-run, release-prepare and release-publish need the license key in
+# GORELEASER_KEY, while release-check and release-snapshot run without it.
 
 .PHONY: changelog-check changelog-assemble changelog-release-check
 changelog-check:
@@ -15,17 +18,27 @@ changelog-assemble:
 changelog-release-check:
 	$(GO) run ./tools/changelog release-check
 
-# goreleaser-cross publishes one image per Go patch release, but not for every
-# patch -- there is no v1.26.1 image even though go.mod pins go 1.26.1. Keep the
-# readable tag and immutable index digest together, and update both only after
-# inspecting the published multi-platform manifest.
-GORELEASER_CROSS_VERSION ?= v1.26.2
-GORELEASER_CROSS_DIGEST  ?= sha256:fadba0d4577866eb2588d46ea6b604c73ef45ee55f044acbc17cc49aa435fd04
-GORELEASER_IMAGE         := ghcr.io/goreleaser/goreleaser-cross:$(GORELEASER_CROSS_VERSION)@$(GORELEASER_CROSS_DIGEST)
+# Maintainer release (SPEC §2.16): opens the release-preparation PR, waits for
+# a human to merge it, then signs and pushes the tag on the merge commit.
+# Prompts for the tag unless VERSION is set, either on the command line or in
+# the environment. The recipe must not reference MAKE: that would make
+# `make -n tag-release` run the release.
+.PHONY: tag-release
+tag-release:
+	@VERSION="$(VERSION)" GOWORK=off "$(AKT_ROOT)/script/tools.sh" tag-release
 
-# The cross image is published for linux/amd64 only; be explicit so arm64 hosts
-# emulate instead of failing to find a manifest.
-GORELEASER_PLATFORM      ?= linux/amd64
+# goreleaser-cross-pro publishes one image per Go patch release, but not for
+# every patch -- there is no v1.26.1 image even though go.mod pins go 1.26.1.
+# Keep the readable tag and immutable index digest together, and update both
+# only after inspecting the published multi-platform manifest. v1.26.2 bundles
+# GoReleaser Pro v2.15.2, the same GoReleaser version as the open-source image
+# it replaced.
+GORELEASER_CROSS_VERSION ?= v1.26.2
+GORELEASER_CROSS_DIGEST  ?= sha256:c51bf484cb3419f17b51695050d74703f8c49c79a231ff99caff8e675a8eabf8
+GORELEASER_IMAGE         := ghcr.io/goreleaser/goreleaser-cross-pro:$(GORELEASER_CROSS_VERSION)@$(GORELEASER_CROSS_DIGEST)
+
+# The digest names a multi-arch index (linux/amd64 and linux/arm64), so Docker
+# runs the host's native variant; no target pins a platform.
 
 GORELEASER_VERBOSE       ?= false
 GORELEASER_MOUNT_CONFIG  ?= false
@@ -62,6 +75,14 @@ ifneq (,$(GORELEASER_SKIP))
 	GORELEASER_ARGS += --skip=$(GORELEASER_SKIP)
 endif
 
+# `goreleaser publish` accepts no pipe skips (its --skip takes only `after`),
+# so GORELEASER_SKIP is not forwarded to it.
+GORELEASER_PUBLISH_ARGS :=
+
+ifeq ($(GORELEASER_VERBOSE),true)
+	GORELEASER_PUBLISH_ARGS += --verbose
+endif
+
 # The image entrypoint runs `docker login ghcr.io` whenever GITHUB_TOKEN is set
 # and /root/.docker/config.json is absent, and it runs under `set -e`, so that
 # login failing kills the release before goreleaser even starts. It does fail:
@@ -79,7 +100,6 @@ $(GORELEASER_DOCKER_CONFIG)/config.json:
 # root-owned files into the developer's GOPATH.
 GORELEASER_DOCKER_ARGS := \
 	--rm \
-	--platform $(GORELEASER_PLATFORM) \
 	-e GOWORK=$(GORELEASER_GOWORK) \
 	-v akt-goreleaser-gomod:/go/pkg/mod \
 	-v akt-goreleaser-gobuild:/root/.cache/go-build \
@@ -138,7 +158,8 @@ release-workspace-check:
 # the deprecation-only outcome is tolerated -- and only that one. GoReleaser's
 # exit status 2 and its two exact error diagnostics distinguish that result
 # from a config that is both invalid and deprecated. Any other status or extra
-# error diagnostic fails.
+# error diagnostic fails. GoReleaser Pro v2.15.2 reports the same deprecation as
+# a warning and exits 0, which passes before any of that is consulted.
 .PHONY: release-check
 release-check: release-workspace-check $(GORELEASER_DOCKER_CONFIG)/config.json
 	@out=$$($(GORELEASER) check $(GORELEASER_ARGS) 2>&1); status=$$?; \
@@ -162,16 +183,27 @@ release-check: release-workspace-check $(GORELEASER_DOCKER_CONFIG)/config.json
 release-snapshot: release-libs release-workspace-check $(GORELEASER_DOCKER_CONFIG)/config.json
 	$(GORELEASER) release --clean --snapshot --skip=publish,validate $(GORELEASER_ARGS)
 
-# Same as `release` but stops short of uploading. Needs a tag reachable from
-# HEAD; `--skip=validate` allows running it from a dirty tree.
+# The same prepare step as release-prepare, without its publication preflight:
+# it needs only GORELEASER_KEY and a tag reachable from HEAD, publishes
+# nothing, and `--skip=validate` allows running it from a dirty tree.
 .PHONY: release-dry-run
 release-dry-run: release-libs release-workspace-check $(GORELEASER_DOCKER_CONFIG)/config.json
-	$(GORELEASER) release --clean --skip=publish,validate $(GORELEASER_ARGS)
+	docker run $(GORELEASER_DOCKER_ARGS) -e GORELEASER_KEY $(GORELEASER_IMAGE) release --clean --prepare --skip=validate $(GORELEASER_ARGS)
 
-# The real thing: builds the matrix and uploads to the GitHub release for the
-# current tag. Driven by .github/workflows/release.yml on `v*` tag pushes;
-# running it by hand needs a GITHUB_TOKEN with contents:write. Tokens are
-# passed by name so they never land in the echoed command line.
+# The real thing, in the two steps .github/workflows/release.yml runs on `v*`
+# tag pushes (SPEC §12.7). The repository's GitHub releases are immutable --
+# sealed when published -- so everything a release ships has to go out in one
+# publication. release-prepare builds the release into $(GORELEASER_DIST)
+# without touching GitHub; release.yml then generates, dry-runs and attests
+# install.sh; release-publish uploads the assets and install.sh together and
+# only then updates the Homebrew formula. There is deliberately no one-shot
+# target that could publish a release without its installer.
+#
+# Both steps need GORELEASER_KEY and run the publication preflight, so a
+# missing credential fails before the build. Only release-publish hands
+# GitHub and tap tokens to its container. Running it by hand needs a
+# GITHUB_TOKEN with contents:write. Tokens are passed by name so they never
+# land in the echoed command line.
 #
 # GORELEASER_ACCESS_TOKEN writes the Homebrew formula to
 # akash-network/homebrew-tap, which GITHUB_TOKEN cannot reach. Needs
@@ -183,6 +215,10 @@ release-dry-run: release-libs release-workspace-check $(GORELEASER_DOCKER_CONFIG
 release-publish-preflight: release-workspace-check changelog-release-check
 	@if [ -z "$${GITHUB_TOKEN}" ]; then \
 		echo "GITHUB_TOKEN is required to publish a release"; \
+		exit 1; \
+	fi
+	@if [ -z "$${GORELEASER_KEY:-}" ]; then \
+		echo "GORELEASER_KEY (the GoReleaser Pro license) is required to publish a release"; \
 		exit 1; \
 	fi
 	@set -eu; \
@@ -204,10 +240,21 @@ release-publish-preflight: release-workspace-check changelog-release-check
 		exit 1; \
 	fi
 
-.PHONY: release
-release: release-libs release-publish-preflight $(GORELEASER_DOCKER_CONFIG)/config.json
+.PHONY: release-prepare
+release-prepare: release-libs release-publish-preflight $(GORELEASER_DOCKER_CONFIG)/config.json
+	docker run $(GORELEASER_DOCKER_ARGS) -e GORELEASER_KEY $(GORELEASER_IMAGE) release --clean --prepare $(GORELEASER_ARGS)
+
+# `publish` loads the prepared context from --dist, whose default is ./dist
+# rather than the `dist` in .goreleaser.yaml, and re-reads the environment.
+# GoReleaser resolves release.extra_files here, so the installer is checked
+# first (release-installer-verify): a missing one would fail only after the
+# release had been created, and a stale one would be sealed into it. Whether
+# the installer is attested is not checked here; release.yml runs this only
+# after its attestation step succeeds.
+.PHONY: release-publish
+release-publish: release-publish-preflight release-installer-verify $(GORELEASER_DOCKER_CONFIG)/config.json
 	GORELEASER_ACCESS_TOKEN="$${GORELEASER_ACCESS_TOKEN:-}" \
-	docker run $(GORELEASER_DOCKER_ARGS) -e GITHUB_TOKEN -e GORELEASER_ACCESS_TOKEN $(GORELEASER_IMAGE) release --clean $(GORELEASER_ARGS)
+	docker run $(GORELEASER_DOCKER_ARGS) -e GITHUB_TOKEN -e GORELEASER_ACCESS_TOKEN -e GORELEASER_KEY $(GORELEASER_IMAGE) publish --dist ./.cache/goreleaser $(GORELEASER_PUBLISH_ARGS)
 
 # Script installation (SPEC §2.15, §12.7). .config/binstaller.yml is the only
 # installer source: install.sh at the repository root is binst's generic
@@ -216,8 +263,9 @@ release: release-libs release-publish-preflight $(GORELEASER_DOCKER_CONFIG)/conf
 # checksums embedded.
 BINSTALLER_CONFIG     := $(AKT_ROOT)/.config/binstaller.yml
 INSTALLER_SCRIPT      := $(AKT_ROOT)/install.sh
-# Fixed paths under the checkout, not $(AKT_DEVCACHE): `dist` in
-# .goreleaser.yaml and release.yml's attest and upload steps name them.
+# Fixed paths under the checkout, not $(AKT_DEVCACHE): `dist` and
+# `release.extra_files` in .goreleaser.yaml, release-publish's --dist, and
+# release.yml's dry-run and attest steps name them.
 GORELEASER_DIST       := $(AKT_ROOT)/.cache/goreleaser
 RELEASE_INSTALLER_DIR := $(AKT_ROOT)/.cache/installer
 # Tag the release installer must pin. Empty accepts the tag of the single
@@ -247,6 +295,34 @@ installer-check: $(BINST)
 release-installer: $(BINST)
 	"$(AKT_ROOT)/script/release-installer.sh" "$(BINST)" "$(BINSTALLER_CONFIG)" \
 		"$(GORELEASER_DIST)" "$(RELEASE_INSTALLER_DIR)" "$(RELEASE_TAG)"
+
+# Fails unless install.sh and attestation-subjects.txt are what
+# release-installer generated from the checksum manifest now in
+# $(GORELEASER_DIST): the subject list must carry both the manifest's and the
+# installer's digest. An installer left over from an earlier release, or edited
+# since, would otherwise be sealed into this one.
+.PHONY: release-installer-verify
+release-installer-verify:
+	@set -eu; \
+	sha256() { if command -v sha256sum >/dev/null; then sha256sum "$$1"; else shasum -a 256 "$$1"; fi | cut -d' ' -f1; }; \
+	installer="$(RELEASE_INSTALLER_DIR)/install.sh"; \
+	subjects="$(RELEASE_INSTALLER_DIR)/attestation-subjects.txt"; \
+	set -- "$(GORELEASER_DIST)"/akt_*_checksums.txt; \
+	if [ $$# -ne 1 ] || [ ! -f "$$1" ]; then \
+		echo "expected exactly one akt_<version>_checksums.txt in $(GORELEASER_DIST)" >&2; \
+		exit 1; \
+	fi; \
+	manifest=$$1; \
+	if [ ! -f "$$installer" ] || [ ! -f "$$subjects" ]; then \
+		echo "$$installer or its attestation subject list is missing; run make release-installer" >&2; \
+		exit 1; \
+	fi; \
+	for subject in "$$(sha256 "$$manifest")  $${manifest##*/}" "$$(sha256 "$$installer")  install.sh"; do \
+		if ! grep -qxF "$$subject" "$$subjects"; then \
+			echo "$$installer does not belong to the prepared release; run make release-installer" >&2; \
+			exit 1; \
+		fi; \
+	done
 
 .PHONY: bins
 bins: $(AKT)

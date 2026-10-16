@@ -46,7 +46,7 @@ brew upgrade akash-network/tap/akt
 
 ### Installer script
 
-Releases after v1.0.2 include an `install.sh` pinned to that release, with the
+Releases after v1.0.3 include an `install.sh` pinned to that release, with the
 SHA-256 of every archive embedded, and a
 [GitHub artifact attestation](https://docs.github.com/en/actions/security-for-github-actions/using-artifact-attestations/using-artifact-attestations-to-establish-provenance-for-builds)
 proving this repository's release workflow built it. Verifying the script with
@@ -69,6 +69,9 @@ is unset; make sure that directory is on your PATH.
 The script runs only if the download and the attestation check succeed, and the
 command exits non-zero if any step fails. Run `akt version` afterwards to
 confirm the installation.
+
+v1.0.3 has no `install.sh`, although its archives and packages are attested;
+install it with the repository-root script below or a release package.
 
 To install a specific release, download the script from its tag. To install
 into another directory, pass `-b <dir>` to the script:
