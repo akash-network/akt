@@ -1,10 +1,11 @@
 ---
 # goreleaser configuration for the akt CLI.
 #
-# This runs inside ghcr.io/goreleaser/goreleaser-cross (see make/releasing.mk),
-# which ships osxcross for the darwin targets and the gnu cross toolchains for
-# linux. CGO cannot be disabled here: the cosmos-sdk keyring and the ledger HID
-# bindings are C libraries.
+# This runs GoReleaser Pro inside ghcr.io/goreleaser/goreleaser-cross-pro (see
+# make/releasing.mk), which ships osxcross for the darwin targets and the gnu
+# cross toolchains for linux. Tag releases run in two steps, `release
+# --prepare` then `publish` (SPEC §12.7). CGO cannot be disabled here: the
+# cosmos-sdk keyring and the ledger HID bindings are C libraries.
 #
 # akt builds with nolink_libwasmvm: it constructs and queries wasm messages
 # over gRPC and never executes a contract, so the CosmWasm VM is not linked and
@@ -276,5 +277,15 @@ release:
   mode: replace
   draft: false
   name_template: "akt {{ .Version }}"
+  # The release install.sh (SPEC §12.7). GitHub seals an immutable release
+  # when it is published, so the installer cannot be uploaded afterwards: it
+  # has to be part of the one publication. release.yml generates, dry-runs
+  # and attests it between `release --prepare` and `publish`; GoReleaser
+  # resolves extra_files only when it publishes, and `make release-publish`
+  # refuses to run unless the file was generated for the prepared release.
+  # Not checksummed: the installer embeds the checksum manifest, so it cannot
+  # also appear in it.
+  extra_files:
+    - glob: ./.cache/installer/install.sh
 
 report_sizes: true

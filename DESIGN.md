@@ -2342,12 +2342,27 @@ outputs. The first is the committed repository-root `install.sh`, which CI
 keeps byte-identical to a pinned `binst` regeneration. It accepts any tag at
 run time, so it cannot embed checksums. The second is a per-release
 `install.sh` pinned to its tag with the release's archive digests embedded.
-The publishing job dry-runs that script against the just-published archives.
-It then creates one build-provenance attestation covering every checksummed
-asset, the checksum manifest, and the script, and only then uploads the
-script. A user who verifies the script with `gh attestation verify` against
-this repository's `release.yml` therefore transitively verifies the archive it
+A user who verifies the script with `gh attestation verify` against this
+repository's `release.yml` therefore transitively verifies the archive it
 installs. Manual modes produce the script as an unattested artifact.
+
+That script can only be generated after GoReleaser has checksummed the
+archives, yet it must ship in the same publication as them: the repository's
+releases are immutable, and GitHub rejects any asset uploaded after a release
+is published. v1.0.3 was published without an installer for exactly that
+reason. Open-source GoReleaser builds, checksums, and publishes in one run
+with no hook in between, and its pre-publish hooks are a Pro feature. The
+publishing job therefore uses GoReleaser Pro's split release:
+`release --prepare` builds into the dist directory without touching GitHub;
+the job generates the script, dry-runs it for every platform against the
+prepared files through a `curl` stand-in that serves exactly the release
+download URLs, and attests everything; then `goreleaser publish` uploads the
+assets and the script together and only afterwards updates the Homebrew
+formula. A failure before publication leaves nothing on GitHub to clean up.
+Letting open-source GoReleaser stop at a draft and publishing the draft from
+the workflow was rejected: GoReleaser's formula update does not wait for the
+draft, so the tap would name download URLs that do not exist until the
+workflow publishes, or the workflow would have to take over the tap commit.
 
 The root script is attested separately, by a dedicated workflow that runs only
 for pushes to `main` changing it. That workflow re-checks drift before signing,
@@ -2408,6 +2423,14 @@ release validation and publication preflight reject pending fragments.
 Assembly happens before the release commit is tested, so publication does not
 mutate that commit. GoReleaser's commit-based GitHub release notes remain a
 separate output.
+
+`make tag-release` (`script/tools.sh tag-release`) scripts the maintainer's
+side of that flow: it opens the release-preparation PR, waits for a human to
+merge it, and signs and pushes the tag on the merge commit. Review and merge
+stay manual, so the core-review boundary does not move. Before tagging, the
+script checks the conditions the release workflow would otherwise reject only
+after the tag is public. Review can outlast a terminal session, so a rerun
+with the same tag resumes from the PR's state instead of starting over.
 
 ## 6. Implementation Phases
 
