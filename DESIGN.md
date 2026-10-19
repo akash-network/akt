@@ -693,6 +693,41 @@ the requested machine-readable format.
 
 This is the only point at which a `console-api` context talks to a provider gateway. Deployment lifecycle operations still route through the Console API, which submits manifests internally during lease creation (SPEC §7.4).
 
+Inside a Console team, a caller limited to some projects cannot mint the
+provider-scoped token of step 3. The client then asks for a granular token
+that names only this provider and dseq; without a selected project it tries
+the provider-scoped token first and falls back only on `project_forbidden`, so
+accounts without teams send the same request as before.
+
+#### 3.1.6 Console Teams and Projects
+
+The Console scope is a property of the Console client, not of each command.
+`cliutil.ConsoleScope` resolves the organization and project from the command's
+flags, `AKT_CONSOLE_ORGANIZATION`/`AKT_CONSOLE_PROJECT`, and the context, and
+`console.Client.WithScope` attaches them. Every request then carries
+`x-organization-id` and `x-project-id` exactly when a value is selected, so the
+direct `akt console` commands, the Console workflow rail, and `akt mcp` share
+one implementation and a context without teams sends nothing new (SPEC §7.1.1).
+
+Three choices keep that boundary small:
+
+- **Ids at rest, names at the edge.** The context stores only a project id.
+  Flags and arguments may name a project by slug or name; the client resolves
+  it once per process through `GET /v1/projects` and reuses the id, so a rename
+  in the web app cannot silently move a context to another project.
+- **Management never narrows.** Listing, creating, renaming, deleting projects,
+  managing API keys, and moving deployments call `ForProject("")`, which drops
+  the project header. A stale or revoked project selection therefore cannot
+  lock the user out of the commands that fix it.
+- **Binding is explicit.** `apikey create` binds a key to a project only when
+  `--console-project` is given on that command. Working in a project never
+  narrows the keys created from it, because the binding cannot be changed
+  later.
+
+Team refusals keep the API's `code` on `console.HTTPError`, so callers branch
+on the code rather than on text, and the rendered error names the remedy
+(SPEC §7.6). Sealed requests keep the code while still dropping the body.
+
 ### 3.2 Dual-Mode Architecture
 
 ```mermaid
