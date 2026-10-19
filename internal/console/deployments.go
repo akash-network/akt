@@ -39,6 +39,11 @@ func (c *Client) CreateDeployment(ctx context.Context, sdl string, options ...Cr
 		c.record("create-deployment", "", err)
 		return nil, err
 	}
+	projectID, err := c.scopeProjectID(ctx)
+	if err != nil {
+		c.recordOutcome("create-deployment", "", "failed", err, map[string]string{"versionHash": versionHash})
+		return nil, err
+	}
 
 	before, err := c.listAllDeployments(ctx)
 	if err != nil {
@@ -51,10 +56,11 @@ func (c *Client) CreateDeployment(ctx context.Context, sdl string, options ...Cr
 		known[item.Deployment.ID.DSeq.String()] = struct{}{}
 	}
 
-	body := envelope(map[string]any{"sdl": sdl})
+	payload := map[string]any{"sdl": sdl}
+	fileInProject(payload, projectID)
 
 	var out CreateDeploymentResult
-	err = c.doData(ctx, http.MethodPost, "/v1/deployments", body, &out)
+	err = c.doData(ctx, http.MethodPost, "/v1/deployments", envelope(payload), &out)
 	if err == nil {
 		err = validateCreateDeploymentResult(&out)
 	}
@@ -227,9 +233,11 @@ func deploymentPaginationLimitError() error {
 	)
 }
 
-// ListDeployments lists deployments with validated pagination.
+// ListDeployments lists deployments with validated pagination. With a
+// selected project, only the deployments filed in it are listed.
 //
-// Wire: GET /v1/deployments?skip=&limit=, data-enveloped response.
+// Wire: GET /v1/deployments?skip=&limit=[&projectId=], data-enveloped
+// response.
 func (c *Client) ListDeployments(ctx context.Context, skip, limit int) (*DeploymentList, error) {
 	if skip < 0 {
 		return nil, fmt.Errorf("console: deployment pagination skip must be non-negative, got %d", skip)
@@ -239,6 +247,13 @@ func (c *Client) ListDeployments(ctx context.Context, skip, limit int) (*Deploym
 	}
 
 	path := "/v1/deployments?skip=" + strconv.Itoa(skip) + "&limit=" + strconv.Itoa(limit)
+	projectID, err := c.scopeProjectID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if projectID != "" {
+		path += "&projectId=" + url.QueryEscape(projectID)
+	}
 
 	var out DeploymentList
 	if err := c.doData(ctx, http.MethodGet, path, nil, &out); err != nil {

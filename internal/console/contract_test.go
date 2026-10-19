@@ -131,6 +131,13 @@ var cannedResponses = map[string]cannedResponse{
 
 	"GET /v1/templates-list": {http.StatusOK, `{"data":[]}`},
 	"GET /v1/templates/{id}": {http.StatusOK, `{"data":{"id":"tpl-1","name":"template"}}`},
+
+	"GET /v1/organizations":                {http.StatusOK, `{"data":[{"id":"123e4567-e89b-12d3-a456-426614174000","name":"Acme","slug":"acme","type":"team","role":"admin","isActive":true,"hasPaymentMethod":true,"createdAt":"2026-10-01T00:00:00Z"}]}`},
+	"GET /v1/projects":                     {http.StatusOK, `{"data":[{"id":"123e4567-e89b-12d3-a456-426614174000","name":"web","slug":"web","description":null,"isDefault":true,"createdAt":"2026-10-01T00:00:00Z","createdBy":null,"lastActivityAt":"2026-10-01T00:00:00Z","deployments":null,"access":{"canDeploy":true,"canManage":true}}]}`},
+	"POST /v1/projects":                    {http.StatusCreated, `{"data":{"id":"123e4567-e89b-12d3-a456-426614174000","name":"web","slug":"web","description":null,"isDefault":false,"createdAt":"2026-10-01T00:00:00Z","createdBy":null}}`},
+	"PATCH /v1/projects/{id}":              {http.StatusOK, `{"data":{"id":"123e4567-e89b-12d3-a456-426614174000","name":"renamed","slug":"web","description":null,"isDefault":false,"createdAt":"2026-10-01T00:00:00Z","createdBy":null}}`},
+	"DELETE /v1/projects/{id}":             {http.StatusNoContent, ""},
+	"PATCH /v1/deployments/{dseq}/project": {http.StatusOK, `{"data":{"dseq":"1","projectId":"123e4567-e89b-12d3-a456-426614174000"}}`},
 }
 
 // newContractServer returns an httptest server that validates every incoming
@@ -205,6 +212,7 @@ func TestClientRequestsMatchOpenAPIContract(t *testing.T) {
 		uuid     = "123e4567-e89b-12d3-a456-426614174000"
 		sdl      = validUpdateSDL
 	)
+	scoped := console.New(srv.URL, "test-key").WithScope("acme", uuid)
 
 	// Minimal valid /v1/bid-screening resources per the vendored schema:
 	// resource{id,cpu,memory,gpu,storage} + count + price are all required.
@@ -367,6 +375,51 @@ func TestClientRequestsMatchOpenAPIContract(t *testing.T) {
 		}},
 		{"GetTemplate", func(ctx context.Context) error {
 			_, err := c.GetTemplate(ctx, "tpl-1")
+			return err
+		}},
+		{"ListOrganizations", func(ctx context.Context) error {
+			_, err := c.ListOrganizations(ctx)
+			return err
+		}},
+		{"ListProjects", func(ctx context.Context) error {
+			_, err := c.ListProjects(ctx)
+			return err
+		}},
+		{"CreateProject", func(ctx context.Context) error {
+			_, err := c.CreateProject(ctx, "web", "Payments")
+			return err
+		}},
+		{"RenameProject", func(ctx context.Context) error {
+			_, err := c.RenameProject(ctx, uuid, "renamed")
+			return err
+		}},
+		{"DeleteProject", func(ctx context.Context) error {
+			return c.DeleteProject(ctx, uuid)
+		}},
+		{"MoveDeployment", func(ctx context.Context) error {
+			_, err := c.MoveDeployment(ctx, "1", uuid)
+			return err
+		}},
+		{"CreateAPIKeyForProject", func(ctx context.Context) error {
+			_, err := c.CreateAPIKeyForProject(ctx, "ci", "", uuid)
+			return err
+		}},
+		// The scope headers are declared on every authenticated route:
+		// x-organization-id as an id or slug, x-project-id as a uuid.
+		{"Scoped/ListDeployments", func(ctx context.Context) error {
+			_, err := scoped.ListDeployments(ctx, 0, 20)
+			return err
+		}},
+		{"Scoped/CreateDeployment", func(ctx context.Context) error {
+			_, err := scoped.CreateDeployment(ctx, sdl)
+			return err
+		}},
+		{"Scoped/ProjectNameResolution", func(ctx context.Context) error {
+			_, err := c.ForProject("web").WithScope("acme", "web").GetUser(ctx)
+			return err
+		}},
+		{"Scoped/CreateDeploymentJWTToken", func(ctx context.Context) error {
+			_, err := scoped.CreateDeploymentJWTToken(ctx, 300, provider, "1", []string{"logs", "status"})
 			return err
 		}},
 	}

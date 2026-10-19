@@ -733,6 +733,10 @@ func TestFlagKeyOverridesStoredCredential(t *testing.T) {
 	var gotKey string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotKey = r.Header.Get("x-api-key")
+		if r.URL.Path == "/v1/organizations" {
+			http.NotFound(w, r)
+			return
+		}
 		writeJSON(t, w, userBody)
 	}))
 	defer srv.Close()

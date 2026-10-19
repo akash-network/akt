@@ -168,6 +168,8 @@ func (s *Server) registerConsoleQueryTools(cl *aktconsole.Client) {
 	s.addQueryTool(consoletools.ToolListProviders(), consoletools.HandleListProviders(cl))
 	s.addQueryTool(consoletools.ToolGetProvider(), consoletools.HandleGetProvider(cl))
 	s.addQueryTool(consoletools.ToolGPUPrices(), consoletools.HandleGPUPrices(cl))
+	s.addQueryTool(consoletools.ToolListOrganizations(), consoletools.HandleListOrganizations(cl))
+	s.addQueryTool(consoletools.ToolListProjects(), consoletools.HandleListProjects(cl))
 }
 
 // registerConsoleWriteTools registers the Console API tools that spend funds

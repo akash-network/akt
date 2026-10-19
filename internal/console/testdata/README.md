@@ -6,11 +6,15 @@ repository's `apps/api/swagger/openapi.json`. It is consumed by
 `contract_test.go`, which validates every request the `internal/console`
 client produces against this contract.
 
-The Variables & Secrets snapshot matches commit
-`1758b470e327084d6fce863126e87b221d4fcf68` byte for byte:
-[pinned source](https://raw.githubusercontent.com/akash-network/console/1758b470e327084d6fce863126e87b221d4fcf68/apps/api/swagger/openapi.json).
+The teams and projects snapshot matches commit
+`5037f6c90e1f0d7811a5da398420a1a4d09474b6` byte for byte:
+[pinned source](https://raw.githubusercontent.com/akash-network/console/5037f6c90e1f0d7811a5da398420a1a4d09474b6/apps/api/swagger/openapi.json).
 Its SHA-256 is
-`e26cc837f62a73919e90103a4b12237d95c6d567c0ab63b296e0ec8be28369ef`.
+`999dbb6291a1feccc74d91b967169411997609367129e7d6b7fe2c77c0b10b6c`.
+
+The committed document lists routes that the served `/v1/doc` reference
+still hides behind a feature flag, among them the organization (team) and
+project routes and the `x-organization-id` and `x-project-id` headers.
 
 ## Refreshing
 

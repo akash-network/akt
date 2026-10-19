@@ -306,6 +306,10 @@ func (m *Manager) CreateContext(ctx Context) error {
 		return fmt.Errorf("invalid auth-method %q: must be %q or %q", ctx.AuthMethod, AuthMethodKeyring, AuthMethodConsoleAPI)
 	}
 
+	if err := validateConsoleScope(ctx); err != nil {
+		return err
+	}
+
 	// Create data directories for the new context.
 	if err := EnsureContextDirs(m.root, ctx.Name); err != nil {
 		return err
@@ -420,6 +424,9 @@ func (m *Manager) UpdateContextAndNetwork(
 		return err
 	}
 	ctx.ProviderDefaults.AuthType = providerAuthType
+	if err := validateConsoleScope(ctx); err != nil {
+		return err
+	}
 
 	oldContexts := append([]Context(nil), m.cfg.Contexts...)
 	oldNetworks := append([]Network(nil), m.cfg.Networks...)
@@ -657,20 +664,24 @@ func (m *Manager) Resolve(name string) (*Context, error) {
 	providerDefaults.AuthType = providerAuthType
 
 	return &Context{
-		Name:             ctx.Name,
-		Network:          *net,
-		Keyring:          *kr,
-		AuthMethod:       authMethod,
-		ConsoleAPIURL:    consoleURL,
-		DefaultAccount:   ctx.DefaultAccount,
-		TrackedAccounts:  ctx.TrackedAccounts,
-		Gas:              ctx.Gas,
-		Fees:             ctx.Fees,
-		ProviderDefaults: providerDefaults,
-		GasPrices:        net.GasPrices,
-		GasAdjustment:    net.GasAdjustment,
-		AuthType:         providerAuthType,
-		Root:             m.root,
-		ConsoleAPIKey:    ResolveConsoleAPIKey(m.root, ctx.Name),
+		Name:           ctx.Name,
+		Network:        *net,
+		Keyring:        *kr,
+		AuthMethod:     authMethod,
+		ConsoleAPIURL:  consoleURL,
+		DefaultAccount: ctx.DefaultAccount,
+		// The environment overrides the stored selection for one
+		// invocation, as AKT_CONSOLE_API_KEY does for the credential.
+		ConsoleOrganization: resolveConsoleSelector(EnvConsoleOrganization, ctx.ConsoleOrganization),
+		ConsoleProject:      resolveConsoleSelector(EnvConsoleProject, ctx.ConsoleProject),
+		TrackedAccounts:     ctx.TrackedAccounts,
+		Gas:                 ctx.Gas,
+		Fees:                ctx.Fees,
+		ProviderDefaults:    providerDefaults,
+		GasPrices:           net.GasPrices,
+		GasAdjustment:       net.GasAdjustment,
+		AuthType:            providerAuthType,
+		Root:                m.root,
+		ConsoleAPIKey:       ResolveConsoleAPIKey(m.root, ctx.Name),
 	}, nil
 }

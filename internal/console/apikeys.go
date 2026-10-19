@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"github.com/google/uuid"
@@ -33,6 +34,16 @@ func (c *Client) ListAPIKeys(ctx context.Context) ([]APIKey, error) {
 // Wire: POST /v1/api-keys, body {"data":{"name":..., "expiresAt"?:...}},
 // data-enveloped response.
 func (c *Client) CreateAPIKey(ctx context.Context, name, expiresAt string) (*CreatedAPIKey, error) {
+	return c.CreateAPIKeyForProject(ctx, name, expiresAt, "")
+}
+
+// CreateAPIKeyForProject creates an API key limited to one project of the
+// active organization; an empty projectID creates one that reaches every
+// project its owner can. The key acts in the organization it is created in.
+//
+// Wire: POST /v1/api-keys, body
+// {"data":{"name":..., "expiresAt"?:..., "projectId"?:...}}.
+func (c *Client) CreateAPIKeyForProject(ctx context.Context, name, expiresAt, projectID string) (*CreatedAPIKey, error) {
 	if strings.TrimSpace(name) == "" {
 		err := errors.New("console: API key name must not be blank")
 		c.record("create-api-key", "", err)
@@ -42,6 +53,14 @@ func (c *Client) CreateAPIKey(ctx context.Context, name, expiresAt string) (*Cre
 	payload := map[string]any{"name": name}
 	if expiresAt != "" {
 		payload["expiresAt"] = expiresAt
+	}
+	if projectID != "" {
+		id, err := projectPathID(projectID)
+		if err != nil {
+			c.record("create-api-key", "", err)
+			return nil, err
+		}
+		payload["projectId"] = id
 	}
 
 	var out CreatedAPIKey
@@ -115,12 +134,68 @@ func (c *Client) CreateJWTToken(ctx context.Context, ttl int, scope []string) (s
 		return "", fmt.Errorf("console: JWT TTL must be between 1 and %d seconds, got %d", MaxJWTTTLSeconds, ttl)
 	}
 
+	return c.mintJWTToken(ctx, ttl, map[string]any{
+		"access": "scoped",
+		"scope":  scope,
+	})
+}
+
+// everyService names all of a deployment's services in a granular grant. The
+// token schema requires a non-empty service list, while providers authorize
+// a deployment grant by dseq and scope alone; Console's web app sends the
+// same value.
+const everyService = "*"
+
+// CreateDeploymentJWTToken mints a short-lived JWT for one deployment's
+// leases on one provider, for direct provider access. Inside a team, an API
+// key limited to some projects (a project-bound key, a selected project, or a
+// member's or viewer's key) may only mint tokens that name their deployments
+// this way. Without a selected project the client first asks for the broader
+// scoped token, which every key without teams uses, and falls back to the
+// deployment grant only when Console refuses it with project_forbidden.
+//
+// Wire: POST /v1/create-jwt-token, body {"data":{"ttl":..., "leases":
+// {"access":"granular","permissions":[{"provider":...,"access":"granular",
+// "deployments":[{"dseq":N,"scope":[...],"services":["*"]}]}]}}}.
+func (c *Client) CreateDeploymentJWTToken(ctx context.Context, ttl int, provider, dseq string, scope []string) (string, error) {
+	if err := validateDSeq(dseq); err != nil {
+		return "", err
+	}
+	dseqNumber, _ := strconv.ParseUint(dseq, 10, 64)
+	if strings.TrimSpace(provider) == "" {
+		return "", errors.New("console: provider address must not be blank")
+	}
+
+	if c.Project() == "" {
+		token, err := c.CreateJWTToken(ctx, ttl, scope)
+		var refusal *HTTPError
+		if err == nil || !errors.As(err, &refusal) || refusal.Code != CodeProjectForbidden {
+			return token, err
+		}
+	}
+
+	if ttl < 1 || ttl > MaxJWTTTLSeconds {
+		return "", fmt.Errorf("console: JWT TTL must be between 1 and %d seconds, got %d", MaxJWTTTLSeconds, ttl)
+	}
+
+	return c.mintJWTToken(ctx, ttl, map[string]any{
+		"access": "granular",
+		"permissions": []any{map[string]any{
+			"provider": provider,
+			"access":   "granular",
+			"deployments": []any{map[string]any{
+				"dseq":     dseqNumber,
+				"scope":    scope,
+				"services": []string{everyService},
+			}},
+		}},
+	})
+}
+
+func (c *Client) mintJWTToken(ctx context.Context, ttl int, leases map[string]any) (string, error) {
 	body := envelope(map[string]any{
-		"ttl": ttl,
-		"leases": map[string]any{
-			"access": "scoped",
-			"scope":  scope,
-		},
+		"ttl":    ttl,
+		"leases": leases,
 	})
 
 	var out struct {
