@@ -1,4 +1,5 @@
 .idea
 .claude
 .cache
+.superpowers
 go.work*
