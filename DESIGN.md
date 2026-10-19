@@ -709,7 +709,7 @@ flags, `AKT_CONSOLE_ORGANIZATION`/`AKT_CONSOLE_PROJECT`, and the context, and
 direct `akt console` commands, the Console workflow rail, and `akt mcp` share
 one implementation and a context without teams sends nothing new (SPEC §7.1.1).
 
-Three choices keep that boundary small:
+Four choices keep that boundary small:
 
 - **Ids at rest, names at the edge.** The context stores only a project id.
   Flags and arguments may name a project by slug or name; the client resolves
@@ -723,6 +723,10 @@ Three choices keep that boundary small:
   `--console-project` is given on that command. Working in a project never
   narrows the keys created from it, because the binding cannot be changed
   later.
+- **The operator pins MCP.** When `akt mcp` starts with a project, a tool call
+  may name only that project, compared by resolved id. The operator, not the
+  model, decides where an MCP server acts, so a prompt injection cannot close
+  deployments in another project the key happens to reach.
 
 Team refusals keep the API's `code` on `console.HTTPError`, so callers branch
 on the code rather than on text, and the rendered error names the remedy

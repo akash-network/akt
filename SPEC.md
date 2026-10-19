@@ -2792,7 +2792,7 @@ diagnostic.
 | ------------------- | ------ | ------- | --------------------------------------------------------------------------------- |
 | `--console-api-key` | string | `""`    | Console API key for this process; overrides environment and context credentials.  |
 | `--console-organization` | string | `""` | Console organization (team) id or slug the Console tools act in; overrides `AKT_CONSOLE_ORGANIZATION` and the context (§7.1.1). |
-| `--console-project` | string | `""` | Console project id, slug, or name the Console tools act in by default; overrides `AKT_CONSOLE_PROJECT` and the context (§7.1.1). |
+| `--console-project` | string | `""` | Console project id, slug, or name the Console tools are limited to; overrides `AKT_CONSOLE_PROJECT` and the context, and a tool call naming another project is refused (§7.1.1). |
 | `--enable-writes`   | bool   | `false` | Enable write tools (on-chain transactions and provider mutations). Without this flag, only read-only query tools are available. |
 
 **Permission model:**
@@ -2864,9 +2864,15 @@ client must never make an otherwise usable read-only MCP server fail startup.
 
 The Console deployment tools (`console_list_deployments`, `console_get_deployment`,
 `console_list_bids`, and `console_close_deployment`) accept an optional `project`
-argument, an id, slug, or name, that replaces the server's project for that
-call. Without it they act in the server's project, or across every project the
-key reaches when none is selected.
+argument, an id, slug, or name. When the server has no project, the argument
+selects the project for that call, and omitting it acts across every project
+the key reaches. When the operator started the server with a project
+(`--console-project`, `AKT_CONSOLE_PROJECT`, or the context), the tools act only
+in it: an argument naming the same project (compared by resolved id) is
+accepted, and any other project is refused with a tool error before any
+deployment request, so a model or a prompt injection cannot act outside the
+project the operator chose. `console_list_projects` then says that the server
+is limited to its project instead of inviting a switch.
 
 **Write tools (only with `--enable-writes`, up to 6 tools):**
 

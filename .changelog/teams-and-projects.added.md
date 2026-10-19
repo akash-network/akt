@@ -18,4 +18,5 @@
   keys limited to some projects.
 - `akt mcp` accepts `--console-organization` and `--console-project`, adds the
   `console_list_organizations` and `console_list_projects` tools, and the
-  Console deployment tools take an optional `project`.
+  Console deployment tools take an optional `project`. A server started with
+  a project refuses tool calls that name another one.

@@ -38,7 +38,7 @@ balances, deployments, groups, orders, bids, leases, providers, audited
 attributes, certificates, and provider/lease/service status. On the Console
 API: deployments, bids, wallet balance, usage history, organizations,
 projects, providers, and GPU pricing. The Console deployment tools accept a
-project; --console-project sets the default.
+project; with --console-project they act only in that project.
 
 Write tools, unlocked only by --enable-writes:
   akash_close_deployment    close a deployment on chain
@@ -125,7 +125,7 @@ Write tools, unlocked only by --enable-writes:
 	cmd.Flags().String(flagdefs.FlagConsoleOrganization, "",
 		"Console organization (team) id or slug the Console tools act in. Overrides AKT_CONSOLE_ORGANIZATION and the context.")
 	cmd.Flags().String(flagdefs.FlagConsoleProject, "",
-		"Console project id, slug, or name the Console tools act in by default. Overrides AKT_CONSOLE_PROJECT and the context; a tool call can name another project.")
+		"Console project id, slug, or name the Console tools are limited to. Overrides AKT_CONSOLE_PROJECT and the context; a tool call naming another project is refused.")
 	cmd.Flags().Bool(flagdefs.FlagEnableWrites, false,
 		"Enable write tools (on-chain transactions and provider mutations). "+
 			"Without this flag, only read-only query tools are available.")

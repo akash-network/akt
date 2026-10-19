@@ -93,16 +93,16 @@ func lastCall(t *testing.T, calls []scopedCall, method, path string) scopedCall 
 	return scopedCall{}
 }
 
-func TestDeploymentToolsActInTheNamedProject(t *testing.T) {
+func TestUnpinnedDeploymentToolsActInTheNamedProject(t *testing.T) {
 	srv, calls := newProjectServer(t)
-	client := aktconsole.New(srv.URL, "test-key").WithScope("acme", mcpOtherProjectID)
+	client := aktconsole.New(srv.URL, "test-key").WithScope("acme", "")
 
 	if result := callTool(t, HandleListDeployments(client), map[string]any{"project": "Checkout API"}); result.IsError {
 		t.Fatalf("list deployments: %s", consoleResultText(t, result))
 	}
 	list := lastCall(t, calls(), http.MethodGet, "/v1/deployments")
 	if list.project != mcpProjectID || !strings.Contains(list.query, "projectId="+mcpProjectID) {
-		t.Fatalf("a named project must replace the server's, got %+v", list)
+		t.Fatalf("a server without a project must act in the named one, got %+v", list)
 	}
 
 	if result := callTool(t, HandleCloseDeployment(client), map[string]any{"dseq": "42", "project": "checkout-api"}); result.IsError {

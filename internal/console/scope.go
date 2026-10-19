@@ -77,6 +77,12 @@ func (c *Client) Project() string {
 	return c.scope.project
 }
 
+// ProjectID resolves the selected project to its id, or returns "" when no
+// project is selected.
+func (c *Client) ProjectID(ctx context.Context) (string, error) {
+	return c.scopeProjectID(ctx)
+}
+
 // scopeProjectID resolves the selected project to its id, or returns "" when
 // no project is selected. A name or slug costs one project listing the first
 // time; the id is reused afterwards.
