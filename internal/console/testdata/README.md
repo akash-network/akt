@@ -12,9 +12,10 @@ The teams and projects snapshot matches commit
 Its SHA-256 is
 `999dbb6291a1feccc74d91b967169411997609367129e7d6b7fe2c77c0b10b6c`.
 
-The committed document lists routes that the served `/v1/doc` reference
-still hides behind a feature flag, among them the organization (team) and
-project routes and the `x-organization-id` and `x-project-id` headers.
+This snapshot predates the public reference for teams and projects. It
+already lists the organization (team) and project routes and the
+`x-organization-id` and `x-project-id` headers, which the served `/v1/doc`
+reference still hid behind a feature flag when the snapshot was pinned.
 
 ## Refreshing
 

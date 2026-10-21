@@ -72,6 +72,8 @@ func scopeErrorExplanations() map[string]scopeErrorExplanation {
 		},
 		CodeProjectLimitReached: {
 			summary: "the organization has reached the number of projects it can have",
+			remedy: "Delete a project you no longer use with `akt console project delete <project>`, or reuse one from " +
+				"`akt console project list`; the default project counts toward the limit.",
 		},
 	}
 }

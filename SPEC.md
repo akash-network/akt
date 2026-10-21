@@ -5196,7 +5196,7 @@ characters) with the code and status, and appends the remedy. Sealed requests
 | `project_name_taken` | 409 | Choose another name. |
 | `project_is_default` | 409 | The default project cannot be deleted. |
 | `project_not_empty` | 409 | Move or close its deployments first. |
-| `project_limit_reached` | 403 | None. |
+| `project_limit_reached` | 403 | Delete a project you no longer use with `akt console project delete <project>`, or reuse one from `akt console project list`; the default project counts toward the limit (10 projects per organization in the Console today). |
 
 A 404 from `GET /v1/organizations` or `GET /v1/projects` means teams are not
 enabled for the account; `akt` says so instead of reporting a missing resource,

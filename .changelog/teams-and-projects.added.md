@@ -13,8 +13,8 @@
   project, and `apikey list` shows the team and project of each key.
   `akt console whoami` shows the active team, role, and project.
 - Explain the Console team refusals `project_required`, `project_forbidden`,
-  `organization_mismatch`, and `project_budget_exceeded` with the command that
-  fixes each. Provider gateway commands mint a token naming the deployment for
+  `organization_mismatch`, `project_budget_exceeded`, and
+  `project_limit_reached` with the command that fixes each. Provider gateway commands mint a token naming the deployment for
   keys limited to some projects.
 - `akt mcp` accepts `--console-organization` and `--console-project`, adds the
   `console_list_organizations` and `console_list_projects` tools, and the

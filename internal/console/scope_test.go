@@ -190,6 +190,7 @@ func TestTeamRefusalsExplainTheirRemedy(t *testing.T) {
 		{console.CodeProjectBudgetExceeded, http.StatusForbidden, "This would take the project past its monthly budget, so it was not signed. An owner or admin can raise the budget.", []string{"(project_budget_exceeded, HTTP 403)", "monthly budget"}},
 		{console.CodeSessionRequired, http.StatusForbidden, "", []string{"needs a signed-in Console session (session_required, HTTP 403)", console.DefaultUIBaseURL}},
 		{console.CodeProjectNotEmpty, http.StatusConflict, "Move or close the project's deployments before deleting it", []string{"(project_not_empty, HTTP 409)", "akt console deployment move"}},
+		{console.CodeProjectLimitReached, http.StatusForbidden, "The organization has reached the number of projects it can have", []string{"(project_limit_reached, HTTP 403)", "akt console project delete", "default project counts toward the limit"}},
 	}
 	for _, tc := range tests {
 		t.Run(tc.code, func(t *testing.T) {

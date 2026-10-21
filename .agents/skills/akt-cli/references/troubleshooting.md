@@ -33,6 +33,9 @@ Console names team refusals with a code, and akt prints the remedy with it:
   `console organization list` shows the key's team.
 - `project_budget_exceeded`: nothing was signed. Do not retry in another
   project without the user's approval.
+- `project_limit_reached`: the team has as many projects as it can, counting
+  the default one. Ask the user before deleting a project;
+  `console project list` shows the existing ones.
 
 ```bash
 akt console whoami --context example -o json
