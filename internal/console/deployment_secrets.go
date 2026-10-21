@@ -53,6 +53,11 @@ func sanitizeSecretError(err error) error {
 	}
 	var response *HTTPError
 	if errors.As(err, &response) {
+		// Team and project refusals carry no workload detail; keep their
+		// code so the explanation and remedy survive sanitization.
+		if response.Code != "" {
+			return &HTTPError{StatusCode: response.StatusCode, Body: response.Code, Code: response.Code}
+		}
 		var body struct {
 			Code string `json:"code"`
 		}
@@ -85,6 +90,11 @@ func (c *Client) createDeploymentWithSecrets(ctx context.Context, rawSDL string,
 		client.record("create-deployment", "", err)
 		return nil, err
 	}
+	projectID, err := client.scopeProjectID(ctx)
+	if err != nil {
+		client.record("create-deployment", "", err)
+		return nil, err
+	}
 	seal, err := client.sealSecrets(ctx, options.Secrets, rawSDL)
 	if err != nil {
 		client.record("create-deployment", "", err)
@@ -94,6 +104,7 @@ func (c *Client) createDeploymentWithSecrets(ctx context.Context, rawSDL string,
 	if options.InheritSecretsFrom != "" {
 		body["inheritSecretsFrom"] = options.InheritSecretsFrom
 	}
+	fileInProject(body, projectID)
 	var result CreateDeploymentResult
 	err = client.doData(ctx, http.MethodPost, "/v1/deployments", envelope(body), &result)
 	if err == nil {

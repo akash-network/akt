@@ -825,7 +825,7 @@ func localIdentityMode(cmd *cobra.Command) aktclient.LocalIdentityMode {
 
 func withConsoleDefaultOwnerResolver(ctx context.Context, rc *aktctx.Context) context.Context {
 	resolver := chaincli.DefaultOwnerResolver(func(callCtx context.Context) (string, error) {
-		cl := aktconsole.New(rc.ConsoleAPIURL, rc.ConsoleAPIKey)
+		cl := aktconsole.New(rc.ConsoleAPIURL, rc.ConsoleAPIKey).WithScope(rc.ConsoleOrganization, rc.ConsoleProject)
 		return cl.ManagedWalletAddress(callCtx)
 	})
 

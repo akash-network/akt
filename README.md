@@ -257,7 +257,8 @@ Full command group for the [Akash Console](https://console.akash.network) manage
 - **Bids and leases** -- `bid list <dseq>` and `lease create <dseq> [provider]`, which uses the saved deployment definition to generate the manifest server-side.
 - **Wallet and usage** -- `wallet list/balance/settings/cost` and `usage [from] [to]` spend history, all rendered in USD.
 - **Keyless marketplace** -- `provider list/get/regions/auditors`, `gpu`, `template list/get/sdl`, and `screen <sdl-file>` bid screening. These hit public endpoints and need neither an API key nor a configured context.
-- **Credentials** -- `apikey list/create/delete` (the secret is printed exactly once) and `jwt create` for short-lived provider-scoped tokens.
+- **Teams and projects** -- `organization list` (alias `team list`), `project list/get/create/rename/delete/use`, and `deployment move <dseq> <project>`. `project use` makes the context act in a project and its team; `--console-project`, `--console-organization`, `AKT_CONSOLE_PROJECT`, and `AKT_CONSOLE_ORGANIZATION` override it for one command. Creating a team and accepting an invitation stay in the Console web app.
+- **Credentials** -- `apikey list/create/delete` (the secret is printed exactly once), `apikey create <name> --console-project <project>` for a key limited to one project, and `jwt create` for short-lived provider-scoped tokens.
 - **Live lease operations** -- `logs <dseq> [service]` and `events <dseq>` (both `--follow`), `status <dseq>` (`--watch`, `--interval`), and `shell <dseq> <service> [-- command]` (exec is the same command with an explicit command). Each resolves the deployment's active lease, looks up the provider's gateway URI, and mints a scoped JWT via the Console, so **managed contexts reach providers with no wallet and no local key**. One-shot calls use a 300 s token; streaming and interactive modes use 3600 s.
 
 The API key is stored per context at `contexts/<name>/console-api-key` (mode 0600, never written to `config.yaml`, never printed) and resolved `--console-api-key` flag > `AKT_CONSOLE_API_KEY` env var > stored credential, so switching context switches Console identity. Write it with `akt console login` or `akt context edit <context> --console-api-key <key>`; `akt context rename` moves it and `akt context delete` removes it. The first-run bootstrap offers Console onboarding, and state-changing Console calls are recorded in the action log. [SPEC.md §7.8](SPEC.md#78-console-compatibility-matrix) tracks coverage of every Console capability.
@@ -841,6 +842,29 @@ akt console screen deploy.yaml
 # Or screen explicit resources; flags override values loaded from an SDL
 akt console screen deploy.yaml --gpu 1 --gpu-model a100
 ```
+
+In a Console team, select the project a context works in once; Console commands, `akt deploy`, and `akt mcp` then act in it. Accounts without teams need none of this:
+
+```bash
+# The team your API key acts in, with your role
+akt console team list
+
+# Projects you can reach, then pick one for this context
+akt console project list
+akt console project use checkout-api
+
+# One command in another project, or across all of them
+akt deploy deploy.yaml --console-project staging
+akt console deployment list --console-project=
+
+# File a deployment in another project (owners and admins)
+akt console deployment move 12345 staging
+
+# A CI key that can only act in one project
+akt console apikey create ci-checkout --console-project checkout-api
+```
+
+Refusals such as `project_required`, `project_forbidden`, `organization_mismatch`, and `project_budget_exceeded` print the Console message and the command that fixes them.
 
 Console `uact` escrow amounts are micro-USD and display as dollars. Bid prices
 reported in `uact` per block also show an estimated 30-day dollar cost using

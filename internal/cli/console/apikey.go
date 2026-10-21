@@ -32,7 +32,7 @@ func apikeyCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 func apikeyListCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
-		Short:   "List API keys (secrets are never shown)",
+		Short:   "List API keys with the organization and project each acts in (secrets are never shown)",
 		Args:    cobra.NoArgs,
 		Example: `  akt console apikey list`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -41,7 +41,7 @@ func apikeyListCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			keys, err := cl.ListAPIKeys(cmd.Context())
+			keys, err := cl.ForProject("").ListAPIKeys(cmd.Context())
 			if err != nil {
 				return fmt.Errorf("list API keys: %w", err)
 			}
@@ -55,9 +55,15 @@ func apikeyCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create <name> [expires-at]",
 		Short: "Create an API key (the secret is shown ONCE)",
-		Args:  cobra.MaximumNArgs(2),
+		Long: "Create an API key in the organization the current key acts in. Pass " +
+			"--console-project on this command to limit the new key to one project; without it the " +
+			"key reaches every project its owner can, even when the context selects a project.",
+		Args: cobra.MaximumNArgs(2),
 		Example: `  # Name (and optional RFC 3339 expiry) as positional arguments
-  akt console apikey create ci 2027-01-01T00:00:00Z`,
+  akt console apikey create ci 2027-01-01T00:00:00Z
+
+  # A key that acts only in one project
+  akt console apikey create ci-checkout --console-project checkout-api`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cl, _, err := clientFromCmd(cmd, mgrFn, true)
 			if err != nil {
@@ -81,18 +87,26 @@ func apikeyCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return fmt.Errorf("name is required: pass it as the first argument")
 			}
 
-			created, err := cl.CreateAPIKey(cmd.Context(), name, expiresAt)
+			cl = cl.ForProject("")
+			projectID, err := apikeyProjectBinding(cmd, cl)
+			if err != nil {
+				return fmt.Errorf("create API key: %w", err)
+			}
+
+			created, err := cl.CreateAPIKeyForProject(cmd.Context(), name, expiresAt, projectID)
 			if err != nil {
 				return fmt.Errorf("create API key: %w", err)
 			}
 
 			// The secret is shown exactly once, by design.
 			return printJSON(cmd, struct {
-				ID      string `json:"id"`
-				Name    string `json:"name"`
-				APIKey  string `json:"apiKey"`
-				Warning string `json:"warning"`
-			}{created.ID, created.Name, created.APIKey, "Store this key now. It will not be shown again."})
+				ID             string  `json:"id"`
+				Name           string  `json:"name"`
+				APIKey         string  `json:"apiKey"`
+				OrganizationID *string `json:"organizationId,omitempty"`
+				ProjectID      *string `json:"projectId,omitempty"`
+				Warning        string  `json:"warning"`
+			}{created.ID, created.Name, created.APIKey, created.OrganizationID, created.ProjectID, "Store this key now. It will not be shown again."})
 		},
 	}
 
@@ -108,6 +122,24 @@ func apikeyCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	return cmd
 }
 
+// apikeyProjectBinding returns the id of the project a new key is limited
+// to: only a --console-project given on this command line binds the key.
+// The context's project or AKT_CONSOLE_PROJECT never does, so selecting a
+// project to work in cannot silently narrow the keys created from it.
+func apikeyProjectBinding(cmd *cobra.Command, cl *consoleapi.Client) (string, error) {
+	flag := cmd.Flags().Lookup(flagdefs.FlagConsoleProject)
+	if flag == nil || !flag.Changed || strings.TrimSpace(flag.Value.String()) == "" {
+		return "", nil
+	}
+
+	project, err := cl.FindProject(cmd.Context(), flag.Value.String())
+	if err != nil {
+		return "", err
+	}
+
+	return project.ID, nil
+}
+
 func apikeyDeleteCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	return &cobra.Command{
 		Use:     "delete <id>",
@@ -120,7 +152,7 @@ func apikeyDeleteCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			if err := cl.DeleteAPIKey(cmd.Context(), args[0]); err != nil {
+			if err := cl.ForProject("").DeleteAPIKey(cmd.Context(), args[0]); err != nil {
 				return fmt.Errorf("delete API key %s: %w", args[0], err)
 			}
 

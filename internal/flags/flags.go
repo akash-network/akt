@@ -50,6 +50,8 @@ const (
 	FlagConsensusKeyAlgo            = "consensus-key-algo"
 	FlagConsoleAPIKey               = "console-api-key"
 	FlagConsoleAPIURL               = "console-api-url"
+	FlagConsoleOrganization         = "console-organization"
+	FlagConsoleProject              = "console-project"
 	FlagContext                     = "context"
 	FlagCount                       = "count"
 	FlagCountTotal                  = "count-total"

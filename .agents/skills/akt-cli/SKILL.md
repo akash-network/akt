@@ -55,6 +55,11 @@ The context preference chooses the path for shared `deploy`, `update`, `redeploy
 Explicit `akt console` commands use Console. Read [setup](references/setup.md)
 when configuration, credentials, installation, or MCP setup is needed.
 
+A Console account can work in teams. A context may then also select a Console
+team and project, reported as `console_organization` and `console_project`;
+Console commands, Console workflows, and MCP act in that project. Read the
+team section of [setup](references/setup.md) before changing either.
+
 ## Choose the operation and identifiers
 
 Prefer `akt deploy`, `akt update`, `akt redeploy`, and `akt close` for complete deployment

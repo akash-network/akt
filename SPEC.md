@@ -153,6 +153,8 @@ contexts:
     auth-method: console-api            # route deploy/update/close through Console
     keyring: default                    # explicit akt tx remains available through this keyring
     console-api-url: ""                 # empty = default (https://console-api.akash.network)
+    console-organization: ""            # Console team id or slug; empty = the API key's own (§7.1.1)
+    console-project: ""                 # Console project id; empty = every project the key reaches (§7.1.1)
     # API key: --console-api-key flag > AKT_CONSOLE_API_KEY env var > per-context
     # credential file (contexts/<name>/console-api-key, see §7.1); never stored here
 
@@ -214,6 +216,8 @@ Contexts compose a network, keyring, and context-specific settings. The state st
 | `network`                     | string | see note | --                                     | Name of network definition to use. Required for the chain rail; optional when `console-api` is preferred (a network-less context operates through Console alone and chain commands are capability-gated until a network is attached, §2.10). |
 | `auth-method`                 | string | no       | `"keyring"`                            | Preferred `deploy`/`update`/`close` rail: `keyring` (chain) or `console-api`; it does not disable another configured credential |
 | `console-api-url`             | string | no       | `"https://console-api.akash.network"` | Console API base URL                                                         |
+| `console-organization`        | string | no       | `""`                                   | Console organization (team) id or slug that Console calls act in, sent as `x-organization-id`. Empty sends no header. See §7.1.1. |
+| `console-project`             | string | no       | `""`                                   | Console project id that Console calls act in, sent as `x-project-id`. Only an id is stored; `akt console project use` resolves a name. Empty acts across every project the key reaches. See §7.1.1. |
 | `keyring`                     | string | no       | `"default"`                            | Keyring name for explicit chain transactions                                |
 | `default-account`             | string | no       | `""`                                   | Default local account name or address                                       |
 | `tracked-accounts`            | []string | no     | `[]`                                   | Accounts to sync (empty = `[default-account]`; `["*"]` = all keyring accounts). See §6.7. |
@@ -373,6 +377,8 @@ All environment variables use the `AKT_` prefix. When set, they override the cor
 | `AKT_BROADCAST_MODE`  | `defaults.broadcast-mode`                               | `sync`                         |
 | `AKT_OUTPUT`          | `defaults.output`                                       | `json`                         |
 | `AKT_CONSOLE_API_KEY` | Console API key (overrides the per-context stored credential; see §7.1) | `akt_abc123...`                |
+| `AKT_CONSOLE_ORGANIZATION` | `contexts[*].console-organization`; `--console-organization` overrides it (see §7.1.1) | `acme`             |
+| `AKT_CONSOLE_PROJECT` | `contexts[*].console-project`; also accepts a slug or name; `--console-project` overrides it (see §7.1.1) | `checkout-api` |
 
 ### 1.10 Built-in Network Templates
 
@@ -888,8 +894,10 @@ akt
 ├── console                              # Akash Console managed-wallet API (§2.9)
 │   ├── login [key]                      # Validate + store per-context API key credential
 │   ├── logout                           # Remove stored credential
-│   ├── whoami                           # Authenticated user info
-│   ├── deployment                       # list | get | sdl | create | update | close | settings
+│   ├── whoami                           # Authenticated user, organization, role, project
+│   ├── organization                     # list (aliases: org, team)
+│   ├── project                          # list | get | create | rename | delete | use
+│   ├── deployment                       # list | get | sdl | create | update | close | settings | move
 │   ├── bid list <dseq>                  # Bids for a deployment's open orders
 │   ├── lease create <dseq> [provider]   # Accept a bid (uses saved definition)
 │   ├── wallet                           # list | balance | settings | cost
@@ -1013,6 +1021,8 @@ field with its stored `keyring` or `console-api` value.
 | `--deploy-via`        | string | `""`        | Clear alias for `--auth-method`: `chain` or `console`            |
 | `--console-api-url`   | string | `""`        | Console API base URL (empty = default; only with `console-api`)  |
 | `--console-api-key`   | string | `""`        | Console API key stored as a per-context credential (§7.1; never written to config.yaml) |
+| `--console-organization` | string | `""`     | Console organization (team) id or slug Console calls act in (§7.1.1) |
+| `--console-project`   | string | `""`        | Console project id Console calls act in; a name is rejected with the `akt console project use` remedy (§7.1.1) |
 | `--keyring`           | string | `"default"` | Keyring used by explicit local chain operations                  |
 | `--default-account`   | string | `""`        | Default local account name or address                            |
 | `--gas`               | string | `"auto"`    | Gas limit override for local transactions                        |
@@ -1043,6 +1053,10 @@ akt context create console --network mainnet --auth-method console-api --set-cur
 
 # Equivalent, with the preferred deployment rail stated directly
 akt context create console --network mainnet --deploy-via console --set-current
+
+# Work in a Console team project (§7.1.1)
+akt context create team --deploy-via console --console-organization acme --set-current
+akt console project use checkout-api
 ```
 
 #### `akt context use <name>`
@@ -1077,6 +1091,10 @@ separate `Network: <name>` row; structured output retains that name in the
 resolved network object. Pretty output labels `auth-method` by what it controls,
 `Deploy Via`, and maps its stored values to `chain` or `console`. A configured
 Console credential is shown regardless of which workflow rail is preferred.
+A selected Console organization and project (§7.1.1) appear in the Console API
+section and as `console_organization` and `console_project` in structured
+output, after `AKT_CONSOLE_ORGANIZATION` and `AKT_CONSOLE_PROJECT` apply. A
+context without them renders and serializes exactly as before.
 
 The keyring line reports the *configured* backend. When that backend is an
 alias for a platform store — `os` (§1.5) — the concrete store that serves it is
@@ -1127,6 +1145,8 @@ Edit context-level settings. For network-level changes (endpoints, gas-prices), 
 | `--deploy-via`      | string | `""`    | Change preferred deployment rail: `chain` or `console` |
 | `--console-api-url` | string | `""`    | Change Console API base URL (empty = default) |
 | `--console-api-key` | string | `""`    | Set the per-context Console API key (empty string removes it; §7.1) |
+| `--console-organization` | string | unchanged | Change the Console organization id or slug (empty string clears it; §7.1.1) |
+| `--console-project` | string | unchanged | Change the Console project id (empty string clears it; §7.1.1) |
 | `--fork-network`    | bool   | `false` | Force fork when editing network fields |
 | `--rpc`             | []string | unchanged | Replace the selected network's RPC endpoints |
 | `--api`             | []string | unchanged | Replace the selected network's REST endpoints |
@@ -1940,11 +1960,19 @@ before workflow steps or message validation and names these remedies plus
 | `--no-wait-active` | bool     | `false`         | Exit after sending manifest (don't poll service readiness)  |
 | `--label`          | string   | `""`            | User label for local store metadata                         |
 | `--note`           | string   | `""`            | User note for local store metadata                          |
+| `--console-organization` | string | context   | Console rail only: organization (team) id or slug to act in (§7.1.1) |
+| `--console-project` | string  | context         | Console rail only: project id, slug, or name to deploy into (§7.1.1) |
 | `--yes`            | bool     | `false`         | Skip all confirmations                                      |
 | `--dry-run`        | bool     | `false`         | Print what would happen without executing                   |
 | `--output`         | string   | `pretty`        | Output format: `pretty` (TUI), `jsonl` (JSONL step output, see 2.3.8), `json`, `yaml` |
 
 **Transaction flags** (inherited): `--gas`, `--gas-prices`, `--fees`, `--gas-adjustment`, `--broadcast-mode`
+
+On the Console rail, the plan (and `--dry-run`) names the selected organization
+and project under `Rail: console`, and the planned `create-deployment` JSONL
+line reports them as `console-organization` and `console-project` outputs. The
+chain rail ignores both. `update`, `redeploy`, and `close` accept the same two
+flags.
 
 **TUI mode** (TTY detected, default):
 ```
@@ -2763,6 +2791,8 @@ diagnostic.
 | Flag                | Type   | Default | Description                                                                       |
 | ------------------- | ------ | ------- | --------------------------------------------------------------------------------- |
 | `--console-api-key` | string | `""`    | Console API key for this process; overrides environment and context credentials.  |
+| `--console-organization` | string | `""` | Console organization (team) id or slug the Console tools act in; overrides `AKT_CONSOLE_ORGANIZATION` and the context (§7.1.1). |
+| `--console-project` | string | `""` | Console project id, slug, or name the Console tools are limited to; overrides `AKT_CONSOLE_PROJECT` and the context, and a tool call naming another project is refused (§7.1.1). |
 | `--enable-writes`   | bool   | `false` | Enable write tools (on-chain transactions and provider mutations). Without this flag, only read-only query tools are available. |
 
 **Permission model:**
@@ -2786,9 +2816,9 @@ attempt, including provider lookup, local authentication, or
 gateway-construction failures that occur before an HTTP request.
 
 The inventory is capability-driven. A chain RPC registers 19 read tools; a
-Console credential registers eight. With both configured, `tools/list`
-returns 27 read-only tools. `--enable-writes` adds four chain/provider writes
-and two Console writes, for 33 tools total. A server with only one rail exposes
+Console credential registers ten. With both configured, `tools/list`
+returns 29 read-only tools. `--enable-writes` adds four chain/provider writes
+and two Console writes, for 35 tools total. A server with only one rail exposes
 only that rail's subset.
 
 Tool registration is also capability-isolated within a rail. Query tools are
@@ -2798,7 +2828,7 @@ the read tools; signing-dependent tools are omitted and the write-capability
 diagnostic is retained for attempted write discovery. A missing optional write
 client must never make an otherwise usable read-only MCP server fail startup.
 
-**Read-only tools (up to 27 tools):**
+**Read-only tools (up to 29 tools):**
 
 | Tool Name                      | Description                                                                |
 | ------------------------------ | -------------------------------------------------------------------------- |
@@ -2829,6 +2859,20 @@ client must never make an otherwise usable read-only MCP server fail startup.
 | `console_list_providers`       | List providers in the Console catalog                                      |
 | `console_get_provider`         | Get one provider from the Console catalog                                  |
 | `console_gpu_prices`           | List current Console GPU pricing                                           |
+| `console_list_organizations`   | The Console organization the API key acts in, with the caller's role      |
+| `console_list_projects`        | Projects the API key can reach, with whether the caller may deploy into each |
+
+The Console deployment tools (`console_list_deployments`, `console_get_deployment`,
+`console_list_bids`, and `console_close_deployment`) accept an optional `project`
+argument, an id, slug, or name. When the server has no project, the argument
+selects the project for that call, and omitting it acts across every project
+the key reaches. When the operator started the server with a project
+(`--console-project`, `AKT_CONSOLE_PROJECT`, or the context), the tools act only
+in it: an argument naming the same project (compared by resolved id) is
+accepted, and any other project is refused with a tool error before any
+deployment request, so a model or a prompt injection cannot act outside the
+project the operator chose. `console_list_projects` then says that the server
+is limited to its project instead of inviting a switch.
 
 **Write tools (only with `--enable-writes`, up to 6 tools):**
 
@@ -2922,6 +2966,8 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | ------------------- | ------ | ------- | -------------------------------------------------------------------- |
 | `--console-api-url` | string | `""`    | Console API base URL (overrides the context setting)                 |
 | `--console-api-key` | string | `""`    | Console API key (overrides env var and stored credential, session only) |
+| `--console-organization` | string | `""` | Console organization (team) id or slug to act in for this command (overrides `AKT_CONSOLE_ORGANIZATION` and the context; §7.1.1) |
+| `--console-project` | string | `""`    | Console project id, slug, or name to act in for this command (overrides `AKT_CONSOLE_PROJECT` and the context; an explicit empty value acts across every project; §7.1.1) |
 
 **Authentication:**
 
@@ -2929,15 +2975,34 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | -------------------------- | ---------------------------------------------------------------------------------------------------------------- |
 | `akt console login [key]`  | Validate a key against `GET /v1/user/me` and store it as the active context's credential (§7.1). The key is taken from the positional argument or a hidden stdin prompt. Requires an active context. Prints the username; never prints the key. |
 | `akt console logout`       | Remove the active context's stored credential.                                                                    |
-| `akt console whoami`       | Show the authenticated user (username, email, verified).                                                          |
+| `akt console whoami`       | Show the authenticated user (username, email, verified). When teams are enabled it adds `organization` (id, name, slug, type, and the caller's `role`) and `project` (the selected project, or `null` when none is selected). When the API reports teams unavailable (404 on `GET /v1/organizations`), both fields are omitted and the output is unchanged. |
+
+**Teams and projects** (§7.1.1; a `<project>` argument is an id, slug, or name):
+
+| Command                                         | Description |
+| ----------------------------------------------- | ----------- |
+| `akt console organization list`                 | The organization the API key acts in, with the caller's role (`owner`, `admin`, `member`, `billing`, `viewer`). Aliases: `org`, `team`. |
+| `akt console project list`                      | Projects the key can reach, most recently active first, with `access.canDeploy` and `access.canManage`. |
+| `akt console project get <project>`             | One project with its active deployments and access. |
+| `akt console project create <name> [description]` | Create a project (owners and admins). |
+| `akt console project rename <project> <new-name>` | Rename a project; its id and slug do not change. |
+| `akt console project delete <project>`          | Delete a project that holds no open deployment; the default project cannot be deleted. JSON/YAML return `{id, name, deleted:true}`. |
+| `akt console project use <project>`             | Resolve the project, then store its id and its organization's id on the active context as `console-project` and `console-organization`, recorded as a `type=context` action. |
+| `akt console deployment move <dseq> <project>`  | File a deployment in another project of the same organization (owners and admins), via `PATCH /v1/deployments/{dseq}/project`. |
+
+Organization and project management commands, and `apikey list/create/delete`,
+send the organization header but never the project header, so a stale project
+selection cannot lock the caller out of the commands that repair it. Creating a
+team and accepting an invitation need a signed-in session in the Console web
+app and have no `akt` command.
 
 **Deployments** (positional `dseq` per §3.8.2):
 
 | Command                                             | Flags                                          | Description                                                                                   |
 | --------------------------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `akt console deployment list [active\|closed]`       | `--skip` (0), `--limit` (20)                   | List deployments with validated pagination and an optional state filter. Filtering traverses bounded pages before applying the requested page window. |
+| `akt console deployment list [active\|closed]`       | `--skip` (0), `--limit` (20)                   | List deployments with validated pagination and an optional state filter. Filtering traverses bounded pages before applying the requested page window. With a selected project (§7.1.1) only that project's deployments are listed (`projectId` query), and each item carries its `projectId` when the API reports one. |
 | `akt console deployment get <dseq>`                 |                                                | Deployment with leases and escrow account.                                                     |
-| `akt console deployment create <sdl-file>` | | Create a deployment; prints `dseq` + tx hash. There is no deposit: the platform funds the deployment from the account's credits. It does not invent a deployment `state`; `deployment get` is authoritative for the later open/active transition. Secret values use `--secrets-file`; manifests are derived server-side at lease creation (§7.9). |
+| `akt console deployment create <sdl-file>` | | Create a deployment; prints `dseq` + tx hash. There is no deposit: the platform funds the deployment from the account's credits. With a selected project (§7.1.1) the deployment is filed in it (`data.projectId`); otherwise the API files it in the only project the caller can deploy into, or else the default project, and answers `project_required` when the caller cannot deploy there. It does not invent a deployment `state`; `deployment get` is authoritative for the later open/active transition. Secret values use `--secrets-file`; manifests are derived server-side at lease creation (§7.9). |
 | `akt console deployment update <dseq> <file>` | `--patch`, `--secrets-file <file or ->` | Apply an SDL diff or a partial configuration patch; closed deployments are rejected before mutation (§7.9). |
 | `akt console deployment sdl <dseq>` | | Print the saved SDL, with secret references preserved. |
 | `akt console deployment close <dseq>`               |                                                | Close an active deployment. A preflight rejects an already-closed or absent deployment with a clear non-zero error; the shared `akt close` workflow preserves that failure. A 2xx delete must acknowledge `success: true`. |
@@ -2973,14 +3038,14 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 
 | Command                          | Flags                                          | Description                                                    |
 | -------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------- |
-| `akt console apikey list`        |                                                | List API keys (secrets are never shown).                         |
-| `akt console apikey create <name> [expires-at]` | `--name`, `--expires-at` (RFC 3339, alternatives) — **disabled pending feedback** (positional only, 2026-07) | Create a key; the secret is printed exactly once with a warning. |
+| `akt console apikey list`        |                                                | List API keys (secrets are never shown), with the `organizationId` and `projectId` each acts in when the API reports them; a key without `projectId` reaches every project. |
+| `akt console apikey create <name> [expires-at]` | `--name`, `--expires-at` (RFC 3339, alternatives) — **disabled pending feedback** (positional only, 2026-07); `--console-project` | Create a key in the organization the current key acts in; the secret is printed exactly once with a warning. Only `--console-project` given on this command binds the key to a project (`data.projectId`); the context's project and `AKT_CONSOLE_PROJECT` never do. The binding cannot be changed later. |
 | `akt console apikey delete <id>` |                                                | Delete a key. The client first requires the UUID to appear in the account's key list, then sends DELETE. An absent key is non-zero with no DELETE or acknowledgement, even when the API's delete endpoint is idempotent. Pretty output acknowledges the full ID; JSON/YAML return `{id, deleted:true}` only after a present key's successful deletion. |
 | `akt console jwt create`         | `--ttl` (300, maximum 3600), `--scope` (csv, default `status,logs,events,shell,send-manifest,get-manifest`) | Mint a short-lived provider-scoped JWT. |
 
 **Provider gateway (live lease operations):**
 
-Managed (Console-API) contexts reach provider gateways directly, without a wallet or local key: each command resolves the deployment's first active lease via the Console API, looks up the provider's `hostUri`, and mints a scoped JWT via `POST /v1/create-jwt-token` that the gateway accepts as `Authorization: Bearer`. One-shot calls use a 300 s token; streaming/interactive modes (`--follow`, `--watch`, `shell`) use 3600 s. Without an active lease the commands fail listing the states of the leases that do exist.
+Managed (Console-API) contexts reach provider gateways directly, without a wallet or local key: each command resolves the deployment's first active lease via the Console API, looks up the provider's `hostUri`, and mints a JWT via `POST /v1/create-jwt-token` that the gateway accepts as `Authorization: Bearer`. Without a selected project the token is provider-scoped; with one, or when Console answers `project_forbidden` (a key limited to some projects), it is a granular token naming only this provider and dseq with `services: ["*"]`. One-shot calls use a 300 s token; streaming/interactive modes (`--follow`, `--watch`, `shell`) use 3600 s. Without an active lease the commands fail listing the states of the leases that do exist.
 Log, event, and shell calls request their operation scope plus `status` because
 the shared gateway boundary verifies the lease before opening a stream.
 Log records identify the provider-reported runtime pod in their `name` field
@@ -4545,10 +4610,10 @@ The action log records entries for the following command categories:
 | `query *` | Never by default | `query` | Read-only queries are not state changes and are not recorded by default (see verbose row below). |
 | Workflow commands (`deploy`, `update`, `redeploy`, `close`) | Always | `workflow` | One entry per workflow step. Each entry includes the step name, step index, result, and workflow run ID, and `akt context log` renders the step and run in `SUMMARY` so the steps of a run stay distinguishable and a failed step is identifiable (§2.2). |
 | `provider *` and MCP provider writes (state-changing: `send-manifest`, `migrate-hostnames`, `migrate-endpoints`, `lease-shell`) | Always | `provider` | After the provider gateway operation completes (success or failure). Read-only provider queries (`status`, `lease-status`, `lease-logs`, `lease-events`, `get-manifest`) and MCP query tools are not recorded. |
-| `context *` | Always | `context` | After context management operation (switch, edit, create, delete). |
+| `context *` | Always | `context` | After context management operation (switch, edit, create, delete). `akt console project use` records the stored `console-project` and `console-organization` as a context `edit`. |
 | `context keys *` (state-changing: `add`, `add --recover`, `delete`, `rename`, `import`) | Always | `context` | After the keyring mutation returns (success or failure), under a dotted `keys.*` action. Secrets — mnemonics, BIP39 and armor passphrases, key material — are never recorded (§2.2.2). Read-only `list`, `show`, `parse`, and `mnemonic` are not recorded. |
 | `context keys export` | Always | `context` | The single exception to the read-only rule: exporting private key material is recorded as a security event, with the key name only and never the armor or passphrase (§2.2.2). |
-| Console API state changes from CLI, workflow, or MCP (create/update/close deployment, create lease, settings writes) | Always | `console` | After the Console API call completes (success or failure). Read-only Console queries, including MCP query tools, are not recorded. |
+| Console API state changes from CLI, workflow, or MCP (create/update/close deployment, create lease, settings writes, create/rename/delete project, move deployment) | Always | `console` | After the Console API call completes (success or failure). Read-only Console queries, including MCP query tools, are not recorded. |
 | `akt faucet --send` | Always | `faucet` | After the faucet HTTP request completes (success or failure). The display path (no `--send`) is read-only and is never recorded (§2.13). |
 | All commands | On failure | `error` | When any command fails. Includes original action type and error message. |
 | `query` (read-only, no side effects) | When `-v` is set (future) | `query` | Verbose-mode query logging for debugging is planned but not yet implemented. Internal queries (e.g. by the sync engine) are never logged. |
@@ -4814,6 +4879,44 @@ All Console API requests require the `x-api-key` header. The API key is resolved
 
 API keys are created at [console.akash.network](https://console.akash.network) > Settings > API Keys.
 
+### 7.1.1 Teams and projects
+
+When the Console teams feature is on for the caller, every request runs in one
+organization (a team or the caller's personal account) and may be limited to
+one of its projects. `akt` selects them with the two optional request headers
+the Console API defines:
+
+| Header              | Value                   | Source, highest priority first |
+| ------------------- | ----------------------- | ------------------------------ |
+| `x-organization-id` | organization id or slug | `--console-organization`, `AKT_CONSOLE_ORGANIZATION`, context `console-organization` |
+| `x-project-id`      | project id (uuid)       | `--console-project`, `AKT_CONSOLE_PROJECT`, context `console-project` |
+
+- A header is sent only when a value is selected. A context without a
+  selection sends neither header, so accounts without teams see no change. When
+  the teams feature is off for the caller, the API ignores both headers.
+- A blank environment variable is no selection. An explicit empty flag
+  (`--console-project=`) clears the context's selection for one command. Flags
+  and environment variables never change the stored context.
+- The context stores only a project id. Flags, the environment variable, and
+  command arguments also accept a project slug or name: `akt` resolves it once
+  per process through `GET /v1/projects` (sent without the project header),
+  matching the id exactly and a slug or name without regard to case. No match,
+  or a name shared by several projects, fails before the request with the
+  candidates.
+- `akt console project use <project>` stores the resolved project id and its
+  organization id (from `GET /v1/organizations`) on the context.
+- An API key acts in the organization it was created in, with the role its
+  owner holds there. Naming another organization fails with
+  `organization_mismatch`. A key created with a project binding acts only in
+  that project; selecting another fails with `project_forbidden`.
+- Organization and project management, API key management, and `deployment
+  move` never send the project header (§2.9).
+- With a selected project, `POST /v1/deployments` also sends
+  `data.projectId`, and `GET /v1/deployments` adds the `projectId` query.
+- Provider gateway JWTs for a caller limited to some projects name the
+  deployment (granular access, §2.9).
+- Team and project refusals are explained with a remedy (§7.6).
+
 ### 7.2 Base URL
 
 | Source              | Value                                  |
@@ -4872,6 +4975,7 @@ active.
 | `data.sdl`      | string | yes      | SDL content as string                 |
 | `data.sealedSecrets` | string | no | JWE containing secret replacements; akt sends an encrypted empty map for ordinary variables (§7.9). |
 | `data.inheritSecretsFrom` | string | no | Source DSEQ for redeploy secret inheritance. |
+| `data.projectId` | string | no | Project to file the deployment in; sent only when a project is selected (§7.1.1). |
 
 Returns `{ data: { dseq: string, manifest: string } }`.
 
@@ -4885,6 +4989,7 @@ does not send the field.
 | --------- | ------ | -------- | ------- | ---------------------------- |
 | `skip`    | number | no       | 0       | Number of deployments to skip |
 | `limit`   | number | no       | 10      | Max deployments to return     |
+| `projectId` | uuid | no      | --      | Only deployments filed in this project; sent only when a project is selected (§7.1.1) |
 
 Returns paginated list of deployments with leases and escrow state.
 
@@ -4979,6 +5084,24 @@ increment. Resending the current total is not an extension and may be rejected;
 lowering a limit is not supported. `data.autoTopUpEnabled` also exists but an
 explicit `false` is rejected under always-on funding, so `akt` never sends it.
 
+#### Team and project endpoints
+
+Every one of these answers 404, like an unknown path, until the teams feature
+is on for the caller; `akt` then reports that teams are not available to the
+account rather than a missing resource.
+
+| Endpoint | Used by | Notes |
+| -------- | ------- | ----- |
+| `GET /v1/organizations` | `organization list`, `project use`, `whoami` | The organization the API key acts in, with the caller's `role`. |
+| `GET /v1/projects` | `project list/get`, project name resolution | Projects the caller can reach, most recently active first, with `access.canDeploy`, `access.canManage`, and a preview of active deployments. |
+| `POST /v1/projects` | `project create` | `data.name`, optional `data.description`. |
+| `PATCH /v1/projects/{id}` | `project rename` | `data.name`; the id and slug do not change. |
+| `DELETE /v1/projects/{id}` | `project delete` | 204 on success. |
+| `PATCH /v1/deployments/{dseq}/project` | `deployment move` | `data.projectId`; owners and admins. |
+| `POST /v1/api-keys` | `apikey create` | Optional `data.projectId` binds the key to one project. |
+| `GET /v1/api-keys` | `apikey list` | Each key reports `organizationId` and `projectId` (null when it reaches every project). |
+| `POST /v1/create-jwt-token` | provider gateway commands | Granular `leases` naming the deployment for a caller limited to some projects (§2.9). |
+
 ### 7.4 Workflow Engine Integration
 
 When a workflow runs in a context with `auth-method: console-api`, the workflow engine automatically routes `type: tx` steps through the Console API instead of building and broadcasting chain transactions locally. This selection applies only to shared workflow commands; it does not change explicit command groups.
@@ -5055,6 +5178,29 @@ identity boundary regardless of the preferred workflow rail.
 | 429         | Rate limited. Retry with backoff only for idempotent methods (GET/HEAD/PUT/DELETE). A non-idempotent request may already have reached the service and is never replayed. |
 | 5xx         | Console API server error. Retry with backoff (max 3 attempts) for idempotent methods (GET/HEAD/PUT/DELETE) only. A non-idempotent request is never replayed: it may have been processed despite the error (e.g. a gateway 502 after a completed write), and replaying it could duplicate a deployment. |
 | 3xx         | Redirect refused. No second request is issued and the API key is not forwarded. |
+
+**Team and project refusals.** The Console error body carries a machine
+readable `code`. For the codes below, `akt` keeps the code on the returned
+error, prints the API's message (control characters removed, at most 300
+characters) with the code and status, and appends the remedy. Sealed requests
+(§7.9) keep only the code and the remedy.
+
+| Code | Status | Remedy printed |
+| ---- | ------ | -------------- |
+| `project_required` | 400 | Select a project with `--console-project`, `AKT_CONSOLE_PROJECT`, or `akt console project use`; `akt console project list` shows the candidates. |
+| `project_forbidden` | 403 | Pick a project from `akt console project list`, or clear the context's project; a key limited to one project acts only there. |
+| `organization_mismatch` | 400 | `akt console organization list` shows the key's organization; select it or clear the selection. |
+| `organization_forbidden` | 403 | Use an API key created in an organization the caller belongs to. |
+| `project_budget_exceeded` | 403 | Nothing was signed; deploy into another project. |
+| `session_required` | 403 | Do it in the Console web app (team creation and deletion, leaving a team, accepting an invitation). |
+| `project_name_taken` | 409 | Choose another name. |
+| `project_is_default` | 409 | The default project cannot be deleted. |
+| `project_not_empty` | 409 | Move or close its deployments first. |
+| `project_limit_reached` | 403 | Delete a project you no longer use with `akt console project delete <project>`, or reuse one from `akt console project list`; the default project counts toward the limit (10 projects per organization in the Console today). |
+
+A 404 from `GET /v1/organizations` or `GET /v1/projects` means teams are not
+enabled for the account; `akt` says so instead of reporting a missing resource,
+and `whoami` omits the team fields.
 
 For legacy deployments without saved definitions or secret input, the Console
 may transiently reject an otherwise valid deployment PUT with
@@ -5138,6 +5284,10 @@ Status of `akt` coverage for every Akash Console capability. "Covered" means the
 | Template catalog | `akt console template list/get/sdl` | `template sdl` writes raw SDL to stdout; redirect it to a file for `akt deploy` (which takes a path, not stdin). |
 | SDL authoring | `akt sdl scaffolds/init/validate` (§2.11) | Local scaffolding, generation, and lint; no context, key, or RPC required. |
 | API key management | `akt console apikey list/create/delete` | Create shows the secret exactly once. |
+| Teams: active organization and role | `akt console organization list` (aliases `org`, `team`), `akt console whoami` | The organization the API key acts in (§7.1.1). |
+| Projects | `akt console project list/get/create/rename/delete/use`; `--console-project`, `AKT_CONSOLE_PROJECT` | `use` stores the project and its organization on the context. |
+| Deploy into a project, list and move deployments by project | `akt deploy` and `akt console deployment create/list` in the selected project; `akt console deployment move <dseq> <project>` | Headers and body fields as the Console API defines them (§7.1.1). |
+| Project-bound API keys | `akt console apikey create <name> --console-project <project>`; `apikey list` shows each key's organization and project | The binding is set at creation and cannot change. |
 | Provider-scoped JWT minting | `akt console jwt create` | Also the mechanism behind the live lease operations above. |
 | Action audit trail | Automatic: state-changing Console calls are recorded in the per-context action log (`akt context log`) | Beyond Console parity — Console has no client-side audit trail. |
 
@@ -5146,7 +5296,9 @@ Status of `akt` coverage for every Akash Console capability. "Covered" means the
 | Console capability | Status | Rationale |
 |---|---|---|
 | Adding funds by card / 3DS payment | Not portable | Stripe checkout with 3DS is inherently interactive and web-only; the reference CLI defers to auto-reload as well. Headless path: `akt console wallet settings true`, which keeps credits topped up from the default card; deployments then fund themselves from those credits. |
-| Account signup / email verification / team management | Not portable | Web-only Console account flows with no public API endpoints. |
+| Account signup / email verification | Not portable | Web-only Console account flows with no public API endpoints. |
+| Creating, deleting, or leaving a team; accepting an invitation | Not portable | The Console API refuses them for API keys (`session_required`); they need a signed-in web session. |
+| Team members, invitations, project budgets, spend, and activity | Deferred | Reachable with an API key, but optional for the first teams release of `akt`. |
 | Certificate management for managed wallets | Not applicable | The managed wallet signs server-side, so no client certificate exists (the reference CLI has no cert commands either). |
 | Console's `provider-proxy` websocket relay | Superseded | akt reaches provider gateways directly with a Console-minted JWT, which covers the same operations without reimplementing the relay's in-band auth protocol. |
 
