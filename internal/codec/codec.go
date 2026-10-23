@@ -36,6 +36,7 @@ import (
 	ov1 "pkg.akt.dev/go/node/oracle/v1"
 	ov2 "pkg.akt.dev/go/node/oracle/v2"
 	providertypes "pkg.akt.dev/go/node/provider/v1beta4"
+	sinktypes "pkg.akt.dev/go/node/sink/v1"
 	"pkg.akt.dev/go/sdkutil"
 )
 
@@ -55,6 +56,7 @@ func MakeEncodingConfig() sdkutil.EncodingConfig {
 	ov2.RegisterInterfaces(encCfg.InterfaceRegistry)
 
 	providertypes.RegisterInterfaces(encCfg.InterfaceRegistry)
+	sinktypes.RegisterInterfaces(encCfg.InterfaceRegistry)
 
 	// cosmos sdk modules
 	authtypes.RegisterInterfaces(encCfg.InterfaceRegistry)

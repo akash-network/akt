@@ -33,6 +33,7 @@ import (
 	mvbeta "pkg.akt.dev/go/node/market/v1beta5"
 	oraclev2 "pkg.akt.dev/go/node/oracle/v2"
 	ptypes "pkg.akt.dev/go/node/provider/v1beta4"
+	sinktypes "pkg.akt.dev/go/node/sink/v1"
 
 	"pkg.akt.dev/akt/internal/codec"
 )
@@ -128,6 +129,13 @@ func TestRegisteredFormattersDispatch(t *testing.T) {
 		&bmetypes.QueryStatusResponse{},
 		&bmetypes.QueryVaultStateResponse{},
 		&bmetypes.QueryLedgerRecordsResponse{},
+
+		// Sink. Record and transfer responses need a real 77-byte record and
+		// are covered in sink_test.go; an empty record is a malformed reply.
+		&sinktypes.QueryOpenTransfersResponse{},
+		&sinktypes.QueryAccountResponse{},
+		&sinktypes.QueryStateResponse{},
+		&sinktypes.Params{},
 
 		// CosmWasm.
 		&wasmtypes.QueryCodesResponse{},

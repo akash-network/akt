@@ -68,23 +68,25 @@ func isMicroDenom(denom string) bool {
 func formatMicroDenom(amount math.Int, denom string) string {
 	base := strings.ToUpper(denom[1:]) // "uakt" → "AKT"
 
+	// Compare as math.Int: amounts such as a uint64 cap exceed int64, and
+	// Int64() panics on them.
 	amount = IntOrZero(amount)
-	uamt := amount.Int64()
+	magnitude := amount.Abs()
 
 	switch {
-	case uamt == 0:
+	case amount.IsZero():
 		return fmt.Sprintf("0 %s", base)
 
-	case abs64(uamt) >= 1_000_000:
+	case magnitude.GTE(math.NewInt(1_000_000)):
 		d := math.LegacyNewDecFromInt(amount).Quo(math.LegacyNewDec(1_000_000))
 		return fmt.Sprintf("%s %s", TrimDecTrailingZeros(d.String()), base)
 
-	case abs64(uamt) >= 1_000:
+	case magnitude.GTE(math.NewInt(1_000)):
 		d := math.LegacyNewDecFromInt(amount).Quo(math.LegacyNewDec(1_000))
 		return fmt.Sprintf("%s m%s", TrimDecTrailingZeros(d.String()), base)
 
 	default:
-		return fmt.Sprintf("%d u%s", uamt, base)
+		return fmt.Sprintf("%s u%s", amount.String(), base)
 	}
 }
 
@@ -108,13 +110,6 @@ func IntOrZero(i math.Int) math.Int {
 	}
 
 	return i
-}
-
-func abs64(n int64) int64 {
-	if n < 0 {
-		return -n
-	}
-	return n
 }
 
 // FormatDecCoin formats a Cosmos SDK DecCoin for human display.

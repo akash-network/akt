@@ -45,6 +45,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/mark3labs/mcp-go v0.48.0
 	github.com/mdp/qrterminal/v3 v3.2.1
+	github.com/mr-tron/base58 v1.2.0
 	github.com/pkg/errors v0.9.1
 	github.com/spf13/cobra v1.10.2
 	github.com/spf13/pflag v1.0.10
@@ -74,6 +75,11 @@ replace (
 	// upstream requirement from chain-sdk
 	github.com/gogo/protobuf => github.com/cosmos/gogoproto v1.3.3-alpha.regen.1
 	github.com/syndtr/goleveldb => github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
+
+	// The sink module's API is not in a tagged chain-sdk release yet. Build
+	// against its private branch until pkg.akt.dev/go ships it, then drop this.
+	// Fetching it needs GOPRIVATE=github.com/ovrclk/* and access to the repo.
+	pkg.akt.dev/go => github.com/ovrclk/chain-sdk/go v0.4.6-0.20261022181937-f62d51f60b1e
 )
 
 require (

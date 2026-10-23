@@ -37,6 +37,7 @@ import (
 	mtypes "pkg.akt.dev/go/node/market/v1beta5"
 	oracletypes "pkg.akt.dev/go/node/oracle/v2"
 	ptypes "pkg.akt.dev/go/node/provider/v1beta4"
+	sinktypes "pkg.akt.dev/go/node/sink/v1"
 	attrtypes "pkg.akt.dev/go/node/types/attributes/v1"
 )
 
@@ -140,6 +141,16 @@ func RegisterAllTxFormatters() {
 	RegisterTx((*bmetypes.MsgBurnMint)(nil), TxPrettyFormatterFunc{TitleStr: "Burn Mint", FormatFn: fmtBMEBurnMint})
 	RegisterTx((*bmetypes.MsgMintACT)(nil), TxPrettyFormatterFunc{TitleStr: "Mint ACT", FormatFn: fmtBMEMintACT})
 	RegisterTx((*bmetypes.MsgBurnACT)(nil), TxPrettyFormatterFunc{TitleStr: "Burn ACT", FormatFn: fmtBMEBurnACT})
+
+	// Sink
+	RegisterTx((*sinktypes.MsgSink)(nil), TxPrettyFormatterFunc{TitleStr: "Sink Deposit", FormatFn: fmtSinkDeposit})
+	RegisterTx((*sinktypes.MsgGuardianPause)(nil), TxPrettyFormatterFunc{TitleStr: "Guardian Pause", FormatFn: fmtSinkGuardianPause})
+	RegisterTx((*sinktypes.MsgReportOutcome)(nil), TxPrettyFormatterFunc{TitleStr: "Report Outcome", FormatFn: fmtSinkReportOutcome})
+	RegisterTx((*sinktypes.MsgVetoVoid)(nil), TxPrettyFormatterFunc{TitleStr: "Veto Void", FormatFn: fmtSinkVetoVoid})
+	RegisterTx((*sinktypes.MsgFinalizeRefund)(nil), TxPrettyFormatterFunc{TitleStr: "Finalize Refund", FormatFn: fmtSinkFinalizeRefund})
+	RegisterTx((*sinktypes.MsgRequestVoid)(nil), TxPrettyFormatterFunc{TitleStr: "Request Void", FormatFn: fmtSinkRequestVoid})
+	RegisterTx((*sinktypes.MsgResolveTransfer)(nil), TxPrettyFormatterFunc{TitleStr: "Resolve Transfer", FormatFn: fmtSinkResolveTransfer})
+	RegisterTx((*sinktypes.MsgUpdateParams)(nil), TxPrettyFormatterFunc{TitleStr: "Update Sink Parameters", FormatFn: fmtSinkUpdateParams})
 }
 
 // ---------------------------------------------------------------------------
@@ -824,6 +835,87 @@ func fmtBMEMintACT(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.M
 func fmtBMEBurnACT(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
 	m := msg.(*bmetypes.MsgBurnACT)
 	_, err := fmt.Fprint(w, RenderBMEBurnACT(m.Owner, m.CoinsToBurn))
+	return err
+}
+
+// ---------------------------------------------------------------------------
+// Sink
+// ---------------------------------------------------------------------------
+
+// A sink deposit only locks AKT; the mint follows on Solana, so the deposit
+// renders the shared block from sink.go that says so and names the follow-up.
+
+func fmtSinkDeposit(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, resp *sdk.TxResponse, msgIndex int) error {
+	m := msg.(*sinktypes.MsgSink)
+	_, err := fmt.Fprint(w, RenderSinkDeposit(m, txEventAttribute(resp, msgIndex, "sink_deposit", "transfer_id")))
+	return err
+}
+
+func fmtSinkGuardianPause(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
+	m := msg.(*sinktypes.MsgGuardianPause)
+	disabled := func(off bool) string {
+		if off {
+			return StyleRed.Render("Disabled")
+		}
+		return "Unchanged"
+	}
+	KV(w, "Guardian", m.Guardian)
+	KV(w, "Deposits", disabled(m.Deposits))
+	KV(w, "Refunds", disabled(m.Refunds))
+	return nil
+}
+
+func fmtSinkReportOutcome(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
+	m := msg.(*sinktypes.MsgReportOutcome)
+	KV(w, "Reporter", m.Reporter)
+	KV(w, "Transfer ID", strconv.FormatUint(m.Id, 10))
+	KV(w, "Outcome", sinkOutcomeLabel(m.Observation.Outcome))
+	KV(w, "Slot", strconv.FormatUint(m.Observation.Slot, 10))
+	KV(w, "Signature", sinkSignature(m.Observation.TransactionSignature))
+	KV(w, "Reporter Epoch", strconv.FormatUint(m.ReporterEpoch, 10))
+	KV(w, "Round", strconv.FormatUint(m.Round, 10))
+	return nil
+}
+
+func fmtSinkVetoVoid(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
+	m := msg.(*sinktypes.MsgVetoVoid)
+	KV(w, "Signer", m.Signer)
+	KV(w, "Transfer ID", strconv.FormatUint(m.Id, 10))
+	KV(w, "Reason", m.Reason)
+	return nil
+}
+
+func fmtSinkFinalizeRefund(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
+	m := msg.(*sinktypes.MsgFinalizeRefund)
+	KV(w, "Executor", m.Executor)
+	KV(w, "Transfer ID", strconv.FormatUint(m.Id, 10))
+	return nil
+}
+
+func fmtSinkRequestVoid(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
+	m := msg.(*sinktypes.MsgRequestVoid)
+	KV(w, "Authority", m.Authority)
+	KV(w, "Transfer ID", strconv.FormatUint(m.Id, 10))
+	return nil
+}
+
+func fmtSinkResolveTransfer(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
+	m := msg.(*sinktypes.MsgResolveTransfer)
+	KV(w, "Authority", m.Authority)
+	KV(w, "Transfer ID", strconv.FormatUint(m.Id, 10))
+	KV(w, "Decision", sinkDecisionLabel(m.Decision))
+	if m.Observation != nil {
+		KV(w, "Evidence", sinkObservation(*m.Observation))
+	}
+	KV(w, "Reason", m.Reason)
+	return nil
+}
+
+func fmtSinkUpdateParams(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg sdk.Msg, _ *sdk.TxResponse, _ int) error {
+	m := msg.(*sinktypes.MsgUpdateParams)
+	KV(w, "Authority", m.Authority)
+	Newline(w)
+	_, err := fmt.Fprint(w, RenderSinkParams(m.Params))
 	return err
 }
 
