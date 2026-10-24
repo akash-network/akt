@@ -201,7 +201,8 @@ func TestRenderSinkStateShowsLockedTotal(t *testing.T) {
 	require.NoError(t, err)
 	plain := ansi.Strip(out)
 
-	require.Contains(t, plain, "2 AKT in 1 transfers")
+	require.Contains(t, plain, "Pending:             2 AKT")
+	require.Contains(t, plain, "Open Transfers:      1")
 	require.Contains(t, plain, "7 AKT on 2026-10-19")
 	require.Contains(t, plain, "1000084 AKT")
 	require.Contains(t, plain, "Sink Parameters")
@@ -221,6 +222,7 @@ func TestRenderSinkAccount(t *testing.T) {
 	require.Contains(t, plain, sdk.AccAddress(sender).String())
 	require.Contains(t, plain, "2026-10-19")
 	require.Contains(t, plain, "3 AKT")
+	require.Contains(t, plain, "Open Transfers:      1")
 }
 
 func TestRenderSinkDepositNamesTheFollowUp(t *testing.T) {

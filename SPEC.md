@@ -6708,14 +6708,16 @@ a final line gives the next command: `akt q sink open-transfers
 transfers.
 
 **State**: a `Sink Totals` section with Last Transfer ID, Launch Reserve,
-Pending (`<amount> in <count> transfers`), Minted, Voided, Refunded,
-Refunded Today (`<amount> on <date>`), Locked (reserve plus pending, minted
-and voided escrow) and Reporter Epoch, then the parameters below.
+Pending, Minted, Voided, Refunded, Refunded Today (`<amount> on <date>`),
+Locked (reserve plus pending, minted and voided escrow), Open Transfers (the
+module's `pending_count`: every transfer not yet minted or refunded,
+including voided transfers waiting for their refund) and Reporter Epoch, then
+the parameters below.
 
 **Params**: a `Sink Parameters` section with Deposits and Refunds
 (`Enabled` green / `Disabled`), Min Transfer (`None` when zero), Max
 Transfer, Solana Daily Mint Cap, Max Amount Per Account Per Day (`No limit`
-when zero), Deposits Per Account Per Day, Pending Per Account, Reporters (one
+when zero), Deposits Per Account Per Day, Open Transfers Per Account, Reporters (one
 full address per line, or `None`), Reporter Threshold
 (`<threshold> of <members>`), Challenge Period (`FormatDuration()`), Daily
 Refund Cap, Pause Guardian (`None` when empty) and Vault Allowlist (one key
@@ -6723,7 +6725,8 @@ per line, or `None`).
 
 **Account** (`akt q sink account [address]`): a `Sink Account` section with
 Sender, Day (the UTC date of the usage day), Deposits That Day, Amount That
-Day and Pending Transfers.
+Day and Open Transfers (not yet minted or refunded, which the per-account
+limit counts).
 
 #### Miscellaneous
 

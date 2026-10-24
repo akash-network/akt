@@ -302,7 +302,7 @@ func RenderSinkAccount(res *types.QueryAccountResponse) string {
 	KV(&buf, "Day", sinkDay(u.Day))
 	KV(&buf, "Deposits That Day", strconv.FormatUint(uint64(u.DailyCount), 10))
 	KV(&buf, "Amount That Day", sinkCoin(u.DailyAmount))
-	KV(&buf, "Pending Transfers", strconv.FormatUint(uint64(u.PendingCount), 10))
+	KV(&buf, "Open Transfers", strconv.FormatUint(uint64(u.PendingCount), 10))
 
 	return buf.String()
 }
@@ -344,7 +344,7 @@ func RenderSinkParams(p types.Params) string {
 		kv("Max Amount Per Account Per Day", sinkCoin(p.MaxDailyAmountPerAccount))
 	}
 	kv("Deposits Per Account Per Day", strconv.FormatUint(uint64(p.MaxDailyPerAccount), 10))
-	kv("Pending Per Account", strconv.FormatUint(uint64(p.MaxPendingPerAccount), 10))
+	kv("Open Transfers Per Account", strconv.FormatUint(uint64(p.MaxPendingPerAccount), 10))
 	writeSinkList(&buf, sinkParamsKeyWidth, "Reporters", p.Reporters)
 	kv("Reporter Threshold", sinkThreshold(p.ReporterThreshold, len(p.Reporters)))
 	if p.ChallengePeriodSeconds > uint64(stdmath.MaxInt64/int64(time.Second)) {
@@ -401,7 +401,7 @@ func RenderSinkState(res *types.QueryStateResponse) (string, error) {
 	fmt.Fprintln(&buf, Section("Sink Totals"))
 	KV(&buf, "Last Transfer ID", strconv.FormatUint(t.LastTransferId, 10))
 	KV(&buf, "Launch Reserve", sinkCoin(t.LaunchReserve))
-	KV(&buf, "Pending", fmt.Sprintf("%s in %d transfers", sinkCoin(t.PendingAmount), t.PendingCount))
+	KV(&buf, "Pending", sinkCoin(t.PendingAmount))
 	KV(&buf, "Minted", sinkCoin(t.MintedAmount))
 	KV(&buf, "Voided", sinkCoin(t.VoidedAmount))
 	KV(&buf, "Refunded", sinkCoin(t.RefundedAmount))
@@ -411,6 +411,9 @@ func RenderSinkState(res *types.QueryStateResponse) (string, error) {
 		KV(&buf, "Refunded Today", fmt.Sprintf("%s on %s", sinkCoin(t.RefundedToday), sinkDay(t.RefundDay)))
 	}
 	KV(&buf, "Locked", Bold(sinkCoin(locked)))
+	// pending_count covers every transfer not yet minted or refunded, so it
+	// includes voided transfers waiting for their refund.
+	KV(&buf, "Open Transfers", strconv.FormatUint(t.PendingCount, 10))
 	KV(&buf, "Reporter Epoch", strconv.FormatUint(t.ReporterEpoch, 10))
 
 	Newline(&buf)
