@@ -77,9 +77,9 @@ replace (
 	github.com/syndtr/goleveldb => github.com/syndtr/goleveldb v1.0.1-0.20210819022825-2ae1ddf74ef7
 
 	// The sink module's API is not in a tagged chain-sdk release yet. Build
-	// against its private branch until pkg.akt.dev/go ships it, then drop this.
-	// Fetching it needs GOPRIVATE=github.com/ovrclk/* and access to the repo.
-	pkg.akt.dev/go => github.com/ovrclk/chain-sdk/go v0.4.6-0.20261022181937-f62d51f60b1e
+	// against the chain-sdk feat/sink branch until pkg.akt.dev/go ships it, then
+	// drop this.
+	pkg.akt.dev/go => github.com/akash-network/chain-sdk/go v0.4.7-0.20261027153028-b6a12d9e84f8
 )
 
 require (

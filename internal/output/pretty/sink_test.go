@@ -188,7 +188,6 @@ func TestRenderSinkParamsAlignsValuesAndListsEveryEntry(t *testing.T) {
 func TestRenderSinkStateShowsLockedTotal(t *testing.T) {
 	out, err := RenderSinkState(&types.QueryStateResponse{Totals: types.Totals{
 		LastTransferId: 12,
-		LaunchReserve:  1_000_000_000_000,
 		PendingAmount:  2_000_000,
 		PendingCount:   1,
 		MintedAmount:   79_000_000,
@@ -204,7 +203,7 @@ func TestRenderSinkStateShowsLockedTotal(t *testing.T) {
 	require.Contains(t, plain, "Pending:             2 AKT")
 	require.Contains(t, plain, "Open Transfers:      1")
 	require.Contains(t, plain, "7 AKT on 2026-10-19")
-	require.Contains(t, plain, "1000084 AKT")
+	require.Contains(t, plain, "84 AKT")
 	require.Contains(t, plain, "Sink Parameters")
 }
 
@@ -397,7 +396,7 @@ func TestRenderSinkParamsOptionalValues(t *testing.T) {
 }
 
 func TestRenderSinkStateRejectsOverflowingTotals(t *testing.T) {
-	overflow := &types.QueryStateResponse{Totals: types.Totals{LaunchReserve: stdmathMaxUint64, PendingAmount: 1}}
+	overflow := &types.QueryStateResponse{Totals: types.Totals{PendingAmount: stdmathMaxUint64, MintedAmount: 1}}
 
 	_, err := RenderSinkState(overflow)
 	require.ErrorContains(t, err, "malformed node response")

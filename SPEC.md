@@ -6707,9 +6707,9 @@ a final line gives the next command: `akt q sink open-transfers
 --start-after <next>`. `--held-only` reads every page and lists only held
 transfers.
 
-**State**: a `Sink Totals` section with Last Transfer ID, Launch Reserve,
+**State**: a `Sink Totals` section with Last Transfer ID,
 Pending, Minted, Voided, Refunded, Refunded Today (`<amount> on <date>`),
-Locked (reserve plus pending, minted and voided escrow), Open Transfers (the
+Locked (pending, minted and voided escrow), Open Transfers (the
 module's `pending_count`: every transfer not yet minted or refunded,
 including voided transfers waiting for their refund) and Reporter Epoch, then
 the parameters below.

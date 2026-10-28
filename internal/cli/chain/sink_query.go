@@ -266,7 +266,7 @@ func GetSinkStateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "state",
 		Short:             "Query sink totals and parameters",
-		Long:              `Query the locked AKT by bucket (launch reserve, pending, minted, voided), refund counters, the reporter epoch and the current parameters.`,
+		Long:              `Query the locked AKT by bucket (pending, minted, voided), refund counters, the reporter epoch and the current parameters.`,
 		Example:           `  akt query sink state`,
 		Args:              cobra.NoArgs,
 		PersistentPreRunE: QueryPersistentPreRunE,

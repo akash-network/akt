@@ -400,7 +400,6 @@ func RenderSinkState(res *types.QueryStateResponse) (string, error) {
 	var buf strings.Builder
 	fmt.Fprintln(&buf, Section("Sink Totals"))
 	KV(&buf, "Last Transfer ID", strconv.FormatUint(t.LastTransferId, 10))
-	KV(&buf, "Launch Reserve", sinkCoin(t.LaunchReserve))
 	KV(&buf, "Pending", sinkCoin(t.PendingAmount))
 	KV(&buf, "Minted", sinkCoin(t.MintedAmount))
 	KV(&buf, "Voided", sinkCoin(t.VoidedAmount))
