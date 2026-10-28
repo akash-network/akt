@@ -50,7 +50,6 @@ func prepareCommandHelp(root *cobra.Command) {
 		"query bme params":          `  akt query bme params`,
 		"query bme status":          `  akt query bme status`,
 		"query bme vault-state":     `  akt query bme vault-state`,
-		"query deployment group":    `  akt query deployment group`,
 		"query deployment params":   `  akt query deployment params`,
 		"query distribution params": `  akt query distribution params`,
 		"query escrow accounts": `  # Arguments narrow the result; both may be omitted.

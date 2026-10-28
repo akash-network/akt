@@ -15,6 +15,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
@@ -249,6 +250,82 @@ func TestPrintGroupsListStructuredOutputIsOneArrayIncludingWhenEmpty(t *testing.
 			})
 		}
 	}
+}
+
+// TestPrintGroupsPageStructuredOutputCarriesPagination: a group listing built
+// from one page of deployments prints an object, so the page key that
+// continues it survives structured output. A missing page reads as the last.
+func TestPrintGroupsPageStructuredOutputCarriesPagination(t *testing.T) {
+	groups := dvbeta.Groups{
+		makeGroup("akash1qwerty", 100, 1, "web", dvbeta.GroupOpen),
+		makeGroup("akash1asdfgh", 200, 1, "worker", dvbeta.GroupClosed),
+	}
+
+	for _, format := range []string{cflags.OutputJSON, cflags.OutputYAML} {
+		for _, tc := range []struct {
+			name    string
+			page    *query.PageResponse
+			nextKey string
+			total   string
+		}{
+			{name: "more pages", page: &query.PageResponse{NextKey: []byte("next"), Total: 7}, nextKey: "bmV4dA==", total: "7"},
+			{name: "no pagination", page: nil, total: "0"},
+		} {
+			t.Run(format+"/"+tc.name, func(t *testing.T) {
+				cmd := &cobra.Command{}
+				cmd.Flags().String(flagdefs.FlagOutput, format, "")
+				var stdout bytes.Buffer
+				cmd.SetOut(&stdout)
+				cctx := sdkclient.Context{Codec: codec.NewProtoCodec(codectypes.NewInterfaceRegistry())}
+
+				require.NoError(t, PrintGroupsPage(cmd, cctx, groups, tc.page))
+
+				var decoded struct {
+					Groups     []any `json:"groups" yaml:"groups"`
+					Pagination struct {
+						NextKey *string `json:"next_key" yaml:"next_key"`
+						Total   string  `json:"total" yaml:"total"`
+					} `json:"pagination" yaml:"pagination"`
+				}
+				if format == cflags.OutputJSON {
+					require.NoError(t, json.Unmarshal(stdout.Bytes(), &decoded))
+				} else {
+					require.NoError(t, yaml.Unmarshal(stdout.Bytes(), &decoded))
+				}
+				require.Len(t, decoded.Groups, len(groups))
+				require.Equal(t, tc.total, decoded.Pagination.Total)
+				if tc.nextKey == "" {
+					require.Nil(t, decoded.Pagination.NextKey, "the last page has no key")
+				} else {
+					require.Equal(t, tc.nextKey, *decoded.Pagination.NextKey)
+				}
+			})
+		}
+	}
+}
+
+func TestPrintGroupsPagePrettyOutputMatchesGroupsList(t *testing.T) {
+	t.Setenv("NO_COLOR", "")
+
+	groups := dvbeta.Groups{makeGroup("akash1qwerty", 100, 1, "web", dvbeta.GroupOpen)}
+	render := func(printGroups func(*cobra.Command) error) string {
+		cmd := &cobra.Command{Use: "group"}
+		cflags.AddQueryFlagsToCmd(cmd)
+		var stdout bytes.Buffer
+		cmd.SetOut(&stdout)
+		require.NoError(t, printGroups(cmd))
+
+		return stdout.String()
+	}
+
+	paged := render(func(cmd *cobra.Command) error {
+		return PrintGroupsPage(cmd, sdkclient.Context{}, groups, &query.PageResponse{NextKey: []byte("next")})
+	})
+	listed := render(func(cmd *cobra.Command) error {
+		return PrintGroupsList(cmd, sdkclient.Context{}, groups)
+	})
+	require.Equal(t, listed, paged)
+	require.Contains(t, paged, "akash1qwerty/100/1")
 }
 
 func TestPrintGroupsListRejectsCodecFailuresAndMalformedJSON(t *testing.T) {

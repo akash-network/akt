@@ -8,20 +8,6 @@ import (
 	"github.com/spf13/pflag"
 )
 
-// requireOwnerScope refuses an owner-mode list query that has no owner to
-// filter on. SPEC §3.8 defines a bare listing as "all matching resources for
-// the context's default account", so with no account configured there is
-// nothing to scope to. The query layer treats an empty owner as "no filter"
-// rather than "no results", so sending it anyway returns every matching
-// resource on the network under a heading the caller reads as their own.
-//
-// A context legitimately has no default account -- Console-only and monitoring
-// contexts commonly omit one -- so this is a normal state to hit, not a
-// misconfiguration.
-func requireOwnerScope(resource string) error {
-	return fmt.Errorf("%s: no default account set; provide an owner address or configure default-account", resource)
-}
-
 // parseByPerspective reads --by, which selects whether the leading address is
 // an owner or a provider. It used to be compared against "provider" and
 // nothing else, so every other value -- including "Provider" -- fell through
@@ -37,13 +23,6 @@ func parseByPerspective(v string) (bool, error) {
 	}
 }
 
-// requireProviderScope refuses a --by provider list query with no provider.
-// SPEC §3.8.4 marks the leading address required in provider mode; nothing
-// enforced it, so the empty filter listed the whole network.
-func requireProviderScope(resource string) error {
-	return fmt.Errorf("%s: --by provider requires a provider address; provide one as the first argument", resource)
-}
-
 // rejectUnsupportedPaging refuses the pagination flags the escrow endpoints
 // silently ignore.
 //
@@ -56,6 +35,20 @@ func rejectUnsupportedPaging(flags *pflag.FlagSet, resource string) error {
 	for _, name := range []string{flagdefs.FlagOffset, flagdefs.FlagPage, flagdefs.FlagReverse} {
 		if flags.Changed(name) {
 			return fmt.Errorf("%s: --%s is not supported by this endpoint; page with --limit and --page-key", resource, name)
+		}
+	}
+
+	return nil
+}
+
+// rejectOffsetPaging refuses --page and --offset on a listing that cannot
+// carry a state filter. The chain accepts an offset only together with one,
+// so the flags would fail there with an error about a filter the caller has
+// no way to set.
+func rejectOffsetPaging(flags *pflag.FlagSet, resource string) error {
+	for _, name := range []string{flagdefs.FlagOffset, flagdefs.FlagPage} {
+		if flags.Changed(name) {
+			return fmt.Errorf("%s: --%s needs a state filter, which this listing cannot take; page with --limit and --page-key", resource, name)
 		}
 	}
 

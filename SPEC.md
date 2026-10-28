@@ -793,8 +793,8 @@ akt
 │   │   ├── total
 │   │   ├── denom-metadata
 │   │   └── send-enabled [denom1...]
-│   ├── deployment [filter] [state]      # [owner/]dseq [state]; no arg → list; --state flag — **disabled pending feedback** (positional only, 2026-07)
-│   │   ├── group [filter]               # [owner/]dseq[/gseq]
+│   ├── deployment [filter] [state]      # [owner/]dseq [state]; no arg → every deployment on the network (one page); --state flag — **disabled pending feedback** (positional only, 2026-07)
+│   │   ├── group [filter]               # [owner[/dseq[/gseq]]]; no dseq → groups of one page of deployments
 │   │   └── params
 │   ├── market
 │   │   ├── order [filter] [state]       # [owner/]dseq[/gseq/oseq] [state]; --state flag — **disabled pending feedback** (positional only, 2026-07)
@@ -803,7 +803,7 @@ akt
 │   │   └── params
 │   ├── provider [address]               # List or get (address → single); `list`/`get` remain as aliases
 │   ├── contract [address-or-label]      # Alias: contracts; no argument lists addresses, labels, and code IDs
-│   ├── cert [owner] [state]             # Owner or default account, plus [state]; --owner/--state flags — **disabled pending feedback** (positional only, 2026-07)
+│   ├── cert [owner] [state]             # Owner (no arg → every certificate on the network), plus [state]; --owner/--state flags — **disabled pending feedback** (positional only, 2026-07)
 │   ├── audit [owner]                    # Owner or default account; --auditor flag
 │   ├── escrow [filter]                  # [owner[/dseq]]; --state flag
 │   │   ├── payment [filter]             # [owner[/dseq]]
@@ -3806,7 +3806,7 @@ The filter is a single positional argument using `/` as the separator. Component
 [provider/]dseq[/gseq[/oseq[/owner]]]
 ```
 
-When no filter argument is given, the command lists all matching resources for the context's default account (in owner mode) or requires an explicit provider address (in provider mode).
+When no filter argument is given, the command lists every matching resource on the network, in either `--by` perspective, and needs no `default-account`. The list is one page, sized by `--limit` (default 100); nothing pages automatically. The next page comes from `--page-key` set to the previous response's `pagination.next_key` (shown by `-o json`). The chain rejects `--page` and `--offset` on a list without a state filter, so offset paging works only together with a state keyword (`akt query deployment closed --page 2`). A bare state keyword narrows the network-wide list (`akt query deployment closed`).
 
 #### 3.8.2 Smart Type Detection
 
@@ -3848,22 +3848,28 @@ State keywords are only recognized as the sole/first component of the filter arg
 
 | Component        | Default when omitted                                                         |
 | ---------------- | ---------------------------------------------------------------------------- |
-| Leading address  | Context `default-account` (in `--by owner` mode); **required** in `--by provider` mode |
+| Leading address  | Before a `dseq` (`--by owner` mode): the context `default-account`. With no filter argument or only a state keyword: empty — no owner or provider filter, in either `--by` mode |
 | `dseq`           | 0 — list all (no dseq filter)                                                |
 | `gseq`           | 0 in list context (no filter); 1 when needed for a unique get                |
 | `oseq`           | 0 in list context (no filter); 1 when needed for a unique get                |
 | Trailing address | Empty — no filter on the trailing identity component                         |
 
-Every owner-scoped list, including `query cert`, must resolve an omitted
-leading address from the active context before sending a request. If the
-context has no default account, the command refuses locally and explains that
-an owner address or `default-account` is required. An empty owner is never sent
-to the chain query service because it means network-wide scope.
+A list with no leading address — no filter argument, or only a state keyword —
+is network-wide, including `query cert` and `--by provider` bid and lease
+lists. The request goes to the chain query service with an empty owner (and
+provider), which it treats as no filter. Such a list never consults
+`default-account`, Console, or the keyring, so it behaves the same in every
+context. Every list row prints the resource's full ID, owner included, so
+results from different owners stay distinguishable.
 
-In any context with a resolvable Console credential, omitted owner and
-numeric-DSEQ shorthand may resolve the managed wallet owner lazily from
-authenticated Console identity and wallet metadata. An explicit full owner
-remains authoritative and triggers no owner lookup. A configured local
+The context's account is consulted only by the numeric-DSEQ shorthand, where
+the owner is part of the identity being named. With no account to resolve, the
+shorthand fails locally and asks for an owner address or `default-account`.
+
+In any context with a resolvable Console credential, the numeric-DSEQ
+shorthand may resolve the managed wallet owner lazily from authenticated
+Console identity and wallet metadata. An explicit full owner remains
+authoritative and triggers no owner lookup. A configured local
 `default-account` also remains authoritative; Console is the fallback only
 when no local default exists. The resolved full address is then used by the
 same deployment and market query filters as any other context.
@@ -3873,7 +3879,7 @@ same deployment and market query filters as any other context.
 | Command                  | Max filter depth                               | `--by` support |
 | ------------------------ | ---------------------------------------------- | -------------- |
 | `query deployment`       | `[owner/]dseq`                                 | no             |
-| `query deployment group` | `[owner/]dseq[/gseq]`                          | no             |
+| `query deployment group` | `[owner[/dseq[/gseq]]]`                        | no             |
 | `query market order`     | `[owner/]dseq[/gseq/oseq]`                     | no             |
 | `query market bid`       | `[owner/]dseq[/gseq/oseq[/provider]]`          | yes            |
 | `query market lease`     | `[owner/]dseq[/gseq/oseq[/provider]]`          | yes            |
@@ -3884,38 +3890,61 @@ same deployment and market query filters as any other context.
 | `query escrow payment`   | `[owner[/dseq]]`                                | no             |
 | `query escrow blocks-remaining` | `[owner/]dseq`                           | no             |
 
+The chain has no query that lists groups, so `query deployment group` without
+a `dseq` — no filter argument, or an owner address only — fetches one page of
+deployments (network-wide, or that owner's) and prints the groups they carry.
+The pagination flags therefore count deployments, not groups. Structured
+output (`-o json|yaml`) of this mode is an object holding `groups` and the
+deployment page's `pagination`, so the listing continues with `--page-key`.
+A group listing cannot take a state filter, so `--page` and `--offset` are
+refused locally rather than sent for the chain to reject. `owner/dseq` prints
+every group of one deployment as a bare array and `owner/dseq/gseq` gets one
+group, as before.
+
 #### 3.8.6 Examples
 
 **Deployment queries** (`akt query deployment`):
 
 ```bash
-akt query deployment                           # List all deployments for default account
+akt query deployment                           # List every deployment on the network (first page of 100)
+akt query deployment --page-key <next_key>     # Next page: pagination.next_key from the previous page (-o json)
+akt query deployment active --limit 20 --page 2 # Offset paging needs a state keyword: second page of 20 active deployments
 akt query deployment 12345                     # Get deployment dseq 12345 (owner from context)
 akt query deployment akash1abc...              # List all deployments for that owner
 akt query deployment akash1abc.../12345        # Get specific deployment
 akt query deployment --state active            # DISABLED pending feedback (2026-07): use `akt query deployment active`
-akt query deployment active                    # List active deployments (positional state keyword)
+akt query deployment active                    # List every active deployment on the network (positional state keyword)
 akt query deployment 12345 active              # Get + state verification: errors if 12345 is not active (§3.8.3)
 akt query deployment akash1abc.../12345 active # Same, with explicit owner
 akt query deployment 12345 --state active      # DISABLED pending feedback (2026-07): use `akt query deployment 12345 active`
 ```
 
+**Deployment group queries** (`akt query deployment group`):
+
+```bash
+akt query deployment group                     # Groups of every deployment on the network (first page of deployments)
+akt query deployment group akash1abc...        # Groups of that owner's deployments (one page)
+akt query deployment group akash1abc.../12345  # Every group of one deployment
+akt query deployment group 12345/1             # Get group 1 of dseq 12345 (owner from context)
+```
+
 **Market lease queries — owner perspective** (default):
 
 ```bash
-akt query market lease                         # List all leases for default account
+akt query market lease                         # List every lease on the network (first page of 100)
 akt query market lease 12345                   # List leases for dseq 12345 (owner from context)
 akt query market lease 12345/1/1               # List leases for order 12345/1/1
 akt query market lease akash1abc.../12345/1/1/akash1prov...  # Get specific lease
 akt query market lease --state active          # DISABLED pending feedback (2026-07): use `akt query market lease active`
-akt query market lease active                  # List active leases (positional state keyword)
+akt query market lease active                  # List every active lease on the network (positional state keyword)
 akt query market lease 12345 active            # Partial identity + state: filters the lease list (state verifies only on full-identity gets, §3.8.3)
-akt query market bid open                      # List open bids (positional state keyword)
+akt query market bid open                      # List every open bid on the network (positional state keyword)
 ```
 
 **Market lease queries — provider perspective** (`--by provider`):
 
 ```bash
+akt query market lease --by provider                            # No address: every lease on the network, as in owner mode
 akt query market lease --by provider akash1prov...              # List all leases for that provider
 akt query market lease --by provider akash1prov.../12345        # List leases for provider + dseq
 akt query market lease --by provider akash1prov.../12345/1/1/akash1owner...  # Get specific lease
@@ -3924,7 +3953,7 @@ akt query market lease --by provider akash1prov.../12345/1/1/akash1owner...  # G
 **Other queries:**
 
 ```bash
-akt query cert                                 # List certs for default account
+akt query cert                                 # List every certificate on the network (first page of 100)
 akt query cert akash1abc...                    # List certs for that owner
 akt query provider                             # List every provider on the network
 akt query provider akash1prov...               # Get one provider (the `get` subcommand remains an alias)
