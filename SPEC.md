@@ -585,6 +585,35 @@ escrow deposits reject a zero deployment identifier, zero amount, empty or
 invalid source set, and duplicate sources. A rejected message produces no
 transaction request or success output.
 
+Sink commands MUST reject, before any request or broadcast, what the sink
+module would reject:
+
+- `tx sink deposit` parses the amount exactly: a whole number of `uakt`
+  (`1500000uakt`) or an exact AKT decimal (`1.5akt`). A fractional `uakt`
+  value, another denomination, zero, and amounts above uint64 are rejected,
+  never truncated. The destination must be canonical base58 of 32 nonzero
+  bytes, and `--dest-type` must be `1` (Solana), its default. The command
+  runs `MsgSink.ValidateBasic`. The on-curve and per-account checks stay with
+  the chain, which knows the vault allowlist and the account's usage.
+- Every sink transfer ID is a canonical positive decimal integer: no sign, no
+  leading zeros, no whitespace.
+- `report-outcome` evidence is the outcome `minted` or `voided`, a positive
+  finalized Solana slot, and a base58 transaction signature of exactly 64
+  bytes, not all zero. The reporter epoch and the transfer's round default to
+  the chain's current values, read with the `State` and `Transfer` queries
+  before signing; `--reporter-epoch` and `--round` override them.
+- Veto and resolution reasons contain 1 to 256 bytes and are not blank.
+- `guardian-pause` takes `deposits`, `refunds` or `all`.
+- The `propose-*` commands wrap one sink message in a `MsgSubmitProposal`
+  signed by the selected account, with the governance module account as the
+  message authority (`--authority` overrides it). `--title` and `--summary`
+  default to a description of the action; `--deposit` and `--expedite` are
+  optional. `propose-resolve` requires a slot and signature for
+  `confirm-mint` and `confirm-void`, rejects them for `restart`, and builds
+  the evidence outcome from the decision. `propose-params` reads a complete
+  parameter set as proto JSON (the shape `akt q sink params -o json` prints)
+  and runs `Params.Validate`.
+
 The global `--context` flag selects every context-owned resource touched by an
 invocation. This includes `context show`, `context log`, Console API key login
 and logout, keyring selection, stores, and action logs; no leaf may fall back to
@@ -779,6 +808,16 @@ akt
 │   │   ├── burn-mint <coins-to-burn> <denom-to-mint>
 │   │   ├── mint-act <coins-to-burn>
 │   │   └── burn-act <coins-to-burn>
+│   ├── sink                             # AKT to Solana transfers (§10.10 Sink)
+│   │   ├── deposit <solana-address> <amount>   # --dest-type (default 1, Solana)
+│   │   ├── guardian-pause <deposits|refunds|all>
+│   │   ├── report-outcome <id> <minted|voided> <slot> <signature>   # --reporter-epoch, --round
+│   │   ├── veto-void <id> <reason>
+│   │   ├── finalize-refund <id>
+│   │   ├── propose-params <params.json>         # Governance proposal (MsgUpdateParams)
+│   │   ├── propose-void <id>                    # Governance proposal (MsgRequestVoid)
+│   │   ├── propose-veto <id> <reason>           # Governance proposal (MsgVetoVoid)
+│   │   └── propose-resolve <id> <restart|confirm-mint|confirm-void> <reason> [slot] [signature]
 │   ├── sign <file>
 │   ├── sign-batch <file> [file2...]
 │   ├── multisign <file> <name> <sigfile1> [sigfile2...]
@@ -872,6 +911,13 @@ akt
 │   │   ├── vault-state
 │   │   ├── status
 │   │   └── ledger
+│   ├── sink
+│   │   ├── record <id>                  # Public status plus the transfer and its settlement
+│   │   ├── transfer <id>
+│   │   ├── open-transfers               # --start-after, --limit, --held-only
+│   │   ├── account [address]            # Default account when omitted
+│   │   ├── state                        # Totals and parameters
+│   │   └── params
 │   ├── ibc                              # IBC core (passthrough from cosmos-sdk, subcommands not expanded)
 │   ├── ibc-transfer                     # IBC transfer (passthrough from cosmos-sdk, subcommands not expanded)
 │   ├── upgrade
@@ -6629,6 +6675,59 @@ Every `Coin`/`LegacyDec` read out of a ledger record passes through
 field the node never set unmarshals with a nil inner value and any method call
 on it panics.
 
+#### Sink
+
+Sink amounts are `uakt` integers on the wire; every amount renders through
+`FormatCoin()`. Addresses are never shortened: the sender renders as its full
+bech32 address decoded from the 77-byte record, the recipient and vault keys
+as full base58 Solana addresses, and transaction signatures as full base58.
+Times are UTC RFC 3339; a zero time or day renders as `-`. A record that does
+not decode is a malformed-node error naming the transfer, never a partial
+block.
+
+**Record** (`akt q sink record <id>`): a `Sink Transfer` section whose
+`Status` row is the module's public status as words: `Transfer pending`
+(yellow), `Completed` (green), `Void` (red). The reserved `Invalid`,
+`Validation pending` and `Validated` values render dimmed. The transfer
+blocks below follow.
+
+**Transfer** (`record` and `transfer`): key-value sections.
+
+- `Transfer`: ID, Sender, Recipient, Amount, Height, Void Ordered (`Yes`/`No`).
+- `Settlement`: Status (`Pending` yellow, `Minted` green, `Voided` red,
+  `Refunded` dim), Hold (`None`, or `Veto`/`Conflict` in red), Round,
+  Reporter Epoch, Threshold (`<threshold> of <members>`), Votes
+  (`<n> minted, <m> voided`), Challenge Ends, and, only when set, Vetoed By,
+  Veto Reason and Governance Evidence (outcome, slot, signature).
+- `Votes`: a table with REPORTER, OUTCOME, SLOT, SIGNATURE, or `(no votes)`.
+
+**Open transfers**: a table with ID, STATUS, HOLD, AMOUNT, SENDER,
+RECIPIENT, ROUND, CHALLENGE ENDS, or `(no open transfers)`. When more remain,
+a final line gives the next command: `akt q sink open-transfers
+--start-after <next>`. `--held-only` reads every page and lists only held
+transfers.
+
+**State**: a `Sink Totals` section with Last Transfer ID,
+Pending, Minted, Voided, Refunded, Refunded Today (`<amount> on <date>`),
+Locked (pending, minted and voided escrow), Open Transfers (the
+module's `pending_count`: every transfer not yet minted or refunded,
+including voided transfers waiting for their refund) and Reporter Epoch, then
+the parameters below.
+
+**Params**: a `Sink Parameters` section with Deposits and Refunds
+(`Enabled` green / `Disabled`), Min Transfer (`None` when zero), Max
+Transfer, Solana Daily Mint Cap, Max Amount Per Account Per Day (`No limit`
+when zero), Deposits Per Account Per Day, Open Transfers Per Account, Reporters (one
+full address per line, or `None`), Reporter Threshold
+(`<threshold> of <members>`), Challenge Period (`FormatDuration()`), Daily
+Refund Cap, Pause Guardian (`None` when empty) and Vault Allowlist (one key
+per line, or `None`).
+
+**Account** (`akt q sink account [address]`): a `Sink Account` section with
+Sender, Day (the UTC date of the usage day), Deposits That Day, Amount That
+Day and Open Transfers (not yet minted or refunded, which the per-account
+limit counts).
+
 #### Miscellaneous
 
 **Slashing signing info**: Table with VALIDATOR, MISSED BLOCKS, JAILED UNTIL.
@@ -7367,6 +7466,25 @@ Destination denom per message:
 
 The same deferred-settlement wording, and the same follow-up command, appear in
 the `Long`/`Example` help of `akt tx bme burn-mint`, `mint-act` and `burn-act`.
+
+##### Sink
+
+A sink deposit only locks AKT. Minting happens on Solana once a relayer proves
+the record, and reporters confirm it on Akash a few minutes later, so
+`Status: success` reports the lock, not the mint. The `MsgSink` formatter says
+so and names the follow-up command. Amounts use `FormatCoin()`; addresses,
+Solana keys and signatures are never shortened (§10.10 Sink).
+
+| Message | Title | Fields |
+|---|---|---|
+| `MsgSink` | "Sink Deposit" | Sender, Destination, Amount, Record ID (the `transfer_id` attribute of the `sink_deposit` event, when included), then a note that minting on Solana follows and `akt q sink record <id>` |
+| `MsgGuardianPause` | "Guardian Pause" | Guardian, Deposits and Refunds (`Disabled` in red, or `Unchanged`) |
+| `MsgReportOutcome` | "Report Outcome" | Reporter, Transfer ID, Outcome (`Minted`/`Voided`), Slot, Signature, Reporter Epoch, Round |
+| `MsgVetoVoid` | "Veto Void" | Signer, Transfer ID, Reason |
+| `MsgFinalizeRefund` | "Finalize Refund" | Executor, Transfer ID |
+| `MsgRequestVoid` | "Request Void" | Authority, Transfer ID |
+| `MsgResolveTransfer` | "Resolve Transfer" | Authority, Transfer ID, Decision (`Restart`, `Confirm mint`, `Confirm void`), Evidence (when present), Reason |
+| `MsgUpdateParams` | "Update Sink Parameters" | Authority, then the `Sink Parameters` block |
 
 #### 10.11.6 Machine-Readable Transaction Result
 

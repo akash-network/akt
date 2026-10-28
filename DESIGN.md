@@ -1285,6 +1285,14 @@ change that public behavior.
   These commands enforce the required deployment identity and run the SDK
   message's `ValidateBasic` contract after parsing, so a node never receives an
   action the local boundary or message type already rejects.
+- **Sink commands validate what the module would reject**: deposits take an
+  exact `uakt` amount (a fractional `uakt` value is rejected, never
+  truncated) and a canonical Solana address, transfer IDs must be canonical
+  positive integers, reporter evidence must carry a positive slot and a
+  64-byte signature, reasons must fit the module's 1 to 256 byte limit, and
+  governance resolutions must pair a confirmation with matching evidence and
+  a restart with none. Each command builds the message and checks it locally
+  before broadcast, so these mistakes never cost gas.
 - **Wasm artifacts and intent are validated before broadcast**: upload parsing
   distinguishes raw Wasm from gzip, rejects truncated or corrupt streams, and
   verifies optional reproducible-build provenance against the uncompressed
@@ -2444,7 +2452,7 @@ with the same tag resumes from the PR's state instead of starting over.
 - Keyring management: shared keyrings, keys visible to all referencing contexts
 - Action log: append-only JSONL log per context, reading/filtering
 - Chain client with multi-endpoint failover
-- Core tx commands: bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, slashing, vesting, upgrade, IBC
+- Core tx commands: bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, sink, slashing, vesting, upgrade, IBC
 - Core query commands: all matching modules
 - Key management commands
 - Output formatting with pretty output: registry-based per-type formatters for all query results, lipgloss color-coded states. `--output json` and `--output yaml` for machine-readable output
@@ -2552,6 +2560,7 @@ never handle.
 | `akash tx wasm *`             | `akt tx wasm *`             | Identical behavior                 |
 | `akash tx oracle *`           | `akt tx oracle *`           | Identical behavior                 |
 | `akash tx bme *`              | `akt tx bme *`              | Identical behavior                 |
+| `akash tx sink *`             | `akt tx sink *`             | Superset: adds reporter, refund and governance proposal commands |
 | `akash query *`               | `akt query *`               | Cosmos SDK modules: identical. Akash modules: simplified (see below). |
 
 **Akash query command simplifications** (non-breaking -- same backend queries, different CLI surface):

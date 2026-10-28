@@ -48,6 +48,8 @@ func TestFormatCoin(t *testing.T) {
 		"Milli":    {sdk.NewInt64Coin("uakt", 3000)},
 		"Base":     {sdk.NewInt64Coin("uakt", 5300000)},
 		"NonMicro": {sdk.NewInt64Coin("atom", 100)},
+		// A uint64 cap, above the int64 range.
+		"AboveInt64": {sdk.NewCoin("uakt", math.NewIntFromUint64(^uint64(0)))},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
