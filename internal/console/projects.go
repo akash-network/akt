@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 )
 
@@ -221,15 +222,62 @@ func validateProjectName(name string) error {
 		return fmt.Errorf("console: project name must be at most %d characters", MaxProjectNameLength)
 	}
 
-	return nil
+	return validateReadableName("project", name)
 }
 
 func validateProjectDescription(description string) error {
 	if utf8.RuneCountInString(description) > MaxProjectDescriptionLength {
 		return fmt.Errorf("console: project description must be at most %d characters", MaxProjectDescriptionLength)
 	}
+	for _, r := range description {
+		if r != '\t' && r != '\n' && r != '\r' && refusedInName(r) {
+			return fmt.Errorf("console: project description must not contain control or bidi characters other than tabs and line breaks, found %U", r)
+		}
+	}
 
 	return nil
+}
+
+// validateReadableName applies the rules Console enforces on project and
+// API key names: no control or bidi character, and at least one visible one.
+func validateReadableName(kind, name string) error {
+	visible := false
+	for _, r := range name {
+		if refusedInName(r) {
+			return fmt.Errorf("console: %s name must not contain control or bidi characters, found %U", kind, r)
+		}
+		if !invisibleInName(r) {
+			visible = true
+		}
+	}
+	if !visible {
+		return fmt.Errorf("console: %s name needs at least one visible character", kind)
+	}
+
+	return nil
+}
+
+// refusedInName mirrors the code point ranges of Console's name pattern: C0
+// and C1 controls, and the bidi marks, embeddings, overrides, and isolates.
+func refusedInName(r rune) bool {
+	switch {
+	case r <= 0x1f, r >= 0x7f && r <= 0x9f:
+		return true
+	case r == 0x061c, r == 0x200e, r == 0x200f:
+		return true
+	case r >= 0x202a && r <= 0x202e, r >= 0x2066 && r <= 0x2069:
+		return true
+	default:
+		return false
+	}
+}
+
+// invisibleInName reports a rune Console does not count as visible. It is a
+// subset of Console's set, so a name akt accepts is never one Console would
+// accept while akt refused it.
+func invisibleInName(r rune) bool {
+	return r == '\u2800' || unicode.IsSpace(r) ||
+		unicode.In(r, unicode.Cf, unicode.Other_Default_Ignorable_Code_Point, unicode.Variation_Selector)
 }
 
 // teamsListError explains the 404 a collection route of organizations or

@@ -5099,11 +5099,11 @@ account rather than a missing resource.
 | -------- | ------- | ----- |
 | `GET /v1/organizations` | `organization list`, `project use`, `whoami` | The organization the API key acts in, with the caller's `role`. |
 | `GET /v1/projects` | `project list/get`, project name resolution | Projects the caller can reach, most recently active first, with `access.canDeploy`, `access.canManage`, and a preview of active deployments. |
-| `POST /v1/projects` | `project create` | `data.name`, optional `data.description`. |
-| `PATCH /v1/projects/{id}` | `project rename` | `data.name`; the id and slug do not change. |
+| `POST /v1/projects` | `project create` | `data.name`, optional `data.description`. Before sending, `akt` refuses what Console refuses: a name with a control or bidi character (U+0000 to U+001F, U+007F to U+009F, U+061C, U+200E, U+200F, U+202A to U+202E, U+2066 to U+2069) or with no visible character, and a description with such a character other than a tab or line break. |
+| `PATCH /v1/projects/{id}` | `project rename` | `data.name`, checked as for `project create`; the id and slug do not change. |
 | `DELETE /v1/projects/{id}` | `project delete` | 204 on success. |
 | `PATCH /v1/deployments/{dseq}/project` | `deployment move` | `data.projectId`; owners and admins. |
-| `POST /v1/api-keys` | `apikey create` | Optional `data.projectId` binds the key to one project. |
+| `POST /v1/api-keys` | `apikey create` | Optional `data.projectId` binds the key to one project. The name is checked as a project name is. |
 | `GET /v1/api-keys` | `apikey list` | Each key reports `organizationId` and `projectId` (null when it reaches every project). |
 | `POST /v1/create-jwt-token` | provider gateway commands | Granular `leases` naming the deployment for a caller limited to some projects (§2.9). |
 

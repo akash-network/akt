@@ -49,6 +49,10 @@ func (c *Client) CreateAPIKeyForProject(ctx context.Context, name, expiresAt, pr
 		c.record("create-api-key", "", err)
 		return nil, err
 	}
+	if err := validateReadableName("API key", name); err != nil {
+		c.record("create-api-key", "", err)
+		return nil, err
+	}
 
 	payload := map[string]any{"name": name}
 	if expiresAt != "" {

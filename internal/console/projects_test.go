@@ -157,6 +157,79 @@ func TestProjectInputIsValidatedBeforeTheNetwork(t *testing.T) {
 	assert.Len(t, loggedEntries(t, path), 8)
 }
 
+func TestNamesConsoleWouldRefuseAreRefusedBeforeTheNetwork(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		requests.Add(1)
+	}))
+	defer srv.Close()
+
+	cl := console.New(srv.URL, "test-key")
+	ctx := context.Background()
+	refusals := []struct {
+		name string
+		call func() error
+		want string
+	}{
+		{"project name with a bidi override", func() error {
+			_, err := cl.CreateProject(ctx, "web\u202eipa", "")
+			return err
+		}, "found U+202E"},
+		{"project name with a control character", func() error {
+			_, err := cl.CreateProject(ctx, "web\x07", "")
+			return err
+		}, "found U+0007"},
+		{"project name of invisible characters only", func() error {
+			_, err := cl.CreateProject(ctx, "\u200b\u2800", "")
+			return err
+		}, "needs at least one visible character"},
+		{"rename with a left-to-right mark", func() error {
+			_, err := cl.RenameProject(ctx, testProjectID, "web\u200e")
+			return err
+		}, "found U+200E"},
+		{"project description with an isolate", func() error {
+			_, err := cl.CreateProject(ctx, "web", "Payments \u2066api")
+			return err
+		}, "found U+2066"},
+		{"API key name with a C1 control", func() error {
+			_, err := cl.CreateAPIKey(ctx, "ci\u0085", "")
+			return err
+		}, "found U+0085"},
+		{"API key name of invisible characters only", func() error {
+			_, err := cl.CreateAPIKey(ctx, "\u2800", "")
+			return err
+		}, "needs at least one visible character"},
+	}
+	for _, tc := range refusals {
+		t.Run(tc.name, func(t *testing.T) {
+			require.ErrorContains(t, tc.call(), tc.want)
+		})
+	}
+	assert.Equal(t, int32(0), requests.Load(), "a name Console refuses must not be sent")
+}
+
+func TestNamesConsoleAcceptsAreSent(t *testing.T) {
+	var creates atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		creates.Add(1)
+		data := decodeDataBody(t, r)
+		w.WriteHeader(http.StatusCreated)
+		body, _ := json.Marshal(map[string]any{"data": map[string]any{
+			"id": testProjectID, "name": data["name"], "slug": "x", "description": data["description"],
+			"isDefault": false, "createdAt": "2026-10-01T00:00:00Z", "createdBy": nil,
+		}})
+		_, _ = w.Write(body)
+	}))
+	defer srv.Close()
+
+	cl := console.New(srv.URL, "test-key")
+	for _, name := range []string{"checkout-api", "Équipe café", "日本語", "payments v2"} {
+		_, err := cl.CreateProject(context.Background(), name, "Line one\n\tLine two\r\n")
+		require.NoError(t, err, name)
+	}
+	assert.Equal(t, int32(4), creates.Load())
+}
+
 func TestAmbiguousProjectCreateIsLoggedPending(t *testing.T) {
 	logger, path := openProjectTestLog(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
