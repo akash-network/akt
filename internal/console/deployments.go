@@ -579,8 +579,8 @@ func (c *Client) reconcileClosedDeploymentUntil(
 // isAlreadyClosed reports whether a close attempt failed because the
 // deployment no longer exists or is already closed. A 404 always qualifies:
 // the resource is gone, which is the desired end state. A 400 qualifies only
-// when its body actually says already-closed/not-found — the pinned contract
-// (testdata/openapi.json) documents only 200 for DELETE
+// when its body actually says already-closed/not-found. The pinned contract
+// (testdata/openapi.json) documents no 400 for DELETE
 // /v1/deployments/{dseq}, so a generic 400 (validation, not-owner, active
 // leases, ...) is a real failure that must surface to the caller.
 func isAlreadyClosed(err error) bool {
@@ -686,6 +686,10 @@ func (c *Client) CreateLease(ctx context.Context, manifest string, leases []Leas
 				err = fmt.Errorf("console: provider could not be reached before lease creation; choose another bid: %w", err)
 				c.record("create-lease", leaseDSeq, err)
 				return nil, err
+			case "provider_manifest_invalid":
+				err = fmt.Errorf("console: lease for deployment %s exists, but the provider refused its manifest as invalid; sending it again cannot help: close the deployment to stop paying, correct the SDL, and deploy again: %w", leaseDSeq, err)
+				c.record("create-lease", leaseDSeq, err)
+				return nil, err
 			}
 		}
 		if manifest == "" {
@@ -738,7 +742,7 @@ func leaseResponseCode(body []byte) string {
 		return ""
 	}
 	switch result.Code {
-	case "manifest_not_delivered", "provider_unreachable":
+	case "manifest_not_delivered", "provider_unreachable", "provider_manifest_invalid":
 		return result.Code
 	default:
 		return ""

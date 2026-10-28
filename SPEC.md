@@ -5051,11 +5051,16 @@ Returns deployment with created leases and escrow state.
 `POST /v1/leases` is not replayed after an error. For server-derived manifests,
 an active lease does not prove provider delivery. A lost or malformed response
 records `pending` and asks the user to inspect the deployment and retry the same
-lease request. Explicit `manifest_not_delivered` and `provider_unreachable`
-errors remain failures even if leases already exist. The former directs the
-user to retry the same lease request to complete manifest delivery.
+lease request. Explicit `manifest_not_delivered`, `provider_unreachable`, and
+`provider_manifest_invalid` errors remain failures even if leases already
+exist. The first directs the user to retry the same lease request to complete
+manifest delivery. `provider_manifest_invalid` (422) means the lease exists
+but its provider refused the manifest itself, so a retry cannot help: the
+error tells the user to close the deployment to stop paying and deploy again
+with a corrected SDL. Sealed requests keep these codes and drop the rest of
+the body.
 
-For legacy explicit-manifest requests without either delivery error, the client
+For legacy explicit-manifest requests without one of these errors, the client
 retains its bounded active-lease reconciliation: read each referenced deployment
 for up to 30 seconds and require every exact `dseq/gseq/oseq/provider` lease to be
 active. An unproved outcome records `pending`. The POST is issued once.

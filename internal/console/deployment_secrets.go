@@ -66,7 +66,7 @@ func sanitizeSecretError(err error) error {
 			body.Code = response.Body
 		}
 		switch body.Code {
-		case "deployment_definition_changed", "deployment_resources_changed", "stored_secrets_unreadable", "stored_sdl_unreadable", "inherited_secrets_unreadable", "deployment_definition_exists", "deployment_definition_mismatch", "manifest_not_delivered", "provider_unreachable":
+		case "deployment_definition_changed", "deployment_resources_changed", "stored_secrets_unreadable", "stored_sdl_unreadable", "inherited_secrets_unreadable", "deployment_definition_exists", "deployment_definition_mismatch", "manifest_not_delivered", "provider_unreachable", "provider_manifest_invalid":
 			return &HTTPError{StatusCode: response.StatusCode, Body: body.Code}
 		default:
 			return &HTTPError{StatusCode: response.StatusCode, Body: "sensitive response details omitted"}

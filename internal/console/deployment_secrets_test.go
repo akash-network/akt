@@ -422,6 +422,49 @@ func TestLeaseManifestFailureNeverBecomesActiveLeaseSuccess(t *testing.T) {
 	}
 }
 
+func TestLeaseRefusedAsInvalidManifestIsFinalAndNeverBecomesSuccess(t *testing.T) {
+	for _, manifest := range []string{"", "legacy-manifest"} {
+		t.Run(fmt.Sprintf("manifest=%q", manifest), func(t *testing.T) {
+			log := openTestLog(t)
+			posts, gets := 0, 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					posts++
+					w.WriteHeader(http.StatusUnprocessableEntity)
+					_, _ = io.WriteString(w, `{"code":"provider_manifest_invalid","message":"private-value","data":{"dseq":"42","provider":"akash1provider","reason":"invalid manifest: private-value"}}`)
+					return
+				}
+				gets++
+				_, _ = io.WriteString(w, `{"data":{"deployment":{"id":{"dseq":"42"}},"leases":[{"id":{"dseq":"42","gseq":1,"oseq":1,"provider":"akash1provider"},"state":"active"}]}}`)
+			}))
+			defer srv.Close()
+
+			_, err := New(srv.URL, "").WithActionLog(log).CreateLease(context.Background(), manifest, []LeaseRequest{{DSeq: "42", GSeq: 1, OSeq: 1, Provider: "akash1provider"}})
+			if err == nil {
+				t.Fatal("a lease whose manifest the provider refused as invalid must not be reported as created")
+			}
+			for _, want := range []string{"lease for deployment 42 exists", "refused its manifest as invalid", "sending it again cannot help", "close the deployment"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not say %q", err, want)
+				}
+			}
+			if strings.Contains(err.Error(), "private-value") || strings.Contains(err.Error(), "retry the same lease request") {
+				t.Fatalf("unsafe or misleading error: %v", err)
+			}
+			if posts != 1 || gets != 0 {
+				t.Fatalf("POST=%d GET=%d; an invalid manifest must not be reconciled into success", posts, gets)
+			}
+			entries, err := log.Read(actionlog.Filter{Type: actionlog.TypeConsole})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 1 || entries[0].Status != "failed" {
+				t.Fatalf("entries=%v", entries)
+			}
+		})
+	}
+}
+
 func TestSavedDefinitionLeaseAmbiguityDoesNotProveDelivery(t *testing.T) {
 	posts, gets := 0, 0
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
