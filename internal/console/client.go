@@ -334,6 +334,15 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, resul
 			lastErr = fmt.Errorf("console: rate limited (HTTP 429)")
 
 		case resp.StatusCode >= 500:
+			// A recognized code marks a refusal Console made before acting,
+			// such as an unpriced deposit, rather than an ambiguous failure.
+			if code := scopeErrorCode(respBody); code != "" {
+				return &HTTPError{
+					StatusCode: resp.StatusCode,
+					Body:       redactResponseSecret(string(respBody), c.apiKey),
+					Code:       code,
+				}
+			}
 			lastErr = fmt.Errorf("console: server error (HTTP %d)", resp.StatusCode)
 
 		case resp.StatusCode >= 300 && resp.StatusCode < 400:

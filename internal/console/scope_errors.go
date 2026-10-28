@@ -20,6 +20,9 @@ const (
 	CodeProjectIsDefault      = "project_is_default"
 	CodeProjectNotEmpty       = "project_not_empty"
 	CodeProjectLimitReached   = "project_limit_reached"
+	// CodeDepositPriceUnavailable comes with a 503: Console could not price
+	// a deposit against the project's budget and refused before signing.
+	CodeDepositPriceUnavailable = "deposit_price_unavailable"
 )
 
 // maxScopeErrorDetail bounds the API's own message quoted in an explanation.
@@ -74,6 +77,10 @@ func scopeErrorExplanations() map[string]scopeErrorExplanation {
 			summary: "the organization has reached the number of projects it can have",
 			remedy: "Delete a project you no longer use with `akt console project delete <project>`, or reuse one from " +
 				"`akt console project list`; the default project counts toward the limit.",
+		},
+		CodeDepositPriceUnavailable: {
+			summary: "Console could not price the deposit against the project's budget",
+			remedy:  "Nothing was signed; run the same command again in a moment.",
 		},
 	}
 }

@@ -145,7 +145,14 @@ func definitiveCreateFailure(err error) bool {
 	}
 
 	var httpErr *HTTPError
-	return errors.As(err, &httpErr) && httpErr.StatusCode >= 400 && httpErr.StatusCode < 500 && httpErr.StatusCode != http.StatusTooManyRequests
+	if !errors.As(err, &httpErr) {
+		return false
+	}
+	if httpErr.Code == CodeDepositPriceUnavailable {
+		return true
+	}
+
+	return httpErr.StatusCode >= 400 && httpErr.StatusCode < 500 && httpErr.StatusCode != http.StatusTooManyRequests
 }
 
 func (c *Client) reconcileCreatedDeployment(

@@ -5181,7 +5181,7 @@ identity boundary regardless of the preferred workflow rail.
 | 402         | Insufficient funds in Console account.                            |
 | 404         | Deployment not found (dseq does not exist or not owned by user).  |
 | 429         | Rate limited. Retry with backoff only for idempotent methods (GET/HEAD/PUT/DELETE). A non-idempotent request may already have reached the service and is never replayed. |
-| 5xx         | Console API server error. Retry with backoff (max 3 attempts) for idempotent methods (GET/HEAD/PUT/DELETE) only. A non-idempotent request is never replayed: it may have been processed despite the error (e.g. a gateway 502 after a completed write), and replaying it could duplicate a deployment. |
+| 5xx         | Console API server error. Retry with backoff (max 3 attempts) for idempotent methods (GET/HEAD/PUT/DELETE) only. A non-idempotent request is never replayed: it may have been processed despite the error (e.g. a gateway 502 after a completed write), and replaying it could duplicate a deployment. A 5xx whose body carries a code from the refusal table below is a refusal, not an ambiguous error: it is returned at once and never reconciled as an unknown outcome. |
 | 3xx         | Redirect refused. No second request is issued and the API key is not forwarded. |
 
 **Team and project refusals.** The Console error body carries a machine
@@ -5202,6 +5202,7 @@ characters) with the code and status, and appends the remedy. Sealed requests
 | `project_is_default` | 409 | The default project cannot be deleted. |
 | `project_not_empty` | 409 | Move or close its deployments first. |
 | `project_limit_reached` | 403 | Delete a project you no longer use with `akt console project delete <project>`, or reuse one from `akt console project list`; the default project counts toward the limit (10 projects per organization in the Console today). |
+| `deposit_price_unavailable` | 503 | Nothing was signed; run the same command again in a moment. Console could not price the deposit against the project's budget, a transient condition. |
 
 A 404 from `GET /v1/organizations` or `GET /v1/projects` means teams are not
 enabled for the account; `akt` says so instead of reporting a missing resource,
