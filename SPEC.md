@@ -5091,9 +5091,10 @@ explicit `false` is rejected under always-on funding, so `akt` never sends it.
 
 #### Team and project endpoints
 
-Every one of these answers 404, like an unknown path, until the teams feature
-is on for the caller; `akt` then reports that teams are not available to the
-account rather than a missing resource.
+The organization, project, and deployment move endpoints answer 404, like an
+unknown path, until the teams feature is on for the caller; `akt` then reports
+that teams are not available to the account rather than a missing resource.
+The API key and JWT endpoints exist for every account.
 
 | Endpoint | Used by | Notes |
 | -------- | ------- | ----- |
