@@ -25,7 +25,8 @@ const (
 func ToolListDeployments() mcp.Tool {
 	return mcp.NewTool(
 		"console_list_deployments",
-		mcp.WithDescription("List the Console-managed deployments belonging to the configured API key."),
+		mcp.WithDescription("List the Console-managed deployments belonging to the configured API key, or only those filed in one project."),
+		projectParam(),
 		mcp.WithNumber("skip",
 			mcp.Description("Number of deployments to skip, for paging. Defaults to 0."),
 			marshal.NonNegativeInteger(),
@@ -66,7 +67,12 @@ func HandleListDeployments(cl *console.Client) mcpserver.ToolHandlerFunc {
 			limit = maxListLimit
 		}
 
-		resp, err := cl.ListDeployments(ctx, skip, limit)
+		scoped, err := inProject(ctx, cl, req)
+		if err != nil {
+			return marshal.ErrResult(err.Error()), nil
+		}
+
+		resp, err := scoped.ListDeployments(ctx, skip, limit)
 		if err != nil {
 			return marshal.ErrResultf("failed to list deployments: %v", err), nil
 		}
@@ -80,6 +86,7 @@ func ToolGetDeployment() mcp.Tool {
 	return mcp.NewTool(
 		"console_get_deployment",
 		mcp.WithDescription("Get a Console-managed deployment by its deployment sequence number (dseq), including its leases."),
+		projectParam(),
 		mcp.WithString("dseq",
 			mcp.Required(),
 			mcp.Description("Deployment sequence number, e.g. 1784752234037."),
@@ -95,7 +102,12 @@ func HandleGetDeployment(cl *console.Client) mcpserver.ToolHandlerFunc {
 			return marshal.ErrResult(err.Error()), nil
 		}
 
-		resp, err := cl.GetDeployment(ctx, dseq)
+		scoped, err := inProject(ctx, cl, req)
+		if err != nil {
+			return marshal.ErrResult(err.Error()), nil
+		}
+
+		resp, err := scoped.GetDeployment(ctx, dseq)
 		if err != nil {
 			return marshal.ErrResultf("failed to get deployment %s: %v", dseq, err), nil
 		}
@@ -109,6 +121,7 @@ func ToolListBids() mcp.Tool {
 	return mcp.NewTool(
 		"console_list_bids",
 		mcp.WithDescription("List the provider bids received for a Console-managed deployment. Bids may take a few seconds to arrive after a deployment is created."),
+		projectParam(),
 		mcp.WithString("dseq",
 			mcp.Required(),
 			mcp.Description("Deployment sequence number to fetch bids for."),
@@ -124,7 +137,12 @@ func HandleListBids(cl *console.Client) mcpserver.ToolHandlerFunc {
 			return marshal.ErrResult(err.Error()), nil
 		}
 
-		bids, err := cl.FetchBids(ctx, dseq)
+		scoped, err := inProject(ctx, cl, req)
+		if err != nil {
+			return marshal.ErrResult(err.Error()), nil
+		}
+
+		bids, err := scoped.FetchBids(ctx, dseq)
 		if err != nil {
 			return marshal.ErrResultf("failed to fetch bids for %s: %v", dseq, err), nil
 		}
@@ -134,7 +152,7 @@ func HandleListBids(cl *console.Client) mcpserver.ToolHandlerFunc {
 		// saying bids take a few seconds to arrive, tells an assistant to poll
 		// forever.
 		if len(bids) == 0 {
-			if _, err := cl.GetDeployment(ctx, dseq); err != nil {
+			if _, err := scoped.GetDeployment(ctx, dseq); err != nil {
 				return marshal.ErrResultf("no bids for %s: %v", dseq, err), nil
 			}
 		}
@@ -360,6 +378,7 @@ func ToolCloseDeployment() mcp.Tool {
 	return mcp.NewTool(
 		"console_close_deployment",
 		mcp.WithDescription("Close a Console-managed deployment. This terminates its leases and stops the workload; remaining escrow is returned to the wallet. This cannot be undone."),
+		projectParam(),
 		mcp.WithString("dseq",
 			mcp.Required(),
 			mcp.Description("Deployment sequence number to close."),
@@ -375,7 +394,12 @@ func HandleCloseDeployment(cl *console.Client) mcpserver.ToolHandlerFunc {
 			return marshal.ErrResult(err.Error()), nil
 		}
 
-		if err := cl.CloseDeployment(ctx, dseq); err != nil {
+		scoped, err := inProject(ctx, cl, req)
+		if err != nil {
+			return marshal.ErrResult(err.Error()), nil
+		}
+
+		if err := scoped.CloseDeployment(ctx, dseq); err != nil {
 			return marshal.ErrResultf("failed to close deployment %s: %v", dseq, err), nil
 		}
 
@@ -384,4 +408,85 @@ func HandleCloseDeployment(cl *console.Client) mcpserver.ToolHandlerFunc {
 			"status": "closed",
 		})
 	}
+}
+
+// ToolListOrganizations returns the tool definition for the organization the
+// API key acts in.
+func ToolListOrganizations() mcp.Tool {
+	return mcp.NewTool(
+		"console_list_organizations",
+		mcp.WithDescription("List the Console organization (team or personal account) the configured API key acts in, with the caller's role there: owner, admin, member, billing, or viewer. An API key acts in exactly one organization."),
+	)
+}
+
+// HandleListOrganizations returns the handler for console_list_organizations.
+func HandleListOrganizations(cl *console.Client) mcpserver.ToolHandlerFunc {
+	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		organizations, err := cl.ListOrganizations(ctx)
+		if err != nil {
+			return marshal.ErrResultf("failed to list organizations: %v", err), nil
+		}
+
+		return marshal.ToTextResult(organizations)
+	}
+}
+
+// ToolListProjects returns the tool definition for listing projects. A
+// server pinned to one project does not invite the caller to switch.
+func ToolListProjects(pinned bool) mcp.Tool {
+	description := "List the projects of the API key's organization that it can reach, most recently active first, with whether the caller may deploy into each."
+	if pinned {
+		description += " This server acts only in the project it was started with; the deployment tools refuse any other."
+	} else {
+		description += " Pass a project's id, slug, or name as `project` to the deployment tools to act in it."
+	}
+
+	return mcp.NewTool("console_list_projects", mcp.WithDescription(description))
+}
+
+// HandleListProjects returns the handler for console_list_projects.
+func HandleListProjects(cl *console.Client) mcpserver.ToolHandlerFunc {
+	return func(ctx context.Context, _ mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		projects, err := cl.ForProject("").ListProjects(ctx)
+		if err != nil {
+			return marshal.ErrResultf("failed to list projects: %v", err), nil
+		}
+
+		return marshal.ToTextResult(projects)
+	}
+}
+
+// projectParam is the optional project selector shared by the deployment
+// tools.
+func projectParam() mcp.ToolOption {
+	return mcp.WithString("project",
+		mcp.Description("Optional Console project id, slug, or name to act in. When the server was started with a project (--console-project, AKT_CONSOLE_PROJECT, or the context), omit this or name that same project; any other project is refused. Without a server project, omitting it acts across every project the API key reaches."),
+	)
+}
+
+// inProject returns the client a call acts in. A server pinned to a project
+// refuses a call that names another one, so the model cannot move an action
+// out of the project the operator chose.
+func inProject(ctx context.Context, cl *console.Client, req mcp.CallToolRequest) (*console.Client, error) {
+	project := strings.TrimSpace(marshal.OptionalString(req, "project"))
+	if project == "" {
+		return cl, nil
+	}
+	if cl.Project() == "" {
+		return cl.ForProject(project), nil
+	}
+
+	pinnedID, err := cl.ProjectID(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("resolve this server's project: %w", err)
+	}
+	requested, err := cl.FindProject(ctx, project)
+	if err != nil {
+		return nil, fmt.Errorf("resolve project %q: %w", project, err)
+	}
+	if !strings.EqualFold(requested.ID, pinnedID) {
+		return nil, fmt.Errorf("this server acts only in project %s; omit the project argument to act in it", cl.Project())
+	}
+
+	return cl, nil
 }

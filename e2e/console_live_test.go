@@ -293,6 +293,10 @@ func TestConsoleLiveUsesConfiguredAPIURL(t *testing.T) {
 			http.Error(w, "unauthorized", http.StatusUnauthorized)
 			return
 		}
+		if r.URL.Path == "/v1/organizations" {
+			http.NotFound(w, r)
+			return
+		}
 		requestPath <- r.URL.Path
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"data":{"id":"sandbox-user","username":"sandbox","email":"sandbox@example.test","emailVerified":true}}`))

@@ -110,6 +110,8 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			}
 			consoleAPIURL, _ := cmd.Flags().GetString(flagdefs.FlagConsoleAPIURL)
 			consoleAPIKey, _ := cmd.Flags().GetString(flagdefs.FlagConsoleAPIKey)
+			consoleOrganization, _ := cmd.Flags().GetString(flagdefs.FlagConsoleOrganization)
+			consoleProject, _ := cmd.Flags().GetString(flagdefs.FlagConsoleProject)
 			setCurrent, _ := cmd.Flags().GetBool(flagdefs.FlagSetCurrent)
 
 			// console-api contexts may be created without a network — they
@@ -120,14 +122,16 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 			}
 
 			ctx := aktctx.Context{
-				Name:           name,
-				Network:        aktctx.Network{Name: network},
-				Keyring:        aktctx.Keyring{Name: keyring},
-				AuthMethod:     authMethod,
-				ConsoleAPIURL:  consoleAPIURL,
-				DefaultAccount: defaultAccount,
-				Gas:            gas,
-				Fees:           fees,
+				Name:                name,
+				Network:             aktctx.Network{Name: network},
+				Keyring:             aktctx.Keyring{Name: keyring},
+				AuthMethod:          authMethod,
+				ConsoleAPIURL:       consoleAPIURL,
+				ConsoleOrganization: strings.TrimSpace(consoleOrganization),
+				ConsoleProject:      strings.TrimSpace(consoleProject),
+				DefaultAccount:      defaultAccount,
+				Gas:                 gas,
+				Fees:                fees,
 				ProviderDefaults: aktctx.ProviderDefaults{
 					AuthType: providerAuthType,
 				},
@@ -145,10 +149,17 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 				}
 			}
 
-			recordContextAction(m.Root(), name, "create", map[string]string{
+			created := map[string]string{
 				"network": network,
 				"keyring": keyring,
-			})
+			}
+			if ctx.ConsoleOrganization != "" {
+				created["console-organization"] = ctx.ConsoleOrganization
+			}
+			if ctx.ConsoleProject != "" {
+				created["console-project"] = ctx.ConsoleProject
+			}
+			recordContextAction(m.Root(), name, "create", created)
 
 			if setCurrent {
 				previous := m.CurrentContext()
@@ -202,6 +213,8 @@ func createCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd.Flags().String(flagdefs.FlagDeployVia, "", "Preferred workflow rail: chain or console")
 	cmd.Flags().String(flagdefs.FlagConsoleAPIURL, "", "Console API base URL (empty = default)")
 	cmd.Flags().String(flagdefs.FlagConsoleAPIKey, "", "Console API key stored as a per-context credential (never written to config.yaml)")
+	cmd.Flags().String(flagdefs.FlagConsoleOrganization, "", "Console organization (team) id or slug that Console calls act in")
+	cmd.Flags().String(flagdefs.FlagConsoleProject, "", "Console project id that Console calls act in (select one by name with akt console project use)")
 	cmd.Flags().Bool(flagdefs.FlagSetCurrent, false, "Set as current context after creation")
 	cmd.MarkFlagsMutuallyExclusive(flagdefs.FlagAuthMethod, flagdefs.FlagDeployVia)
 	// --network is validated in RunE rather than MarkFlagRequired: console-api
@@ -373,6 +386,8 @@ type contextDetails struct {
 	AuthMethod              string                  `json:"auth_method"                yaml:"auth_method"`
 	ConsoleAPIURL           string                  `json:"console_api_url"            yaml:"console_api_url"`
 	ConsoleAPIKeyConfigured bool                    `json:"console_api_key_configured" yaml:"console_api_key_configured"`
+	ConsoleOrganization     string                  `json:"console_organization,omitempty" yaml:"console_organization,omitempty"`
+	ConsoleProject          string                  `json:"console_project,omitempty" yaml:"console_project,omitempty"`
 	DefaultAccount          string                  `json:"default_account,omitempty"  yaml:"default_account,omitempty"`
 	TrackedAccounts         []string                `json:"tracked_accounts,omitempty" yaml:"tracked_accounts,omitempty"`
 	Gas                     string                  `json:"gas"                        yaml:"gas"`
@@ -397,6 +412,8 @@ func newContextDetails(rc *aktctx.Context, effectiveKeyringBackend string, keyri
 		AuthMethod:              rc.AuthMethod,
 		ConsoleAPIURL:           rc.ConsoleAPIURL,
 		ConsoleAPIKeyConfigured: rc.ConsoleAPIKey != "",
+		ConsoleOrganization:     rc.ConsoleOrganization,
+		ConsoleProject:          rc.ConsoleProject,
 		DefaultAccount:          rc.DefaultAccount,
 		TrackedAccounts:         rc.TrackedAccounts,
 		Gas:                     rc.Gas,
@@ -530,6 +547,18 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 					changed["console-api-url"] = c.ConsoleAPIURL
 				}
 
+				if cmd.Flags().Changed(flagdefs.FlagConsoleOrganization) {
+					value, _ := cmd.Flags().GetString(flagdefs.FlagConsoleOrganization)
+					c.ConsoleOrganization = strings.TrimSpace(value)
+					changed["console-organization"] = c.ConsoleOrganization
+				}
+
+				if cmd.Flags().Changed(flagdefs.FlagConsoleProject) {
+					value, _ := cmd.Flags().GetString(flagdefs.FlagConsoleProject)
+					c.ConsoleProject = strings.TrimSpace(value)
+					changed["console-project"] = c.ConsoleProject
+				}
+
 				return nil
 			}
 
@@ -599,6 +628,8 @@ func editCmd(mgr func() *aktctx.Manager) *cobra.Command {
 	cmd.Flags().String(flagdefs.FlagDeployVia, "", "Change preferred workflow rail: chain or console")
 	cmd.Flags().String(flagdefs.FlagConsoleAPIURL, "", "Change Console API base URL (empty = default)")
 	cmd.Flags().String(flagdefs.FlagConsoleAPIKey, "", "Set the per-context Console API key (empty string removes it)")
+	cmd.Flags().String(flagdefs.FlagConsoleOrganization, "", "Change the Console organization (team) id or slug Console calls act in (empty string clears it)")
+	cmd.Flags().String(flagdefs.FlagConsoleProject, "", "Change the Console project id Console calls act in (empty string clears it)")
 	cmd.Flags().Bool(flagdefs.FlagForkNetwork, false, "Fork the context's network before editing")
 	cmd.Flags().StringSlice(flagdefs.FlagRPC, nil, "Replace the selected network's RPC endpoints")
 	cmd.Flags().StringSlice(flagdefs.FlagAPI, nil, "Replace the selected network's REST endpoints")

@@ -268,12 +268,13 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 				return err
 			}
 
+			scope := workflowConsoleScope(cmd, mgrFn, ctxNameFn)
 			if dryRun {
 				if jsonl {
-					return emitDryRunJSONL(out, rtDef, params)
+					return emitDryRunJSONL(out, rtDef, params, scope)
 				}
 
-				if err := printPlan(out, rtDef, params, workflowRail(mgrFn, ctxNameFn)); err != nil {
+				if err := printPlan(out, rtDef, params, workflowRail(mgrFn, ctxNameFn), scope); err != nil {
 					return err
 				}
 				return writeWorkflowReport(out, "\nDry run — no transactions broadcast.\n", "dry-run")
@@ -282,7 +283,7 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 			// During execution, keep stdout pure in JSONL mode; other modes
 			// retain the human plan before step results.
 			if !jsonl {
-				if err := printPlan(out, rtDef, params, workflowRail(mgrFn, ctxNameFn)); err != nil {
+				if err := printPlan(out, rtDef, params, workflowRail(mgrFn, ctxNameFn), scope); err != nil {
 					return err
 				}
 			}
@@ -314,6 +315,8 @@ func commandFromDef(def *wf.WorkflowDef, homeFn func() string, ctxNameFn func() 
 	}
 
 	// Common workflow flags.
+	cmd.Flags().String(flagdefs.FlagConsoleOrganization, "", "Console organization (team) id or slug the Console rail acts in (overrides AKT_CONSOLE_ORGANIZATION and the context)")
+	cmd.Flags().String(flagdefs.FlagConsoleProject, "", "Console project id, slug, or name the Console rail deploys into (overrides AKT_CONSOLE_PROJECT and the context)")
 	cmd.Flags().BoolP(flagdefs.FlagSkipConfirmation, "y", false, "Skip confirmation prompts")
 	cmd.Flags().Bool(flagdefs.FlagDryRun, false, "Show execution plan without broadcasting transactions")
 	cmd.Flags().VarP(output.NewFormatFlag(cflags.OutputPretty, outputJSONL), flagdefs.FlagOutput, "o", "Output format (pretty|json|yaml|jsonl)")
@@ -551,7 +554,8 @@ func executeWorkflow(
 		}
 
 		cc := console.New(rc.ConsoleAPIURL, rc.ConsoleAPIKey).
-			WithActionLog(cliutil.ActionLogFromContext(cmd.Context()))
+			WithActionLog(cliutil.ActionLogFromContext(cmd.Context())).
+			WithScope(cliutil.ConsoleScope(cmd, rc))
 		consoleClient = cc
 
 		// Chain queries still go directly to the chain when a client is
@@ -942,6 +946,23 @@ func workflowRail(mgrFn func() *aktctx.Manager, ctxNameFn func() string) transpo
 	return transport.KindChain
 }
 
+// consoleScope is the Console organization and project a Console-rail run
+// acts in, as selected (an id, slug, or name); it is empty on the chain rail.
+type consoleScope struct {
+	organization string
+	project      string
+}
+
+func workflowConsoleScope(cmd *cobra.Command, mgrFn func() *aktctx.Manager, ctxNameFn func() string) consoleScope {
+	rc := resolveContext(mgrFn, ctxNameFn)
+	if rc == nil || rc.AuthMethod != aktctx.AuthMethodConsoleAPI {
+		return consoleScope{}
+	}
+
+	organization, project := cliutil.ConsoleScope(cmd, rc)
+	return consoleScope{organization: organization, project: project}
+}
+
 // filterProviderSteps returns a copy of def without provider-type steps,
 // noting each skipped step on w. Used for console-api auth, where manifest
 // submission is handled by the Console API (SPEC §7.4).
@@ -972,13 +993,20 @@ func filterProviderSteps(def *wf.WorkflowDef, w io.Writer) (*wf.WorkflowDef, err
 }
 
 // printPlan renders the workflow execution plan (name, params, steps).
-func printPlan(out io.Writer, rtDef *wf.WorkflowDef, params map[string]any, rail transport.Kind) error {
+func printPlan(out io.Writer, rtDef *wf.WorkflowDef, params map[string]any, rail transport.Kind, scope consoleScope) error {
 	var rendered strings.Builder
 
 	fmt.Fprintf(&rendered, "Workflow: %s (v%d)\n", rtDef.Name, rtDef.Version)
 	fmt.Fprintf(&rendered, "  %s\n\n", rtDef.Description)
 	if rail != "" {
-		fmt.Fprintf(&rendered, "Rail: %s\n\n", rail)
+		fmt.Fprintf(&rendered, "Rail: %s\n", rail)
+		if scope.organization != "" {
+			fmt.Fprintf(&rendered, "Console organization: %s\n", scope.organization)
+		}
+		if scope.project != "" {
+			fmt.Fprintf(&rendered, "Console project: %s\n", scope.project)
+		}
+		fmt.Fprintln(&rendered)
 	}
 
 	fmt.Fprintln(&rendered, "Parameters:")
@@ -1323,10 +1351,30 @@ func (w completeWriter) Write(data []byte) (int, error) {
 	return written, err
 }
 
+// plannedCreateOutputs reports what a planned deployment creation will use:
+// the deposit, and on the Console rail the selected organization and project.
+func plannedCreateOutputs(params map[string]any, scope consoleScope) map[string]any {
+	outputs := map[string]any{}
+	if deposit, ok := params[flagdefs.FlagDeposit]; ok {
+		outputs[flagdefs.FlagDeposit] = deposit
+	}
+	if scope.organization != "" {
+		outputs[flagdefs.FlagConsoleOrganization] = scope.organization
+	}
+	if scope.project != "" {
+		outputs[flagdefs.FlagConsoleProject] = scope.project
+	}
+	if len(outputs) == 0 {
+		return nil
+	}
+
+	return outputs
+}
+
 // emitDryRunJSONL renders the validated plan without executing or discovering
 // clients. Every line shares one run ID so consumers can treat it like an
 // execution stream, while "planned" distinguishes it from completed work.
-func emitDryRunJSONL(out io.Writer, def *wf.WorkflowDef, params map[string]any) error {
+func emitDryRunJSONL(out io.Writer, def *wf.WorkflowDef, params map[string]any, scope consoleScope) error {
 	enc := json.NewEncoder(completeWriter{writer: out})
 	runID := wf.GenerateWorkflowID()
 
@@ -1340,9 +1388,7 @@ func emitDryRunJSONL(out io.Writer, def *wf.WorkflowDef, params map[string]any) 
 			Txs:      []jsonlTx{},
 		}
 		if step.Name == "create-deployment" {
-			if deposit, ok := params[flagdefs.FlagDeposit]; ok {
-				line.Outputs = map[string]any{flagdefs.FlagDeposit: deposit}
-			}
+			line.Outputs = plannedCreateOutputs(params, scope)
 		}
 		if err := enc.Encode(line); err != nil {
 			return fmt.Errorf("render workflow dry-run JSONL: %w", err)
