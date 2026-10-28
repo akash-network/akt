@@ -11,12 +11,15 @@ package console_test
 // 400 that motivated this suite).
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
+	"strings"
 	"sync"
 	"testing"
 
@@ -170,6 +173,7 @@ func newContractServer(router routers.Router, rec *contractRecorder) *httptest.S
 				// format=date query parameter.
 				SchemaValidationOptions: []openapi3.SchemaValidationOption{
 					openapi3.EnableFormatValidation(),
+					openapi3.SetSchemaRegexCompiler(compileECMAScriptPattern),
 				},
 			},
 		}
@@ -188,6 +192,16 @@ func newContractServer(router routers.Router, rec *contractRecorder) *httptest.S
 		w.WriteHeader(resp.status)
 		_, _ = io.WriteString(w, resp.body)
 	}))
+}
+
+// compileECMAScriptPattern compiles a schema `pattern` written for
+// JavaScript. Console's name patterns spell code points as `\u001f`;
+// kin-openapi only rewrites the uppercase form to Go's `\x{001f}`, so the
+// lowercase one would fail to compile instead of being enforced.
+func compileECMAScriptPattern(expr string) (openapi3.RegexMatcher, error) {
+	unicodeEscape := regexp.MustCompile(`\\u([0-9A-Fa-f]{4})`)
+
+	return regexp.Compile(unicodeEscape.ReplaceAllString(expr, `\x{$1}`))
 }
 
 // TestClientRequestsMatchOpenAPIContract calls every public client method
@@ -461,5 +475,33 @@ func TestContractHarnessDetectsViolations(t *testing.T) {
 	violations := rec.take()
 	if len(violations) == 0 {
 		t.Fatal("expected the harness to flag empty startDate/endDate (format=date), but no violation was recorded")
+	}
+}
+
+// TestContractHarnessEnforcesNamePatterns is the negative control for the
+// name patterns Console publishes: a project name carrying a bidi override
+// must be flagged, which proves the ECMAScript patterns compile and run
+// rather than being skipped.
+func TestContractHarnessEnforcesNamePatterns(t *testing.T) {
+	router := loadContractRouter(t)
+	rec := &contractRecorder{}
+	srv := newContractServer(router, rec)
+	defer srv.Close()
+
+	body := bytes.NewBufferString(`{"data":{"name":"web\u202eapi"}}`)
+	resp, err := http.Post(srv.URL+"/v1/projects", "application/json", body)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	resp.Body.Close()
+
+	violations := rec.take()
+	if len(violations) == 0 {
+		t.Fatal("expected the harness to flag a project name with a bidi override, but no violation was recorded")
+	}
+	for _, violation := range violations {
+		if !strings.Contains(violation, "/data/name") {
+			t.Errorf("unexpected violation: %s", violation)
+		}
 	}
 }
