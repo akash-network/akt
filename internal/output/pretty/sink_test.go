@@ -58,6 +58,11 @@ func TestRenderSinkTransferShowsFullIdentitiesAndSettlement(t *testing.T) {
 	state.Settlement.VetoBy = state.ID.Owner
 	state.Settlement.VetoReason = "mint found"
 	state.Settlement.VetoPolicyVersion = 5
+	state.Settlement.GovernanceObservation = &types.Observation{
+		Outcome:              types.OutcomeMinted,
+		Slot:                 500,
+		TransactionSignature: sinkTestSignature(3),
+	}
 	state.Settlement.Votes = []types.Vote{
 		{
 			Reporter:      state.ID.Owner,
@@ -87,9 +92,13 @@ func TestRenderSinkTransferShowsFullIdentitiesAndSettlement(t *testing.T) {
 		"0 minted, 1 voided", "2026-10-14T17:46:40Z", "mint found",
 		"Void Ordered Height:", "Void Ordered Round:", "Veto Policy Version:",
 		base58.Encode(sinkTestSignature(1)), base58.Encode(sinkTestSignature(2)),
+		"Governance Evidence:", "slot 500", base58.Encode(sinkTestSignature(3)),
 	} {
 		require.Contains(t, plain, want)
 	}
+	var buf bytes.Buffer
+	require.NoError(t, formatSinkTransfer(&buf, nil, sdkclient.Context{}, &types.QueryTransferResponse{Transfer: state}))
+	require.Equal(t, out, buf.String())
 }
 
 func TestRenderSinkTransfersPreservesTerminalHoldsAndCursor(t *testing.T) {
@@ -149,6 +158,8 @@ func TestRenderSinkParamsAlignsValuesAndListsEveryEntry(t *testing.T) {
 	}
 	p.MaxAmountPerTransfer = sdk.NewCoin("uakt", math.NewIntFromUint64(^uint64(0)))
 	require.Contains(t, ansi.Strip(RenderSinkParams(p)), "18446744073709.551615 AKT")
+	p.PauseGuardian = first
+	require.Contains(t, strings.Join(strings.Fields(ansi.Strip(RenderSinkParams(p))), " "), "Pause Guardian: "+first)
 }
 
 func TestRenderSinkStateShowsSeparatePopulationsAndLockedTotal(t *testing.T) {
@@ -204,11 +215,14 @@ func TestRenderSinkAccountAndReporters(t *testing.T) {
 	}
 	require.NotContains(t, plain, "2026-")
 	policy := sinkTestTransfer().Settlement.Policy
+	prior := policy
+	prior.Version = policy.Version - 1
 	plain = ansi.Strip(RenderSinkReporters(&types.QueryReportersResponse{
-		Reporters: []types.ReporterPolicy{policy},
+		Reporters: []types.ReporterPolicy{prior, policy},
 	}))
 	require.Contains(t, plain, policy.Members[0])
 	require.Contains(t, plain, "0.67 (1 of 1)")
+	require.Equal(t, 2, strings.Count(plain, "Reporter Policy"))
 	require.Contains(t, RenderSinkReporters(&types.QueryReportersResponse{}), "no reporter policy")
 }
 
@@ -405,6 +419,10 @@ func TestSinkDepositReceiptPreservesCompositeIDAndMessageScope(t *testing.T) {
 	require.NotContains(t, buf.String(), "Transfer ID:")
 	res.Events[0].Attributes[1].Value = `{"height":"0"}`
 	require.Error(t, fmtSinkDeposit(&buf, nil, sdkclient.Context{}, msg, res, 0))
+	buf.Reset()
+	res.Events[0].Attributes[1].Value = `{broken`
+	require.ErrorContains(t, fmtSinkDeposit(&buf, nil, sdkclient.Context{}, msg, res, 0), "decode sink transfer ID from receipt")
+	require.Empty(t, buf.String())
 }
 
 func TestSinkBroadcastReceiptWithoutBody(t *testing.T) {
@@ -472,8 +490,18 @@ func TestSinkFormattersRejectMalformedTransferData(t *testing.T) {
 		require.ErrorContains(t, formatSinkTransfers(&buf, nil, sdkclient.Context{}, &types.QueryTransfersResponse{
 			Transfers: []types.TransferState{state},
 		}), "malformed node response")
+		require.ErrorContains(t, formatSinkDisputes(&buf, nil, sdkclient.Context{}, &types.QueryDisputesResponse{
+			Transfers: []types.TransferState{state},
+		}), "malformed node response")
 		require.Empty(t, buf.String())
 	}
+	var buf bytes.Buffer
+	require.ErrorContains(t, formatSinkState(&buf, nil, sdkclient.Context{}, &types.QueryStateResponse{
+		Totals: types.Totals{
+			PendingAmount: sdk.NewInt64Coin("uact", 1),
+		},
+	}), "malformed node response")
+	require.Empty(t, buf.String())
 }
 
 func TestSinkLabelsCoverFinancialStates(t *testing.T) {
@@ -483,9 +511,13 @@ func TestSinkLabelsCoverFinancialStates(t *testing.T) {
 		types.StatusVoided:          "Voided",
 		types.StatusRefundPending:   "Refund pending",
 		types.StatusRefunded:        "Refunded",
+		types.StatusInvalid:         "STATUS_INVALID",
 	} {
 		require.Equal(t, want, ansi.Strip(sinkStatusLabel(status)))
 	}
+	require.Equal(t, "None", sinkHoldLabel(types.HoldNone))
+	require.Equal(t, types.Hold(99).String(), ansi.Strip(sinkHoldLabel(types.Hold(99))))
+	require.Equal(t, "Unspecified", ansi.Strip(sinkOutcomeLabel(types.OutcomeUnspecified)))
 	require.Equal(t, "-", sinkTime(0))
 	require.Equal(t, "-", sinkSignature(nil))
 	require.Equal(t, "0.666666666666666667 (3 of 3)", sinkThreshold(math.LegacyMustNewDecFromStr("0.666666666666666667"), 3))

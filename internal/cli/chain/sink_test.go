@@ -221,6 +221,23 @@ func sinkPartialCmd(source *cobra.Command, keep ...string) *cobra.Command {
 }
 
 func TestSinkParsers(t *testing.T) {
+	t.Run("financial status", func(t *testing.T) {
+		for input, want := range map[string]types.Status{
+			"all":              types.StatusInvalid,
+			"transfer-pending": types.StatusTransferPending,
+			"MINTED":           types.StatusMinted,
+			"voided":           types.StatusVoided,
+			"refund-pending":   types.StatusRefundPending,
+			"refunded":         types.StatusRefunded,
+		} {
+			got, err := parseSinkStatus(input)
+			require.NoError(t, err, input)
+			require.Equal(t, want, got, input)
+		}
+		_, err := parseSinkStatus("conflict")
+		require.ErrorContains(t, err, "invalid sink status")
+	})
+
 	t.Run("transfer ID", func(t *testing.T) {
 		id, err := parseSinkTransferID(sinkTestIDString())
 		require.NoError(t, err)
@@ -419,6 +436,10 @@ func TestSinkQueriesRejectInvalidInputBeforeTransport(t *testing.T) {
 		{
 			cmd:   GetSinkDisputesCmd(),
 			flags: map[string]string{flagdefs.FlagPageKey: "AQ==", flagdefs.FlagOffset: "1"},
+		},
+		{
+			cmd:   GetSinkDisputesCmd(),
+			flags: map[string]string{flagdefs.FlagPageKey: "bad!"},
 		},
 		{
 			cmd:  GetSinkReportersCmd(),
@@ -958,6 +979,37 @@ func TestSinkReportOutcomeReadsBeforeSigning(t *testing.T) {
 }
 
 func TestSinkTransactionsRejectMissingFlagsAndSigner(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		cmd  *cobra.Command
+		args []string
+	}{
+		{
+			name: "report",
+			cmd:  GetTxSinkReportOutcomeCmd(),
+			args: []string{sinkTestIDString(), "minted", "400", sinkTestSignature()},
+		},
+		{
+			name: "veto",
+			cmd:  GetTxSinkVetoVoidCmd(),
+			args: []string{sinkTestIDString(), "mint found"},
+		},
+		{
+			name: "refund",
+			cmd:  GetTxSinkFinalizeRefundCmd(),
+			args: []string{sinkTestIDString()},
+		},
+	} {
+		t.Run(tc.name+" without a signer", func(t *testing.T) {
+			capture := &moduleTxCapture{}
+			noSigner := func(c sdkclient.Context) sdkclient.Context {
+				return c.WithFrom("").WithFromAddress(nil)
+			}
+			require.ErrorContains(t, runSinkTxContext(t, tc.cmd, &sinkTestQuery{}, capture, noSigner, tc.args...), "address")
+			require.Empty(t, capture.messages)
+		})
+	}
+
 	t.Run("deposit destination type", func(t *testing.T) {
 		capture := &moduleTxCapture{}
 		require.Error(t, runSinkTx(t, sinkPartialCmd(GetTxSinkDepositCmd()), &sinkTestQuery{}, capture, sinkTestDestination(), "1akt"))
@@ -975,6 +1027,7 @@ func TestSinkTransactionsRejectMissingFlagsAndSigner(t *testing.T) {
 
 	t.Run("proposal flags", func(t *testing.T) {
 		source := GetTxSinkProposeVoidCmd()
+		require.NoError(t, source.Flags().Set(flagdefs.FlagExpectedRound, "1"))
 		for _, keep := range [][]string{
 			nil,
 			{flagdefs.FlagAuthority},
@@ -985,6 +1038,7 @@ func TestSinkTransactionsRejectMissingFlagsAndSigner(t *testing.T) {
 			capture := &moduleTxCapture{
 				response: &sdk.TxResponse{},
 			}
+			keep = append(keep, flagdefs.FlagExpectedRound)
 			require.Error(t, runSinkTx(t, sinkPartialCmd(source, keep...), &sinkTestQuery{}, capture, sinkTestIDString()))
 			require.Empty(t, capture.messages)
 		}
@@ -1087,6 +1141,54 @@ func TestSinkProposalsRejectInvalidArguments(t *testing.T) {
 			require.Empty(t, capture.messages)
 		})
 	}
+}
+
+type sinkUnencodableProposal struct {
+	types.MsgRequestVoid
+	err error
+}
+
+func (m *sinkUnencodableProposal) XXX_Marshal([]byte, bool) ([]byte, error) {
+	return nil, m.err
+}
+
+func TestSinkProposalAssemblyStopsBeforeBroadcast(t *testing.T) {
+	valid := types.MsgRequestVoid{
+		Authority:     sinkTestID().Owner,
+		ID:            sinkTestID(),
+		ExpectedRound: 1,
+	}
+	t.Run("invalid message", func(t *testing.T) {
+		cmd := GetTxSinkProposeVoidCmd()
+		capture := &moduleTxCapture{}
+		client := setSinkTxContext(cmd, &sinkTestQuery{}, capture, nil)
+		invalid := valid
+		invalid.ExpectedRound = 0
+		require.Error(t, submitSinkProposal(cmd, client, &invalid, "title", "summary"))
+		require.Empty(t, capture.messages)
+	})
+	t.Run("invalid signing context", func(t *testing.T) {
+		cmd := GetTxSinkProposeVoidCmd()
+		require.NoError(t, cmd.Flags().Set(flagdefs.FlagFeePayer, "not-an-address"))
+		capture := &moduleTxCapture{}
+		client := setSinkTxContext(cmd, &sinkTestQuery{}, capture, nil)
+		require.Error(t, submitSinkProposal(cmd, client, &valid, "title", "summary"))
+		require.Empty(t, capture.messages)
+	})
+	t.Run("message serialization failure", func(t *testing.T) {
+		cmd := GetTxSinkProposeVoidCmd()
+		capture := &moduleTxCapture{}
+		client := setSinkTxContext(cmd, &sinkTestQuery{}, capture, nil)
+		sentinel := errors.New("proposal cannot be encoded")
+		msg := &sinkUnencodableProposal{
+			MsgRequestVoid: valid,
+			err:            sentinel,
+		}
+		err := submitSinkProposal(cmd, client, msg, "title", "summary")
+		require.ErrorIs(t, err, sentinel)
+		require.ErrorContains(t, err, "build sink proposal")
+		require.Empty(t, capture.messages)
+	})
 }
 
 func TestSinkParserEdgeCases(t *testing.T) {

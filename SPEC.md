@@ -8092,6 +8092,15 @@ reject a test whose expected result was copied from the implementation without
 an independent contract or whose only assertion is successful exit when the
 command promises state or structured data.
 
+Sink boundary tests cover every financial status filter, malformed pagination,
+missing transaction signers, proposal flag failures, governance evidence and
+malformed query or receipt data. Invalid inputs must not reach the broadcaster,
+and malformed responses must not emit a successful transfer summary. Codec
+startup uses one fail-fast result check for SDK constructors: descriptor or
+signing configuration errors must panic rather than return a partial config.
+Tests exercise real invalid descriptor and signing configurations alongside
+the full CLI's successful nested Sink Amino encoding.
+
 ### 12.4 Coverage exceptions
 
 The shared checked-in exception registry covers exact active changed-line

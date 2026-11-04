@@ -1306,7 +1306,9 @@ change that public behavior.
   for Kubernetes Quantity. The CLI resolves Amino descriptors in a local
   registry, normalizing Quantity's legacy gogo import path before validating
   that graph. Signer lookups retain the SDK global resolver and address codecs;
-  direct, direct-aux and Amino signing remain available.
+  direct, direct-aux and Amino signing remain available. SDK constructor results
+  share a fail-fast check so startup cannot return a partially initialized codec;
+  tests cover invalid descriptors and signing options as well as valid encoding.
 - **Wasm artifacts and intent are validated before broadcast**: upload parsing
   distinguishes raw Wasm from gzip, rejects truncated or corrupt streams, and
   verifies optional reproducible-build provenance against the uncompressed

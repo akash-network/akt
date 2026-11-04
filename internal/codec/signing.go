@@ -25,15 +25,8 @@ func makeEncodingConfig() sdkutil.EncodingConfig {
 	amino.RegisterConcrete(&offchain.MsgSignData{}, "sign/"+(&offchain.MsgSignData{}).Type(), nil)
 	cdc := codec.NewProtoCodec(registry)
 
-	signingContext, err := signing.NewContext(options.Options)
-	if err != nil {
-		panic(err)
-	}
-
-	files, err := proto.MergedGlobalFileDescriptors()
-	if err != nil {
-		panic(err)
-	}
+	signingContext := mustCodecValue(signing.NewContext(options.Options))
+	files := mustCodecValue(proto.MergedGlobalFileDescriptors())
 	// Quantity's generated descriptor names this same gogo file by its old
 	// repository path. Normalize the local copy, not the process registries.
 	for _, file := range files.File {
@@ -43,12 +36,9 @@ func makeEncodingConfig() sdkutil.EncodingConfig {
 			}
 		}
 	}
-	resolved, err := protodesc.NewFiles(files)
-	if err != nil {
-		panic(err)
-	}
+	resolved := mustCodecValue(protodesc.NewFiles(files))
 
-	txConfig, err := tx.NewTxConfigWithOptions(cdc, tx.ConfigOptions{
+	txConfig := mustCodecValue(tx.NewTxConfigWithOptions(cdc, tx.ConfigOptions{
 		EnabledSignModes: []signingtypes.SignMode{
 			signingtypes.SignMode_SIGN_MODE_DIRECT,
 			signingtypes.SignMode_SIGN_MODE_DIRECT_AUX,
@@ -61,10 +51,7 @@ func makeEncodingConfig() sdkutil.EncodingConfig {
 		},
 		SigningOptions: &options.Options,
 		SigningContext: signingContext,
-	})
-	if err != nil {
-		panic(err)
-	}
+	}))
 
 	return sdkutil.EncodingConfig{
 		InterfaceRegistry: registry,
@@ -73,4 +60,12 @@ func makeEncodingConfig() sdkutil.EncodingConfig {
 		SigningOptions:    options.Options,
 		Amino:             amino,
 	}
+}
+
+// mustCodecValue rejects a failed SDK constructor during codec startup.
+func mustCodecValue[T any](value T, err error) T {
+	if err != nil {
+		panic(err)
+	}
+	return value
 }
