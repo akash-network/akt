@@ -2165,6 +2165,9 @@ name only the validation class and never echo the secret-backed URL. Context
 creation uses the same bounded, redacted subprocess runner as every later live
 command, and the lifecycle revalidates the raw key/origin pair immediately
 before constructing any network client.
+Console rate-limit, server and redirect failures retain a typed numeric HTTP
+status through secret sanitization. The live harness can classify the failure
+without logging response bodies or other captured text.
 Loopback acceptance is an explicit test-only option that neither protected
 read setup nor mutation configuration enables. Child CLI processes receive
 only the documented runtime credential; all `AKT_E2E_CONSOLE_*` harness

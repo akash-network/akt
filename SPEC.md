@@ -8461,7 +8461,11 @@ harness scans its complete temporary akt home for the injected credential
 before teardown rather than checking only config and action-log files.
 For a failed Console subprocess, the error class MAY include a recognized HTTP
 status (for example, `console_http_401`) extracted from bounded stderr. It MUST
-NOT include the response body or any other captured text. The production Console client applies the same boundary independently of the
+NOT include the response body or any other captured text. Rate-limit, server,
+and redirect failures retain their HTTP status through secret sanitization,
+including nested request/envelope decoding boundaries. These errors carry only
+the numeric status and a fixed description; response bodies remain omitted.
+The production Console client applies the same boundary independently of the
 test harness. It reads no more than the configured maximum response size and
 fails a larger response without retaining or reporting its contents. Before an
 HTTP error body can enter a returned error or action-log entry, every exact
