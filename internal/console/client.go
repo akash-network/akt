@@ -50,10 +50,6 @@ var (
 	// ErrNotFound indicates the requested resource does not exist (HTTP 404).
 	ErrNotFound = errors.New("console: resource not found")
 
-	// ErrSessionRequired indicates the endpoint needs a signed-in Console
-	// session, which an API key never is (HTTP 403, code session_required).
-	ErrSessionRequired = errors.New("console: a signed-in Console session is required")
-
 	// ErrAlreadyClosed is returned by CloseDeployment when the deployment is
 	// already closed or absent (the preflight answers 404 or reports a closed
 	// state, or the DELETE reports unambiguous already-closed semantics).
@@ -75,6 +71,14 @@ func responseCode(body []byte) string {
 		return ""
 	}
 	return result.Code
+}
+
+// SessionRequiredError reports an endpoint that needs a signed-in Console
+// session, which an API key never is (HTTP 403, code session_required).
+type SessionRequiredError struct{}
+
+func (*SessionRequiredError) Error() string {
+	return "console: a signed-in Console session is required (HTTP 403)"
 }
 
 // HTTPError is returned for non-2xx statuses that have no dedicated mapping.
@@ -337,7 +341,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, resul
 			return fmt.Errorf("%w (HTTP 404): %s %s", ErrNotFound, method, path)
 
 		case resp.StatusCode == http.StatusForbidden && responseCode(respBody) == sessionRequiredCode:
-			return fmt.Errorf("%w (HTTP 403)", ErrSessionRequired)
+			return &SessionRequiredError{}
 
 		case resp.StatusCode == http.StatusTooManyRequests:
 			lastErr = fmt.Errorf("console: rate limited (HTTP 429)")

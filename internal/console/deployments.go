@@ -134,7 +134,8 @@ func validDeploymentDSeq(dseq string) bool {
 }
 
 func definitiveCreateFailure(err error) bool {
-	if errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrInsufficientFunds) || errors.Is(err, ErrNotFound) || errors.Is(err, ErrSessionRequired) {
+	var sessionErr *SessionRequiredError
+	if errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrInsufficientFunds) || errors.Is(err, ErrNotFound) || errors.As(err, &sessionErr) {
 		return true
 	}
 

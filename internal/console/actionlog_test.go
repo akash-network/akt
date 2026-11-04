@@ -567,8 +567,9 @@ func TestCreateAPIKeySessionRefusalIsRecordedAsFailed(t *testing.T) {
 
 	log := openTestLog(t)
 	_, err := New(srv.URL, "test-key").WithActionLog(log).CreateAPIKey(context.Background(), "ci", "")
-	if !errors.Is(err, ErrSessionRequired) {
-		t.Fatalf("session refusal = %v, want ErrSessionRequired", err)
+	var sessionErr *SessionRequiredError
+	if !errors.As(err, &sessionErr) {
+		t.Fatalf("session refusal = %v, want SessionRequiredError", err)
 	}
 
 	entries, readErr := log.Read(actionlog.Filter{Type: actionlog.TypeConsole})

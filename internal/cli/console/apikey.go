@@ -89,7 +89,8 @@ func apikeyCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			}
 
 			created, err := cl.CreateAPIKey(cmd.Context(), name, expiresAt)
-			if errors.Is(err, consoleapi.ErrSessionRequired) {
+			var sessionErr *consoleapi.SessionRequiredError
+			if errors.As(err, &sessionErr) {
 				return fmt.Errorf("create API key: %w; create the key at %s, then store it with `akt console login`", err, apiKeysPage)
 			}
 			if err != nil {

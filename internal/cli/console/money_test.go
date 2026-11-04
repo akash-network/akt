@@ -593,8 +593,9 @@ func TestAPIKeyCreateRefusedForAnAPIKeyPointsToConsole(t *testing.T) {
 	defer srv.Close()
 
 	out, err := execConsole(t, m, srv.URL, "apikey", "create", "ci")
-	if !errors.Is(err, console.ErrSessionRequired) {
-		t.Fatalf("apikey create refused for a key = %v, want ErrSessionRequired", err)
+	var sessionErr *console.SessionRequiredError
+	if !errors.As(err, &sessionErr) {
+		t.Fatalf("apikey create refused for a key = %v, want SessionRequiredError", err)
 	}
 	if !strings.Contains(err.Error(), "console.akash.network > Settings > API Keys") || !strings.Contains(err.Error(), "akt console login") {
 		t.Errorf("error should name where to create the key and how to store it, got %q", err)

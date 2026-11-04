@@ -104,7 +104,8 @@ func TestCreateAPIKeyFromAnAPIKeyNeedsASession(t *testing.T) {
 	defer srv.Close()
 
 	_, err := console.New(srv.URL, "test-key").CreateAPIKey(context.Background(), "ci-key", "")
-	require.ErrorIs(t, err, console.ErrSessionRequired)
+	var sessionErr *console.SessionRequiredError
+	require.ErrorAs(t, err, &sessionErr)
 	assert.NotContains(t, err.Error(), "outcome unknown", "a refused create is definitive")
 	assert.Equal(t, int32(1), requests.Load(), "a refused create is never replayed")
 }
@@ -118,7 +119,7 @@ func TestCreateAPIKeyKeepsOtherForbiddenAnswersUnexpected(t *testing.T) {
 
 	_, err := console.New(srv.URL, "test-key").CreateAPIKey(context.Background(), "ci-key", "")
 	require.Error(t, err)
-	assert.NotErrorIs(t, err, console.ErrSessionRequired)
+	assert.NotErrorAs(t, err, new(*console.SessionRequiredError))
 	var httpErr *console.HTTPError
 	require.ErrorAs(t, err, &httpErr)
 	assert.Equal(t, http.StatusForbidden, httpErr.StatusCode)
