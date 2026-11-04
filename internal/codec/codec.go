@@ -27,6 +27,7 @@ import (
 	ibctypes "github.com/cosmos/ibc-go/v10/modules/core/types"
 	ibclightclienttypes "github.com/cosmos/ibc-go/v10/modules/light-clients/07-tendermint"
 
+	_ "pkg.akt.dev/go/grpc/gogoreflection" // Register Kubernetes Quantity descriptors for the SDK signing resolver.
 	audittypes "pkg.akt.dev/go/node/audit/v1"
 	bmetypes "pkg.akt.dev/go/node/bme/v1"
 	certtypes "pkg.akt.dev/go/node/cert/v1"
@@ -43,7 +44,7 @@ import (
 // MakeEncodingConfig builds the encoding config and registers all module interfaces.
 // Call once at startup; pass the result to keyring, client, and any other consumer.
 func MakeEncodingConfig() sdkutil.EncodingConfig {
-	encCfg := sdkutil.MakeEncodingConfig()
+	encCfg := makeEncodingConfig()
 
 	// akash modules
 	audittypes.RegisterInterfaces(encCfg.InterfaceRegistry)

@@ -11,23 +11,18 @@ import (
 
 // AddSinkDepositFlags adds the destination network flag of a sink deposit.
 func AddSinkDepositFlags(flags *pflag.FlagSet) {
-	flags.Uint32(flagdefs.FlagDestType, types.DestTypeSolana, "Destination network (1 = Solana, the only supported value)")
+	flags.Uint32(flagdefs.FlagDestType, uint32(types.DestTypeSolana), "Destination network (1 = Solana, the only supported value)")
 }
 
-// AddSinkOpenTransfersFlags adds the paging and hold filter flags of the
-// open-transfers query. Its limit is the module's own page size, not the
-// Cosmos page request, so the standard pagination flags do not apply.
-func AddSinkOpenTransfersFlags(flags *pflag.FlagSet) {
-	flags.Uint64(flagdefs.FlagStartAfter, 0, "Return transfers with IDs above this one")
-	flags.Uint32(flagdefs.FlagLimit, 0, "Maximum transfers to return; 0 means 100, at most 500")
-	flags.Bool(flagdefs.FlagHeldOnly, false, "List every open transfer held for governance (veto or conflict), reading all pages")
-}
-
-// AddSinkReportFlags adds the overrides for the reporter epoch and transfer
-// round a report names. Both default to the chain's current values.
+// AddSinkReportFlags adds overrides for the current policy version and round.
 func AddSinkReportFlags(flags *pflag.FlagSet) {
-	flags.Uint64(flagdefs.FlagReporterEpoch, 0, "Reporter epoch to report in (default: the chain's current epoch)")
-	flags.Uint64(flagdefs.FlagRound, 0, "Settlement round to report in (default: the transfer's current round)")
+	flags.Uint64(flagdefs.FlagPolicyVersion, 0, "Reporter policy version (default: the chain's current policy)")
+	flags.Uint64(flagdefs.FlagRound, 0, "Settlement round (default: the transfer's current round)")
+}
+
+// AddSinkExpectedRoundFlag binds governance actions to one settlement round.
+func AddSinkExpectedRoundFlag(flags *pflag.FlagSet) {
+	flags.Uint64(flagdefs.FlagExpectedRound, 0, "Expected settlement round (default: read from the transfer before proposing)")
 }
 
 // AddSinkProposalFlags adds the governance proposal flags shared by the

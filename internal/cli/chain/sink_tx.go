@@ -52,17 +52,17 @@ whole uakt (1500000uakt) or an exact AKT decimal (1.5akt).
 
 The deposit only locks AKT. A successful broadcast means the chain recorded
 the transfer; the AKT is minted on Solana once a relayer proves the record,
-usually within a few minutes, and reporters then confirm it on Akash. If
-Solana cannot accept the destination, the transfer is voided and the AKT is
-refunded to the sender after the challenge window. Follow the transfer with
-"akt q sink record <id>".
+and reporters then confirm it on Akash. If Solana cannot accept the
+destination, governance can order a void. A refund requires a confirmed
+Solana void, the challenge window and available capacity. Follow it with
+"akt q sink transfer <owner/height/sequence>".
 
 Use a Solana wallet address, not a token account.`,
 		Example: `  akt tx sink deposit <solana-address> 1000000uakt --from mykey
   akt tx sink deposit <solana-address> 2.5akt --from mykey
 
   # Then follow it
-  akt q sink record <id>`,
+  akt q sink transfer <owner/height/sequence>`,
 		Args:              cobra.ExactArgs(2),
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -85,7 +85,7 @@ Use a Solana wallet address, not a token account.`,
 			}
 
 			msg := &types.MsgSink{
-				DestType: destType,
+				DestType: types.DestType(destType),
 				Dest:     args[0],
 				Amount:   amount,
 				Sender:   cctx.GetFromAddress().String(),
@@ -170,10 +170,10 @@ reporter. The evidence is the finalized slot and the base58 signature of the
 Solana transaction that minted or voided the record; read both from your own
 Solana node.
 
-The report names the chain's current reporter epoch and the transfer's
+The report names the chain's current reporter policy version and the transfer's
 current round, which are read from the chain before signing. Use
---reporter-epoch and --round to name them explicitly.`,
-		Example:           `  akt tx sink report-outcome 12 minted 412345678 <solana-signature> --from reporter`,
+--policy-version and --round to name them explicitly.`,
+		Example:           `  akt tx sink report-outcome <owner>/29188334/1 minted 412345678 <solana-signature> --from reporter`,
 		Args:              cobra.ExactArgs(4),
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -195,34 +195,34 @@ current round, which are read from the chain before signing. Use
 				return err
 			}
 
-			epoch, err := cmd.Flags().GetUint64(flagdefs.FlagReporterEpoch)
+			version, err := cmd.Flags().GetUint64(flagdefs.FlagPolicyVersion)
 			if err != nil {
 				return err
 			}
-			if !cmd.Flags().Changed(flagdefs.FlagReporterEpoch) {
-				res, err := cl.Query().Sink().State(ctx, &types.QueryStateRequest{})
+			if !cmd.Flags().Changed(flagdefs.FlagPolicyVersion) {
+				res, err := cl.Query().Sink().Reporters(ctx, &types.QueryReportersRequest{})
 				if err != nil {
-					return fmt.Errorf("read the current reporter epoch: %w", err)
+					return fmt.Errorf("read the current reporter policy version: %w", err)
 				}
-				if err := requireQueryResponse("sink state", res); err != nil {
+				if err := requireQueryResponse("sink reporters", res); err != nil {
 					return err
 				}
-				epoch = res.Totals.ReporterEpoch
+				if len(res.Reporters) != 1 {
+					return fmt.Errorf("sink reporters query returned no unique current policy")
+				}
+				if err := res.Reporters[0].Validate(); err != nil {
+					return fmt.Errorf("sink reporters query returned malformed node response: %w", err)
+				}
+				version = res.Reporters[0].Version
 			}
 
-			round, err := cmd.Flags().GetUint64(flagdefs.FlagRound)
+			if version == 0 {
+				return fmt.Errorf("reporter policy version must be positive")
+			}
+
+			round, err := sinkRound(cmd, cl, id, flagdefs.FlagRound)
 			if err != nil {
 				return err
-			}
-			if !cmd.Flags().Changed(flagdefs.FlagRound) {
-				res, err := cl.Query().Sink().Transfer(ctx, &types.QueryTransferRequest{Id: id})
-				if err != nil {
-					return fmt.Errorf("read the round of sink transfer %d: %w", id, err)
-				}
-				if err := requireQueryResponse("sink transfer", res); err != nil {
-					return err
-				}
-				round = res.Transfer.Settlement.Round
 			}
 
 			cctx, err := GetClientTxContext(cmd)
@@ -232,10 +232,14 @@ current round, which are read from the chain before signing. Use
 
 			msg := &types.MsgReportOutcome{
 				Reporter:      cctx.GetFromAddress().String(),
-				Id:            id,
-				ReporterEpoch: epoch,
+				ID:            id,
+				PolicyVersion: version,
 				Round:         round,
 				Observation:   observation,
+			}
+
+			if err := msg.ValidateBasic(); err != nil {
+				return err
 			}
 
 			resp, err := cl.Tx().BroadcastMsgs(ctx, []sdk.Msg{msg})
@@ -262,7 +266,7 @@ func GetTxSinkVetoVoidCmd() *cobra.Command {
 the challenge window, for example when the void does not match Solana. The
 transfer is then held until governance resolves it. Governance vetoes
 through "akt tx sink propose-veto".`,
-		Example:           `  akt tx sink veto-void 12 "status account shows a mint at slot 412345678" --from reporter`,
+		Example:           `  akt tx sink veto-void <owner>/29188334/1 "status account shows a mint at slot 412345678" --from reporter`,
 		Args:              cobra.ExactArgs(2),
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -286,8 +290,12 @@ through "akt tx sink propose-veto".`,
 
 			msg := &types.MsgVetoVoid{
 				Signer: cctx.GetFromAddress().String(),
-				Id:     id,
+				ID:     id,
 				Reason: reason,
+			}
+
+			if err := msg.ValidateBasic(); err != nil {
+				return err
 			}
 
 			resp, err := cl.Tx().BroadcastMsgs(ctx, []sdk.Msg{msg})
@@ -312,9 +320,9 @@ func GetTxSinkFinalizeRefundCmd() *cobra.Command {
 		Long: `Refund a voided transfer. Anyone can send this and pay its fee; the
 refund always goes to the transfer's original sender, for exactly the
 recorded amount. The chain refuses it while the challenge window is open,
-while the transfer is held, when refunds are disabled or when the day's
+while the transfer is held, when refunds are disabled or when the native epoch's
 refund cap is reached.`,
-		Example:           `  akt tx sink finalize-refund 12 --from mykey`,
+		Example:           `  akt tx sink finalize-refund <owner>/29188334/1 --from mykey`,
 		Args:              cobra.ExactArgs(1),
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -333,7 +341,11 @@ refund cap is reached.`,
 
 			msg := &types.MsgFinalizeRefund{
 				Executor: cctx.GetFromAddress().String(),
-				Id:       id,
+				ID:       id,
+			}
+
+			if err := msg.ValidateBasic(); err != nil {
+				return err
 			}
 
 			resp, err := cl.Tx().BroadcastMsgs(ctx, []sdk.Msg{msg})
@@ -383,11 +395,14 @@ parameters are checked locally before broadcast.`,
 			if err := cl.ClientContext().Codec.UnmarshalJSON(raw, &params); err != nil {
 				return fmt.Errorf("parse sink parameters %s: %w", args[0], err)
 			}
-			if err := params.Validate(); err != nil {
+			if err := params.ValidateBasic(); err != nil {
 				return fmt.Errorf("invalid sink parameters: %w", err)
 			}
 
-			msg := &types.MsgUpdateParams{Authority: authority, Params: params}
+			msg := &types.MsgUpdateParams{
+				Authority: authority,
+				Params:    params,
+			}
 
 			return submitSinkProposal(cmd, cl, msg,
 				"Update sink parameters",
@@ -406,12 +421,13 @@ func GetTxSinkProposeVoidCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "propose-void [id]",
 		Short: "Submit a governance proposal that orders a transfer voided",
-		Long: `Submit a governance proposal with MsgRequestVoid. Once it passes, the
-void order is proven on Solana and the transfer can never be minted; after
+		Long: `Submit a governance proposal with MsgRequestVoid. It names the current
+settlement round (--expected-round overrides); a stale proposal is rejected.
+Once the void order is proven and executed on Solana, it cannot mint. After
 reporters confirm the void and the challenge window passes, the AKT is
 refunded. If the transfer was already minted, the void fails on Solana and
 the transfer closes as minted. Use this for a transfer that cannot be minted.`,
-		Example:           `  akt tx sink propose-void 12 --deposit 50000000uakt --from mykey`,
+		Example:           `  akt tx sink propose-void <owner>/29188334/1 --deposit 50000000uakt --from mykey`,
 		Args:              cobra.ExactArgs(1),
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -428,14 +444,24 @@ the transfer closes as minted. Use this for a transfer that cannot be minted.`,
 				return err
 			}
 
-			msg := &types.MsgRequestVoid{Authority: authority, Id: id}
+			round, err := sinkRound(cmd, cl, id, flagdefs.FlagExpectedRound)
+			if err != nil {
+				return err
+			}
+
+			msg := &types.MsgRequestVoid{
+				Authority:     authority,
+				ID:            id,
+				ExpectedRound: round,
+			}
 
 			return submitSinkProposal(cmd, cl, msg,
-				fmt.Sprintf("Void sink transfer %d", id),
-				fmt.Sprintf("Write a void order for sink transfer %d so it is voided on Solana and refunded to its sender.", id))
+				fmt.Sprintf("Void sink transfer %s", id.String()),
+				fmt.Sprintf("Write a void order for sink transfer %s so it is voided on Solana and refunded to its sender.", id.String()))
 		},
 	}
 
+	cflags.AddSinkExpectedRoundFlag(cmd.Flags())
 	cflags.AddSinkProposalFlags(cmd, DefaultGovAuthority.String())
 
 	return cmd
@@ -449,7 +475,7 @@ func GetTxSinkProposeVetoCmd() *cobra.Command {
 		Long: `Submit a governance proposal with MsgVetoVoid signed by governance. Unlike
 a reporter, governance can veto a voided transfer at any time before the
 refund is paid. The transfer is then held until a resolution passes.`,
-		Example:           `  akt tx sink propose-veto 12 "void evidence does not match Solana" --from mykey`,
+		Example:           `  akt tx sink propose-veto <owner>/29188334/1 "void evidence does not match Solana" --from mykey`,
 		Args:              cobra.ExactArgs(2),
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -471,11 +497,15 @@ refund is paid. The transfer is then held until a resolution passes.`,
 				return err
 			}
 
-			msg := &types.MsgVetoVoid{Signer: authority, Id: id, Reason: reason}
+			msg := &types.MsgVetoVoid{
+				Signer: authority,
+				ID:     id,
+				Reason: reason,
+			}
 
 			return submitSinkProposal(cmd, cl, msg,
-				fmt.Sprintf("Veto the void of sink transfer %d", id),
-				fmt.Sprintf("Hold sink transfer %d before its refund: %s", id, reason))
+				fmt.Sprintf("Veto the void of sink transfer %s", id.String()),
+				fmt.Sprintf("Hold sink transfer %s before its refund: %s", id.String(), reason))
 		},
 	}
 
@@ -490,18 +520,20 @@ func GetTxSinkProposeResolveCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "propose-resolve [id] [restart|confirm-mint|confirm-void] [reason] [slot] [signature]",
 		Short: "Submit a governance proposal that resolves a held or stalled transfer",
-		Long: `Submit a governance proposal with MsgResolveTransfer.
+		Long: `Submit a governance proposal with MsgRestartTransfer, MsgConfirmMint or
+MsgConfirmVoid, bound to the current settlement round (--expected-round overrides).
 
   restart        clear the votes and hold and let reporters vote again
   confirm-mint   close the transfer as minted; give the Solana slot and
                  signature of the mint
   confirm-void   confirm the Solana void; give the slot and signature of the
                  void. A new challenge window starts, and the refund still
-                 obeys the refund switch and daily cap
+                 obeys the refund switch and native epoch cap
 
-A transfer that is already minted or refunded cannot change.`,
-		Example: `  akt tx sink propose-resolve 12 restart "reporters disagreed after an RPC outage" --from mykey
-  akt tx sink propose-resolve 12 confirm-void "recipient was a token account" 412345678 <solana-signature> --from mykey`,
+A terminal dispute can be resolved without moving its funds again. A stale
+expected round is rejected when the proposal executes.`,
+		Example: `  akt tx sink propose-resolve <owner>/29188334/1 restart "reporters disagreed after an RPC outage" --from mykey
+  akt tx sink propose-resolve <owner>/29188334/1 confirm-void "recipient was a token account" 412345678 <solana-signature> --from mykey`,
 		Args:              cobra.RangeArgs(3, 5),
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -528,39 +560,96 @@ A transfer that is already minted or refunded cannot change.`,
 				return err
 			}
 
-			msg := &types.MsgResolveTransfer{Authority: authority, Id: id, Decision: decision, Reason: reason}
-
-			switch decision {
-			case types.Decision_DECISION_RESTART:
+			var evidence types.SolanaEvidence
+			if decision == types.DecisionRestart {
 				if len(args) != 3 {
 					return fmt.Errorf("restart takes no Solana evidence: pass only the ID, decision and reason")
 				}
-			default:
+			} else {
 				if len(args) != 5 {
 					return fmt.Errorf("%s needs the Solana slot and transaction signature after the reason", args[1])
 				}
-
-				outcome := types.Outcome_OUTCOME_VOIDED
-				if decision == types.Decision_DECISION_CONFIRM_MINT {
-					outcome = types.Outcome_OUTCOME_MINTED
+				outcome := types.OutcomeVoided
+				if decision == types.DecisionConfirmMint {
+					outcome = types.OutcomeMinted
 				}
-
 				observation, err := parseSinkObservation(outcome, args[3], args[4])
 				if err != nil {
 					return err
 				}
-				msg.Observation = &observation
+				evidence = types.SolanaEvidence{
+					Slot:                 observation.Slot,
+					TransactionSignature: observation.TransactionSignature,
+				}
+			}
+
+			round, err := sinkRound(cmd, cl, id, flagdefs.FlagExpectedRound)
+			if err != nil {
+				return err
+			}
+
+			var msg types.Resolution
+			switch decision {
+			case types.DecisionRestart:
+				msg = &types.MsgRestartTransfer{
+					Authority:     authority,
+					ID:            id,
+					Reason:        reason,
+					ExpectedRound: round,
+				}
+			case types.DecisionConfirmMint:
+				msg = &types.MsgConfirmMint{
+					Authority:     authority,
+					ID:            id,
+					Reason:        reason,
+					Evidence:      evidence,
+					ExpectedRound: round,
+				}
+			case types.DecisionConfirmVoid:
+				msg = &types.MsgConfirmVoid{
+					Authority:     authority,
+					ID:            id,
+					Reason:        reason,
+					Evidence:      evidence,
+					ExpectedRound: round,
+				}
 			}
 
 			return submitSinkProposal(cmd, cl, msg,
-				fmt.Sprintf("Resolve sink transfer %d: %s", id, strings.ToLower(args[1])),
-				fmt.Sprintf("Resolve sink transfer %d (%s): %s", id, strings.ToLower(args[1]), reason))
+				fmt.Sprintf("Resolve sink transfer %s: %s", id.String(), strings.ToLower(args[1])),
+				fmt.Sprintf("Resolve sink transfer %s (%s): %s", id.String(), strings.ToLower(args[1]), reason))
 		},
 	}
 
+	cflags.AddSinkExpectedRoundFlag(cmd.Flags())
 	cflags.AddSinkProposalFlags(cmd, DefaultGovAuthority.String())
 
 	return cmd
+}
+
+// sinkRound uses an explicit override or the queried transfer's current round.
+func sinkRound(cmd *cobra.Command, cl aclient.Client, id types.ID, flag string) (uint64, error) {
+	round, err := cmd.Flags().GetUint64(flag)
+	if err != nil {
+		return 0, err
+	}
+	if !cmd.Flags().Changed(flag) {
+		res, err := cl.Query().Sink().Transfer(cmd.Context(), &types.QueryTransferRequest{ID: id})
+		if err != nil {
+			return 0, fmt.Errorf("read the round of sink transfer %s: %w", id.String(), err)
+		}
+		if err := requireQueryResponse("sink transfer", res); err != nil {
+			return 0, err
+		}
+		if res.Transfer.ID != id {
+			return 0, fmt.Errorf("sink transfer query returned malformed node response: transfer ID mismatch")
+		}
+		round = res.Transfer.Settlement.Round
+	}
+	if round == 0 {
+		return 0, fmt.Errorf("%s must be positive", flag)
+	}
+	return round, nil
 }
 
 // sinkProposalAuthority returns the authority a proposed sink message names.
@@ -577,10 +666,22 @@ func sinkProposalAuthority(cmd *cobra.Command) (string, error) {
 	return authority, nil
 }
 
+type sinkProposalMessage interface {
+	sdk.Msg
+	sdk.HasValidateBasic
+}
+
 // submitSinkProposal wraps one sink message in a governance proposal signed
 // by the selected account and broadcasts it through the logged chain client.
 // Title and summary fall back to a description of the action.
-func submitSinkProposal(cmd *cobra.Command, cl aclient.Client, msg sdk.Msg, defaultTitle, defaultSummary string) error {
+func submitSinkProposal(cmd *cobra.Command, cl aclient.Client, msg sinkProposalMessage, defaultTitle, defaultSummary string) error {
+	if msg == nil {
+		return fmt.Errorf("build sink proposal: missing message")
+	}
+	if err := msg.ValidateBasic(); err != nil {
+		return err
+	}
+
 	title, err := cmd.Flags().GetString(flagdefs.FlagTitle)
 	if err != nil {
 		return err

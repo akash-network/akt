@@ -1,0 +1,3 @@
+- Update Sink commands for composite transfer IDs, native transfer/dispute pagination, reporter policy versions and round-bound governance messages.
+- Match the node SDK dependency, current parameter and epoch accounting, five settlement states, and typed deposit receipts.
+- Resolve the CLI's Kubernetes protobuf import aliases locally so startup and nested Amino signing work with the updated SDK.

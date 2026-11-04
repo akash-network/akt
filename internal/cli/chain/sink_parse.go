@@ -1,31 +1,41 @@
 package cli
 
 import (
-	"bytes"
 	"fmt"
 	"strconv"
 	"strings"
 
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/mr-tron/base58"
+	"github.com/gagliardetto/solana-go"
 
 	types "pkg.akt.dev/go/node/sink/v1"
+	"pkg.akt.dev/go/sdkutil"
 )
 
-// sinkSignatureSize is the length of a Solana transaction signature.
-const sinkSignatureSize = 64
+// parseSinkTransferID uses the public owner/height/sequence identity parser.
+func parseSinkTransferID(value string) (types.ID, error) {
+	return types.ParseID(value)
+}
 
-// parseSinkTransferID accepts the canonical decimal form the module itself
-// uses for record keys: a positive integer with no sign, leading zeros or
-// whitespace.
-func parseSinkTransferID(value string) (uint64, error) {
-	id, err := strconv.ParseUint(value, 10, 64)
-	if err != nil || id == 0 || strconv.FormatUint(id, 10) != value {
-		return 0, fmt.Errorf("invalid sink transfer ID %q: use a positive whole number without leading zeros", value)
+// parseSinkStatus accepts the financial status independently of settlement holds.
+func parseSinkStatus(value string) (types.Status, error) {
+	switch strings.ToLower(value) {
+	case "all":
+		return types.StatusInvalid, nil
+	case "transfer-pending":
+		return types.StatusTransferPending, nil
+	case "minted":
+		return types.StatusMinted, nil
+	case "voided":
+		return types.StatusVoided, nil
+	case "refund-pending":
+		return types.StatusRefundPending, nil
+	case "refunded":
+		return types.StatusRefunded, nil
+	default:
+		return types.StatusInvalid, fmt.Errorf("invalid sink status %q: use all, transfer-pending, minted, voided, refund-pending or refunded", value)
 	}
-
-	return id, nil
 }
 
 // parseSinkAmount converts a uakt or AKT amount exactly. A fractional uakt
@@ -38,7 +48,7 @@ func parseSinkAmount(value string) (sdk.Coin, error) {
 
 	amount := coin.Amount
 	switch strings.ToLower(coin.Denom) {
-	case types.Denom:
+	case sdkutil.DenomUakt:
 	case "akt":
 		amount = amount.MulInt64(1_000_000)
 	default:
@@ -54,18 +64,18 @@ func parseSinkAmount(value string) (sdk.Coin, error) {
 		return sdk.Coin{}, fmt.Errorf("invalid amount %q: must be a positive uint64 number of uakt", value)
 	}
 
-	return sdk.NewCoin(types.Denom, math.NewIntFromUint64(whole.Uint64())), nil
+	return sdk.NewCoin(sdkutil.DenomUakt, math.NewIntFromUint64(whole.Uint64())), nil
 }
 
 // parseSinkOutcome maps the reported Solana outcome to its enum.
 func parseSinkOutcome(value string) (types.Outcome, error) {
 	switch strings.ToLower(value) {
 	case "minted":
-		return types.Outcome_OUTCOME_MINTED, nil
+		return types.OutcomeMinted, nil
 	case "voided":
-		return types.Outcome_OUTCOME_VOIDED, nil
+		return types.OutcomeVoided, nil
 	default:
-		return types.Outcome_OUTCOME_UNSPECIFIED, fmt.Errorf("invalid outcome %q: use minted or voided", value)
+		return types.OutcomeUnspecified, fmt.Errorf("invalid outcome %q: use minted or voided", value)
 	}
 }
 
@@ -82,12 +92,12 @@ func parseSinkSlot(value string) (uint64, error) {
 // parseSinkSignature decodes a base58 Solana transaction signature. The
 // module requires exactly 64 bytes that are not all zero.
 func parseSinkSignature(value string) ([]byte, error) {
-	signature, err := base58.Decode(value)
-	if err != nil || len(signature) != sinkSignatureSize || bytes.Equal(signature, make([]byte, sinkSignatureSize)) {
+	signature, err := solana.SignatureFromBase58(value)
+	if err != nil || signature.IsZero() {
 		return nil, fmt.Errorf("invalid Solana transaction signature %q: use the base58 signature of a finalized transaction", value)
 	}
 
-	return signature, nil
+	return signature[:], nil
 }
 
 // parseSinkObservation builds and checks the Solana evidence a report or a
@@ -103,7 +113,11 @@ func parseSinkObservation(outcome types.Outcome, slotArg, signatureArg string) (
 		return types.Observation{}, err
 	}
 
-	observation := types.Observation{Outcome: outcome, Slot: slot, TransactionSignature: signature}
+	observation := types.Observation{
+		Outcome:              outcome,
+		Slot:                 slot,
+		TransactionSignature: signature,
+	}
 	if err := observation.Validate(); err != nil {
 		return types.Observation{}, err
 	}
@@ -115,13 +129,13 @@ func parseSinkObservation(outcome types.Outcome, slotArg, signatureArg string) (
 func parseSinkDecision(value string) (types.Decision, error) {
 	switch strings.ToLower(value) {
 	case "restart":
-		return types.Decision_DECISION_RESTART, nil
+		return types.DecisionRestart, nil
 	case "confirm-mint":
-		return types.Decision_DECISION_CONFIRM_MINT, nil
+		return types.DecisionConfirmMint, nil
 	case "confirm-void":
-		return types.Decision_DECISION_CONFIRM_VOID, nil
+		return types.DecisionConfirmVoid, nil
 	default:
-		return types.Decision_DECISION_UNSPECIFIED, fmt.Errorf("invalid decision %q: use restart, confirm-mint or confirm-void", value)
+		return types.DecisionUnspecified, fmt.Errorf("invalid decision %q: use restart, confirm-mint or confirm-void", value)
 	}
 }
 

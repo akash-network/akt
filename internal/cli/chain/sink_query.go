@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"math"
 	"strconv"
 
 	"github.com/spf13/cobra"
@@ -10,7 +11,6 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
-	flagdefs "pkg.akt.dev/akt/internal/flags"
 	"pkg.akt.dev/akt/internal/output/pretty"
 	types "pkg.akt.dev/go/node/sink/v1"
 )
@@ -25,9 +25,10 @@ func GetQuerySinkCmd() *cobra.Command {
 	}
 
 	cmd.AddCommand(
-		GetSinkRecordCmd(),
 		GetSinkTransferCmd(),
-		GetSinkOpenTransfersCmd(),
+		GetSinkTransfersCmd(),
+		GetSinkDisputesCmd(),
+		GetSinkReportersCmd(),
 		GetSinkAccountCmd(),
 		GetSinkStateCmd(),
 		GetSinkParamsCmd(),
@@ -36,56 +37,12 @@ func GetQuerySinkCmd() *cobra.Command {
 	return cmd
 }
 
-// GetSinkRecordCmd returns a transfer's public status and settlement
-func GetSinkRecordCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "record [id]",
-		Short: "Query a transfer's status and settlement by record ID",
-		Long: `Query a sink transfer by the record ID its deposit returned.
-
-STATUS is the module's public status:
-
-  Transfer pending   AKT is locked; the Solana mint is not confirmed yet
-  Completed          reporters confirmed the mint on Solana
-  Void               Solana voided the transfer; the settlement shows whether
-                     the refund is waiting for its challenge window or paid
-
-The settlement below it shows reporter votes, holds and the challenge window.`,
-		Example:           `  akt query sink record 12`,
-		Args:              cobra.ExactArgs(1),
-		PersistentPreRunE: QueryPersistentPreRunE,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			id, err := parseSinkTransferID(args[0])
-			if err != nil {
-				return err
-			}
-
-			ctx := cmd.Context()
-			cl := MustLightClientFromContext(ctx)
-
-			res, err := cl.Query().Sink().Sink(ctx, &types.QuerySink{Id: strconv.FormatUint(id, 10)})
-			if err != nil {
-				return err
-			}
-			if err := requireQueryResponse("sink record", res); err != nil {
-				return err
-			}
-
-			return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)
-		},
-	}
-
-	cflags.AddQueryFlagsToCmd(cmd)
-
-	return cmd
-}
-
 // GetSinkTransferCmd returns a transfer's record, void order and settlement
 func GetSinkTransferCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "transfer [id]",
+		Use:               "transfer [owner/height/sequence]",
 		Short:             "Query a transfer's record, void order and settlement",
-		Example:           `  akt query sink transfer 12`,
+		Example:           `  akt query sink transfer <owner>/29188334/1`,
 		Args:              cobra.ExactArgs(1),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -97,7 +54,7 @@ func GetSinkTransferCmd() *cobra.Command {
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)
 
-			res, err := cl.Query().Sink().Transfer(ctx, &types.QueryTransferRequest{Id: id})
+			res, err := cl.Query().Sink().Transfer(ctx, &types.QueryTransferRequest{ID: id})
 			if err != nil {
 				return err
 			}
@@ -114,108 +71,158 @@ func GetSinkTransferCmd() *cobra.Command {
 	return cmd
 }
 
-// GetSinkOpenTransfersCmd pages through transfers that are neither minted nor
-// refunded, in ascending ID order
-func GetSinkOpenTransfersCmd() *cobra.Command {
+// GetSinkTransfersCmd lists transfers through native owner/status pagination.
+func GetSinkTransfersCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "open-transfers",
-		Short: "List pending and voided transfers in ascending ID order",
-		Long: `List transfers that are neither minted nor refunded, with IDs above
---start-after. When more remain, the output names the --start-after value
-for the next page.
+		Use:   "transfers [owner] [status]",
+		Short: "List transfers across all financial states or filter by owner and status",
+		Long: `List all transfers, or supply an owner, a status, or both.
+Statuses: transfer-pending, minted, voided, refund-pending, refunded, all.
 
---held-only reads every page and lists only transfers held for governance
-(a veto or conflicting reports), so one proposal can resolve all of them.`,
-		Example: `  akt query sink open-transfers --limit 50
-
-  # Every transfer waiting for governance
-  akt query sink open-transfers --held-only`,
-		Args:              cobra.NoArgs,
+Use --page-key with the returned key to continue. Transfer cursors retain
+their original owner/status selection. Keep --height and --reverse unchanged
+across pages for a consistent snapshot. --offset and --page require a status.
+Held transfers of every status can also be found with "akt q sink disputes".`,
+		Example: `  akt q sink transfers
+  akt q sink transfers refund-pending
+  akt q sink transfers <owner> minted --limit 50 --height 29188334`,
+		Args:              cobra.MaximumNArgs(2),
 		PersistentPreRunE: QueryPersistentPreRunE,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			startAfter, err := cmd.Flags().GetUint64(flagdefs.FlagStartAfter)
-			if err != nil {
+		RunE: func(cmd *cobra.Command, args []string) error {
+			req := &types.QueryTransfersRequest{}
+			if len(args) > 0 {
+				if status, err := parseSinkStatus(args[0]); err == nil {
+					if len(args) != 1 {
+						return fmt.Errorf("supply owner before status, or status alone")
+					}
+					req.Status = status
+				} else {
+					req.Owner = args[0]
+				}
+			}
+			if len(args) == 2 {
+				status, err := parseSinkStatus(args[1])
+				if err != nil {
+					return err
+				}
+				req.Status = status
+			}
+			if err := req.ValidateBasic(); err != nil {
 				return err
 			}
 
-			limit, err := cmd.Flags().GetUint32(flagdefs.FlagLimit)
+			page, err := ReadPageRequest(cmd.Flags())
 			if err != nil {
 				return err
 			}
-
-			heldOnly, err := cmd.Flags().GetBool(flagdefs.FlagHeldOnly)
-			if err != nil {
-				return err
+			if page.Offset > 0 && req.Status == types.StatusInvalid {
+				return fmt.Errorf("sink transfers --offset or --page requires a financial status")
 			}
+			if page.Offset > 0 && len(page.Key) > 0 {
+				return fmt.Errorf("--page-key cannot be combined with --offset or --page")
+			}
+			req.Pagination = page
 
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)
-
-			page := func(cursor uint64) (*types.QueryOpenTransfersResponse, error) {
-				res, err := cl.Query().Sink().OpenTransfers(ctx, &types.QueryOpenTransfersRequest{
-					StartAfter: cursor,
-					Limit:      limit,
-				})
-				if err != nil {
-					return nil, err
-				}
-				if err := requireQueryResponse("sink open transfers", res); err != nil {
-					return nil, err
-				}
-
-				return res, nil
-			}
-
-			res, err := page(startAfter)
+			res, err := cl.Query().Sink().Transfers(ctx, req)
 			if err != nil {
 				return err
 			}
-
-			if !heldOnly {
-				return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)
+			if err := requireQueryResponse("sink transfers", res); err != nil {
+				return err
 			}
-
-			held := &types.QueryOpenTransfersResponse{}
-			cursor := startAfter
-			for {
-				for _, transfer := range res.Transfers {
-					if transfer.Settlement.Hold != types.Hold_HOLD_NONE {
-						held.Transfers = append(held.Transfers, transfer)
-					}
-				}
-
-				if res.NextStartAfter == 0 {
-					return pretty.PrintQueryResult(cmd, cl.ClientContext(), held)
-				}
-
-				// A cursor that does not advance would page forever.
-				if res.NextStartAfter <= cursor {
-					return fmt.Errorf("sink open transfers query returned malformed node response: next page starts after %d, not after %d", res.NextStartAfter, cursor)
-				}
-				cursor = res.NextStartAfter
-
-				if res, err = page(cursor); err != nil {
-					return err
-				}
-			}
+			return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)
 		},
 	}
-
 	cflags.AddQueryFlagsToCmd(cmd)
-	cflags.AddSinkOpenTransfersFlags(cmd.Flags())
-
+	cflags.AddPaginationFlagsToCmd(cmd, "transfers")
 	return cmd
 }
 
-// GetSinkAccountCmd returns an account's daily deposit usage and pending count
+// GetSinkDisputesCmd lists held transfers, including minted and refunded ones.
+func GetSinkDisputesCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "disputes",
+		Short: "List transfers held for governance, including terminal disputes",
+		Long: `List one page of held transfers, including already minted or refunded
+transfers. Continue with --page-key; keep --height and --reverse unchanged
+across pages for a consistent snapshot.`,
+		Example: `  akt q sink disputes
+  akt q sink disputes --limit 50 --height 29188334`,
+		Args:              cobra.NoArgs,
+		PersistentPreRunE: QueryPersistentPreRunE,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			page, err := ReadPageRequest(cmd.Flags())
+			if err != nil {
+				return err
+			}
+			if page.Offset > 0 && len(page.Key) > 0 {
+				return fmt.Errorf("--page-key cannot be combined with --offset or --page")
+			}
+			ctx := cmd.Context()
+			cl := MustLightClientFromContext(ctx)
+			res, err := cl.Query().Sink().Disputes(ctx, &types.QueryDisputesRequest{Pagination: page})
+			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("sink disputes", res); err != nil {
+				return err
+			}
+			return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)
+		},
+	}
+	cflags.AddQueryFlagsToCmd(cmd)
+	cflags.AddPaginationFlagsToCmd(cmd, "disputes")
+	return cmd
+}
+
+// GetSinkReportersCmd queries the current or retained reporter policies.
+func GetSinkReportersCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "reporters [version|all]",
+		Short: "Query the current reporter policy, a retained version, or all policies",
+		Example: `  akt q sink reporters
+  akt q sink reporters 7
+  akt q sink reporters all`,
+		Args:              cobra.MaximumNArgs(1),
+		PersistentPreRunE: QueryPersistentPreRunE,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			var version uint64
+			if len(args) == 1 {
+				if args[0] == "all" {
+					version = math.MaxUint64
+				} else {
+					var err error
+					version, err = strconv.ParseUint(args[0], 10, 64)
+					if err != nil {
+						return fmt.Errorf("invalid reporter policy version %q: use a version number or all", args[0])
+					}
+				}
+			}
+			ctx := cmd.Context()
+			cl := MustLightClientFromContext(ctx)
+			res, err := cl.Query().Sink().Reporters(ctx, &types.QueryReportersRequest{Version: version})
+			if err != nil {
+				return err
+			}
+			if err := requireQueryResponse("sink reporters", res); err != nil {
+				return err
+			}
+			return pretty.PrintQueryResult(cmd, cl.ClientContext(), res)
+		},
+	}
+	cflags.AddQueryFlagsToCmd(cmd)
+	return cmd
+}
+
+// GetSinkAccountCmd returns lifetime and native epoch deposit usage.
 func GetSinkAccountCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "account [address]",
-		Short: "Query an account's sink usage for the current UTC day",
-		Long: `Query how many deposits and how much AKT an account sent to the sink on
-its last deposit day, and how many of its transfers are still open. These
-are the counters the per-account limits check. Without an address the
-default account is used.`,
+		Short: "Query an account's lifetime and current epoch sink usage",
+		Long: `Query lifetime sent AKT and usage normalized to the current native "day"
+epoch. Without an address the default account is used.`,
 		Example: `  akt query sink account
 
   # Another account
@@ -244,7 +251,7 @@ default account is used.`,
 				return fmt.Errorf("invalid sink account address %q: %w", sender, err)
 			}
 
-			res, err := cl.Query().Sink().Account(ctx, &types.QueryAccountRequest{Sender: sender})
+			res, err := cl.Query().Sink().Account(ctx, &types.QueryAccountRequest{Owner: sender})
 			if err != nil {
 				return err
 			}
@@ -261,12 +268,12 @@ default account is used.`,
 	return cmd
 }
 
-// GetSinkStateCmd returns the module totals and parameters
+// GetSinkStateCmd returns financial totals, native epoch usage and refund head.
 func GetSinkStateCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "state",
-		Short:             "Query sink totals and parameters",
-		Long:              `Query the locked AKT by bucket (pending, minted, voided), refund counters, the reporter epoch and the current parameters.`,
+		Short:             "Query sink totals, epoch usage and the refund candidate",
+		Long:              `Query all five financial populations, native epoch send/refund usage and the oldest refund candidate. A candidate still needs challenge maturity, enabled refunds and capacity before payment.`,
 		Example:           `  akt query sink state`,
 		Args:              cobra.NoArgs,
 		PersistentPreRunE: QueryPersistentPreRunE,
@@ -308,7 +315,7 @@ func GetSinkParamsCmd() *cobra.Command {
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)
 
-			res, err := cl.Query().Sink().State(ctx, &types.QueryStateRequest{})
+			res, err := cl.Query().Sink().Params(ctx, &types.QueryParamsRequest{})
 			if err != nil {
 				return err
 			}

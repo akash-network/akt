@@ -1,16 +1,16 @@
 package pretty
 
 import (
+	"encoding/base64"
 	"fmt"
 	"io"
-	stdmath "math"
 	"strconv"
 	"strings"
 	"time"
 
 	"cosmossdk.io/math"
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	sdkquery "github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/cosmos/gogoproto/proto"
 	"github.com/mr-tron/base58"
 	"github.com/spf13/cobra"
@@ -19,17 +19,13 @@ import (
 )
 
 func init() {
-	Register((*types.QuerySinkResponse)(nil), PrettyFormatterFunc(formatSinkRecord))
 	Register((*types.QueryTransferResponse)(nil), PrettyFormatterFunc(formatSinkTransfer))
-	Register((*types.QueryOpenTransfersResponse)(nil), PrettyFormatterFunc(formatSinkOpenTransfers))
+	Register((*types.QueryTransfersResponse)(nil), PrettyFormatterFunc(formatSinkTransfers))
+	Register((*types.QueryDisputesResponse)(nil), PrettyFormatterFunc(formatSinkDisputes))
+	Register((*types.QueryReportersResponse)(nil), PrettyFormatterFunc(formatSinkReporters))
 	Register((*types.QueryAccountResponse)(nil), PrettyFormatterFunc(formatSinkAccount))
 	Register((*types.QueryStateResponse)(nil), PrettyFormatterFunc(formatSinkState))
 	Register((*types.Params)(nil), PrettyFormatterFunc(formatSinkParams))
-}
-
-// sinkCoin renders a sink uakt amount, which the module keeps as a uint64.
-func sinkCoin(amount uint64) string {
-	return FormatCoin(sdk.NewCoin(types.Denom, math.NewIntFromUint64(amount)))
 }
 
 // sinkTime renders a unix time in seconds; zero means unset.
@@ -40,42 +36,18 @@ func sinkTime(unix int64) string {
 	return time.Unix(unix, 0).UTC().Format(time.RFC3339)
 }
 
-// sinkDay renders a sink usage day: days since the unix epoch in UTC.
-func sinkDay(day uint64) string {
-	if day == 0 || day > uint64(stdmath.MaxInt64/86400) {
-		return "-"
-	}
-	return time.Unix(int64(day)*86400, 0).UTC().Format(time.DateOnly)
-}
-
-// sinkPublicStatusLabel renders the module's public transfer status.
-func sinkPublicStatusLabel(s types.QuerySinkResponse_SinkStatus) string {
-	switch s {
-	case types.QuerySinkResponse_transfer_pending:
-		return StyleYellow.Render("Transfer pending")
-	case types.QuerySinkResponse_completed:
-		return StyleGreen.Render("Completed")
-	case types.QuerySinkResponse_void:
-		return StyleRed.Render("Void")
-	case types.QuerySinkResponse_validation_pending:
-		return Dim("Validation pending")
-	case types.QuerySinkResponse_validated:
-		return Dim("Validated")
-	default:
-		return Dim("Invalid")
-	}
-}
-
 // sinkStatusLabel renders a settlement status as a word.
 func sinkStatusLabel(s types.Status) string {
 	switch s {
-	case types.Status_STATUS_PENDING:
-		return StyleYellow.Render("Pending")
-	case types.Status_STATUS_MINTED:
+	case types.StatusTransferPending:
+		return StyleYellow.Render("Transfer pending")
+	case types.StatusMinted:
 		return StyleGreen.Render("Minted")
-	case types.Status_STATUS_VOIDED:
+	case types.StatusVoided:
 		return StyleRed.Render("Voided")
-	case types.Status_STATUS_REFUNDED:
+	case types.StatusRefundPending:
+		return StyleYellow.Render("Refund pending")
+	case types.StatusRefunded:
 		return Dim("Refunded")
 	default:
 		return Dim(s.String())
@@ -85,11 +57,11 @@ func sinkStatusLabel(s types.Status) string {
 // sinkHoldLabel renders a settlement hold; any hold waits for governance.
 func sinkHoldLabel(h types.Hold) string {
 	switch h {
-	case types.Hold_HOLD_NONE:
+	case types.HoldNone:
 		return "None"
-	case types.Hold_HOLD_VETO:
+	case types.HoldVeto:
 		return StyleRed.Render("Veto")
-	case types.Hold_HOLD_CONFLICT:
+	case types.HoldConflict:
 		return StyleRed.Render("Conflict")
 	default:
 		return Dim(h.String())
@@ -99,24 +71,10 @@ func sinkHoldLabel(h types.Hold) string {
 // sinkOutcomeLabel renders a reported Solana outcome.
 func sinkOutcomeLabel(o types.Outcome) string {
 	switch o {
-	case types.Outcome_OUTCOME_MINTED:
+	case types.OutcomeMinted:
 		return "Minted"
-	case types.Outcome_OUTCOME_VOIDED:
+	case types.OutcomeVoided:
 		return "Voided"
-	default:
-		return Dim("Unspecified")
-	}
-}
-
-// sinkDecisionLabel renders a governance resolution decision.
-func sinkDecisionLabel(d types.Decision) string {
-	switch d {
-	case types.Decision_DECISION_RESTART:
-		return "Restart"
-	case types.Decision_DECISION_CONFIRM_MINT:
-		return "Confirm mint"
-	case types.Decision_DECISION_CONFIRM_VOID:
-		return "Confirm void"
 	default:
 		return Dim("Unspecified")
 	}
@@ -135,25 +93,32 @@ func sinkObservation(o types.Observation) string {
 	return fmt.Sprintf("%s at slot %s, signature %s", sinkOutcomeLabel(o.Outcome), strconv.FormatUint(o.Slot, 10), sinkSignature(o.TransactionSignature))
 }
 
-// sinkThreshold renders a reporter threshold against its member count.
-func sinkThreshold(threshold uint32, members int) string {
-	return fmt.Sprintf("%d of %d", threshold, members)
+// sinkThreshold displays both the governed decimal ratio and its rounded quorum.
+func sinkThreshold(threshold math.LegacyDec, members int) string {
+	if threshold.IsNil() || threshold.IsNegative() || threshold.GT(math.LegacyOneDec()) {
+		return "Invalid threshold"
+	}
+	required := threshold.MulInt64(int64(members)).Ceil().TruncateInt64()
+	ratio := strings.TrimRight(strings.TrimRight(threshold.String(), "0"), ".")
+	return fmt.Sprintf("%s (%d of %d)", ratio, required, members)
 }
 
-// decodeSinkRecord decodes a transfer's 77-byte record. The record is node
-// input, so a value that does not decode is a malformed response.
-func decodeSinkRecord(state types.TransferState) (types.Transfer, error) {
-	transfer, err := types.DecodeTransfer(state.Record)
-	if err != nil {
-		return types.Transfer{}, fmt.Errorf("sink query returned malformed node response: transfer record does not decode: %w", err)
+func validateSinkTransfer(state types.TransferState) error {
+	if err := state.ID.ValidateBasic(); err != nil {
+		return fmt.Errorf("sink query returned malformed node response: %w", err)
 	}
-	return transfer, nil
+	if err := state.Data.ValidateBasic(); err != nil {
+		return fmt.Errorf("sink query returned malformed node response: %w", err)
+	}
+	if !state.Status.IsValid() {
+		return fmt.Errorf("sink query returned malformed node response: invalid financial status")
+	}
+	return nil
 }
 
 // RenderSinkTransfer renders a transfer's record and settlement.
 func RenderSinkTransfer(state types.TransferState) (string, error) {
-	transfer, err := decodeSinkRecord(state)
-	if err != nil {
+	if err := validateSinkTransfer(state); err != nil {
 		return "", err
 	}
 
@@ -161,26 +126,30 @@ func RenderSinkTransfer(state types.TransferState) (string, error) {
 	s := state.Settlement
 
 	fmt.Fprintln(&buf, Section("Transfer"))
-	KV(&buf, "ID", Bold(strconv.FormatUint(transfer.ID, 10)))
-	KV(&buf, "Sender", sdk.AccAddress(transfer.Sender[:]).String())
-	KV(&buf, "Recipient", base58.Encode(transfer.Recipient[:]))
-	KV(&buf, "Amount", sinkCoin(transfer.Amount))
-	KV(&buf, "Height", FormatHeight(int64(transfer.Height)))
-	KV(&buf, "Void Ordered", FormatBool(state.VoidOrdered))
+	KV(&buf, "ID", Bold(state.ID.String()))
+	KV(&buf, "Sender", state.ID.Owner)
+	KV(&buf, "Recipient", state.Data.Dest)
+	KV(&buf, "Amount", FormatCoin(state.Data.Amount))
+	KV(&buf, "Height", FormatHeight(state.ID.Height))
+	if s.VoidAuthorization != nil {
+		KV(&buf, "Void Ordered Height", FormatHeight(s.VoidAuthorization.RequestedHeight))
+		KV(&buf, "Void Ordered Round", strconv.FormatUint(s.VoidAuthorization.RequestedRound, 10))
+	}
 
 	Newline(&buf)
 	fmt.Fprintln(&buf, Section("Settlement"))
 	minted, voided := s.Tallies()
-	KV(&buf, "Status", sinkStatusLabel(s.Status))
+	KV(&buf, "Status", sinkStatusLabel(state.Status))
 	KV(&buf, "Hold", sinkHoldLabel(s.Hold))
 	KV(&buf, "Round", strconv.FormatUint(s.Round, 10))
-	KV(&buf, "Reporter Epoch", strconv.FormatUint(s.Policy.Epoch, 10))
+	KV(&buf, "Policy Version", strconv.FormatUint(s.Policy.Version, 10))
 	KV(&buf, "Threshold", sinkThreshold(s.Policy.Threshold, len(s.Policy.Members)))
 	KV(&buf, "Votes", fmt.Sprintf("%d minted, %d voided", minted, voided))
 	KV(&buf, "Challenge Ends", sinkTime(s.ChallengeEnd))
 	if s.VetoBy != "" {
 		KV(&buf, "Vetoed By", s.VetoBy)
 		KV(&buf, "Veto Reason", s.VetoReason)
+		KV(&buf, "Veto Policy Version", strconv.FormatUint(s.VetoPolicyVersion, 10))
 	}
 	if s.GovernanceObservation != nil {
 		KV(&buf, "Governance Evidence", sinkObservation(*s.GovernanceObservation))
@@ -192,6 +161,7 @@ func RenderSinkTransfer(state types.TransferState) (string, error) {
 	for _, vote := range s.Votes {
 		rows = append(rows, []string{
 			vote.Reporter,
+			strconv.FormatUint(vote.PolicyVersion, 10),
 			sinkOutcomeLabel(vote.Observation.Outcome),
 			strconv.FormatUint(vote.Observation.Slot, 10),
 			sinkSignature(vote.Observation.TransactionSignature),
@@ -199,30 +169,16 @@ func RenderSinkTransfer(state types.TransferState) (string, error) {
 	}
 	WriteTableColsOrEmpty(&buf, []ColDef{
 		{Header: "REPORTER"},
+		{Header: "POLICY VERSION"},
 		{Header: "OUTCOME"},
-		{Header: "SLOT", Align: AlignRight},
+		{
+			Header: "SLOT",
+			Align:  AlignRight,
+		},
 		{Header: "SIGNATURE"},
 	}, rows, "(no votes)")
 
 	return buf.String(), nil
-}
-
-func formatSinkRecord(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	res := msg.(*types.QuerySinkResponse)
-
-	transfer, err := RenderSinkTransfer(res.Transfer)
-	if err != nil {
-		return err
-	}
-
-	var buf strings.Builder
-	fmt.Fprintln(&buf, Section("Sink Transfer"))
-	KV(&buf, "Status", sinkPublicStatusLabel(res.Status))
-	Newline(&buf)
-	buf.WriteString(transfer)
-
-	_, err = fmt.Fprint(w, buf.String())
-	return err
 }
 
 func formatSinkTransfer(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
@@ -235,56 +191,97 @@ func formatSinkTransfer(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg 
 	return err
 }
 
-// RenderSinkOpenTransfers renders a page of open transfers as a table.
-func RenderSinkOpenTransfers(res *types.QueryOpenTransfersResponse) (string, error) {
+// RenderSinkTransfers renders one native page without interpreting its cursor.
+func RenderSinkTransfers(transfers []types.TransferState, page *sdkquery.PageResponse) (string, error) {
 	var buf strings.Builder
 
-	rows := make([][]string, 0, len(res.Transfers))
-	for _, state := range res.Transfers {
-		transfer, err := decodeSinkRecord(state)
-		if err != nil {
+	rows := make([][]string, 0, len(transfers))
+	for _, state := range transfers {
+		if err := validateSinkTransfer(state); err != nil {
 			return "", err
 		}
 
 		s := state.Settlement
 		rows = append(rows, []string{
-			strconv.FormatUint(transfer.ID, 10),
-			sinkStatusLabel(s.Status),
+			state.ID.String(),
+			sinkStatusLabel(state.Status),
 			sinkHoldLabel(s.Hold),
-			sinkCoin(transfer.Amount),
-			sdk.AccAddress(transfer.Sender[:]).String(),
-			base58.Encode(transfer.Recipient[:]),
+			FormatCoin(state.Data.Amount),
+			state.Data.Dest,
 			strconv.FormatUint(s.Round, 10),
 			sinkTime(s.ChallengeEnd),
 		})
 	}
 
 	WriteTableColsOrEmpty(&buf, []ColDef{
-		{Header: "ID", Align: AlignRight},
+		{
+			Header: "ID",
+			Align:  AlignRight,
+		},
 		{Header: "STATUS"},
 		{Header: "HOLD"},
-		{Header: "AMOUNT", Align: AlignRight},
-		{Header: "SENDER"},
+		{
+			Header: "AMOUNT",
+			Align:  AlignRight,
+		},
 		{Header: "RECIPIENT"},
-		{Header: "ROUND", Align: AlignRight},
+		{
+			Header: "ROUND",
+			Align:  AlignRight,
+		},
 		{Header: "CHALLENGE ENDS"},
-	}, rows, "(no open transfers)")
+	}, rows, "(no transfers)")
 
-	if res.NextStartAfter != 0 {
+	if page != nil && len(page.NextKey) > 0 {
 		Newline(&buf)
-		fmt.Fprintf(&buf, "%s %s\n", Dim("More transfers:"), Bold(fmt.Sprintf("akt q sink open-transfers --start-after %d", res.NextStartAfter)))
+		KV(&buf, "Next page key", base64.StdEncoding.EncodeToString(page.NextKey))
+		fmt.Fprintln(&buf, Dim("  Continue with --page-key; retain --height and --reverse for consistent paging."))
 	}
 
 	return buf.String(), nil
 }
 
-func formatSinkOpenTransfers(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
-	table, err := RenderSinkOpenTransfers(msg.(*types.QueryOpenTransfersResponse))
+func formatSinkTransfers(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
+	res := msg.(*types.QueryTransfersResponse)
+	table, err := RenderSinkTransfers(res.Transfers, res.Pagination)
 	if err != nil {
 		return err
 	}
 
 	_, err = fmt.Fprint(w, table)
+	return err
+}
+
+func formatSinkDisputes(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
+	res := msg.(*types.QueryDisputesResponse)
+	table, err := RenderSinkTransfers(res.Transfers, res.Pagination)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprint(w, table)
+	return err
+}
+
+// RenderSinkReporters shows the membership and quorum of each returned policy.
+func RenderSinkReporters(res *types.QueryReportersResponse) string {
+	var buf strings.Builder
+	if len(res.Reporters) == 0 {
+		fmt.Fprintln(&buf, "(no reporter policy configured)")
+	}
+	for i, policy := range res.Reporters {
+		if i > 0 {
+			Newline(&buf)
+		}
+		fmt.Fprintln(&buf, Section("Reporter Policy"))
+		KV(&buf, "Version", strconv.FormatUint(policy.Version, 10))
+		KV(&buf, "Threshold", sinkThreshold(policy.Threshold, len(policy.Members)))
+		writeSinkList(&buf, sinkParamsKeyWidth, "Members", policy.Members)
+	}
+	return buf.String()
+}
+
+func formatSinkReporters(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg proto.Message) error {
+	_, err := fmt.Fprint(w, RenderSinkReporters(msg.(*types.QueryReportersResponse)))
 	return err
 }
 
@@ -294,15 +291,9 @@ func RenderSinkAccount(res *types.QueryAccountResponse) string {
 	u := res.Usage
 
 	fmt.Fprintln(&buf, Section("Sink Account"))
-	if len(u.Sender) == 0 {
-		KV(&buf, "Sender", "-")
-	} else {
-		KV(&buf, "Sender", sdk.AccAddress(u.Sender).String())
-	}
-	KV(&buf, "Day", sinkDay(u.Day))
-	KV(&buf, "Deposits That Day", strconv.FormatUint(uint64(u.DailyCount), 10))
-	KV(&buf, "Amount That Day", sinkCoin(u.DailyAmount))
-	KV(&buf, "Open Transfers", strconv.FormatUint(uint64(u.PendingCount), 10))
+	KV(&buf, "Epoch", strconv.FormatUint(res.Epoch, 10))
+	KV(&buf, "Total Sent", formatCoinSafe(u.TotalSent))
+	KV(&buf, "Sent This Epoch", formatCoinSafe(u.EpochSent))
 
 	return buf.String()
 }
@@ -331,38 +322,24 @@ func RenderSinkParams(p types.Params) string {
 	fmt.Fprintln(&buf, Section("Sink Parameters"))
 	kv("Deposits", enabled(p.Enabled))
 	kv("Refunds", enabled(p.RefundsEnabled))
-	if p.MinTransfer == 0 {
-		kv("Min Transfer", "None")
+	kv("Min Transfer", formatCoinSafe(p.MinAmountPerTransfer))
+	kv("Max Transfer", formatCoinSafe(p.MaxAmountPerTransfer))
+	kv("Send Cap Per Epoch", formatCoinSafe(p.MaxTransferAmountPerEpoch))
+	if !p.MaxEpochAmountPerAccount.Amount.IsNil() && p.MaxEpochAmountPerAccount.IsZero() {
+		kv("Account Cap Per Epoch", "No limit")
 	} else {
-		kv("Min Transfer", sinkCoin(p.MinTransfer))
+		kv("Account Cap Per Epoch", formatCoinSafe(p.MaxEpochAmountPerAccount))
 	}
-	kv("Max Transfer", sinkCoin(p.MaxTransfer))
-	kv("Solana Daily Mint Cap", sinkCoin(p.SolanaDailyMintCap))
-	if p.MaxDailyAmountPerAccount == 0 {
-		kv("Max Amount Per Account Per Day", "No limit")
-	} else {
-		kv("Max Amount Per Account Per Day", sinkCoin(p.MaxDailyAmountPerAccount))
-	}
-	kv("Deposits Per Account Per Day", strconv.FormatUint(uint64(p.MaxDailyPerAccount), 10))
-	kv("Open Transfers Per Account", strconv.FormatUint(uint64(p.MaxPendingPerAccount), 10))
 	writeSinkList(&buf, sinkParamsKeyWidth, "Reporters", p.Reporters)
-	kv("Reporter Threshold", sinkThreshold(p.ReporterThreshold, len(p.Reporters)))
-	if p.ChallengePeriodSeconds > uint64(stdmath.MaxInt64/int64(time.Second)) {
-		kv("Challenge Period", strconv.FormatUint(p.ChallengePeriodSeconds, 10)+"s")
-	} else {
-		kv("Challenge Period", FormatDuration(time.Duration(p.ChallengePeriodSeconds)*time.Second))
-	}
-	kv("Daily Refund Cap", sinkCoin(p.DailyRefundCap))
+	kv("Reporter Threshold", sinkThreshold(p.ReportersThreshold, len(p.Reporters)))
+	kv("Challenge Period", FormatDuration(p.ReporterChallengePeriod))
+	kv("Refund Cap Per Epoch", formatCoinSafe(p.MaxEpochRefund))
 	if p.PauseGuardian == "" {
 		kv("Pause Guardian", "None")
 	} else {
 		kv("Pause Guardian", p.PauseGuardian)
 	}
-	vaults := make([]string, 0, len(p.VaultAllowlist))
-	for _, vault := range p.VaultAllowlist {
-		vaults = append(vaults, base58.Encode(vault))
-	}
-	writeSinkList(&buf, sinkParamsKeyWidth, "Vault Allowlist", vaults)
+	writeSinkList(&buf, sinkParamsKeyWidth, "Vault Allowlist", p.AllowedDestinationVaults)
 
 	return buf.String()
 }
@@ -388,7 +365,7 @@ func formatSinkParams(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg pr
 	return err
 }
 
-// RenderSinkState renders the module totals followed by its parameters.
+// RenderSinkState keeps each financial population separate from epoch usage.
 func RenderSinkState(res *types.QueryStateResponse) (string, error) {
 	t := res.Totals
 
@@ -399,24 +376,24 @@ func RenderSinkState(res *types.QueryStateResponse) (string, error) {
 
 	var buf strings.Builder
 	fmt.Fprintln(&buf, Section("Sink Totals"))
-	KV(&buf, "Last Transfer ID", strconv.FormatUint(t.LastTransferId, 10))
-	KV(&buf, "Pending", sinkCoin(t.PendingAmount))
-	KV(&buf, "Minted", sinkCoin(t.MintedAmount))
-	KV(&buf, "Voided", sinkCoin(t.VoidedAmount))
-	KV(&buf, "Refunded", sinkCoin(t.RefundedAmount))
-	if t.RefundDay == 0 {
-		KV(&buf, "Refunded Today", "-")
-	} else {
-		KV(&buf, "Refunded Today", fmt.Sprintf("%s on %s", sinkCoin(t.RefundedToday), sinkDay(t.RefundDay)))
+	population := func(label string, amount string, count uint64) {
+		KV(&buf, label, fmt.Sprintf("%s in %d transfers", amount, count))
 	}
-	KV(&buf, "Locked", Bold(sinkCoin(locked)))
-	// pending_count covers every transfer not yet minted or refunded, so it
-	// includes voided transfers waiting for their refund.
-	KV(&buf, "Open Transfers", strconv.FormatUint(t.PendingCount, 10))
-	KV(&buf, "Reporter Epoch", strconv.FormatUint(t.ReporterEpoch, 10))
-
-	Newline(&buf)
-	buf.WriteString(RenderSinkParams(res.Params))
+	population("Transfer Pending", FormatCoin(t.PendingAmount), t.PendingCount)
+	population("Minted", FormatCoin(t.MintedAmount), t.MintedCount)
+	population("Voided", FormatCoin(t.VoidedAmount), t.VoidedCount)
+	population("Refund Pending", FormatCoin(t.RefundPendingAmount), t.RefundPendingCount)
+	population("Refunded", formatCoinSafe(t.RefundedAmount), t.RefundedCount)
+	KV(&buf, "Locked", Bold(FormatCoin(locked)))
+	KV(&buf, "Epoch", strconv.FormatUint(res.Epoch, 10))
+	KV(&buf, "Sent This Epoch", formatCoinSafe(res.SendUsage.Amount))
+	KV(&buf, "Refunded This Epoch", formatCoinSafe(res.RefundUsage.Amount))
+	if res.RefundHead == nil {
+		KV(&buf, "Refund Candidate", "None")
+	} else {
+		KV(&buf, "Refund Candidate", res.RefundHead.String())
+		fmt.Fprintln(&buf, Dim("  Payment still requires challenge maturity, authorization, enabled refunds and capacity."))
+	}
 
 	return buf.String(), nil
 }
@@ -431,12 +408,12 @@ func formatSinkState(w io.Writer, _ *cobra.Command, _ sdkclient.Context, msg pro
 	return err
 }
 
-// SinkRecordCommand is the follow-up command for a deposited transfer.
-func SinkRecordCommand(id string) string {
+// SinkTransferCommand is the follow-up command for a deposited transfer.
+func SinkTransferCommand(id string) string {
 	if id == "" {
-		id = "<id>"
+		id = "<owner/height/sequence>"
 	}
-	return "akt q sink record " + id
+	return "akt q sink transfer " + id
 }
 
 // RenderSinkDeposit renders the message detail of a sink deposit. The
@@ -449,13 +426,13 @@ func RenderSinkDeposit(m *types.MsgSink, recordID string) string {
 	KV(&buf, "Destination", m.Dest)
 	KV(&buf, "Amount", formatCoinSafe(m.Amount))
 	if recordID != "" {
-		KV(&buf, "Record ID", Bold(recordID))
+		KV(&buf, "Transfer ID", Bold(recordID))
 	}
 
 	Newline(&buf)
 	fmt.Fprintln(&buf, Dim("  The AKT is locked on Akash. It is minted on Solana once a relayer"))
-	fmt.Fprintln(&buf, Dim("  proves the record, usually within a few minutes. Follow it with:"))
-	fmt.Fprintf(&buf, "    %s\n", Bold(SinkRecordCommand(recordID)))
+	fmt.Fprintln(&buf, Dim("  proves the record. Follow it with:"))
+	fmt.Fprintf(&buf, "    %s\n", Bold(SinkTransferCommand(recordID)))
 
 	return buf.String()
 }

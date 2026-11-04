@@ -1285,14 +1285,24 @@ change that public behavior.
   These commands enforce the required deployment identity and run the SDK
   message's `ValidateBasic` contract after parsing, so a node never receives an
   action the local boundary or message type already rejects.
-- **Sink commands validate what the module would reject**: deposits take an
-  exact `uakt` amount (a fractional `uakt` value is rejected, never
-  truncated) and a canonical Solana address, transfer IDs must be canonical
-  positive integers, reporter evidence must carry a positive slot and a
-  64-byte signature, reasons must fit the module's 1 to 256 byte limit, and
-  governance resolutions must pair a confirmation with matching evidence and
-  a restart with none. Each command builds the message and checks it locally
-  before broadcast, so these mistakes never cost gas.
+- **Sink follows the public SDK contract**: the CLI parses composite
+  `owner/height/sequence` IDs through the SDK and consumes typed transfer
+  aggregates. Storage codecs and query-prefix layouts remain in node.
+  Transfers and disputes use opaque native pagination; terminal disputes are
+  visible independently of financial status. Reports name policy versions,
+  governance voids/resolutions name the expected round, and all constructed
+  messages run SDK validation before broadcast. Amount caps use Coins,
+  reporter quorum is a decimal ratio, and quota usage follows native chain
+  epochs separately from the challenge Duration. Pretty renderers share the
+  same typed data as JSON output and preserve full identities and evidence.
+  Sink uses the existing chain transport, capability gating and action log.
+  The updated SDK event service accepts the selected node URI and owns its
+  RPC connection; the event command passes that URI through.
+  Codec initialization uses the SDK's options and gogoreflection registration
+  for Kubernetes Quantity. The CLI resolves Amino descriptors in a local
+  registry, normalizing Quantity's legacy gogo import path before validating
+  that graph. Signer lookups retain the SDK global resolver and address codecs;
+  direct, direct-aux and Amino signing remain available.
 - **Wasm artifacts and intent are validated before broadcast**: upload parsing
   distinguishes raw Wasm from gzip, rejects truncated or corrupt streams, and
   verifies optional reproducible-build provenance against the uncompressed

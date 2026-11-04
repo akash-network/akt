@@ -130,11 +130,12 @@ func TestRegisteredFormattersDispatch(t *testing.T) {
 		&bmetypes.QueryVaultStateResponse{},
 		&bmetypes.QueryLedgerRecordsResponse{},
 
-		// Sink. Record and transfer responses need a real 77-byte record and
-		// are covered in sink_test.go; an empty record is a malformed reply.
-		&sinktypes.QueryOpenTransfersResponse{},
+		// Sink transfer responses need valid typed data, covered in sink_test.go.
+		&sinktypes.QueryTransfersResponse{},
+		&sinktypes.QueryDisputesResponse{},
+		&sinktypes.QueryReportersResponse{},
 		&sinktypes.QueryAccountResponse{},
-		&sinktypes.QueryStateResponse{},
+		&sinktypes.QueryStateResponse{Totals: sinktypes.DefaultTotals()},
 		&sinktypes.Params{},
 
 		// CosmWasm.
