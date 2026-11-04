@@ -558,6 +558,28 @@ func TestCreateAPIKeyDefinitiveFailureIsNotMarkedPending(t *testing.T) {
 	}
 }
 
+func TestCreateAPIKeySessionRefusalIsRecordedAsFailed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"code":"session_required"}`))
+	}))
+	defer srv.Close()
+
+	log := openTestLog(t)
+	_, err := New(srv.URL, "test-key").WithActionLog(log).CreateAPIKey(context.Background(), "ci", "")
+	if !errors.Is(err, ErrSessionRequired) {
+		t.Fatalf("session refusal = %v, want ErrSessionRequired", err)
+	}
+
+	entries, readErr := log.Read(actionlog.Filter{Type: actionlog.TypeConsole})
+	if readErr != nil {
+		t.Fatalf("read action log: %v", readErr)
+	}
+	if len(entries) != 1 || entries[0].Action != "create-api-key" || entries[0].Status != "failed" {
+		t.Fatalf("session refusal action entry = %+v, want one failed create", entries)
+	}
+}
+
 func TestConsoleWithoutActionLogIsNoop(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == http.MethodGet {

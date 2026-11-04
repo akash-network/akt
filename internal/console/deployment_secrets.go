@@ -46,7 +46,7 @@ func sanitizeSecretError(err error) error {
 	if err == nil {
 		return nil
 	}
-	for _, known := range []error{context.Canceled, context.DeadlineExceeded, ErrUnauthorized, ErrInsufficientFunds, ErrNotFound, ErrAlreadyClosed} {
+	for _, known := range []error{context.Canceled, context.DeadlineExceeded, ErrUnauthorized, ErrInsufficientFunds, ErrNotFound, ErrSessionRequired, ErrAlreadyClosed} {
 		if errors.Is(err, known) {
 			return known
 		}

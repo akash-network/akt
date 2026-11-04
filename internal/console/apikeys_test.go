@@ -94,6 +94,36 @@ func TestCreateAPIKeyRejectsIncompleteOneTimeSecret(t *testing.T) {
 	}
 }
 
+func TestCreateAPIKeyFromAnAPIKeyNeedsASession(t *testing.T) {
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"ForbiddenError","message":"An API key can only be created from a signed-in Console session.","code":"session_required"}`))
+	}))
+	defer srv.Close()
+
+	_, err := console.New(srv.URL, "test-key").CreateAPIKey(context.Background(), "ci-key", "")
+	require.ErrorIs(t, err, console.ErrSessionRequired)
+	assert.NotContains(t, err.Error(), "outcome unknown", "a refused create is definitive")
+	assert.Equal(t, int32(1), requests.Load(), "a refused create is never replayed")
+}
+
+func TestCreateAPIKeyKeepsOtherForbiddenAnswersUnexpected(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"error":"ForbiddenError","message":"Forbidden","code":"forbidden"}`))
+	}))
+	defer srv.Close()
+
+	_, err := console.New(srv.URL, "test-key").CreateAPIKey(context.Background(), "ci-key", "")
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, console.ErrSessionRequired)
+	var httpErr *console.HTTPError
+	require.ErrorAs(t, err, &httpErr)
+	assert.Equal(t, http.StatusForbidden, httpErr.StatusCode)
+}
+
 func TestDeleteAPIKey(t *testing.T) {
 	id := "11111111-1111-4111-8111-111111111111"
 	var lists atomic.Int32

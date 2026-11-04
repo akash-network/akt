@@ -583,6 +583,27 @@ func TestAPIKeyCreateShowsSecretOnceWithWarning(t *testing.T) {
 	}
 }
 
+func TestAPIKeyCreateRefusedForAnAPIKeyPointsToConsole(t *testing.T) {
+	m := newAuthedManager(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"An API key can only be created from a signed-in Console session.","code":"session_required"}`))
+	}))
+	defer srv.Close()
+
+	out, err := execConsole(t, m, srv.URL, "apikey", "create", "ci")
+	if !errors.Is(err, console.ErrSessionRequired) {
+		t.Fatalf("apikey create refused for a key = %v, want ErrSessionRequired", err)
+	}
+	if !strings.Contains(err.Error(), "console.akash.network > Settings > API Keys") || !strings.Contains(err.Error(), "akt console login") {
+		t.Errorf("error should name where to create the key and how to store it, got %q", err)
+	}
+	if strings.Contains(out, "apiKey") {
+		t.Errorf("a refused create must print no key, got %q", out)
+	}
+}
+
 func TestAPIKeyDeleteMissingResourceDoesNotReportSuccess(t *testing.T) {
 	m := newAuthedManager(t)
 
