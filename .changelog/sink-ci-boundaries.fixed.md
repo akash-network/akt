@@ -1,0 +1,1 @@
+- Complete Sink command, output and codec failure coverage for PR #124's changed-line CI gate, including missing signers, proposal flags, malformed responses and startup errors.
