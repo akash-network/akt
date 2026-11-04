@@ -1296,6 +1296,10 @@ change that public behavior.
   epochs separately from the challenge Duration. Pretty renderers share the
   same typed data as JSON output and preserve full identities and evidence.
   Sink uses the existing chain transport, capability gating and action log.
+  Confirmed Sink broadcasts pass their submitted messages to the shared pretty
+  printer because the SDK receipt can omit its transaction body. Receipt events
+  still supply the transfer ID; missing fee and body data remain unknown. This
+  does not turn a pending or failed broadcast into a successful deposit.
   The updated SDK event service accepts the selected node URI and owns its
   RPC connection; the event command passes that URI through.
   Codec initialization uses the SDK's options and gogoreflection registration

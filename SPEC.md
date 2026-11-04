@@ -7477,6 +7477,13 @@ the record, and reporters confirm it on Akash, so
 so and names the follow-up command. Amounts use `FormatCoin()`; addresses,
 Solana keys and signatures are never shortened (§10.10 Sink).
 
+The SDK can return a confirmed broadcast receipt without its transaction body.
+Sink commands pass the submitted message to the shared pretty printer so its
+message details and event-derived composite ID still render in that case.
+This fallback applies only to confirmed receipts. Pending and failed receipts
+must not claim the deposit locked funds. It does not fabricate fees or a
+transaction body, and structured output remains the original receipt data.
+
 | Message | Title | Fields |
 |---|---|---|
 | `MsgSink` | "Sink Deposit" | Sender, Destination, Amount, Transfer ID (the composite `id` in typed `akash.sink.v1.EventTransferCreated`, when included), then a note that minting on Solana follows and `akt q sink transfer <owner/height/sequence>` |

@@ -99,7 +99,7 @@ Use a Solana wallet address, not a token account.`,
 				return err
 			}
 
-			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp, msg)
 		},
 	}
 
@@ -150,7 +150,7 @@ off; a governance proposal ("akt tx sink propose-params") turns them back on.`,
 				return err
 			}
 
-			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp, msg)
 		},
 	}
 
@@ -247,7 +247,7 @@ current round, which are read from the chain before signing. Use
 				return err
 			}
 
-			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp, msg)
 		},
 	}
 
@@ -303,7 +303,7 @@ through "akt tx sink propose-veto".`,
 				return err
 			}
 
-			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp, msg)
 		},
 	}
 
@@ -353,7 +353,7 @@ refund cap is reached.`,
 				return err
 			}
 
-			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
+			return pretty.PrintTxResult(cmd, cl.ClientContext(), resp, msg)
 		},
 	}
 
@@ -728,5 +728,5 @@ func submitSinkProposal(cmd *cobra.Command, cl aclient.Client, msg sinkProposalM
 		return err
 	}
 
-	return pretty.PrintTxResult(cmd, cl.ClientContext(), resp)
+	return pretty.PrintTxResult(cmd, cl.ClientContext(), resp, proposal)
 }

@@ -15,6 +15,7 @@ import (
 	sdkquery "github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/cosmos/gogoproto/jsonpb"
 	"github.com/mr-tron/base58"
+	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
 
 	types "pkg.akt.dev/go/node/sink/v1"
@@ -404,6 +405,58 @@ func TestSinkDepositReceiptPreservesCompositeIDAndMessageScope(t *testing.T) {
 	require.NotContains(t, buf.String(), "Transfer ID:")
 	res.Events[0].Attributes[1].Value = `{"height":"0"}`
 	require.Error(t, fmtSinkDeposit(&buf, nil, sdkclient.Context{}, msg, res, 0))
+}
+
+func TestSinkBroadcastReceiptWithoutBody(t *testing.T) {
+	RegisterAllTxFormatters()
+	state := sinkTestTransfer()
+	msg := &types.MsgSink{
+		Sender: state.ID.Owner,
+		Dest:   state.Data.Dest,
+		Amount: state.Data.Amount,
+	}
+	event, err := sdk.TypedEventToEvent(&types.EventTransferCreated{
+		ID:        state.ID,
+		Sender:    msg.Sender,
+		Recipient: msg.Dest,
+		Amount:    msg.Amount,
+		Height:    state.ID.Height,
+	})
+	require.NoError(t, err)
+	for _, status := range []string{TxStatusConfirmed, TxStatusPending, TxStatusFailed} {
+		t.Run(status, func(t *testing.T) {
+			resp := &sdk.TxResponse{TxHash: strings.Repeat("A", 64)}
+			switch status {
+			case TxStatusConfirmed:
+				resp.Height = state.ID.Height
+				resp.Events = []abci.Event{abci.Event(event)}
+			case TxStatusFailed:
+				resp.Code = 5
+			}
+			cmd := &cobra.Command{}
+			cmd.Flags().String("output", "pretty", "")
+			var buf bytes.Buffer
+			cmd.SetOut(&buf)
+			require.NoError(t, PrintTxResult(cmd, sdkclient.Context{}, resp, msg))
+			plain := ansi.Strip(buf.String())
+			if status == TxStatusConfirmed {
+				require.Contains(t, plain, "Sink Deposit")
+				require.Contains(t, plain, "1.5 AKT")
+				require.Contains(t, plain, "akt q sink transfer "+state.ID.String())
+				require.Contains(t, plain, "unknown (transaction body not returned)")
+			} else {
+				require.NotContains(t, plain, "AKT is locked")
+				require.NotContains(t, plain, "Transfer ID:")
+			}
+			require.Nil(t, resp.Tx)
+
+			buf.Reset()
+			require.NoError(t, cmd.Flags().Set("output", "json"))
+			require.NoError(t, PrintTxResult(cmd, sdkclient.Context{}, resp, msg))
+			require.NotContains(t, buf.String(), `"body"`)
+			require.NotContains(t, buf.String(), `"fee"`)
+		})
+	}
 }
 
 func TestSinkFormattersRejectMalformedTransferData(t *testing.T) {
