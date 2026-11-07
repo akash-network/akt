@@ -78,6 +78,24 @@ Remote commands have their own effects. Choose a command within the user's
 task; structured output requires an explicit command instead of an interactive
 shell session.
 
+## Console projects
+
+In a Console team, `akt deploy` files the deployment in the context's project,
+and `console deployment list` shows only that project's deployments. Preview
+the project a deployment would go to before deploying into another one:
+
+```bash
+akt deploy deploy.yaml --context example --console-project checkout-api --dry-run
+akt console deployment list --context example --console-project checkout-api -o json
+```
+
+Moving a deployment to another project of the same team needs an owner or
+admin role, and changes who in the team can see and manage it:
+
+```bash
+akt console deployment move 12345 checkout-api --context example -o json
+```
+
 ## Inspect a chain deployment
 
 ```bash

@@ -3,6 +3,7 @@ package console
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -73,6 +74,64 @@ func TestCreateDeploymentSealsValuesAndInherits(t *testing.T) {
 	}
 	if posts != 1 || result.DSeq != "42" {
 		t.Fatalf("posts=%d result=%v", posts, result)
+	}
+}
+
+func TestUnpricedDepositIsAFinalRefusalThatInvitesARetry(t *testing.T) {
+	_, encryption := secretTestContext(t)
+	tests := []struct {
+		name    string
+		options []CreateDeploymentOptions
+	}{
+		{name: "legacy"},
+		{name: "sealed", options: []CreateDeploymentOptions{{Secrets: SecretValues{}}}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			log := openTestLog(t)
+			posts, listings := 0, 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.Method + " " + r.URL.Path {
+				case "GET /v1/sdl-secrets-context":
+					_ = json.NewEncoder(w).Encode(envelope(encryption))
+				case "GET /v1/deployments":
+					listings++
+					_, _ = io.WriteString(w, `{"data":{"deployments":[],"pagination":{"total":0,"skip":0,"limit":100,"hasMore":false}}}`)
+				case "POST /v1/deployments":
+					posts++
+					w.WriteHeader(http.StatusServiceUnavailable)
+					_, _ = io.WriteString(w, `{"error":"ServiceUnavailableError","message":"The deposit could not be priced, try again shortly","code":"deposit_price_unavailable","type":"server_error"}`)
+				default:
+					t.Errorf("unexpected request %s %s", r.Method, r.URL.Path)
+					w.WriteHeader(http.StatusBadRequest)
+				}
+			}))
+			defer srv.Close()
+
+			_, err := New(srv.URL, "").WithActionLog(log).CreateDeployment(context.Background(), actionLogTestSDL, tc.options...)
+			var refusal *HTTPError
+			if !errors.As(err, &refusal) || refusal.Code != CodeDepositPriceUnavailable {
+				t.Fatalf("error=%v; want the deposit_price_unavailable refusal", err)
+			}
+			for _, want := range []string{"(deposit_price_unavailable, HTTP 503)", "Nothing was signed", "run the same command again"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not say %q", err, want)
+				}
+			}
+			if strings.Contains(err.Error(), "outcome unknown") {
+				t.Fatalf("a refusal made before signing must not read as an unknown outcome: %v", err)
+			}
+			if posts != 1 || listings > 1 {
+				t.Fatalf("POST=%d listings=%d; the create must be neither replayed nor reconciled", posts, listings)
+			}
+			entries, err := log.Read(actionlog.Filter{Type: actionlog.TypeConsole})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 1 || entries[0].Status != "failed" {
+				t.Fatalf("entries=%v", entries)
+			}
+		})
 	}
 }
 
@@ -419,6 +478,49 @@ func TestLeaseManifestFailureNeverBecomesActiveLeaseSuccess(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestLeaseRefusedAsInvalidManifestIsFinalAndNeverBecomesSuccess(t *testing.T) {
+	for _, manifest := range []string{"", "legacy-manifest"} {
+		t.Run(fmt.Sprintf("manifest=%q", manifest), func(t *testing.T) {
+			log := openTestLog(t)
+			posts, gets := 0, 0
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodPost {
+					posts++
+					w.WriteHeader(http.StatusUnprocessableEntity)
+					_, _ = io.WriteString(w, `{"code":"provider_manifest_invalid","message":"private-value","data":{"dseq":"42","provider":"akash1provider","reason":"invalid manifest: private-value"}}`)
+					return
+				}
+				gets++
+				_, _ = io.WriteString(w, `{"data":{"deployment":{"id":{"dseq":"42"}},"leases":[{"id":{"dseq":"42","gseq":1,"oseq":1,"provider":"akash1provider"},"state":"active"}]}}`)
+			}))
+			defer srv.Close()
+
+			_, err := New(srv.URL, "").WithActionLog(log).CreateLease(context.Background(), manifest, []LeaseRequest{{DSeq: "42", GSeq: 1, OSeq: 1, Provider: "akash1provider"}})
+			if err == nil {
+				t.Fatal("a lease whose manifest the provider refused as invalid must not be reported as created")
+			}
+			for _, want := range []string{"lease for deployment 42 exists", "refused its manifest as invalid", "sending it again cannot help", "close the deployment"} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("error %q does not say %q", err, want)
+				}
+			}
+			if strings.Contains(err.Error(), "private-value") || strings.Contains(err.Error(), "retry the same lease request") {
+				t.Fatalf("unsafe or misleading error: %v", err)
+			}
+			if posts != 1 || gets != 0 {
+				t.Fatalf("POST=%d GET=%d; an invalid manifest must not be reconciled into success", posts, gets)
+			}
+			entries, err := log.Read(actionlog.Filter{Type: actionlog.TypeConsole})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(entries) != 1 || entries[0].Status != "failed" {
+				t.Fatalf("entries=%v", entries)
+			}
+		})
 	}
 }
 

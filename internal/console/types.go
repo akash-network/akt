@@ -147,10 +147,13 @@ type Lease struct {
 	Status *LeaseStatus `json:"status,omitempty"`
 }
 
-// DeploymentListItem is one entry of GET /v1/deployments.
+// DeploymentListItem is one entry of GET /v1/deployments. ProjectID is the
+// project the deployment is filed in; Console reports it only to accounts
+// with teams enabled, and it is omitted otherwise.
 type DeploymentListItem struct {
 	Deployment Deployment `json:"deployment"`
 	Leases     []Lease    `json:"leases"`
+	ProjectID  *string    `json:"projectId,omitempty"`
 }
 
 // Pagination describes list paging metadata.
@@ -260,25 +263,108 @@ func (s DeploymentSettings) EstimatedTopUpUSD() float64 {
 	return s.EstimatedTopUpAmount / 1e6
 }
 
+// --- Organizations and projects ---------------------------------------------
+
+// Organization is one organization (a team, or the personal account) the
+// caller acts in (GET /v1/organizations). IsActive marks the one the request
+// ran in; Role is the caller's role there: owner, admin, member, billing, or
+// viewer.
+type Organization struct {
+	ID               string `json:"id"`
+	Name             string `json:"name"`
+	Slug             string `json:"slug"`
+	Type             string `json:"type"`
+	Role             string `json:"role"`
+	IsActive         bool   `json:"isActive"`
+	HasPaymentMethod *bool  `json:"hasPaymentMethod"`
+	CreatedAt        string `json:"createdAt"`
+}
+
+// ProjectCreator names the user who created a project.
+type ProjectCreator struct {
+	ID       string  `json:"id"`
+	Username *string `json:"username"`
+}
+
+// Project is a project of the active organization (GET, POST, and PATCH
+// /v1/projects). Every organization has one default project, which cannot be
+// deleted.
+type Project struct {
+	ID          string          `json:"id"`
+	Name        string          `json:"name"`
+	Slug        string          `json:"slug"`
+	Description *string         `json:"description"`
+	IsDefault   bool            `json:"isDefault"`
+	CreatedAt   string          `json:"createdAt"`
+	CreatedBy   *ProjectCreator `json:"createdBy"`
+}
+
+// ListedProject is one entry of GET /v1/projects: the project plus its
+// recent activity, a preview of its active deployments, and what the caller
+// may do in it.
+type ListedProject struct {
+	Project
+	LastActivityAt string              `json:"lastActivityAt"`
+	Deployments    *ProjectDeployments `json:"deployments"`
+	Access         ProjectAccess       `json:"access"`
+}
+
+// ProjectDeployments summarizes a project's active deployments. Console
+// reports null when the caller may not read them or too many are open to
+// count.
+type ProjectDeployments struct {
+	ActiveCount int                        `json:"activeCount"`
+	Preview     []ProjectDeploymentPreview `json:"preview"`
+}
+
+// ProjectDeploymentPreview is one of the newest active deployments of a
+// project.
+type ProjectDeploymentPreview struct {
+	DSeq   FlexString `json:"dseq"`
+	Name   *string    `json:"name"`
+	Status string     `json:"status"`
+}
+
+// ProjectAccess reports whether the caller may deploy into a project and
+// whether it may rename it and decide who else reaches it.
+type ProjectAccess struct {
+	CanDeploy bool `json:"canDeploy"`
+	CanManage bool `json:"canManage"`
+}
+
+// DeploymentProject is the payload of PATCH /v1/deployments/{dseq}/project.
+type DeploymentProject struct {
+	DSeq      FlexString `json:"dseq"`
+	ProjectID string     `json:"projectId"`
+}
+
 // --- API keys / auth --------------------------------------------------------
 
 // APIKey describes an existing API key (GET /v1/api-keys). The secret is
-// never returned after creation.
+// never returned after creation. OrganizationID is the organization the key
+// acts in and ProjectID the one project it is limited to. Console reports
+// null for a key that predates organizations or reaches every project, and
+// both are then omitted.
 type APIKey struct {
-	ID         string `json:"id"`
-	Name       string `json:"name"`
-	ExpiresAt  string `json:"expiresAt,omitempty"`
-	CreatedAt  string `json:"createdAt,omitempty"`
-	LastUsedAt string `json:"lastUsedAt,omitempty"`
-	KeyFormat  string `json:"keyFormat,omitempty"`
+	ID             string  `json:"id"`
+	Name           string  `json:"name"`
+	ExpiresAt      string  `json:"expiresAt,omitempty"`
+	CreatedAt      string  `json:"createdAt,omitempty"`
+	LastUsedAt     string  `json:"lastUsedAt,omitempty"`
+	KeyFormat      string  `json:"keyFormat,omitempty"`
+	OrganizationID *string `json:"organizationId,omitempty"`
+	ProjectID      *string `json:"projectId,omitempty"`
 }
 
 // CreatedAPIKey is the payload of POST /v1/api-keys. APIKey holds the secret,
-// which is shown exactly once at creation time.
+// which is shown exactly once at creation time. OrganizationID and ProjectID
+// report where the key acts, as on APIKey.
 type CreatedAPIKey struct {
-	ID     string `json:"id"`
-	Name   string `json:"name"`
-	APIKey string `json:"apiKey"`
+	ID             string  `json:"id"`
+	Name           string  `json:"name"`
+	APIKey         string  `json:"apiKey"`
+	OrganizationID *string `json:"organizationId,omitempty"`
+	ProjectID      *string `json:"projectId,omitempty"`
 }
 
 // --- Marketplace / catalog (public) -----------------------------------------

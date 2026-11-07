@@ -36,8 +36,9 @@ transactions.
 Read-only tools cover both rails. On the chain: node status, account
 balances, deployments, groups, orders, bids, leases, providers, audited
 attributes, certificates, and provider/lease/service status. On the Console
-API: deployments, bids, wallet balance, usage history, providers, and GPU
-pricing.
+API: deployments, bids, wallet balance, usage history, organizations,
+projects, providers, and GPU pricing. The Console deployment tools accept a
+project; with --console-project they act only in that project.
 
 Write tools, unlocked only by --enable-writes:
   akash_close_deployment    close a deployment on chain
@@ -121,6 +122,10 @@ Write tools, unlocked only by --enable-writes:
 
 	cmd.Flags().String(flagdefs.FlagConsoleAPIKey, "",
 		"Console API key. Overrides the context credential and AKT_CONSOLE_API_KEY.")
+	cmd.Flags().String(flagdefs.FlagConsoleOrganization, "",
+		"Console organization (team) id or slug the Console tools act in. Overrides AKT_CONSOLE_ORGANIZATION and the context.")
+	cmd.Flags().String(flagdefs.FlagConsoleProject, "",
+		"Console project id, slug, or name the Console tools are limited to. Overrides AKT_CONSOLE_PROJECT and the context; a tool call naming another project is refused.")
 	cmd.Flags().Bool(flagdefs.FlagEnableWrites, false,
 		"Enable write tools (on-chain transactions and provider mutations). "+
 			"Without this flag, only read-only query tools are available.")
@@ -171,6 +176,7 @@ func consoleClientFor(cmd *cobra.Command, mgrFn func() *aktctx.Manager) *console
 	key, _ := cmd.Flags().GetString(flagdefs.FlagConsoleAPIKey)
 
 	baseURL := ""
+	var selected *aktctx.Context
 	if m := mgrFn(); m != nil {
 		override := ""
 		if f := cmd.Flags().Lookup(flagdefs.FlagContext); f != nil {
@@ -182,6 +188,7 @@ func consoleClientFor(cmd *cobra.Command, mgrFn func() *aktctx.Manager) *console
 				key = rc.ConsoleAPIKey
 			}
 			baseURL = rc.ConsoleAPIURL
+			selected = rc
 		}
 	}
 
@@ -193,5 +200,7 @@ func consoleClientFor(cmd *cobra.Command, mgrFn func() *aktctx.Manager) *console
 		return nil
 	}
 
-	return console.New(baseURL, key).WithActionLog(cliutil.ActionLogFromContext(cmd.Context()))
+	return console.New(baseURL, key).
+		WithActionLog(cliutil.ActionLogFromContext(cmd.Context())).
+		WithScope(cliutil.ConsoleScope(cmd, selected))
 }

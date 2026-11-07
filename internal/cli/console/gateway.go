@@ -49,8 +49,9 @@ const (
 //
 //  1. GetDeployment(dseq) and pick the first active lease,
 //  2. GetProvider(lease.provider) for the gateway hostUri,
-//  3. CreateJWTToken(ttl, scope) to mint a Console-signed scoped JWT that
-//     provider gateways accept as `Authorization: Bearer`,
+//  3. CreateDeploymentJWTToken to mint a Console-signed JWT that provider
+//     gateways accept as `Authorization: Bearer`; inside a team it names
+//     this deployment when the key is limited to some projects,
 //  4. build a pkg.akt.dev provider REST client against the hostUri.
 //
 // ttl is in seconds (gatewayJWTTTLOneShot / gatewayJWTTTLStream); scope lists
@@ -81,7 +82,7 @@ func gatewayForDeployment(cmd *cobra.Command, cl *console.Client, dseq string, t
 		return nil, mtypes.LeaseID{}, fmt.Errorf("provider %s has no gateway hostUri in the Console catalog", lease.ID.Provider)
 	}
 
-	token, err := cl.CreateJWTToken(ctx, ttl, scope)
+	token, err := cl.CreateDeploymentJWTToken(ctx, ttl, lease.ID.Provider, lease.ID.DSeq.String(), scope)
 	if err != nil {
 		return nil, mtypes.LeaseID{}, fmt.Errorf("mint provider JWT (scope %s): %w", strings.Join(scope, ","), err)
 	}
