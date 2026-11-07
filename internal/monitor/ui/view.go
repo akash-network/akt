@@ -461,7 +461,11 @@ func renderBlockProgress(ctx ViewContext) string {
 	state := ctx.State
 	termWidth := ctx.Width
 
-	header := headerStyle.Width(termWidth).Render("Block Progress")
+	title := "Block Progress"
+	if state != nil && state.Error != nil {
+		title += " (stale; disconnected)"
+	}
+	header := headerStyle.Width(termWidth).Render(title)
 
 	var b strings.Builder
 	b.WriteString(header)
@@ -1342,7 +1346,7 @@ func renderStatusBar(
 	}
 	help := helpStyle.Width(width).Render(helpText)
 
-	mode := "HTTP"
+	mode := "WS disconnected; stale"
 	if wsConnected {
 		mode = "WS"
 	}

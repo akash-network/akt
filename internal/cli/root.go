@@ -166,7 +166,13 @@ the deployment is created.`,
 
 			initCctx = initCctx.WithCmdContext(cmd.Context())
 
-			if err := chaincli.SetCmdClientContextHandler(initCctx, cmd); err != nil {
+			// The monitor owns RPC selection and connection lifetime. Reading
+			// its --node alias here would open a separate SDK client too early.
+			if strings.HasPrefix(cmd.CommandPath(), "akt monitor") {
+				if err := chaincli.SetCmdClientContext(cmd, initCctx); err != nil {
+					return err
+				}
+			} else if err := chaincli.SetCmdClientContextHandler(initCctx, cmd); err != nil {
 				return err
 			}
 
@@ -1100,15 +1106,18 @@ func monitorRunE(
 		}
 
 		rpcEndpoint, _ := cmd.Flags().GetString(flagdefs.FlagRPC)
+		if !cmd.Flags().Changed(flagdefs.FlagRPC) {
+			rpcEndpoint, _ = cmd.Flags().GetString(flagdefs.FlagNode)
+		}
 		restEndpoint, _ := cmd.Flags().GetString(flagdefs.FlagREST)
 		cleanCache, _ := cmd.Flags().GetBool(flagdefs.FlagCleanCache)
 		insecure, _ := cmd.Flags().GetBool(flagdefs.FlagInsecure)
 
-		// Positional argument overrides --rpc flag.
+		// Positional argument overrides either RPC flag.
 		if len(args) > 0 {
 			rpcEndpoint = args[0]
 		}
-		rpcExplicit := len(args) > 0 || cmd.Flags().Changed(flagdefs.FlagRPC)
+		rpcExplicit := len(args) > 0 || cmd.Flags().Changed(flagdefs.FlagRPC) || cmd.Flags().Changed(flagdefs.FlagNode)
 
 		// Resolve endpoints from active akt context when not
 		// explicitly provided via flags.
@@ -1118,7 +1127,7 @@ func monitorRunE(
 		}
 
 		if rpcEndpoint == "" {
-			return fmt.Errorf("no RPC endpoint; provide one via --rpc flag, positional argument, or configure an akt context")
+			return fmt.Errorf("no RPC endpoint; provide one via --rpc/--node flag, positional argument, or configure an akt context")
 		}
 
 		runtime, err := resolveMonitorRuntime(
@@ -1176,6 +1185,7 @@ func clearMonitorCache(cacheDir string) error {
 // subcommands.
 func addMonitorFlags(cmd *cobra.Command) {
 	cmd.Flags().String(flagdefs.FlagRPC, "", "RPC endpoint URL (resolved from context if not set)")
+	cmd.Flags().String(flagdefs.FlagNode, "", "RPC endpoint URL (compatibility alias for --rpc)")
 	cmd.Flags().String(flagdefs.FlagREST, "", "REST endpoint URL (resolved from context if not set)")
 	cmd.Flags().Bool(flagdefs.FlagCleanCache, false, "Delete monitor cache and start fresh")
 	cmd.Flags().Bool(flagdefs.FlagInsecure, false, "Skip TLS certificate verification for provider queries")
@@ -1211,14 +1221,17 @@ directly into a specific dashboard:
 Connects to the RPC endpoint via WebSocket for real-time vote streaming.
 The RPC endpoint must support WebSocket connections.
 
-If --rpc is not specified, the endpoint is resolved from the active akt
-context. A positional argument overrides the --rpc flag.`,
+The endpoint is resolved from the positional argument, --rpc, --node, or the
+active akt context, in that order. --node is a compatibility alias for --rpc.`,
 		Args: cobra.MaximumNArgs(1),
 		Example: `  # Launch the monitor hub (defaults to Network dashboard)
   akt monitor
 
   # Connect to a specific RPC endpoint
   akt monitor https://rpc.akt.dev:443/rpc
+
+  # Use the familiar node flag
+  akt monitor --node https://rpc.akt.dev:443/rpc
 
   # Launch directly into the Provider dashboard
   akt monitor provider`,

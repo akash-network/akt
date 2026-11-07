@@ -417,7 +417,7 @@ func TestRenderStatusBar(t *testing.T) {
 		"ProviderDetail": {HubProvider, TabOverview, true, true},
 		"OracleBME":      {HubOracleBME, TabOverview, false, true},
 		"WSConnected":    {HubNetwork, TabOverview, false, true},
-		"HTTPOnly":       {HubNetwork, TabOverview, false, false},
+		"Disconnected":   {HubNetwork, TabOverview, false, false},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
