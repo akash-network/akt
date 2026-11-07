@@ -62,6 +62,7 @@ func deploymentCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 		deploymentCreateCmd(mgrFn),
 		deploymentUpdateCmd(mgrFn),
 		deploymentCloseCmd(mgrFn),
+		deploymentMoveCmd(mgrFn),
 		deploymentSettingsCmd(mgrFn),
 	)
 

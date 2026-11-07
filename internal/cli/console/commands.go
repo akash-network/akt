@@ -6,6 +6,7 @@ package console
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"math/big"
@@ -44,6 +45,8 @@ func Commands(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 	cmd.PersistentFlags().String(flagdefs.FlagConsoleAPIURL, "", "Console API base URL (overrides the context setting)")
 	cmd.PersistentFlags().String(flagdefs.FlagConsoleAPIKey, "", "Console API key (overrides AKT_CONSOLE_API_KEY and the stored credential)")
+	cmd.PersistentFlags().String(flagdefs.FlagConsoleOrganization, "", "Console organization (team) id or slug to act in (overrides AKT_CONSOLE_ORGANIZATION and the context)")
+	cmd.PersistentFlags().String(flagdefs.FlagConsoleProject, "", "Console project id, slug, or name to act in (overrides AKT_CONSOLE_PROJECT and the context; empty acts across every project)")
 
 	cmd.AddCommand(
 		// Credential management and public marketplace/catalog commands
@@ -57,6 +60,8 @@ func Commands(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 		// Everything below needs a resolvable Console API key (SPEC §2.10).
 		requireConsole(whoamiCmd(mgrFn)),
+		requireConsole(organizationCmds(mgrFn)),
+		requireConsole(projectCmds(mgrFn)),
 		requireConsole(deploymentCmds(mgrFn)),
 		requireConsole(bidCmds(mgrFn)),
 		requireConsole(leaseCmds(mgrFn)),
@@ -108,6 +113,10 @@ func consoleNextSuggestion(cmd *cobra.Command) string {
 		path == "console status",
 		path == "console shell":
 		return "akt console deployment list active"
+	case path == "console project use":
+		return "akt console whoami"
+	case strings.HasPrefix(path, "console project "), strings.HasPrefix(path, "console organization "):
+		return "akt console project list"
 	case strings.HasPrefix(path, "console wallet "):
 		return "akt console usage"
 	case path == "console usage":
@@ -246,10 +255,43 @@ func logoutCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	}
 }
 
+type whoamiUser struct {
+	Username      string `json:"username"`
+	Email         string `json:"email"`
+	EmailVerified bool   `json:"emailVerified"`
+}
+
+type whoamiOrganization struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+	Type string `json:"type"`
+	Role string `json:"role"`
+}
+
+type whoamiProject struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	Slug string `json:"slug"`
+}
+
+// whoamiInOrganization is whoami for an account with teams enabled. Project
+// is null when no project is selected: the key then acts in every project it
+// reaches.
+type whoamiInOrganization struct {
+	whoamiUser
+	Organization whoamiOrganization `json:"organization"`
+	Project      *whoamiProject     `json:"project"`
+}
+
 func whoamiCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	return &cobra.Command{
-		Use:     "whoami",
-		Short:   "Show the authenticated Console user",
+		Use:   "whoami",
+		Short: "Show the authenticated Console user, and the organization, role, and project it acts in",
+		Long: "Show the Console user the API key belongs to. With teams enabled, also show the " +
+			"organization the key acts in, your role there, and the selected project " +
+			"(--console-project, AKT_CONSOLE_PROJECT, or the context); no project means every " +
+			"project the key reaches.",
 		Args:    cobra.NoArgs,
 		Example: `  akt console whoami`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -262,12 +304,35 @@ func whoamiCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("get user: %w", err)
 			}
+			identity := whoamiUser{user.Username, user.Email, user.EmailVerified}
 
-			return printJSON(cmd, struct {
-				Username      string `json:"username"`
-				Email         string `json:"email"`
-				EmailVerified bool   `json:"emailVerified"`
-			}{user.Username, user.Email, user.EmailVerified})
+			organization, err := cl.ForProject("").ActiveOrganization(cmd.Context())
+			if errors.Is(err, console.ErrTeamsUnavailable) {
+				return printJSON(cmd, identity)
+			}
+			if err != nil {
+				return fmt.Errorf("get organization: %w", err)
+			}
+
+			result := whoamiInOrganization{
+				whoamiUser: identity,
+				Organization: whoamiOrganization{
+					ID:   organization.ID,
+					Name: organization.Name,
+					Slug: organization.Slug,
+					Type: organization.Type,
+					Role: organization.Role,
+				},
+			}
+			if selector := cl.Project(); selector != "" {
+				project, err := cl.FindProject(cmd.Context(), selector)
+				if err != nil {
+					return fmt.Errorf("resolve the selected project: %w", err)
+				}
+				result.Project = &whoamiProject{ID: project.ID, Name: project.Name, Slug: project.Slug}
+			}
+
+			return printJSON(cmd, result)
 		},
 	}
 }
@@ -349,6 +414,9 @@ func clientFromCmd(cmd *cobra.Command, mgrFn func() *aktctx.Manager, requireKey 
 	}
 
 	cl := console.New(baseURL, key).WithActionLog(cliutil.ActionLogFromContext(cmd.Context()))
+	if requireKey {
+		cl = cl.WithScope(cliutil.ConsoleScope(cmd, rc))
+	}
 
 	return cl, rc, nil
 }

@@ -39,6 +39,11 @@ func TestSensitiveCreateSessionRefusalIsDefinitiveAndRedacted(t *testing.T) {
 	)
 	var sessionErr *SessionRequiredError
 	require.ErrorAs(t, err, &sessionErr)
+	var httpErr *HTTPError
+	require.ErrorAs(t, err, &httpErr)
+	require.Equal(t, CodeSessionRequired, httpErr.Code)
+	require.Empty(t, httpErr.Body)
+	require.Contains(t, err.Error(), DefaultUIBaseURL)
 	require.ErrorContains(t, err, "HTTP 403")
 	require.NotContains(t, err.Error(), credential)
 	require.NotContains(t, err.Error(), "private-workload")

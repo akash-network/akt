@@ -72,6 +72,8 @@ func consoleQueryToolNames() []string {
 		"console_gpu_prices",
 		"console_list_bids",
 		"console_list_deployments",
+		"console_list_organizations",
+		"console_list_projects",
 		"console_list_providers",
 		"console_usage_history",
 		"console_wallet_balance",
