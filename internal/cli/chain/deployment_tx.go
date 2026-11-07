@@ -24,13 +24,14 @@ import (
 var (
 	errDeploymentUpdate              = errors.New("deployment update failed")
 	errDeploymentUpdateGroupsChanged = fmt.Errorf("%w: groups are different than existing deployment, you cannot update groups", errDeploymentUpdate)
-
-	// errDSeqRequired is the fail-fast guard for the positional-only UX
-	// trial: with --dseq disabled, the positional [dseq] argument is the only
-	// source, so a missing (or zero) dseq must be rejected before the tx
-	// pipeline (connection, keyring unlock, broadcast) is ever entered.
-	errDSeqRequired = errors.New("dseq is required: provide the positional [dseq] argument")
 )
+
+type deploymentInputError string
+
+func (err deploymentInputError) Error() string { return string(err) }
+
+// errDSeqRequired prevents entering the transaction pipeline without an ID.
+const errDSeqRequired deploymentInputError = "dseq is required: provide [dseq] or --dseq"
 
 // GetTxDeploymentCmds returns the transaction commands for this module
 func GetTxDeploymentCmds() *cobra.Command {
@@ -141,17 +142,14 @@ func GetTxDeploymentCreateCmd() *cobra.Command {
 
 func GetTxDeploymentCloseCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "close <dseq>",
+		Use:   "close [dseq]",
 		Short: "Close deployment",
-		// FEEDBACK(2026-07): --dseq disabled for the positional-only UX
-		// trial; the positional dseq is the only source, so validate it here
-		// — before the tx pipeline (connection, keyring, broadcast) starts.
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.MaximumNArgs(1)(cmd, args); err != nil {
 				return err
 			}
 
-			dseq, err := cflags.DSeqFromArgs(args, 0)
+			dseq, err := cflags.DSeqFromFlagsAndArgs(cmd.Flags(), args)
 			if err != nil {
 				return err
 			}
@@ -173,11 +171,7 @@ func GetTxDeploymentCloseCmd() *cobra.Command {
 				return err
 			}
 
-			// FEEDBACK(2026-07): --dseq disabled for the positional-only UX
-			// trial; the positional dseq is the only source. The Args hook
-			// already validated it; this guard is defense in depth so a zero
-			// dseq can never reach the broadcast pipeline.
-			if id.DSeq, err = cflags.DSeqFromArgs(args, 0); err != nil {
+			if id.DSeq, err = cflags.DSeqFromFlagsAndArgs(cmd.Flags(), args); err != nil {
 				return err
 			}
 			if id.DSeq == 0 {
@@ -202,18 +196,14 @@ func GetTxDeploymentCloseCmd() *cobra.Command {
 
 func GetTxDeploymentUpdateCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "update <sdl-file> <dseq>",
+		Use:   "update <sdl-file> [dseq]",
 		Short: "update deployment",
-		// FEEDBACK(2026-07): --dseq disabled for the positional-only UX
-		// trial; the positional dseq is the only source, so validate it here
-		// — before the tx pipeline (connection, keyring, broadcast) starts
-		// and before deployment 0 is ever queried.
 		Args: func(cmd *cobra.Command, args []string) error {
 			if err := cobra.RangeArgs(1, 2)(cmd, args); err != nil {
 				return err
 			}
 
-			dseq, err := cflags.DSeqFromArgs(args[1:], 0)
+			dseq, err := cflags.DSeqFromFlagsAndArgs(cmd.Flags(), args[1:])
 			if err != nil {
 				return err
 			}
@@ -239,11 +229,7 @@ func GetTxDeploymentUpdateCmd() *cobra.Command {
 				return err
 			}
 
-			// FEEDBACK(2026-07): --dseq disabled for the positional-only UX
-			// trial; the positional dseq is the only source. The Args hook
-			// already validated it; this guard is defense in depth so a zero
-			// dseq can never reach the query/broadcast pipeline.
-			if id.DSeq, err = cflags.DSeqFromArgs(args[1:], 0); err != nil {
+			if id.DSeq, err = cflags.DSeqFromFlagsAndArgs(cmd.Flags(), args[1:]); err != nil {
 				return err
 			}
 			if id.DSeq == 0 {
@@ -318,19 +304,8 @@ func readChainDeploymentSDL(path string) (sdl.SDL, error) {
 	return sdl.Read(data)
 }
 
-// addDeploymentOwnerTxFlags registers the deployment identity flags for the
-// close/update tx commands: --owner stays (it defaults to the signer and has
-// no positional twin).
-// FEEDBACK(2026-07): --dseq disabled for the positional-only UX trial (use
-// the positional [dseq] argument instead). Restore by replacing this helper's
-// body with the original registration:
-// cflags.AddDeploymentIDFlags(cmd.Flags())
 func addDeploymentOwnerTxFlags(cmd *cobra.Command) {
-	cmd.Flags().String(flagdefs.FlagOwner, "", "Deployment Owner")
-	// FEEDBACK(2026-07): --dseq disabled for the positional-only UX trial
-	// (use the positional form instead). Restore by uncommenting if users
-	// ask for the flag form back.
-	// cmd.Flags().Uint64(flagdefs.FlagDSeq, 0, "Deployment Sequence")
+	cflags.AddDeploymentIDFlags(cmd.Flags())
 }
 
 func GetTxDeploymentGroupCmds() *cobra.Command {
@@ -355,7 +330,7 @@ func GetTxDeploymentGroupCloseCmd() *cobra.Command {
 		Short: "close a Deployment's specific Group",
 		Example: `akt tx deployment group close 12345 1
 akt tx deployment group close 12345 1 --owner=[Account Address]`,
-		Args:              cobra.MaximumNArgs(2),
+		Args:              cflags.PositionalOrFlagArgs(flagdefs.FlagDSeq, flagdefs.FlagGSeq),
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -396,7 +371,7 @@ func GetDeploymentGroupPauseCmd() *cobra.Command {
 		Short: "pause a Deployment's specific Group",
 		Example: `akt tx deployment group pause 12345 1
 akt tx deployment group pause 12345 1 --owner=[Account Address]`,
-		Args:              cobra.MaximumNArgs(2),
+		Args:              cflags.PositionalOrFlagArgs(flagdefs.FlagDSeq, flagdefs.FlagGSeq),
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -437,7 +412,7 @@ func GetDeploymentGroupStartCmd() *cobra.Command {
 		Short: "start a Deployment's specific Group",
 		Example: `akt tx deployment group start 12345 1
 akt tx deployment group start 12345 1 --owner=[Account Address]`,
-		Args:              cobra.MaximumNArgs(2),
+		Args:              cflags.PositionalOrFlagArgs(flagdefs.FlagDSeq, flagdefs.FlagGSeq),
 		PersistentPreRunE: TxPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -472,38 +447,23 @@ akt tx deployment group start 12345 1 --owner=[Account Address]`,
 	return cmd
 }
 
-// addGroupOwnerTxFlags registers the group identity flags for the group tx
-// commands: --owner stays (it defaults to the signer and has no positional
-// twin).
-// FEEDBACK(2026-07): --dseq/--gseq disabled for the positional-only UX trial
-// (use the positional [dseq] [gseq] arguments instead). Restore by replacing
-// this helper's body with the original registration:
-// cflags.AddGroupIDFlags(cmd.Flags())
 func addGroupOwnerTxFlags(cmd *cobra.Command) {
-	cmd.Flags().String(flagdefs.FlagOwner, "", "Deployment Owner")
-	// FEEDBACK(2026-07): --dseq disabled for the positional-only UX trial
-	// (use the positional form instead). Restore by uncommenting if users
-	// ask for the flag form back.
-	// cmd.Flags().Uint64(flagdefs.FlagDSeq, 0, "Deployment Sequence")
-	// FEEDBACK(2026-07): --gseq disabled for the positional-only UX trial
-	// (use the positional form instead). Restore by uncommenting if users
-	// ask for the flag form back.
-	// cmd.Flags().Uint32(flagdefs.FlagGSeq, 1, "Group Sequence")
+	cflags.AddGroupIDFlags(cmd.Flags())
 }
 
 // groupIDFromFlagsAndArgs resolves a GroupID from the optional positional
 // [dseq] [gseq] arguments. The owner defaults to the signer (the from
 // address) and may be overridden with --owner.
 func groupIDFromFlagsAndArgs(cmd *cobra.Command, args []string, owner sdk.AccAddress) (dv1.GroupID, error) {
+	if err := cflags.RejectDuplicateArgs(cmd.Flags(), args, flagdefs.FlagDSeq, flagdefs.FlagGSeq); err != nil {
+		return dv1.GroupID{}, err
+	}
 	id, err := cflags.GroupIDFromFlags(cmd.Flags(), cflags.WithOwner(owner))
 	if err != nil {
 		return dv1.GroupID{}, err
 	}
 
-	// FEEDBACK(2026-07): --dseq/--gseq disabled for the positional-only UX
-	// trial; the positional [dseq] [gseq] arguments are the only source
-	// (dseq zero fallback; gseq keeps its old flag default of 1).
-	if id.DSeq, id.GSeq, err = cflags.GroupSeqsFromArgs(args, 0, 1); err != nil {
+	if id.DSeq, id.GSeq, err = cflags.GroupSeqsFromArgs(args, id.DSeq, id.GSeq); err != nil {
 		return dv1.GroupID{}, err
 	}
 

@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	flagdefs "pkg.akt.dev/akt/internal/flags"
 	"pkg.akt.dev/akt/internal/output/pretty"
 	dv1 "pkg.akt.dev/go/node/deployment/v1"
 	dvbeta "pkg.akt.dev/go/node/deployment/v1beta4"
@@ -49,7 +50,7 @@ the command fails if the deployment is in a different one.`,
 
   # Fails unless that deployment is closed
   akt query deployment akash1zn43lm.../25354313 closed`,
-		Args:                       cobra.MaximumNArgs(2),
+		Args:                       cflags.ResourceFilterArgs(cflags.DeploymentStateFromArg, flagdefs.FlagOwner, flagdefs.FlagDSeq),
 		SuggestionsMinimumDistance: 2,
 		PersistentPreRunE:          QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -167,7 +168,7 @@ func GetQueryDeploymentGroupCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "group [id]",
 		Short:             "Query deployment groups",
-		Args:              cobra.MaximumNArgs(1),
+		Args:              cflags.ResourceFilterArgs(nil, flagdefs.FlagOwner, flagdefs.FlagDSeq, flagdefs.FlagGSeq),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -194,24 +195,22 @@ func GetQueryDeploymentGroupCmd() *cobra.Command {
 				if fullySpecified {
 					gseq = parsed.GSeq
 				}
+			} else {
+				id, err := cflags.DeploymentIDFromFlags(cmd.Flags())
+				if err != nil {
+					return err
+				}
+				owner, dseq = id.Owner, id.DSeq
+				if cmd.Flags().Changed(flagdefs.FlagGSeq) {
+					gseq, _ = cmd.Flags().GetUint32(flagdefs.FlagGSeq)
+				}
 			}
-			// FEEDBACK(2026-07): the --owner/--dseq/--gseq flag path is
-			// disabled for the positional-only UX trial; the positional
-			// [owner/]dseq[/gseq] argument is the only source. Restore by
-			// uncommenting if users ask for the flag form back.
-			// } else {
-			// 	// Read from flags
-			// 	id, err := cflags.DeploymentIDFromFlags(cmd.Flags())
-			// 	if err != nil {
-			// 		return err
-			// 	}
-			// 	owner = id.Owner
-			// 	dseq = id.DSeq
-			//
-			// 	if cmd.Flags().Changed(flagdefs.FlagGSeq) {
-			// 		gseq, _ = cmd.Flags().GetUint32(flagdefs.FlagGSeq)
-			// 	}
-			// }
+			if owner == "" && dseq != 0 {
+				owner, err = resolveDefaultAccountAddress(cl.ClientContext())
+				if err != nil {
+					return err
+				}
+			}
 
 			if owner == "" || dseq == 0 {
 				return fmt.Errorf("owner and dseq are required (provide as owner/dseq[/gseq])")
@@ -242,10 +241,7 @@ func GetQueryDeploymentGroupCmd() *cobra.Command {
 	}
 
 	cflags.AddQueryFlagsToCmd(cmd)
-	// FEEDBACK(2026-07): --owner/--dseq/--gseq disabled for the
-	// positional-only UX trial (use the positional owner/dseq[/gseq] form
-	// instead). Restore by uncommenting if users ask for the flag form back.
-	// cflags.AddGroupIDFlags(cmd.Flags())
+	cflags.AddGroupIDFlags(cmd.Flags())
 
 	return cmd
 }

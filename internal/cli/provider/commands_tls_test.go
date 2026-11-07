@@ -21,6 +21,7 @@ import (
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -123,6 +124,7 @@ func TestProviderCommandsOverTLS(t *testing.T) {
 				require.NoError(t, err)
 				var mu sync.Mutex
 				var uploaded manifest.Manifest
+				var eventRequests []string
 				requests := map[string]int{}
 				server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 					if authType == "mtls" {
@@ -158,8 +160,35 @@ func TestProviderCommandsOverTLS(t *testing.T) {
 						if err := json.NewEncoder(w).Encode(uploaded); err != nil {
 							t.Errorf("return manifest: %v", err)
 						}
+					case "GET /lease/42/1/1/service/web/status":
+						_, _ = io.WriteString(w, `{"name":"web","available":1,"total":1}`)
 					case "GET /lease/42/1/1/status":
 						_, _ = io.WriteString(w, `{"services":{"web":{"name":"web","available":1,"total":1,"uris":["web.example.com"]}}}`)
+					case "GET /lease/42/1/1/kubeevents":
+						eventRequests = append(eventRequests, r.URL.RawQuery)
+						upgrader := websocket.Upgrader{}
+						conn, err := upgrader.Upgrade(w, r, nil)
+						if err != nil {
+							t.Errorf("upgrade event stream: %v", err)
+							return
+						}
+						defer func() { _ = conn.Close() }()
+						if err := conn.WriteJSON(rest.LeaseEvent{
+							Type:   "Normal",
+							Reason: "Scheduled",
+							Note:   "ready",
+							Object: rest.LeaseEventObject{
+								Kind: "Pod",
+								Name: "web",
+							},
+						}); err != nil {
+							t.Errorf("write lease event: %v", err)
+							return
+						}
+						if err := conn.WriteControl(websocket.CloseMessage,
+							websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""), time.Now().Add(time.Second)); err != nil {
+							t.Errorf("close event stream: %v", err)
+						}
 					default:
 						t.Errorf("unexpected request: %s", request)
 						http.NotFound(w, r)
@@ -179,11 +208,18 @@ func TestProviderCommandsOverTLS(t *testing.T) {
 				require.NoError(t, err)
 				t.Cleanup(func() { require.NoError(t, actions.Close()) })
 				ctx = cliutil.WithActionLog(ctx, actions)
-				for _, args := range [][]string{
+				commands := [][]string{
 					{"send-manifest", "../../workflow/adapters/testdata/deployment.yaml", "--dseq", "42"},
 					{"get-manifest", "42"},
 					{"lease-status", "42"},
-				} {
+					{"lease-status", "--dseq", "42"},
+					{"get-manifest", "--dseq", "42"},
+					{"service-status", "42", "web"},
+					{"service-status", "--dseq", "42", "--service", "web"},
+					{"lease-events", "42", "--service", "web"},
+					{"lease-events", "--dseq", "42", "--service", "web", "--follow"},
+				}
+				for _, args := range commands {
 					t.Run(args[0], func(t *testing.T) {
 						root := Commands()
 						root.SilenceUsage = true
@@ -204,6 +240,8 @@ func TestProviderCommandsOverTLS(t *testing.T) {
 						}
 						require.NoError(t, err)
 						switch args[0] {
+						case "lease-events":
+							require.Equal(t, "Normal [Pod/web] Scheduled: ready\n", stdout.String())
 						case "send-manifest":
 							require.Equal(t, fmt.Sprintf("Manifest submitted successfully to %s.\n", provider), stdout.String())
 							mu.Lock()
@@ -220,6 +258,10 @@ func TestProviderCommandsOverTLS(t *testing.T) {
 							mu.Lock()
 							defer mu.Unlock()
 							require.Equal(t, uploaded, got)
+						case "service-status":
+							var got rest.ServiceStatus
+							require.NoError(t, json.Unmarshal(stdout.Bytes(), &got))
+							require.Equal(t, "web", got.Name)
 						case "lease-status":
 							var got rest.LeaseStatus
 							require.NoError(t, json.Unmarshal(stdout.Bytes(), &got))
@@ -233,8 +275,13 @@ func TestProviderCommandsOverTLS(t *testing.T) {
 				defer mu.Unlock()
 				if registration == "valid" {
 					require.Equal(t, map[string]int{
-						"PUT /deployment/42/manifest": 1, "GET /lease/42/1/1/manifest": 1, "GET /lease/42/1/1/status": 1,
+						"PUT /deployment/42/manifest":          1,
+						"GET /lease/42/1/1/manifest":           2,
+						"GET /lease/42/1/1/status":             4,
+						"GET /lease/42/1/1/kubeevents":         2,
+						"GET /lease/42/1/1/service/web/status": 2,
 					}, requests)
+					require.Equal(t, []string{"follow=false&service=web", "follow=true&service=web"}, eventRequests)
 				} else {
 					require.Empty(t, requests, "an unverified provider must receive no HTTP request")
 				}
@@ -282,7 +329,6 @@ func TestProviderCommandsRejectInvalidQueryContextBeforeGateway(t *testing.T) {
 	for _, authType := range []string{"public", "jwt", "mtls"} {
 		t.Run(authType, func(t *testing.T) {
 			root := Commands()
-			root.PersistentFlags().String("chain-id", "", "")
 			root.SetOut(io.Discard)
 			root.SetErr(io.Discard)
 			ctx := walletlessCommandContext()

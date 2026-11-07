@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	flagdefs "pkg.akt.dev/akt/internal/flags"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
@@ -469,7 +470,12 @@ func leaseCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 		Long: "Accept a bid by creating a lease and sending the deployment manifest to the " +
 			"winning provider. Console derives the manifest from its saved definition. " +
 			"Use `akt deploy <sdl-file>` to perform creation, bid selection, and lease creation together.",
-		Args: cobra.RangeArgs(1, 2),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.RangeArgs(1, 2)(cmd, args); err != nil {
+				return err
+			}
+			return cflags.RejectDuplicateArgs(cmd.Flags(), args[1:], flagdefs.FlagProvider)
+		},
 		Example: `  # Provider as positional argument (gseq/oseq default to 1)
   akt console lease create 12345 akash1provider...`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -481,12 +487,7 @@ func leaseCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 			dseq := args[0]
 			gseq, _ := cmd.Flags().GetUint32(flagdefs.FlagGSeq)
 			oseq, _ := cmd.Flags().GetUint32(flagdefs.FlagOSeq)
-			// FEEDBACK(2026-07): --provider disabled for the positional-only
-			// UX trial; the positional [provider] argument is the only
-			// source. Restore by uncommenting if users ask for the flag form
-			// back.
-			// provider, _ := cmd.Flags().GetString("provider")
-			provider := ""
+			provider, _ := cmd.Flags().GetString(flagdefs.FlagProvider)
 			if len(args) > 1 {
 				provider = args[1]
 			}
@@ -519,10 +520,7 @@ func leaseCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 	create.Flags().Uint32(flagdefs.FlagGSeq, 1, "Group sequence number")
 	create.Flags().Uint32(flagdefs.FlagOSeq, 1, "Order sequence number")
-	// FEEDBACK(2026-07): --provider disabled for the positional-only UX trial
-	// (use the positional form instead). Restore by uncommenting if users
-	// ask for the flag form back.
-	// create.Flags().String("provider", "", "Provider address; alternative to the positional argument")
+	create.Flags().String(flagdefs.FlagProvider, "", "Provider address; alternative to the positional argument")
 	create.Flags().String(flagdefs.FlagManifest, "", "Explicit manifest for a legacy deployment without a saved definition")
 
 	cmd.AddCommand(create)

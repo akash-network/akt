@@ -184,6 +184,9 @@ func (client *gatewayClient) LeaseEvents(
 	if source, ok := client.Client.(gatewayStreamRequestSource); ok {
 		query := url.Values{}
 		query.Set("follow", strconv.FormatBool(follow))
+		if services != "" {
+			query.Set("service", services)
+		}
 		stream, onClose, err := openGatewayStream[rest.LeaseEvent](
 			ctx,
 			client,

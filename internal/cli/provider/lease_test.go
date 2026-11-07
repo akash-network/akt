@@ -417,16 +417,16 @@ func TestSendManifestTargetsHonorsAnExplicitProvider(t *testing.T) {
 }
 
 // TestMissingDSeqErrorNamesTheAcceptedForm pins that the remedy matches the
-// command: a positional-[dseq] command must never be told to pass --dseq, and
-// a flag-only command must never be told to pass a positional.
+// command: positional commands accept both forms; shell consumes its
+// positionals as the remote command and therefore needs --dseq.
 func TestMissingDSeqErrorNamesTheAcceptedForm(t *testing.T) {
-	positional := &cobra.Command{Use: "lease-status"}
+	positional := &cobra.Command{Use: "lease-status [dseq]"}
 	addLeaseFlags(positional)
 
 	if err := missingDSeqError(positional); !strings.Contains(err.Error(), "positional argument") {
 		t.Errorf("positional-dseq command remedy = %q, want the positional form", err)
-	} else if strings.Contains(err.Error(), "--dseq") {
-		t.Errorf("positional-dseq command must not advertise the disabled --dseq flag: %q", err)
+	} else if !strings.Contains(err.Error(), "--dseq") {
+		t.Errorf("positional-dseq command must advertise its --dseq alternative: %q", err)
 	}
 
 	flagged := &cobra.Command{Use: "lease-shell"}

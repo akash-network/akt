@@ -161,7 +161,10 @@ func TestKeysAddLedgerUsesConfiguredAccountPrefix(t *testing.T) {
 	}
 
 	stop := errors.New("ledger boundary reached")
-	keyring := &ledgerPrefixKeyring{stop: stop}
+	keyring := &ledgerPrefixKeyring{
+		Keyring: testKeyring(t),
+		stop:    stop,
+	}
 	_, err := runKeysCommand(t, keyring, "add", "ledger", "--ledger")
 	if !errors.Is(err, stop) {
 		t.Fatalf("ledger add error = %v, want boundary error", err)

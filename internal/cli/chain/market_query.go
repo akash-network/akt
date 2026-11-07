@@ -55,7 +55,7 @@ The optional [state] argument narrows the result: with a partial identity it
 filters the list; when the identity pins down a single order it verifies the
 record instead — the command fails if the order is in a different state
 rather than printing it.`,
-		Args:              cobra.MaximumNArgs(2),
+		Args:              cflags.ResourceFilterArgs(cflags.OrderStateFromArg, flagdefs.FlagOwner, flagdefs.FlagDSeq, flagdefs.FlagGSeq, flagdefs.FlagOSeq),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -192,7 +192,7 @@ The optional [state] argument narrows the result: with a partial identity it
 filters the list; when the identity pins down a single bid it verifies the
 record instead — the command fails if the bid is in a different state rather
 than printing it.`,
-		Args:              cobra.MaximumNArgs(2),
+		Args:              cflags.ResourceFilterArgs(cflags.BidStateFromArg, flagdefs.FlagOwner, flagdefs.FlagDSeq, flagdefs.FlagGSeq, flagdefs.FlagOSeq, flagdefs.FlagProvider),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -348,7 +348,7 @@ The optional [state] argument narrows the result: with a partial identity it
 filters the list; when the identity pins down a single lease it verifies the
 record instead — the command fails if the lease is in a different state
 rather than printing it.`,
-		Args:              cobra.MaximumNArgs(2),
+		Args:              cflags.ResourceFilterArgs(cflags.LeaseStateFromArg, flagdefs.FlagOwner, flagdefs.FlagDSeq, flagdefs.FlagGSeq, flagdefs.FlagOSeq, flagdefs.FlagProvider),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()

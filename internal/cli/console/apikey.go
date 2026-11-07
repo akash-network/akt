@@ -1,9 +1,11 @@
 package console
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
+	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	flagdefs "pkg.akt.dev/akt/internal/flags"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
@@ -12,6 +14,9 @@ import (
 	consoleapi "pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
 )
+
+// apiKeysPage is where Console creates API keys from a signed-in session.
+const apiKeysPage = "console.akash.network > Settings > API Keys"
 
 func apikeyCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
@@ -53,9 +58,12 @@ func apikeyListCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 func apikeyCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "create <name> [expires-at]",
+		Use:   "create [name] [expires-at]",
 		Short: "Create an API key (the secret is shown ONCE)",
-		Args:  cobra.MaximumNArgs(2),
+		Long: "Create an API key. Console creates keys only from a signed-in Console session and " +
+			"refuses a request authenticated with an API key, which is how akt authenticates. When " +
+			"it refuses, create the key at " + apiKeysPage + " and store it with `akt console login`.",
+		Args: cflags.PositionalOrFlagArgs(flagdefs.FlagName, flagdefs.FlagExpiresAt),
 		Example: `  # Name (and optional RFC 3339 expiry) as positional arguments
   akt console apikey create ci 2027-01-01T00:00:00Z`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -64,13 +72,8 @@ func apikeyCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			// FEEDBACK(2026-07): --name/--expires-at disabled for the
-			// positional-only UX trial; the positional <name> [expires-at]
-			// arguments are the only source. Restore by uncommenting if
-			// users ask for the flag form back.
-			// name, _ := cmd.Flags().GetString("name")
-			// expiresAt, _ := cmd.Flags().GetString("expires-at")
-			name, expiresAt := "", ""
+			name, _ := cmd.Flags().GetString(flagdefs.FlagName)
+			expiresAt, _ := cmd.Flags().GetString(flagdefs.FlagExpiresAt)
 			if len(args) > 0 {
 				name = args[0]
 			}
@@ -82,6 +85,10 @@ func apikeyCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			}
 
 			created, err := cl.CreateAPIKey(cmd.Context(), name, expiresAt)
+			var sessionErr *consoleapi.SessionRequiredError
+			if errors.As(err, &sessionErr) {
+				return fmt.Errorf("create API key: %w; create the key at %s, then store it with `akt console login`", err, apiKeysPage)
+			}
 			if err != nil {
 				return fmt.Errorf("create API key: %w", err)
 			}
@@ -96,14 +103,8 @@ func apikeyCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	// FEEDBACK(2026-07): --name disabled for the positional-only UX trial
-	// (use the positional form instead). Restore by uncommenting if users
-	// ask for the flag form back.
-	// cmd.Flags().String("name", "", "Human-readable key name; alternative to the positional argument")
-	// FEEDBACK(2026-07): --expires-at disabled for the positional-only UX
-	// trial (use the positional form instead). Restore by uncommenting if
-	// users ask for the flag form back.
-	// cmd.Flags().String("expires-at", "", "Expiry as an RFC 3339 timestamp (empty = no expiry)")
+	cmd.Flags().String(flagdefs.FlagName, "", "Human-readable key name; alternative to the positional argument")
+	cmd.Flags().String(flagdefs.FlagExpiresAt, "", "Expiry as an RFC 3339 timestamp (empty = no expiry)")
 
 	return cmd
 }

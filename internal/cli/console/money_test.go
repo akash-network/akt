@@ -583,6 +583,28 @@ func TestAPIKeyCreateShowsSecretOnceWithWarning(t *testing.T) {
 	}
 }
 
+func TestAPIKeyCreateRefusedForAnAPIKeyPointsToConsole(t *testing.T) {
+	m := newAuthedManager(t)
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"message":"An API key can only be created from a signed-in Console session.","code":"session_required"}`))
+	}))
+	defer srv.Close()
+
+	out, err := execConsole(t, m, srv.URL, "apikey", "create", "ci")
+	var sessionErr *console.SessionRequiredError
+	if !errors.As(err, &sessionErr) {
+		t.Fatalf("apikey create refused for a key = %v, want SessionRequiredError", err)
+	}
+	if !strings.Contains(err.Error(), "console.akash.network > Settings > API Keys") || !strings.Contains(err.Error(), "akt console login") {
+		t.Errorf("error should name where to create the key and how to store it, got %q", err)
+	}
+	if strings.Contains(out, "apiKey") {
+		t.Errorf("a refused create must print no key, got %q", out)
+	}
+}
+
 func TestAPIKeyDeleteMissingResourceDoesNotReportSuccess(t *testing.T) {
 	m := newAuthedManager(t)
 
@@ -789,5 +811,49 @@ func TestAuthenticatedCommandsCarryConsoleCapability(t *testing.T) {
 		if !seen[name] {
 			t.Errorf("keyless command %q is missing from the console group", name)
 		}
+	}
+}
+
+func TestRestoredConsoleFlagsMatchMutationRequests(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		positional []string
+		flagged    []string
+		response   string
+	}{
+		{
+			name:       "lease",
+			positional: []string{"lease", "create", "9911", "akash1provider"},
+			flagged:    []string{"lease", "create", "9911", "--provider", "akash1provider"},
+			response:   `{"data":{"deployment":{"id":{"dseq":"9911"}},"leases":[{"id":{"dseq":"9911","gseq":1,"oseq":1,"provider":"akash1provider"},"state":"active"}]}}`,
+		},
+		{
+			name:       "apikey",
+			positional: []string{"apikey", "create", "ci", "2027-01-01T00:00:00Z"},
+			flagged:    []string{"apikey", "create", "--name", "ci", "--expires-at", "2027-01-01T00:00:00Z"},
+			response:   `{"data":{"id":"test","name":"ci","apiKey":"synthetic-test-key"}}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newAuthedManager(t)
+			bodies := make(chan string, 2)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Error(err)
+				}
+				bodies <- string(body)
+				writeJSON(t, w, tc.response)
+			}))
+			defer server.Close()
+			for _, args := range [][]string{tc.positional, tc.flagged} {
+				if _, err := execConsole(t, m, server.URL, args...); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if first, second := <-bodies, <-bodies; first != second {
+				t.Fatalf("requests differ: %q / %q", first, second)
+			}
+		})
 	}
 }

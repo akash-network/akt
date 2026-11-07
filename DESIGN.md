@@ -1205,6 +1205,19 @@ Commands are copied from `akash-network/chain-sdk/go/cli` with the following cle
 
 The `chain-sdk` CLI package (`pkg.akt.dev/go/cli`) will be deprecated and eventually removed once `akt` reaches full feature parity. In the interim, the `go/cli` code is clean-copied into `internal/cli/chain` and adjusted to respect akt context defaults; all other chain-sdk packages are imported directly.
 
+Flag compatibility is audited across the complete upstream command tree,
+including inherited options and renamed query paths. The positional-only
+trial ends for existing flag alternatives: positional arguments remain easy
+to use, while scripts can use the familiar resource, state, and search flags.
+Restored alternatives reject duplicate positional/flag input; established
+precedence on existing alternatives remains unchanged. Every accepted option
+must reach its request or SDK operation. Explicit identities take precedence
+over context defaults without triggering an unnecessary account lookup.
+The audit records node/operator exclusions separately and tests all mapped
+commands against the assembled tree. Provider endpoint, signer, service, and
+replica selection follow the same rule. Status and event streaming are
+read-only RPC operations with no signing-key requirement.
+
 The clean copy is bounded by the release command tree. `internal/cli/chain`
 contains registered user-facing transaction and query commands plus helpers
 they call. It does not retain validator-node server, genesis, RPC-console, or
@@ -1460,6 +1473,22 @@ Cosmos CLI compatibility even though add has no confirmation prompt. It never
 authorizes overwriting an existing key and cannot bypass mnemonic, Ledger, or
 keyring-passphrase input; `--no-backup` remains the separate control that keeps
 a newly generated mnemonic out of command output.
+
+Key management preserves the `akash keys` flag surface beneath
+`akt context keys`, including public-only imports needed to assemble multisig
+accounts. JSON and base64 public keys are decoded at the CLI boundary and
+saved through the SDK's offline-key API. Signing algorithms are resolved from
+the keyring's supported algorithms. Multisig construction uses node-compatible
+address sorting unless `--nosort` is selected; stored keys are never reordered.
+
+Dry runs use an isolated in-memory destination and suppress mutation logging.
+They do not open persistent storage except to read existing multisig members.
+Unarmored export requires both explicit unsafe-export flags and confirmation
+(or `--yes`), and shares the existing security-event recorder. Hex import and
+record migration use SDK operations on the selected keyring. No compatibility
+command implicitly imports keys from `~/.akash` or changes storage backends.
+The compatibility matrix in SPEC §2.2.3 distinguishes retained akt output and
+confirmation conventions from node-specific server logging flags.
 
 The output flag is an enum at the parsing boundary. A misspelling such as
 `-o josn` is a usage error; it must never fall through to pretty output. The
@@ -2165,6 +2194,9 @@ name only the validation class and never echo the secret-backed URL. Context
 creation uses the same bounded, redacted subprocess runner as every later live
 command, and the lifecycle revalidates the raw key/origin pair immediately
 before constructing any network client.
+Session-required refusals retain their body-free type through the same
+redaction boundary. A refused secret-bearing mutation is a definitive failed
+attempt, preserving its authorization classification in the action log.
 Loopback acceptance is an explicit test-only option that neither protected
 read setup nor mutation configuration enables. Child CLI processes receive
 only the documented runtime credential; all `AKT_E2E_CONSOLE_*` harness
@@ -2281,13 +2313,16 @@ implements the raw Console observer, attempted-request and exact
 transferred-spend limits, direct action-log inspection, bounded redacted
 diagnostics, and phased in-process cleanup for create, bid, lease, status,
 settings, update,
-logs, events, deterministic non-interactive shell, child API-key lifecycle,
+logs, events, deterministic non-interactive shell, API-key creation authorization,
 and close. The provider-reported public workload URI must also return a
 bounded non-empty successful response through a standard HTTP client that does
 not reuse the Console or provider adapters. Streaming commands must return
 non-empty structured records; shell execution must return the exact sentinel
 output and record exactly one provider mutation, while status, logs, and events
-remain unlogged reads. A child credential must authenticate the same tenant,
+remain unlogged reads. A session-required API-key creation refusal must print
+no secret, leave the independent key collection unchanged, and log one failed
+create. Where creation is allowed, a child credential must authenticate the
+same tenant,
 disappear from both independent and CLI listings after revocation, and then
 fail authentication without reaching disk or the action log. The suite does
 not yet independently observe chain or Kubernetes state, persist a run

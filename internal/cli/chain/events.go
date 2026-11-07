@@ -7,10 +7,10 @@ import (
 	flagdefs "pkg.akt.dev/akt/internal/flags"
 
 	"github.com/spf13/cobra"
-	"github.com/spf13/viper"
 	"golang.org/x/sync/errgroup"
 
-	"github.com/cosmos/cosmos-sdk/client"
+	"pkg.akt.dev/akt/internal/capability"
+	"pkg.akt.dev/akt/internal/output"
 
 	"pkg.akt.dev/go/util/events"
 	"pkg.akt.dev/go/util/pubsub"
@@ -19,8 +19,11 @@ import (
 // EventsCmd prints out events in real time
 func EventsCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "events",
-		Short: "Prints out akash events in real time",
+		Use:         "events",
+		Short:       "Prints out akash events in real time",
+		Args:        cobra.NoArgs,
+		Example:     "akt events --node http://localhost:26657",
+		Annotations: map[string]string{capability.AnnotationKey: string(capability.ChainQuery)},
 		RunE: func(cmd *cobra.Command, args []string) error {
 			return RunForeverWithContext(cmd.Context(), func(ctx context.Context) error {
 				return getEvents(ctx, cmd, args)
@@ -29,13 +32,15 @@ func EventsCmd() *cobra.Command {
 	}
 
 	cmd.Flags().String(flagdefs.FlagNode, "tcp://localhost:26657", "The node address")
-	_ = viper.BindPFlag(flagdefs.FlagNode, cmd.Flags().Lookup(flagdefs.FlagNode))
 
 	return cmd
 }
 
 func getEvents(ctx context.Context, cmd *cobra.Command, _ []string) error {
-	cctx := client.GetClientContextFromCmd(cmd)
+	cctx, err := GetClientQueryContext(cmd)
+	if err != nil {
+		return err
+	}
 
 	node, err := cctx.GetNode()
 	if err != nil {
@@ -67,10 +72,18 @@ func getEvents(ctx context.Context, cmd *cobra.Command, _ []string) error {
 	group.Go(func() error {
 		for {
 			select {
+			case <-ctx.Done():
+				return nil
 			case <-subscriber.Done():
 				return nil
 			case ev := <-subscriber.Events():
-				if err := PrintJSON(cctx, ev); err != nil {
+				var err error
+				if output.FormatFromCmd(cmd) == output.FormatTable {
+					err = output.FprintJSONSemantics(cmd.OutOrStdout(), output.FormatJSON, ev)
+				} else {
+					err = output.PrintStreamRecord(cmd, ev, "")
+				}
+				if err != nil {
 					return err
 				}
 			}
