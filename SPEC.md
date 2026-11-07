@@ -8451,7 +8451,7 @@ requires a nonblank token before it may be used.
 
 The Console sandbox lifecycle covers deployment create, bid observation, lease
 creation, live status, logs, events, a deterministic non-interactive shell
-command, settings, update, child API-key lifecycle, close, and final
+command, settings, update, API-key creation authorization, close, and final
 cleanup. Each state is verified independently through the Console API and,
 where applicable, chain RPC, provider gateway, and Kubernetes workload state.
 The deployment-get, bid-list, status, and default log-read contracts MUST run
@@ -8561,7 +8561,11 @@ harness scans its complete temporary akt home for the injected credential
 before teardown rather than checking only config and action-log files.
 For a failed Console subprocess, the error class MAY include a recognized HTTP
 status (for example, `console_http_401`) extracted from bounded stderr. It MUST
-NOT include the response body or any other captured text. The production Console client applies the same boundary independently of the
+NOT include the response body or any other captured text.
+Session-required refusals retain their body-free error type and HTTP status
+through redaction, so secret-bearing mutations record a definitive failed
+attempt when the server refuses authorization.
+The production Console client applies the same boundary independently of the
 test harness. It reads no more than the configured maximum response size and
 fails a larger response without retaining or reporting its contents. Before an
 HTTP error body can enter a returned error or action-log entry, every exact
@@ -8609,7 +8613,10 @@ serve a bounded non-empty 2xx response through an independent standard HTTP
 client, non-empty structured log and event streams, and an exact sentinel from
 deterministic non-interactive shell execution. The shell operation must produce
 exactly one successful `provider/lease-shell` action while status, logs, and
-events produce none. The child API-key scenario proves the one-time credential
+events produce none. A session-required API-key creation refusal must print no
+secret, leave the independent key collection unchanged, and record one failed
+create. Where the server permits creation, the child API-key scenario proves
+the one-time credential
 authenticates the same tenant through both the CLI and a raw observer, revokes
 it, returns both listings to their exact baseline, proves the revoked secret
 fails, and scans the temporary home for disclosure. Independent chain and
