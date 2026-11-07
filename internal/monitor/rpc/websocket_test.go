@@ -16,7 +16,7 @@ func TestConsensusTrackerResetsVotesWhenRoundAdvancesAtSameHeight(t *testing.T) 
 	})
 
 	_, changed := tracker.handleNewRoundStepEvent(json.RawMessage(
-		`{"type":"tendermint/event/NewRoundStep","value":{"height":"10","round":0,"step":3}}`,
+		`{"type":"tendermint/event/NewRoundStep","value":{"height":"10","round":0,"step":"RoundStepPropose"}}`,
 	))
 	require.True(t, changed)
 
@@ -28,7 +28,7 @@ func TestConsensusTrackerResetsVotesWhenRoundAdvancesAtSameHeight(t *testing.T) 
 	require.Equal(t, int64(10), withVote.State.PrevotePower)
 
 	nextRound, changed := tracker.handleNewRoundStepEvent(json.RawMessage(
-		`{"type":"tendermint/event/NewRoundStep","value":{"height":"10","round":1,"step":1}}`,
+		`{"type":"tendermint/event/NewRoundStep","value":{"height":"10","round":1,"step":"RoundStepNewHeight"}}`,
 	))
 	require.True(t, changed)
 	require.Equal(t, int64(10), nextRound.State.Height)
@@ -47,7 +47,7 @@ func TestConsensusTrackerKeepsVotesAcrossStepsInSameRound(t *testing.T) {
 	})
 
 	_, changed := tracker.handleNewRoundStepEvent(json.RawMessage(
-		`{"type":"tendermint/event/NewRoundStep","value":{"height":"10","round":2,"step":3}}`,
+		`{"type":"tendermint/event/NewRoundStep","value":{"height":"10","round":2,"step":"RoundStepPropose"}}`,
 	))
 	require.True(t, changed)
 
@@ -57,7 +57,7 @@ func TestConsensusTrackerKeepsVotesAcrossStepsInSameRound(t *testing.T) {
 	require.True(t, changed)
 
 	nextStep, changed := tracker.handleNewRoundStepEvent(json.RawMessage(
-		`{"type":"tendermint/event/NewRoundStep","value":{"height":"10","round":2,"step":4}}`,
+		`{"type":"tendermint/event/NewRoundStep","value":{"height":"10","round":2,"step":"RoundStepPrevote"}}`,
 	))
 	require.True(t, changed)
 	require.Equal(t, 2, nextStep.State.Round)
@@ -88,7 +88,7 @@ func TestConsensusTrackerAdvancesOnForwardRoundVote(t *testing.T) {
 	})
 
 	_, changed := tracker.handleNewRoundStepEvent(json.RawMessage(
-		`{"value":{"height":"42","round":0,"step":4}}`,
+		`{"value":{"height":"42","round":0,"step":"RoundStepPrevote"}}`,
 	))
 	require.True(t, changed)
 	_, changed = tracker.handleVoteEvent(json.RawMessage(
@@ -125,15 +125,15 @@ func TestConsensusTrackerRejectsStaleProgress(t *testing.T) {
 	}{
 		{
 			name: "lower-height step",
-			data: json.RawMessage(`{"value":{"height":"9","round":2,"step":4}}`),
+			data: json.RawMessage(`{"value":{"height":"9","round":2,"step":"RoundStepPrevote"}}`),
 		},
 		{
 			name: "lower-round step",
-			data: json.RawMessage(`{"value":{"height":"10","round":1,"step":4}}`),
+			data: json.RawMessage(`{"value":{"height":"10","round":1,"step":"RoundStepPrevote"}}`),
 		},
 		{
 			name: "lower step",
-			data: json.RawMessage(`{"value":{"height":"10","round":2,"step":3}}`),
+			data: json.RawMessage(`{"value":{"height":"10","round":2,"step":"RoundStepPropose"}}`),
 		},
 		{
 			name:   "lower-height vote",
@@ -151,7 +151,7 @@ func TestConsensusTrackerRejectsStaleProgress(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			tracker := newConsensusTracker([]consensus.Validator{{VotingPower: "10"}})
 			_, changed := tracker.handleNewRoundStepEvent(json.RawMessage(
-				`{"value":{"height":"10","round":2,"step":4}}`,
+				`{"value":{"height":"10","round":2,"step":"RoundStepPrevote"}}`,
 			))
 			require.True(t, changed)
 			_, changed = tracker.handleVoteEvent(json.RawMessage(
@@ -184,19 +184,19 @@ func TestConsensusTrackerRejectsNegativeRoundStateValues(t *testing.T) {
 	}{
 		{
 			name: "height",
-			data: json.RawMessage(`{"value":{"height":"-1","round":0,"step":1}}`),
+			data: json.RawMessage(`{"value":{"height":"-1","round":0,"step":"RoundStepNewHeight"}}`),
 		},
 		{
 			name: "round",
-			data: json.RawMessage(`{"value":{"height":"10","round":-1,"step":1}}`),
+			data: json.RawMessage(`{"value":{"height":"10","round":-1,"step":"RoundStepNewHeight"}}`),
 		},
 		{
 			name: "step",
-			data: json.RawMessage(`{"value":{"height":"10","round":0,"step":-1}}`),
+			data: json.RawMessage(`{"value":{"height":"10","round":0,"step":"invalid-step"}}`),
 		},
 		{
 			name: "malformed height",
-			data: json.RawMessage(`{"value":{"height":"not-a-height","round":0,"step":1}}`),
+			data: json.RawMessage(`{"value":{"height":"not-a-height","round":0,"step":"RoundStepNewHeight"}}`),
 		},
 		{
 			name: "malformed event",
@@ -245,7 +245,7 @@ func TestConsensusTrackerRoutesWebSocketMessages(t *testing.T) {
 
 	round, changed := tracker.handleMessage(json.RawMessage(`{
   "query": "tm.event='NewRoundStep'",
-  "data": {"value":{"height":"10","round":1,"step":2}}
+  "data": {"value":{"height":"10","round":1,"step":"RoundStepNewRound"}}
 }`))
 	require.True(t, changed)
 	require.Equal(t, int64(10), round.State.Height)
@@ -271,7 +271,7 @@ func TestConsensusTrackerHandlesVoteTransitions(t *testing.T) {
 	require.False(t, changed)
 
 	_, changed = tracker.handleNewRoundStepEvent(json.RawMessage(
-		`{"value":{"height":"10","round":0,"step":1}}`,
+		`{"value":{"height":"10","round":0,"step":"RoundStepNewHeight"}}`,
 	))
 	require.True(t, changed)
 

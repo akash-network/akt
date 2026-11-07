@@ -54,6 +54,9 @@ func TestBuildModelOwnsRealCometWebSocketLifecycle(t *testing.T) {
 	upgrader := websocket.Upgrader{}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/consensus_state", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"result":{"round_state":{"height/round/step":"1/0/1"}}}`)
+	})
 	mux.HandleFunc("/websocket", func(w http.ResponseWriter, request *http.Request) {
 		conn, err := upgrader.Upgrade(w, request, nil)
 		if err != nil {
@@ -144,6 +147,9 @@ func TestRunCancelsModelConsensusSubscription(t *testing.T) {
 	upgrader := websocket.Upgrader{}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/consensus_state", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"result":{"round_state":{"height/round/step":"1/0/1"}}}`)
+	})
 	mux.HandleFunc("/validators", func(w http.ResponseWriter, request *http.Request) {
 		if page := request.URL.Query().Get("page"); page != "1" {
 			reportConsensusPeerError(peerErrors, "validator page = %q, want 1", page)
@@ -177,10 +183,10 @@ func TestRunCancelsModelConsensusSubscription(t *testing.T) {
 
 			if call.Method == "subscribe" {
 				switch call.Params["query"] {
-				case "tm.event='Vote'", "tm.event='NewRoundStep'":
+				case "tm.event='Vote'", "tm.event='NewRoundStep'", "tm.event='NewRound'", "tm.event='NewBlock'":
 					consensusConnection = true
 					consensusSubscriptions++
-					if consensusSubscriptions == 2 {
+					if consensusSubscriptions == 4 {
 						consensusReady <- struct{}{}
 					}
 				}
@@ -276,6 +282,9 @@ func TestRunCancelsAndDrainsBlockedChainRefreshBeforeCacheClose(t *testing.T) {
 	leaseRequestCanceled := make(chan struct{})
 	upgrader := websocket.Upgrader{}
 	mux := http.NewServeMux()
+	mux.HandleFunc("/consensus_state", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"result":{"round_state":{"height/round/step":"1/0/1"}}}`)
+	})
 	mux.HandleFunc("/websocket", func(w http.ResponseWriter, request *http.Request) {
 		connection, err := upgrader.Upgrade(w, request, nil)
 		if err != nil {
