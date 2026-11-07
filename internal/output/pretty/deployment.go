@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
+	"github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/cosmos/gogoproto/proto"
 	"github.com/spf13/cobra"
 
@@ -158,6 +159,34 @@ func RenderGroupsList(groups dvbeta.Groups) string {
 // PrintGroupsList formats a list of deployment groups for display.
 // This is used when querying groups for a deployment (no gseq specified).
 func PrintGroupsList(cmd *cobra.Command, cctx sdkclient.Context, groups dvbeta.Groups) error {
+	return printGroups(cmd, cctx, groups, nil)
+}
+
+// PrintGroupsPage formats the groups gathered from one page of deployments
+// (no dseq specified). Structured output wraps them with that page's
+// pagination so a caller can continue with --page-key; pretty output is the
+// same as PrintGroupsList.
+func PrintGroupsPage(cmd *cobra.Command, cctx sdkclient.Context, groups dvbeta.Groups, page *query.PageResponse) error {
+	if page == nil {
+		page = &query.PageResponse{}
+	}
+
+	return printGroups(cmd, cctx, groups, page)
+}
+
+// groupsPageJSON is PrintGroupsPage's structured output. Pagination keeps
+// the chain's JSON shape: next_key in base64, total as a string.
+type groupsPageJSON struct {
+	Groups     []json.RawMessage `json:"groups"`
+	Pagination struct {
+		NextKey []byte `json:"next_key"`
+		Total   uint64 `json:"total,string"`
+	} `json:"pagination"`
+}
+
+// printGroups writes groups as pretty text or as structured output: a bare
+// array, or with page set a groupsPageJSON object.
+func printGroups(cmd *cobra.Command, cctx sdkclient.Context, groups dvbeta.Groups, page *query.PageResponse) error {
 	output, _ := cmd.Flags().GetString(flagdefs.FlagOutput)
 	checked := clioutput.NewCheckedWriter(cmd.OutOrStdout())
 	cctx = cctx.WithOutput(checked)
@@ -170,7 +199,16 @@ func PrintGroupsList(cmd *cobra.Command, cctx sdkclient.Context, groups dvbeta.G
 			}
 			encoded[i] = raw
 		}
-		raw, err := json.Marshal(encoded)
+
+		var doc any = encoded
+		if page != nil {
+			paged := groupsPageJSON{Groups: encoded}
+			paged.Pagination.NextKey = page.NextKey
+			paged.Pagination.Total = page.Total
+			doc = paged
+		}
+
+		raw, err := json.Marshal(doc)
 		if err != nil {
 			return checked.Complete(err)
 		}

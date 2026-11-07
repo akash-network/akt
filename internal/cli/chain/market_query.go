@@ -44,12 +44,17 @@ func GetQueryMarketOrderCmd() *cobra.Command {
 		Short: "Query orders",
 		Long: `Query orders.
 
+Without arguments, lists every order on the network, one page at a
+time (--limit, default 100). Continue with --page-key set to the previous
+page's pagination.next_key (shown by -o json); the chain accepts --page and
+--offset only together with a state.
+
 [id] identifies what to look at, and accepts any of:
 
   <owner>                        every order for that address
   <owner>/<dseq>[/gseq[/oseq]]   narrows to a deployment, group, or order
   <dseq>[/gseq[/oseq]]           the same, owned by the default account
-  open | active | closed         every order of the default account in that state
+  open | active | closed         every order on the network in that state
 
 The optional [state] argument narrows the result: with a partial identity it
 filters the list; when the identity pins down a single order it verifies the
@@ -106,18 +111,9 @@ rather than printing it.`,
 				}
 			}
 
-			// Default owner fallback when no arg and no --owner flag.
-			if ofilters.Owner == "" {
-				if defaultOwner == "" {
-					defaultOwner, err = resolveDefaultAccountAddress(cl.ClientContext())
-					if err != nil {
-						return err
-					}
-				}
-				if defaultOwner == "" {
-					return requireOwnerScope("order filter")
-				}
-				ofilters.Owner = defaultOwner
+			ofilters.Owner, err = ownerForQueryDSeq(cl.ClientContext(), ofilters.Owner, ofilters.DSeq)
+			if err != nil {
+				return err
 			}
 
 			if cflags.OrderFiltersIsID(ofilters) {
@@ -178,12 +174,17 @@ func GetQueryMarketBidCmd() *cobra.Command {
 		Short: "Query bids",
 		Long: `Query bids.
 
+Without arguments, lists every bid on the network, one page at a
+time (--limit, default 100). Continue with --page-key set to the previous
+page's pagination.next_key (shown by -o json); the chain accepts --page and
+--offset only together with a state.
+
 [id] identifies what to look at, and accepts any of:
 
   <owner>                                  every bid for that address
   <owner>/<dseq>[/gseq[/oseq[/provider]]]  narrows to a deployment, group, order, or bid
   <dseq>[/gseq[/oseq[/provider]]]          the same, owned by the default account
-  open | active | lost | closed            every bid of the default account in that state
+  open | active | lost | closed            every bid on the network in that state
 
 With --by provider the leading address is the provider instead of the owner,
 and the trailing one is the owner.
@@ -256,22 +257,11 @@ than printing it.`,
 				}
 			}
 
-			// Default owner fallback when no arg and no --owner flag (owner mode only).
-			if isByProvider {
-				if bfilters.Provider == "" {
-					return requireProviderScope("bid filter")
+			if !isByProvider {
+				bfilters.Owner, err = ownerForQueryDSeq(cl.ClientContext(), bfilters.Owner, bfilters.DSeq)
+				if err != nil {
+					return err
 				}
-			} else if bfilters.Owner == "" {
-				if defaultOwner == "" {
-					defaultOwner, err = resolveDefaultAccountAddress(cl.ClientContext())
-					if err != nil {
-						return err
-					}
-				}
-				if defaultOwner == "" {
-					return requireOwnerScope("bid filter")
-				}
-				bfilters.Owner = defaultOwner
 			}
 
 			if cflags.BidFiltersIsID(bfilters) {
@@ -334,12 +324,17 @@ func GetQueryMarketLeaseCmd() *cobra.Command {
 		Short: "Query leases",
 		Long: `Query leases.
 
+Without arguments, lists every lease on the network, one page at a
+time (--limit, default 100). Continue with --page-key set to the previous
+page's pagination.next_key (shown by -o json); the chain accepts --page and
+--offset only together with a state.
+
 [id] identifies what to look at, and accepts any of:
 
   <owner>                                  every lease for that address
   <owner>/<dseq>[/gseq[/oseq[/provider]]]  narrows to a deployment, group, order, or lease
   <dseq>[/gseq[/oseq[/provider]]]          the same, owned by the default account
-  active | insufficient_funds | closed     every lease of the default account in that state
+  active | insufficient_funds | closed     every lease on the network in that state
 
 With --by provider the leading address is the provider instead of the owner,
 and the trailing one is the owner.
@@ -412,22 +407,11 @@ rather than printing it.`,
 				}
 			}
 
-			// Default owner fallback when no arg and no --owner flag (owner mode only).
-			if isByProvider {
-				if lfilters.Provider == "" {
-					return requireProviderScope("lease filter")
+			if !isByProvider {
+				lfilters.Owner, err = ownerForQueryDSeq(cl.ClientContext(), lfilters.Owner, lfilters.DSeq)
+				if err != nil {
+					return err
 				}
-			} else if lfilters.Owner == "" {
-				if defaultOwner == "" {
-					defaultOwner, err = resolveDefaultAccountAddress(cl.ClientContext())
-					if err != nil {
-						return err
-					}
-				}
-				if defaultOwner == "" {
-					return requireOwnerScope("lease filter")
-				}
-				lfilters.Owner = defaultOwner
 			}
 
 			if cflags.LeaseFiltersIsID(lfilters) {

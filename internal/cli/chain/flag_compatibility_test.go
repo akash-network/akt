@@ -209,12 +209,12 @@ func TestStatusCommandUsesPublicRPCAndCommandOutput(t *testing.T) {
 	require.Equal(t, 1, rpc.statusCalls)
 }
 
-func TestZeroQuerySequenceFlagsKeepOwnerScope(t *testing.T) {
+func TestZeroQuerySequenceFlagsRemainNetworkWide(t *testing.T) {
 	market := &capturingMarketQuery{}
 	_, err := execQueryCmdFrom(t, GetQueryMarketLeaseCmd(), &stubQueryClient{mkt: market}, stateTestOwner,
 		"--owner", "", "--dseq", "0", "--gseq", "0", "--oseq", "0")
 	require.NoError(t, err)
-	require.Equal(t, stateTestOwner, market.leases.Filters.Owner)
+	require.Empty(t, market.leases.Filters.Owner)
 	require.Zero(t, market.leases.Filters.DSeq)
 	require.Zero(t, market.leases.Filters.GSeq)
 	require.Zero(t, market.leases.Filters.OSeq)

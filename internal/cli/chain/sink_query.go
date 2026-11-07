@@ -242,7 +242,7 @@ epoch. Without an address the default account is used.`,
 					return err
 				}
 				if account == "" {
-					return requireOwnerScope("sink account")
+					return fmt.Errorf("sink account: no default account set; provide an owner address or configure default-account")
 				}
 				sender = account
 			}

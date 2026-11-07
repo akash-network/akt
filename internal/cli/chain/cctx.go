@@ -169,6 +169,23 @@ func defaultOwnerForQueryArg(cctx sdkclient.Context, args []string) (string, err
 	return "", nil
 }
 
+// ownerForQueryDSeq scopes positive deployment sequences without narrowing lists.
+func ownerForQueryDSeq(cctx sdkclient.Context, owner string, dseq uint64) (string, error) {
+	if owner != "" || dseq == 0 {
+		return owner, nil
+	}
+
+	owner, err := resolveDefaultAccountAddress(cctx)
+	if err != nil {
+		return "", err
+	}
+	if owner == "" {
+		return "", fmt.Errorf("no default account set; provide an owner address or configure default-account")
+	}
+
+	return owner, nil
+}
+
 // ReadQueryCommandFlags returns an updated Context with fields set based on flags
 // defined in AddQueryFlagsToCmd. An error is returned if any flag query fails.
 //

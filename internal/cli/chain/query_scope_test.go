@@ -128,121 +128,111 @@ func execQueryCmdFrom(t *testing.T, cmd *cobra.Command, q cv1beta3.QueryClient, 
 	return queryOut.String(), err
 }
 
-// TestQueryListWithoutOwnerIsRefused pins the core regression: on a context
-// with no default account, a bare owner-mode list must fail rather than drop
-// the owner filter. An empty owner is not "no results" to the query layer, it
-// is "no filter", so the unscoped request came back with every deployment on
-// the network presented as the caller's own.
-//
-// listCalls is the assertion that matters -- the request must never leave.
-func TestQueryListWithoutOwnerIsRefused(t *testing.T) {
-	cases := []struct {
-		name string
-		cmd  func() *cobra.Command
-	}{
-		{"deployment", GetQueryDeploymentCmds},
-		{"order", GetQueryMarketOrderCmd},
-		{"bid", GetQueryMarketBidCmd},
-		{"lease", GetQueryMarketLeaseCmd},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			dep := &capturingDeploymentQuery{}
-			mkt := &capturingMarketQuery{}
-
-			out, err := execQueryCmdFrom(t, tc.cmd(), &stubQueryClient{dep: dep, mkt: mkt}, "")
-			require.Error(t, err, "a bare list with no default account must not answer")
-			require.Contains(t, err.Error(), "no default account set")
-			require.Zero(t, dep.listCalls, "no unscoped deployment query may be sent")
-			require.Zero(t, mkt.listCalls, "no unscoped market query may be sent")
-			require.Empty(t, out)
-		})
-	}
+// listedFilter is the scope a captured list request carried.
+type listedFilter struct {
+	owner, provider string
+	limit           uint64
 }
 
-// TestQueryListByProviderWithoutProviderIsRefused: SPEC §3.8.4 makes the
-// leading address required in --by provider mode. Nothing enforced it, so
-// `--by provider` with no address listed the whole network.
-func TestQueryListByProviderWithoutProviderIsRefused(t *testing.T) {
-	cases := []struct {
-		name string
-		cmd  func() *cobra.Command
-	}{
-		{"bid", GetQueryMarketBidCmd},
-		{"lease", GetQueryMarketLeaseCmd},
-	}
+// runBareList runs one list command against capturing stubs, requires that it
+// sent exactly one list request, and returns that request's scope.
+func runBareList(t *testing.T, kind, from string, args ...string) listedFilter {
+	t.Helper()
 
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			mkt := &capturingMarketQuery{}
-
-			out, err := execQueryCmdFrom(t, tc.cmd(), &stubQueryClient{mkt: mkt}, "", "--by", "provider")
-			require.Error(t, err)
-			require.Contains(t, err.Error(), "--by provider requires a provider address")
-			require.Zero(t, mkt.listCalls, "no unscoped market query may be sent")
-			require.Empty(t, out)
-		})
-	}
-}
-
-// TestQueryListWithDefaultOwnerScopes is the other half: when the context does
-// have an account, the bare list still works and the filter carries it. Without
-// this the fix above could pass by refusing everything.
-func TestQueryListWithDefaultOwnerScopes(t *testing.T) {
-	t.Run("deployment", func(t *testing.T) {
-		dep := &capturingDeploymentQuery{}
-
-		_, err := execQueryCmdFrom(t, GetQueryDeploymentCmds(), &stubQueryClient{dep: dep}, stateTestOwner)
-		require.NoError(t, err)
-		require.Equal(t, 1, dep.listCalls)
-		require.Equal(t, stateTestOwner, dep.lastList.Filters.Owner, "the list must be scoped to the default account")
-	})
-
-	t.Run("order", func(t *testing.T) {
-		mkt := &capturingMarketQuery{}
-
-		_, err := execQueryCmdFrom(t, GetQueryMarketOrderCmd(), &stubQueryClient{mkt: mkt}, stateTestOwner)
-		require.NoError(t, err)
-		require.Equal(t, stateTestOwner, mkt.orders.Filters.Owner)
-	})
-
-	t.Run("bid", func(t *testing.T) {
-		mkt := &capturingMarketQuery{}
-
-		_, err := execQueryCmdFrom(t, GetQueryMarketBidCmd(), &stubQueryClient{mkt: mkt}, stateTestOwner)
-		require.NoError(t, err)
-		require.Equal(t, stateTestOwner, mkt.bids.Filters.Owner)
-	})
-
-	t.Run("lease", func(t *testing.T) {
-		mkt := &capturingMarketQuery{}
-
-		_, err := execQueryCmdFrom(t, GetQueryMarketLeaseCmd(), &stubQueryClient{mkt: mkt}, stateTestOwner)
-		require.NoError(t, err)
-		require.Equal(t, stateTestOwner, mkt.leases.Filters.Owner)
-	})
-
-	t.Run("certificate", func(t *testing.T) {
-		cert := &capturingCertQuery{}
-		query := &certQueryClient{stubQueryClient: &stubQueryClient{}, cert: cert}
-
-		_, err := execQueryCmdFrom(t, GetQueryCertCertificatesCmd(), query, stateTestOwner)
-		require.NoError(t, err)
-		require.Equal(t, 1, cert.listCalls)
-		require.Equal(t, stateTestOwner, cert.last.Filter.Owner)
-	})
-}
-
-func TestCertificateListWithoutOwnerIsRefused(t *testing.T) {
+	dep := &capturingDeploymentQuery{}
+	mkt := &capturingMarketQuery{}
 	cert := &capturingCertQuery{}
-	query := &certQueryClient{stubQueryClient: &stubQueryClient{}, cert: cert}
+	query := &certQueryClient{stubQueryClient: &stubQueryClient{dep: dep, mkt: mkt}, cert: cert}
 
-	out, err := execQueryCmdFrom(t, GetQueryCertCertificatesCmd(), query, "")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "no default account set")
-	require.Zero(t, cert.listCalls, "no unscoped certificate query may be sent")
-	require.Empty(t, out)
+	cmds := map[string]func() *cobra.Command{
+		"deployment":  GetQueryDeploymentCmds,
+		"order":       GetQueryMarketOrderCmd,
+		"bid":         GetQueryMarketBidCmd,
+		"lease":       GetQueryMarketLeaseCmd,
+		"certificate": GetQueryCertCertificatesCmd,
+	}
+
+	_, err := execQueryCmdFrom(t, cmds[kind](), query, from, args...)
+	require.NoError(t, err)
+	require.Equal(t, 1, dep.listCalls+mkt.listCalls+cert.listCalls, "exactly one list request")
+
+	switch {
+	case dep.lastList != nil:
+		return listedFilter{owner: dep.lastList.Filters.Owner, limit: dep.lastList.Pagination.Limit}
+	case mkt.orders != nil:
+		return listedFilter{owner: mkt.orders.Filters.Owner, limit: mkt.orders.Pagination.Limit}
+	case mkt.bids != nil:
+		return listedFilter{owner: mkt.bids.Filters.Owner, provider: mkt.bids.Filters.Provider, limit: mkt.bids.Pagination.Limit}
+	case mkt.leases != nil:
+		return listedFilter{owner: mkt.leases.Filters.Owner, provider: mkt.leases.Filters.Provider, limit: mkt.leases.Pagination.Limit}
+	default:
+		return listedFilter{owner: cert.last.Filter.Owner, limit: cert.last.Pagination.Limit}
+	}
+}
+
+// TestQueryListWithoutOwnerIsNetworkWide pins SPEC §3.8.4: a bare list needs no
+// default account. It goes out once with an empty owner -- the chain's "no
+// filter" -- and the default page size, instead of being refused.
+func TestQueryListWithoutOwnerIsNetworkWide(t *testing.T) {
+	for _, kind := range []string{"deployment", "order", "bid", "lease", "certificate"} {
+		t.Run(kind, func(t *testing.T) {
+			got := runBareList(t, kind, "")
+			require.Empty(t, got.owner)
+			require.Equal(t, uint64(100), got.limit, "the default page size applies")
+		})
+	}
+}
+
+// TestQueryListIgnoresDefaultAccount is the other half: a configured default
+// account does not narrow a bare list either, so the same command answers the
+// same way in every context.
+func TestQueryListIgnoresDefaultAccount(t *testing.T) {
+	for _, kind := range []string{"deployment", "order", "bid", "lease", "certificate"} {
+		t.Run(kind, func(t *testing.T) {
+			require.Empty(t, runBareList(t, kind, stateTestOwner).owner)
+		})
+	}
+}
+
+// TestQueryListByProviderWithoutProviderIsNetworkWide: --by provider with no
+// address is the same network-wide list as owner mode.
+func TestQueryListByProviderWithoutProviderIsNetworkWide(t *testing.T) {
+	for _, kind := range []string{"bid", "lease"} {
+		t.Run(kind, func(t *testing.T) {
+			got := runBareList(t, kind, "", "--by", "provider")
+			require.Empty(t, got.owner)
+			require.Empty(t, got.provider)
+		})
+	}
+}
+
+// TestQueryStateKeywordListIsNetworkWide covers the reported command,
+// `akt query deployment closed` on a context with no default account.
+func TestQueryStateKeywordListIsNetworkWide(t *testing.T) {
+	dep := &capturingDeploymentQuery{}
+
+	_, err := execQueryCmdFrom(t, GetQueryDeploymentCmds(), &stubQueryClient{dep: dep}, "", "closed")
+	require.NoError(t, err)
+	require.Empty(t, dep.lastList.Filters.Owner)
+	require.Equal(t, "closed", dep.lastList.Filters.State)
+}
+
+// TestQueryDseqShorthandUsesDefaultAccount: the numeric dseq shorthand is where
+// the default account still applies, since the owner is part of the identity it
+// names. Without an account to resolve, it fails before any request is sent.
+func TestQueryDseqShorthandUsesDefaultAccount(t *testing.T) {
+	mkt := &capturingMarketQuery{}
+
+	_, err := execQueryCmdFrom(t, GetQueryMarketOrderCmd(), &stubQueryClient{mkt: mkt}, stateTestOwner, "12345")
+	require.NoError(t, err)
+	require.Equal(t, stateTestOwner, mkt.orders.Filters.Owner)
+	require.Equal(t, uint64(12345), mkt.orders.Filters.DSeq)
+
+	mkt = &capturingMarketQuery{}
+
+	_, err = execQueryCmdFrom(t, GetQueryMarketOrderCmd(), &stubQueryClient{mkt: mkt}, "", "12345")
+	require.ErrorContains(t, err, "no default account set")
+	require.Zero(t, mkt.listCalls)
 }
 
 // TestQueryListByProviderWithProviderScopes: provider mode still works when the
