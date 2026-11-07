@@ -614,7 +614,11 @@ func TestSubscribeConsensusStateRejectsServerSubscriptionError(t *testing.T) {
 		defer close(peerDone)
 		defer conn.Close()
 
-		requests, err := readTestSubscriptions(conn, 1)
+		if err := conn.SetReadDeadline(time.Now().Add(3 * time.Second)); err != nil {
+			reportWSPeerError(peerErrors, "set rejection peer deadline: %v", err)
+			return
+		}
+		requests, err := readTestSubscriptions(conn, 4)
 		if err != nil {
 			reportWSPeerError(peerErrors, "read rejected subscription: %v", err)
 			return
@@ -628,6 +632,10 @@ func TestSubscribeConsensusStateRejectsServerSubscriptionError(t *testing.T) {
 			},
 		}); err != nil {
 			reportWSPeerError(peerErrors, "write rejected subscription: %v", err)
+			return
+		}
+		if _, _, err := conn.ReadMessage(); !websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseAbnormalClosure) {
+			reportWSPeerError(peerErrors, "expected client to close rejected subscription: %v", err)
 		}
 	})
 
@@ -641,7 +649,7 @@ func TestSubscribeConsensusStateRejectsServerSubscriptionError(t *testing.T) {
 	select {
 	case <-peerDone:
 	case <-time.After(3 * time.Second):
-		t.Fatal("websocket peer remained open after second subscription failure")
+		t.Fatal("websocket peer remained open after subscription rejection")
 	}
 	select {
 	case peerErr := <-peerErrors:

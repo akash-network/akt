@@ -5556,6 +5556,9 @@ observations stale.
 Hermetic monitor tests MUST cover rejected bootstrap responses, malformed
 block/proposer events, existing precommits at attachment, cancellation under
 snapshot backpressure, and the UI's disconnected and elapsed-time states.
+Subscription-rejection fixtures MUST receive all four subscribe requests
+before sending the rejection and wait for the client to close the connection.
+This isolates JSON-RPC rejection handling from transport write failures.
 Bootstrap first reads the height needed to fetch its validator set, then
 validates the complete snapshot against that set before publishing any state.
 

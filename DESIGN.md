@@ -136,6 +136,10 @@ client is stopped and the consumer channel closes instead of leaving the
 dashboard attached to a silent connection. Both the transport reconnect delay
 and the view model's bounded retry delay are owned by the monitor and terminate
 immediately on context cancellation.
+The rejection test peer receives the complete subscription batch before
+replying and stays connected until the client closes. This makes the test
+exercise the server's JSON-RPC rejection without racing pending client writes
+against a peer-initiated disconnect.
 Validator identity and voting power are height-scoped, not session-scoped.
 The consensus tracker refreshes the validator set before applying the first
 event of a higher height and never caches a failed validator response. It does
