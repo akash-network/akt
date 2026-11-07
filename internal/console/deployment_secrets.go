@@ -51,6 +51,10 @@ func sanitizeSecretError(err error) error {
 			return known
 		}
 	}
+	var sessionErr *SessionRequiredError
+	if errors.As(err, &sessionErr) {
+		return sessionErr
+	}
 	var status responseStatusError
 	if errors.As(err, &status) {
 		return status
