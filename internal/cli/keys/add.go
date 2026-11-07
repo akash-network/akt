@@ -19,7 +19,6 @@ import (
 	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/multisig"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
-	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256r1"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
@@ -68,17 +67,8 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *c
 				if decodeErr != nil {
 					return fmt.Errorf("decode base64 public key: %w", decodeErr)
 				}
-				data, marshalErr := json.Marshal(struct {
-					Type string `json:"@type"`
-					Key  []byte `json:"key"`
-				}{
-					Type: "/cosmos.crypto." + keyType + ".PubKey",
-					Key:  key,
-				})
-				if marshalErr != nil {
-					return marshalErr
-				}
-				pubJSON = string(data)
+				pubJSON = fmt.Sprintf(`{"@type":%q,"key":%q}`,
+					"/cosmos.crypto."+keyType+".PubKey", base64.StdEncoding.EncodeToString(key))
 			}
 			if cmd.Flags().Changed(flagdefs.FlagPubKey) || cmd.Flags().Changed(flagdefs.FlagPubKeyBase64) {
 				pubKey, err = decodePublicKey([]byte(pubJSON))
@@ -145,7 +135,7 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *c
 				return printSavedKey(cmd, rec, keyTypeLedger, err)
 			}
 
-			return addLocalKey(cmd, target, activeRecorder, name, path, algo)
+			return addLocalKey(cmd, target, activeRecorder, name, path, algo, generateMnemonic)
 		},
 	}
 
@@ -177,7 +167,7 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *c
 	return cmd
 }
 
-func addLocalKey(cmd *cobra.Command, kr sdkkeyring.Keyring, recorder Recorder, name, path string, algo sdkkeyring.SignatureAlgo) error {
+func addLocalKey(cmd *cobra.Command, kr sdkkeyring.Keyring, recorder Recorder, name, path string, algo sdkkeyring.SignatureAlgo, generate func() (string, error)) error {
 	recoverKey, _ := cmd.Flags().GetBool(flagdefs.FlagRecover)
 	interactive, _ := cmd.Flags().GetBool(flagdefs.FlagInteractive)
 	source, _ := cmd.Flags().GetString(flagdefs.FlagMnemonicSource)
@@ -198,7 +188,7 @@ func addLocalKey(cmd *cobra.Command, kr sdkkeyring.Keyring, recorder Recorder, n
 	}
 	generated := mnemonic == "" && !recoverKey && source == ""
 	if generated {
-		mnemonic, err = generateMnemonic()
+		mnemonic, err = generate()
 		if err != nil {
 			return err
 		}
@@ -346,26 +336,26 @@ func decodePublicKey(data []byte) (cryptotypes.PubKey, error) {
 	if len(fields.Key) == 0 {
 		return nil, fmt.Errorf("public key bytes are required")
 	}
-	var pk cryptotypes.PubKey
-	if err := keyCodec().UnmarshalInterfaceJSON(data, &pk); err != nil {
-		return nil, err
-	}
-	switch key := pk.(type) {
-	case *secp256k1.PubKey:
-		if len(key.Key) != secp256k1.PubKeySize {
+	switch fields.Type {
+	case "/cosmos.crypto.secp256k1.PubKey":
+		if len(fields.Key) != secp256k1.PubKeySize {
 			return nil, fmt.Errorf("secp256k1 public key must be %d bytes", secp256k1.PubKeySize)
 		}
-		if _, err := secp.ParsePubKey(key.Key); err != nil {
+		if _, err := secp.ParsePubKey(fields.Key); err != nil {
 			return nil, fmt.Errorf("invalid secp256k1 public key: %w", err)
 		}
-	case *ed25519.PubKey:
-		if len(key.Key) != ed25519.PubKeySize {
+	case "/cosmos.crypto.ed25519.PubKey":
+		if len(fields.Key) != ed25519.PubKeySize {
 			return nil, fmt.Errorf("ed25519 public key must be %d bytes", ed25519.PubKeySize)
 		}
-	case *secp256r1.PubKey:
+	case "/cosmos.crypto.secp256r1.PubKey":
 		// The SDK decoder validates the point on the curve.
 	default:
 		return nil, fmt.Errorf("unsupported public key type %q", fields.Type)
+	}
+	var pk cryptotypes.PubKey
+	if err := keyCodec().UnmarshalInterfaceJSON(data, &pk); err != nil {
+		return nil, err
 	}
 	return pk, nil
 }

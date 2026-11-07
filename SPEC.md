@@ -1407,6 +1407,10 @@ to the node-compatible default; existing records are not rewritten.
 `--dry-run` creates the result in an in-memory keyring and emits no mutation
 action log. Local and public-key dry runs do not open the persistent keyring;
 multisig dry runs may read constituent keys but never save to that keyring.
+Failure-path tests cover keyring storage, malformed records, secret input,
+terminal output, and mnemonic generation/encoding without modifying global
+randomness or requiring hardware. Command-local mnemonic dependencies use the
+same production generator and encoder as ordinary key creation.
 `--interactive` / `-i` accepts a mnemonic (empty generates one), then a BIP39
 passphrase and its confirmation when nonempty. One reader owns the prompt
 sequence so piped input is not lost. `--recover` and `--source` retain their
@@ -2785,6 +2789,10 @@ Refresh intervals: oracle aggregated prices every 30s, BME status/vault every 30
 ### 2.7 Events Command
 
 #### `akt events`
+
+Cancellation stops the event output loop and the RPC subscription even when
+the chain produces no more events. Output failures also stop the subscription
+and propagate to the caller.
 
 Stream live blockchain events in real-time. When launched with no subcommand and a TTY is attached, opens an interactive TUI event viewer. When piped or with `--output json`, emits one JSON object per event to stdout.
 

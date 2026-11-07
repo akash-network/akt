@@ -200,7 +200,7 @@ func migrateCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder
 	}
 }
 
-func mnemonicCmd() *cobra.Command {
+func mnemonicCmd(generate func() (string, error), encode func([]byte) (string, error)) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "mnemonic",
 		Short:   "Generate a new BIP39 mnemonic",
@@ -224,12 +224,12 @@ func mnemonicCmd() *cobra.Command {
 					return err
 				}
 				hash := sha256.Sum256([]byte(entropy))
-				mnemonic, err = bip39Mnemonic(hash[:])
+				mnemonic, err = encode(hash[:])
 				if err != nil {
 					return err
 				}
 			} else {
-				mnemonic, err = generateMnemonic()
+				mnemonic, err = generate()
 				if err != nil {
 					return err
 				}

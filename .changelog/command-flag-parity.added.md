@@ -4,3 +4,5 @@
   selection, service-status, remote status/events, and Console flag alternatives.
   Audit the full Akash command tree with a checked-in compatibility fixture and
   explicit operator/runtime exclusions.
+  Stop remote event subscriptions on cancellation or output failure, including
+  when no further blocks arrive.

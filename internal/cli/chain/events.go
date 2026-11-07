@@ -72,6 +72,8 @@ func getEvents(ctx context.Context, cmd *cobra.Command, _ []string) error {
 	group.Go(func() error {
 		for {
 			select {
+			case <-ctx.Done():
+				return nil
 			case <-subscriber.Done():
 				return nil
 			case ev := <-subscriber.Events():

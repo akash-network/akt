@@ -139,7 +139,7 @@ func Commands(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) 
 		listKeyTypesCmd(getKeyring),
 		migrateCmd(getKeyring, recorder),
 		renameCmd(getKeyring, recorder),
-		mnemonicCmd(),
+		mnemonicCmd(generateMnemonic, bip39Mnemonic),
 		parseCmd(),
 	)
 

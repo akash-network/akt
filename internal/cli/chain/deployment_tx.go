@@ -24,10 +24,14 @@ import (
 var (
 	errDeploymentUpdate              = errors.New("deployment update failed")
 	errDeploymentUpdateGroupsChanged = fmt.Errorf("%w: groups are different than existing deployment, you cannot update groups", errDeploymentUpdate)
-
-	// errDSeqRequired prevents entering the transaction pipeline without an ID.
-	errDSeqRequired = errors.New("dseq is required: provide [dseq] or --dseq")
 )
+
+type deploymentInputError string
+
+func (err deploymentInputError) Error() string { return string(err) }
+
+// errDSeqRequired prevents entering the transaction pipeline without an ID.
+const errDSeqRequired deploymentInputError = "dseq is required: provide [dseq] or --dseq"
 
 // GetTxDeploymentCmds returns the transaction commands for this module
 func GetTxDeploymentCmds() *cobra.Command {
