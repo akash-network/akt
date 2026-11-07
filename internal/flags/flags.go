@@ -144,6 +144,7 @@ const (
 	FlagKeyType                     = "key-type"
 	FlagLabel                       = "label"
 	FlagLimit                       = "limit"
+	FlagListNames                   = "list-names"
 	FlagLogColor                    = "log_color"
 	FlagLogFormat                   = "log_format"
 	FlagLogLevel                    = "log_level"

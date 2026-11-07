@@ -1461,6 +1461,22 @@ authorizes overwriting an existing key and cannot bypass mnemonic, Ledger, or
 keyring-passphrase input; `--no-backup` remains the separate control that keeps
 a newly generated mnemonic out of command output.
 
+Key management preserves the `akash keys` flag surface beneath
+`akt context keys`, including public-only imports needed to assemble multisig
+accounts. JSON and base64 public keys are decoded at the CLI boundary and
+saved through the SDK's offline-key API. Signing algorithms are resolved from
+the keyring's supported algorithms. Multisig construction uses node-compatible
+address sorting unless `--nosort` is selected; stored keys are never reordered.
+
+Dry runs use an isolated in-memory destination and suppress mutation logging.
+They do not open persistent storage except to read existing multisig members.
+Unarmored export requires both explicit unsafe-export flags and confirmation
+(or `--yes`), and shares the existing security-event recorder. Hex import and
+record migration use SDK operations on the selected keyring. No compatibility
+command implicitly imports keys from `~/.akash` or changes storage backends.
+The compatibility matrix in SPEC §2.2.3 distinguishes retained akt output and
+confirmation conventions from node-specific server logging flags.
+
 The output flag is an enum at the parsing boundary. A misspelling such as
 `-o josn` is a usage error; it must never fall through to pretty output. The
 same boundary owns the flag's help text so adopted commands cannot advertise a

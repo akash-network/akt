@@ -1355,6 +1355,29 @@ akt context keyring set default file --dir /mnt/secure/keys
 
 ### 2.2.3 Keys Commands
 
+The key command surface follows `akash keys` (audited against Akash 2.1.0
+and chain-sdk commit `c5826df56a0400debb583dbd7de6760bad8d1cc4`). All twelve
+key subcommands are available beneath `akt context keys`. Keyring selection,
+home, output, and verbosity retain akt's context-aware global flags; node
+server logging flags are not copied. The SDK's hidden `--offline` spelling
+is accepted for compatibility; key operations remain local.
+
+The compatibility audit adds these missing flags and behaviors together:
+
+| Command | Added compatibility |
+| --- | --- |
+| `add` | `--pubkey`, `--pubkey-base64`, `--dry-run`, `--nosort`, and the legacy `--algo` alias for `--key-type` |
+| `list` | `--list-names` / `-n` |
+| `delete` | Deprecated `--force` / `-f` spelling; like the current node CLI it does not bypass confirmation or keyring authentication |
+| `export` | `--unarmored-hex`, `--unsafe`, `--yes` / `-y` |
+| `rename` | `--yes` / `-y`; accepted without adding a prompt to akt's existing rename behavior |
+| `mnemonic` | `--unsafe-entropy`, `--yes` / `-y` |
+| `import-hex` | New command with `--key-type` |
+| `list-key-types`, `migrate` | Missing node key commands, using the selected keyring's SDK methods |
+
+`show`, `parse`, and armored `import` already expose the node's command-local
+flags. Existing `show` scalar and JSON/YAML conventions remain unchanged.
+
 #### `akt context keys add <name>`
 
 Create, recover, or register a key. Pretty output retains the human backup
@@ -1364,6 +1387,30 @@ object with `name`, `address`, and `type`; multisig results also include
 unless `--no-backup` was selected. Recovered keys never repeat their input
 mnemonic. The selected output format applies equally to local, Ledger, and
 multisig keys.
+
+`--pubkey` accepts a Protobuf JSON public key, including legacy amino
+multisig public keys; `--pubkey-base64` accepts base64-encoded public-key
+bytes for the selected `--key-type`. Both save an offline public-key record,
+without mnemonic generation or private-key input. Invalid encodings, key
+lengths, multisig thresholds, and conflicting creation modes fail before
+saving a record. Public-key inputs never overwrite an existing key.
+
+For local and Ledger creation, `--key-type` MUST select a signing algorithm
+supported by the selected keyring rather than merely labeling the result.
+Public-key JSON carries its own type. `--algo` is the legacy `--key-type`
+spelling. `--multisig` accepts repeated and comma-separated names, rejects
+duplicate names, and validates the threshold before SDK construction. Keys
+are sorted by address by default to match `akash`; `--nosort` retains caller
+order. This changes newly constructed multisig addresses for unsorted input
+to the node-compatible default; existing records are not rewritten.
+
+`--dry-run` creates the result in an in-memory keyring and emits no mutation
+action log. Local and public-key dry runs do not open the persistent keyring;
+multisig dry runs may read constituent keys but never save to that keyring.
+`--interactive` / `-i` accepts a mnemonic (empty generates one), then a BIP39
+passphrase and its confirmation when nonempty. One reader owns the prompt
+sequence so piped input is not lost. `--recover` and `--source` retain their
+existing recovery forms; supplied mnemonics are never echoed in the result.
 
 The command is non-interactive except when it must read secret material or a
 keyring passphrase. It accepts `--yes` / `-y` for Cosmos CLI script
@@ -1376,8 +1423,31 @@ before the keyring is opened.
 When `--ledger` is selected, the command MUST pass the current Cosmos SDK
 Bech32 account-address prefix to `SaveLedgerKey`. It MUST NOT hardcode either
 `cosmos` or `akash`: the SDK configuration is authoritative for the active
-network. Tests MUST verify this call through a keyring boundary double and MUST
-NOT require physical Ledger hardware.
+network. A custom `--hd-path` is rejected for Ledger, as in `akash`, rather
+than silently ignored. Tests MUST verify this call through a keyring boundary
+double and MUST NOT require physical Ledger hardware.
+
+#### Other key command compatibility
+
+`list --list-names` prints one name per line in pretty output and an array of
+names in JSON/YAML. `list-key-types` reports the selected keyring's supported
+signing algorithms, with an array in machine formats.
+
+`export --unarmored-hex --unsafe` emits raw private-key hex only when both
+flags are present. It requires confirmation unless `--yes` is set; either
+flag alone is an error. Cancellation exports and logs nothing. Armored
+export remains the default and still requires its encryption passphrase.
+
+`import-hex <name> [hex] --key-type <algorithm>` imports a hex private key;
+omitting the hex prompts for it without terminal echo. Validate the 32-byte
+encoding and the secp256k1 scalar before SDK import; errors MUST NOT echo the
+private key. `migrate` delegates legacy Amino-to-Protobuf record migration to
+the selected keyring and records `keys.migrate`; it never opens an unrelated
+legacy Akash home or changes the configured keyring backend.
+
+`mnemonic --unsafe-entropy` reads user-supplied text, requires at least 43
+characters as in `akash`, confirms unless `--yes` is set, and derives its
+256-bit entropy with SHA-256. The default continues to use system randomness.
 
 #### `akt context keys show <name|address> [name|address...]`
 
@@ -1458,17 +1528,19 @@ itself is unaffected.
 
 | Command                                  | Action          | Recorded parameters                                                                          |
 | ---------------------------------------- | --------------- | -------------------------------------------------------------------------------------------- |
-| `keys add <name>`                        | `keys.add`      | `name`, `type` (`local`, `ledger`, `multi`), `address`; multisig adds `threshold` and `pubkeys` |
+| `keys add <name>`                        | `keys.add`      | `name`, `type` (`local`, `ledger`, `multi`, `offline`), `address`; multisig adds `threshold` and `pubkeys` |
 | `keys add <name> --recover` / `--source` | `keys.recover`  | `name`, `type`, `address`                                                                      |
 | `keys delete <name>`                     | `keys.delete`   | `name`, `type`, `address`                                                                      |
 | `keys rename <old> <new>`                | `keys.rename`   | `from`, `to`                                                                                   |
 | `keys import <name> <keyfile>`           | `keys.import`   | `name`, `type`, `address`                                                                      |
+| `keys import-hex <name> [hex]`           | `keys.import`   | `name`, `type`, `address`; never private-key hex                                                |
+| `keys migrate`                          | `keys.migrate`  | Number of records returned by the SDK migration                                               |
 | `keys export <name>`                     | `keys.export`   | `name`                                                                                         |
 
 `keys export` changes no state, but it is the one command that moves private key
 material out of the keyring. It is recorded as a security event and is the only
 deliberate exception to the rule that read-only commands are not logged (§5.6).
-The read-only `keys list`, `keys show`, `keys parse`, and `keys mnemonic` are
+The read-only `keys list`, `keys list-key-types`, `keys show`, `keys parse`, and `keys mnemonic` are
 never recorded, and a cancelled `keys delete` confirmation records nothing.
 
 Secrets never reach the log: mnemonics, BIP39 passphrases, export and import
