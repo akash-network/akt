@@ -1,0 +1,1 @@
+- Preserve HTTP rate-limit, server and redirect status codes through Console secret sanitization so live CI failures remain diagnosable without exposing response bodies.

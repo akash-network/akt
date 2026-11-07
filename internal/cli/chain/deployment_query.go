@@ -5,6 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
+
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	"pkg.akt.dev/akt/internal/output/pretty"
 	dv1 "pkg.akt.dev/go/node/deployment/v1"
@@ -19,24 +21,32 @@ func GetQueryDeploymentCmds() *cobra.Command {
 		Short: "Query deployments",
 		Long: `Query deployments.
 
-Without arguments, lists the deployments owned by the context's default
-account.
+Without arguments, lists every deployment on the network, one page at a
+time (--limit, default 100). Continue with --page-key set to the previous
+page's pagination.next_key (shown by -o json); the chain accepts --page and
+--offset only together with a state.
 
 [id] identifies what to look at, and accepts any of:
 
   <owner>          every deployment owned by that address
   <owner>/<dseq>   one deployment
   <dseq>           one deployment owned by the default account
-  active | closed  every deployment of the default account in that state
+  active | closed  every deployment on the network in that state
 
 [state] narrows the result. With an owner or no identity it filters the
 list; when [id] names a single deployment it checks the state instead, and
 the command fails if the deployment is in a different one.`,
-		Example: `  # Deployments owned by the default account
+		Example: `  # Every deployment on the network (first page of 100)
   akt query deployment
 
   # ...only the active ones
   akt query deployment active
+
+  # The next page: pagination.next_key from the previous page (-o json)
+  akt query deployment --page-key <next_key>
+
+  # Offset paging needs a state: the second page of 20 active deployments
+  akt query deployment active --limit 20 --page 2
 
   # Every deployment owned by an address
   akt query deployment akash1zn43lm...
@@ -95,20 +105,8 @@ the command fails if the deployment is in a different one.`,
 				}
 			}
 
-			// Default owner fallback when no arg and no --owner flag.
-			if dfilters.Owner == "" {
-				if defaultOwner == "" {
-					defaultOwner, err = resolveDefaultAccountAddress(cl.ClientContext())
-					if err != nil {
-						return err
-					}
-				}
-				if defaultOwner == "" {
-					return requireOwnerScope("deployment filter")
-				}
-				dfilters.Owner = defaultOwner
-			}
-
+			// An empty owner lists the whole network (SPEC §3.8.4); only the
+			// numeric dseq shorthand above takes the default account.
 			if cflags.DepFiltersIsID(dfilters) {
 				id := dv1.DeploymentID{
 					Owner: dfilters.Owner,
@@ -160,13 +158,38 @@ the command fails if the deployment is in a different one.`,
 }
 
 // GetQueryDeploymentGroupCmd returns the command to query deployment groups.
-// Accepts an optional positional ID in the form owner/dseq[/gseq].
+// Accepts an optional positional ID in the form owner[/dseq[/gseq]].
 // When gseq is provided, returns a single group.
 // When only owner/dseq are given, fetches the deployment and shows all its groups.
+// Without a dseq, shows the groups of one page of deployments (SPEC §3.8.5).
 func GetQueryDeploymentGroupCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:               "group [id]",
-		Short:             "Query deployment groups",
+		Use:   "group [id]",
+		Short: "Query deployment groups",
+		Long: `Query deployment groups.
+
+Without arguments, lists the groups of every deployment on the network. No
+chain query lists groups, so this fetches one page of deployments (--limit,
+default 100) and prints their groups. Continue with --page-key set to the
+pagination.next_key that -o json prints; --page and --offset need a state
+filter, which a group listing cannot take.
+
+[id] identifies what to look at, and accepts any of:
+
+  <owner>                 the groups of that owner's deployments (one page)
+  <owner>/<dseq>[/gseq]   every group of one deployment, or one group
+  <dseq>[/gseq]           the same, owned by the default account`,
+		Example: `  # Groups of every deployment on the network (first page of deployments)
+  akt query deployment group
+
+  # Groups of one owner's deployments
+  akt query deployment group akash1zn43lm...
+
+  # Every group of one deployment
+  akt query deployment group akash1zn43lm.../25354313
+
+  # Group 1 of a deployment of the default account
+  akt query deployment group 25354313/1`,
 		Args:              cobra.MaximumNArgs(1),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -185,14 +208,20 @@ func GetQueryDeploymentGroupCmd() *cobra.Command {
 			}
 
 			if len(args) == 1 {
-				parsed, fullySpecified, err := cflags.GroupIDFromArg(args[0], defaultOwner)
-				if err != nil {
-					return err
-				}
-				owner = parsed.Owner
-				dseq = parsed.DSeq
-				if fullySpecified {
-					gseq = parsed.GSeq
+				// A bare owner address lists that owner's groups; anything
+				// longer is a group path.
+				if addr, aerr := sdk.AccAddressFromBech32(args[0]); aerr == nil {
+					owner = addr.String()
+				} else {
+					parsed, fullySpecified, err := cflags.GroupIDFromArg(args[0], defaultOwner)
+					if err != nil {
+						return err
+					}
+					owner = parsed.Owner
+					dseq = parsed.DSeq
+					if fullySpecified {
+						gseq = parsed.GSeq
+					}
 				}
 			}
 			// FEEDBACK(2026-07): the --owner/--dseq/--gseq flag path is
@@ -213,8 +242,33 @@ func GetQueryDeploymentGroupCmd() *cobra.Command {
 			// 	}
 			// }
 
-			if owner == "" || dseq == 0 {
-				return fmt.Errorf("owner and dseq are required (provide as owner/dseq[/gseq])")
+			// Without a dseq there is no single deployment to read, and no
+			// chain query lists groups: list one page of deployments (the
+			// whole network when owner is empty) and show their groups.
+			if dseq == 0 {
+				if err := rejectOffsetPaging(cmd.Flags(), "deployment group"); err != nil {
+					return err
+				}
+
+				pageReq, err := ReadPageRequest(cmd.Flags())
+				if err != nil {
+					return err
+				}
+
+				res, err := cl.Query().Deployment().Deployments(ctx, &dvbeta.QueryDeploymentsRequest{
+					Filters:    dvbeta.DeploymentFilters{Owner: owner},
+					Pagination: pageReq,
+				})
+				if err != nil {
+					return err
+				}
+
+				var groups dvbeta.Groups
+				for _, d := range res.Deployments {
+					groups = append(groups, d.Groups...)
+				}
+
+				return pretty.PrintGroupsPage(cmd, cl.ClientContext(), groups, res.Pagination)
 			}
 
 			// If gseq is specified, query a single group.
@@ -242,6 +296,7 @@ func GetQueryDeploymentGroupCmd() *cobra.Command {
 	}
 
 	cflags.AddQueryFlagsToCmd(cmd)
+	cflags.AddPaginationFlagsToCmd(cmd, "deployments")
 	// FEEDBACK(2026-07): --owner/--dseq/--gseq disabled for the
 	// positional-only UX trial (use the positional owner/dseq[/gseq] form
 	// instead). Restore by uncommenting if users ask for the flag form back.

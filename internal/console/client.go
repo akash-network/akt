@@ -105,6 +105,21 @@ func (e *HTTPError) Error() string {
 	return fmt.Sprintf("console: unexpected status %d: %s", e.StatusCode, e.Body)
 }
 
+// responseStatusError contains no server-supplied text, so secret operations
+// can retain its status without exposing the response body.
+type responseStatusError int
+
+func (e responseStatusError) Error() string {
+	switch {
+	case e == http.StatusTooManyRequests:
+		return fmt.Sprintf("console: rate limited (HTTP %d)", e)
+	case e >= http.StatusInternalServerError:
+		return fmt.Sprintf("console: server error (HTTP %d)", e)
+	default:
+		return fmt.Sprintf("console: HTTP redirects are not allowed (HTTP %d)", e)
+	}
+}
+
 // Client interacts with the Akash Console API.
 type Client struct {
 	baseURL         string
@@ -365,7 +380,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, resul
 			return &SessionRequiredError{}
 
 		case resp.StatusCode == http.StatusTooManyRequests:
-			lastErr = fmt.Errorf("console: rate limited (HTTP 429)")
+			lastErr = responseStatusError(resp.StatusCode)
 
 		case resp.StatusCode >= 500:
 			// A recognized code marks a refusal Console made before acting,
@@ -377,10 +392,10 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, resul
 					Code:       code,
 				}
 			}
-			lastErr = fmt.Errorf("console: server error (HTTP %d)", resp.StatusCode)
+			lastErr = responseStatusError(resp.StatusCode)
 
 		case resp.StatusCode >= 300 && resp.StatusCode < 400:
-			return fmt.Errorf("console: HTTP redirects are not allowed (HTTP %d)", resp.StatusCode)
+			return responseStatusError(resp.StatusCode)
 
 		default:
 			return &HTTPError{
