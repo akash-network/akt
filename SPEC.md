@@ -2527,7 +2527,16 @@ Each dashboard is also directly accessible via its CLI subcommand. When launched
 
 1. Positional argument: `akt monitor https://rpc.akt.dev:443/rpc`
 2. `--rpc` flag: `akt monitor --rpc https://rpc.akt.dev:443/rpc`
-3. Active context RPC endpoint (from `context → network → endpoints.rpc[0]`)
+3. `--node` compatibility alias: `akt monitor --node https://rpc.akt.dev:443/rpc`
+4. Active context RPC endpoint (from `context → network → endpoints.rpc[0]`)
+
+`--node` is supported on the hub and every dashboard subcommand. If both
+flags are supplied, `--rpc` takes precedence; a positional endpoint overrides
+either flag. Both flags count as explicit endpoint selections.
+
+The monitor owns RPC initialization and reconnects. Root startup MUST NOT
+create a separate SDK RPC client from `--node` before the monitor resolves
+the winning endpoint, including when another endpoint overrides that flag.
 
 If no endpoint can be resolved, the command exits with an error.
 
@@ -2546,13 +2555,14 @@ commands, but it is not a valid monitor example.
 | Flag              | Type   | Default         | Description                                              |
 | ----------------- | ------ | --------------- | -------------------------------------------------------- |
 | `--rpc`           | string | context default | RPC endpoint (WebSocket-capable)                         |
+| `--node`          | string | context default | Compatibility alias for `--rpc`                         |
 | `--rest`          | string | auto-derived    | REST API endpoint (for governance/oracle/BME queries). Default: derived from the context's `endpoints.api[0]`. If no API endpoint is configured, falls back to the RPC host on port 1317 (standard Cosmos REST port). |
 | `--insecure`      | bool   | `false`         | Skip TLS certificate verification for REST and gRPC provider probes |
 | `--clean-cache`   | bool   | `false`         | Clear the local cache before start                       |
 
 An explicit `--rest` always wins. Without it, a context API endpoint is used
 only when the selected RPC is one of that same context network's configured RPC
-endpoints. For an ad-hoc positional or `--rpc` override, the REST endpoint is
+endpoints. For an ad-hoc positional, `--rpc`, or `--node` override, the REST endpoint is
 derived from that RPC: a terminal `/rpc` path becomes `/rest`; otherwise the
 same hostname uses the standard Cosmos REST port 1317. WebSocket and Cosmos
 `tcp` schemes are converted to their HTTP equivalents for REST requests. The
@@ -2564,7 +2574,7 @@ logs.
 For implicit context resolution only, a primary endpoint that exactly matches
 a retired HTTP-only endpoint from an older built-in template is replaced at
 runtime by that template's current WebSocket-capable primary. This compatibility
-selection does not rewrite the context. Positional and `--rpc` endpoints are
+selection does not rewrite the context. Positional, `--rpc`, and `--node` endpoints are
 explicit user choices and are never substituted.
 
 An explicit positional or `--rpc` endpoint MUST work with no config file and
@@ -5499,13 +5509,13 @@ MUST advance the model and clear the prior vote set. It is forward-progress
 evidence even when a reconnect caused the corresponding `NewRoundStep` event
 to be missed.
 
-The consensus WebSocket feed subscribes to both `tm.event='Vote'` and
-`tm.event='NewRoundStep'` on its initial connection and after every successful
+The consensus WebSocket feed subscribes to `Vote`, `NewRoundStep`, `NewRound`,
+and `NewBlock` on its initial connection and after every successful
 transport reconnect. A transport reconnect alone MUST NOT be treated as a
 restored feed because CometBFT subscriptions are connection-scoped. The server
-MUST acknowledge both subscribe requests with their valid empty JSON-RPC result
+MUST acknowledge all subscribe requests with their valid empty JSON-RPC result
 before setup succeeds; an event that races ahead of those acknowledgements MUST
-be buffered and applied after setup. If either subscription cannot be restored,
+be buffered and applied after setup. If any subscription cannot be restored,
 the WebSocket client stops and the returned snapshot channel closes; it MUST
 NOT remain open as a silent feed. Transport and model reconnect delays MUST
 select on the runtime context so cancellation stops the producer, closes its
@@ -5519,6 +5529,48 @@ initial connection, subscription, or validator failure MUST update the visible
 error and schedule a bounded reconnect rather than leaving the monitor dead
 until process restart.
 
+Consensus percentages MUST be computed from unique validators' voting power
+for the selected node's current `(height, round)`. They describe votes
+observed by that node, not global validator availability or agreement on a
+particular block: nil votes also count as participation. The stream MUST
+subscribe before reading a single `/consensus_state` bootstrap snapshot,
+including after reconnect. It loads validators at that snapshot's height,
+merges already observed votes, and replays buffered events without double
+counting or rewinding state. HTTP is used for initialization, validator
+metadata, and gap recovery; ongoing consensus updates MUST come from WebSocket
+events.
+
+`NewRoundStep` and `NewRound` MUST decode the real CometBFT named string
+`step` field. `NewRound` supplies the proposer for its exact height and round.
+A proposer from another round MUST NOT be carried forward. `NewBlock` supplies
+committed header timestamps. Completed block intervals use consecutive header
+timestamps, independent of delivery/rendering delay; a gap leaves the interval
+unknown. Live round duration is an observed local interval, not a committed
+block interval. Historical vote records describe observed votes and MUST NOT
+be presented as proof of a canonical commit. Every received event updates
+accounting independently of the 100ms elapsed-display tick. Reconnects MUST
+restore every subscription and seed current state again. The UI MUST
+distinguish connecting/disconnected from live WebSocket data and mark retained
+observations stale.
+
+Hermetic monitor tests MUST cover rejected bootstrap responses, malformed
+block/proposer events, existing precommits at attachment, cancellation under
+snapshot backpressure, and the UI's disconnected and elapsed-time states.
+Subscription-rejection fixtures MUST receive all four subscribe requests
+before sending the rejection and wait for the client to close the connection.
+This isolates JSON-RPC rejection handling from transport write failures.
+Bootstrap first reads the height needed to fetch its validator set, then
+validates the complete snapshot against that set before publishing any state.
+
+The upgrade check MUST run the public `akt monitor` binary in real terminals
+against at least two local validators and attach an additional monitor late to
+the same RPC. Evidence includes raw WebSocket events, same-node consensus
+snapshots identified by height and round, and timestamped terminal captures.
+Compare stable matching observations, not unsynchronized percentages from
+different heights or rounds. An existing feed-only test does not prove
+terminal percentages accurate. The fixture simulates an operator halt/restart
+at a fixed height; it does not prove a particular software-version migration.
+
 The upgrade regression scenario runs three real validators with voting-power
 shares of 60%, 25%, and 15%. All three halt at the same configured height. The
 RPC validator restarts first and proves that the monitor reconnects, reloads a
@@ -5528,7 +5580,7 @@ must resume block production; the monitor must advance to the new height
 without retaining votes from the halted round. The final validator may then
 rejoin without changing the total-power denominator or rewinding height.
 
-**Refresh interval**: Configurable, default 1s. Supports fast mode (250ms).
+**Refresh**: WebSocket-driven consensus accounting; live elapsed labels refresh every 100ms.
 
 **Components:** bubbles/progress (vote progress bars), custom (vote grid, consensus state display).
 

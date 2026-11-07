@@ -171,6 +171,28 @@ func TestMonitorThreeValidatorUpgradeHaltAndRestart(t *testing.T) {
 	}
 	assertMonitorHeightStalled(t, cluster.rpc, stalledHeight, 2*time.Second)
 
+	// No new vote need arrive while this minority is stalled. A late observer
+	// must recover the node's existing 60%, not wait indefinitely or report 0%.
+	late := subscribeMonitorConsensus(t, client, 10*time.Second)
+	lateVote := awaitMonitorSnapshot(t, late, 5*time.Second, func(snapshot monitorrpc.ConsensusSnapshot) bool {
+		return snapshot.Reset && snapshot.State != nil
+	})
+	if lateVote.State.Height != minorityVote.State.Height || lateVote.State.Round != minorityVote.State.Round ||
+		lateVote.State.PrevotePower != 60 || lateVote.State.TotalVotingPower != 100 {
+		t.Fatalf("late observer = %+v, want the stalled round's 60/100 prevote power", lateVote.State)
+	}
+	assertMonitorNodePrevotePower(t, cluster.rpc, lateVote.State.Height, lateVote.State.Round, 60, 100)
+	assertMonitorTerminalParticipation(t, cluster.rpc, lateVote.State.Height, 60, 0)
+	go func() {
+		for {
+			if _, ok := <-late.Snapshots; !ok {
+				return
+			}
+		}
+	}()
+	t.Logf("stalled height=%d round=%d: independent RPC=60/100, original monitor=60/100, late monitor=60/100; public terminal verified",
+		lateVote.State.Height, lateVote.State.Round)
+
 	restartMonitorValidator(t, cluster.containers[1])
 	quorum := awaitMonitorSnapshot(t, minority, 30*time.Second, func(snapshot monitorrpc.ConsensusSnapshot) bool {
 		if snapshot.State == nil || snapshot.State.TotalVotingPower != 100 || snapshot.State.Height <= stalledHeight {
@@ -181,6 +203,10 @@ func TestMonitorThreeValidatorUpgradeHaltAndRestart(t *testing.T) {
 	if quorum.State.Height <= stalledHeight {
 		t.Fatalf("85%% voting power did not resume blocks: stalled=%d observed=%d", stalledHeight, quorum.State.Height)
 	}
+	resumedHeight := awaitMonitorCommittedHeight(t, cluster.rpc, stalledHeight, 30*time.Second)
+	t.Logf("85%% restart: height=%d prevote=%d/%d precommit=%d/%d", quorum.State.Height,
+		quorum.State.PrevotePower, quorum.State.TotalVotingPower, quorum.State.PrecommitPower, quorum.State.TotalVotingPower)
+	t.Logf("independent committed height advanced from %d to %d", stalledHeight, resumedHeight)
 
 	restartMonitorValidator(t, cluster.containers[2])
 	all := awaitMonitorSnapshot(t, minority, 30*time.Second, func(snapshot monitorrpc.ConsensusSnapshot) bool {
@@ -193,6 +219,8 @@ func TestMonitorThreeValidatorUpgradeHaltAndRestart(t *testing.T) {
 		t.Fatalf("full restart changed monitor denominator: validators=%d power=%d",
 			all.State.TotalValidators, all.State.TotalVotingPower)
 	}
+	t.Logf("full restart: height=%d prevote=%d/%d precommit=%d/%d", all.State.Height,
+		all.State.PrevotePower, all.State.TotalVotingPower, all.State.PrecommitPower, all.State.TotalVotingPower)
 }
 
 func startMonitorUpgradeCluster(t *testing.T, haltHeight int64) monitorUpgradeCluster {
@@ -330,6 +358,9 @@ func awaitMonitorSnapshot(
 			if !ok {
 				t.Fatal("monitor consensus subscription closed before the expected snapshot")
 			}
+			if snapshot.Err != nil {
+				t.Logf("monitor feed: %v", snapshot.Err)
+			}
 			if accept(snapshot) {
 				return snapshot
 			}
@@ -441,4 +472,20 @@ func assertMonitorHeightStalled(t *testing.T, rpc string, want int64, duration t
 		}
 		time.Sleep(250 * time.Millisecond)
 	}
+}
+
+func awaitMonitorCommittedHeight(t *testing.T, rpc string, after int64, timeout time.Duration) int64 {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var lastHeight int64
+	var lastErr error
+	for time.Now().Before(deadline) {
+		lastHeight, lastErr = monitorChainHeight(rpc)
+		if lastErr == nil && lastHeight > after {
+			return lastHeight
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("committed height did not advance beyond %d: height=%d error=%v", after, lastHeight, lastErr)
+	return 0
 }

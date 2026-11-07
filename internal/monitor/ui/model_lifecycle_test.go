@@ -69,9 +69,9 @@ func TestModelInitStartsProviderPipeline(t *testing.T) {
 		t.Fatalf("Init() message = %T, want tea.BatchMsg", msg)
 	}
 
-	// Eleven commands serve the network/oracle dashboards. The provider
+	// Ten commands serve the network/oracle dashboards. The provider
 	// pipeline adds one ordered load/sync command and three timer chains.
-	if got, want := len(cmds), 15; got != want {
+	if got, want := len(cmds), 14; got != want {
 		t.Fatalf("Init() command count = %d, want %d", got, want)
 	}
 }
@@ -169,12 +169,15 @@ func TestConsensusInitialFailureSchedulesReconnectAndRecovers(t *testing.T) {
 	upgrader := websocket.Upgrader{}
 
 	mux := http.NewServeMux()
+	mux.HandleFunc("/consensus_state", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"result":{"round_state":{"height/round/step":"42/0/1"}}}`)
+	})
 	mux.HandleFunc("/validators", func(w http.ResponseWriter, _ *http.Request) {
 		if validatorRequests.Add(1) == 1 {
 			http.Error(w, "temporarily unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		_, _ = fmt.Fprint(w, `{"result":{"validators":[{"address":"AA","voting_power":"10"}],"total":"1"}}`)
+		_, _ = fmt.Fprint(w, `{"result":{"block_height":"42","validators":[{"address":"AA","voting_power":"10"}],"total":"1"}}`)
 	})
 	mux.HandleFunc("/websocket", func(w http.ResponseWriter, r *http.Request) {
 		conn, err := upgrader.Upgrade(w, r, nil)
@@ -189,7 +192,7 @@ func TestConsensusInitialFailureSchedulesReconnectAndRecovers(t *testing.T) {
 
 		connection := websocketConnections.Add(1)
 		if connection == 2 {
-			for range 2 {
+			for range 4 {
 				var request struct {
 					ID int `json:"id"`
 				}
@@ -223,6 +226,8 @@ func TestConsensusInitialFailureSchedulesReconnectAndRecovers(t *testing.T) {
 	m := Model{
 		client:         rpc.NewClient(server.URL, server.URL),
 		runtimeContext: ctx,
+		validatorTable: newTestValidatorTableModel(nil, nil, nil, nil),
+		blockTable:     newTestBlockTableModel(nil, nil),
 	}
 
 	failed := m.connectWebSocket()
@@ -249,8 +254,13 @@ func TestConsensusInitialFailureSchedulesReconnectAndRecovers(t *testing.T) {
 	connected := connectCmd()
 	updated, waitCmd := m.Update(connected)
 	m = lifecycleModelValue(t, updated)
+	if m.wsConnected || m.state == nil || m.state.Error == nil {
+		t.Fatal("connection acknowledgement cleared stale state before bootstrap")
+	}
+	updated, waitCmd = m.Update(waitCmd())
+	m = lifecycleModelValue(t, updated)
 	if !m.wsConnected {
-		t.Fatal("transient validator failure did not recover")
+		t.Fatal("bootstrap did not restore the live feed")
 	}
 	if m.state == nil || m.state.Error != nil {
 		t.Fatalf("visible consensus error after recovery = %v, want nil", m.state)
@@ -260,8 +270,8 @@ func TestConsensusInitialFailureSchedulesReconnectAndRecovers(t *testing.T) {
 	case <-time.After(timeout):
 		t.Fatal("second connection did not restore subscriptions")
 	}
-	if got := validatorRequests.Load(); got != 2 {
-		t.Fatalf("validator requests = %d, want 2", got)
+	if got := validatorRequests.Load(); got != 3 {
+		t.Fatalf("validator requests = %d, want 3", got)
 	}
 
 	cancel()
