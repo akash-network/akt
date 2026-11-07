@@ -77,17 +77,31 @@ func responseCode(body []byte) string {
 // session, which an API key never is (HTTP 403, code session_required).
 type SessionRequiredError struct{}
 
-func (*SessionRequiredError) Error() string {
-	return "console: a signed-in Console session is required (HTTP 403)"
+func (err *SessionRequiredError) Error() string {
+	return err.Unwrap().Error()
+}
+
+func (*SessionRequiredError) Unwrap() error {
+	return &HTTPError{
+		StatusCode: http.StatusForbidden,
+		Code:       CodeSessionRequired,
+	}
 }
 
 // HTTPError is returned for non-2xx statuses that have no dedicated mapping.
+// Code carries a recognized team or project error code (SPEC §7.6), whose
+// message then explains the refusal and its remedy instead of echoing Body.
 type HTTPError struct {
 	StatusCode int
 	Body       string
+	Code       string
 }
 
 func (e *HTTPError) Error() string {
+	if message, ok := scopeErrorMessage(e); ok {
+		return message
+	}
+
 	return fmt.Sprintf("console: unexpected status %d: %s", e.StatusCode, e.Body)
 }
 
@@ -98,6 +112,7 @@ type Client struct {
 	httpClient      *http.Client
 	actionLog       *actionlog.Logger
 	sensitiveErrors bool
+	scope           *requestScope
 }
 
 // New creates a Console API client. An empty baseURL selects DefaultBaseURL.
@@ -272,6 +287,11 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, resul
 		payload = data
 	}
 
+	projectID, scopeErr := c.scopeProjectID(ctx)
+	if scopeErr != nil {
+		return scopeErr
+	}
+
 	var lastErr error
 	for attempt := range maxRetries {
 		if err := ctx.Err(); err != nil {
@@ -293,6 +313,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, resul
 		if c.apiKey != "" {
 			req.Header.Set("x-api-key", c.apiKey)
 		}
+		c.setScopeHeaders(req, projectID)
 		if payload != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
@@ -347,6 +368,15 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, resul
 			lastErr = fmt.Errorf("console: rate limited (HTTP 429)")
 
 		case resp.StatusCode >= 500:
+			// A recognized code marks a refusal Console made before acting,
+			// such as an unpriced deposit, rather than an ambiguous failure.
+			if code := scopeErrorCode(respBody); code != "" {
+				return &HTTPError{
+					StatusCode: resp.StatusCode,
+					Body:       redactResponseSecret(string(respBody), c.apiKey),
+					Code:       code,
+				}
+			}
 			lastErr = fmt.Errorf("console: server error (HTTP %d)", resp.StatusCode)
 
 		case resp.StatusCode >= 300 && resp.StatusCode < 400:
@@ -356,6 +386,7 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, resul
 			return &HTTPError{
 				StatusCode: resp.StatusCode,
 				Body:       redactResponseSecret(string(respBody), c.apiKey),
+				Code:       scopeErrorCode(respBody),
 			}
 		}
 

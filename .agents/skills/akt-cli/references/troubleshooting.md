@@ -21,6 +21,30 @@ If a known flag is rejected, inspect that command's help. Some identity and
 filter flags have positional replacements. Syntax can differ between the
 shared workflows, raw transactions, and explicit Console commands.
 
+## Console team or project refusal
+
+Console names team refusals with a code, and akt prints the remedy with it:
+
+- `project_required`: the deployment needs a project. Ask the user which one,
+  then pass `--console-project` or run `console project use`.
+- `project_forbidden`: the selected project is out of the key's reach, or the
+  key is limited to another project. Pick one from `console project list`.
+- `organization_mismatch`: the context names a team other than the key's own.
+  `console organization list` shows the key's team.
+- `project_budget_exceeded`: nothing was signed. Do not retry in another
+  project without the user's approval.
+- `project_limit_reached`: the team has as many projects as it can, counting
+  the default one. Ask the user before deleting a project;
+  `console project list` shows the existing ones.
+
+```bash
+akt console whoami --context example -o json
+akt console project list --context example -o json
+```
+
+When the team commands report that teams are not enabled, the account works
+without teams: leave the context's team and project unset.
+
 ## A command waits for input
 
 Check whether it is selecting a bid, confirming a mutation, unlocking the

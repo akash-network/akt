@@ -611,7 +611,11 @@ func TestWhoamiPrintsUsername(t *testing.T) {
 		t.Fatalf("SetConsoleAPIKey: %v", err)
 	}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/organizations" {
+			http.NotFound(w, r)
+			return
+		}
 		writeJSON(t, w, userBody)
 	}))
 	defer srv.Close()
@@ -623,6 +627,9 @@ func TestWhoamiPrintsUsername(t *testing.T) {
 
 	if !strings.Contains(out, `"username": "max"`) || !strings.Contains(out, "max@example.com") {
 		t.Errorf("whoami output missing user fields, got %q", out)
+	}
+	if strings.Contains(out, "organization") || strings.Contains(out, "project") {
+		t.Errorf("whoami without teams must keep its output, got %q", out)
 	}
 }
 

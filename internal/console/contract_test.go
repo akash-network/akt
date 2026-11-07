@@ -11,12 +11,15 @@ package console_test
 // 400 that motivated this suite).
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"regexp"
+	"strings"
 	"sync"
 	"testing"
 
@@ -131,6 +134,13 @@ var cannedResponses = map[string]cannedResponse{
 
 	"GET /v1/templates-list": {http.StatusOK, `{"data":[]}`},
 	"GET /v1/templates/{id}": {http.StatusOK, `{"data":{"id":"tpl-1","name":"template"}}`},
+
+	"GET /v1/organizations":                {http.StatusOK, `{"data":[{"id":"123e4567-e89b-12d3-a456-426614174000","name":"Acme","slug":"acme","type":"team","role":"admin","isActive":true,"hasPaymentMethod":true,"createdAt":"2026-10-01T00:00:00Z"}]}`},
+	"GET /v1/projects":                     {http.StatusOK, `{"data":[{"id":"123e4567-e89b-12d3-a456-426614174000","name":"web","slug":"web","description":null,"isDefault":true,"createdAt":"2026-10-01T00:00:00Z","createdBy":null,"lastActivityAt":"2026-10-01T00:00:00Z","deployments":null,"access":{"canDeploy":true,"canManage":true}}]}`},
+	"POST /v1/projects":                    {http.StatusCreated, `{"data":{"id":"123e4567-e89b-12d3-a456-426614174000","name":"web","slug":"web","description":null,"isDefault":false,"createdAt":"2026-10-01T00:00:00Z","createdBy":null}}`},
+	"PATCH /v1/projects/{id}":              {http.StatusOK, `{"data":{"id":"123e4567-e89b-12d3-a456-426614174000","name":"renamed","slug":"web","description":null,"isDefault":false,"createdAt":"2026-10-01T00:00:00Z","createdBy":null}}`},
+	"DELETE /v1/projects/{id}":             {http.StatusNoContent, ""},
+	"PATCH /v1/deployments/{dseq}/project": {http.StatusOK, `{"data":{"dseq":"1","projectId":"123e4567-e89b-12d3-a456-426614174000"}}`},
 }
 
 // newContractServer returns an httptest server that validates every incoming
@@ -163,6 +173,7 @@ func newContractServer(router routers.Router, rec *contractRecorder) *httptest.S
 				// format=date query parameter.
 				SchemaValidationOptions: []openapi3.SchemaValidationOption{
 					openapi3.EnableFormatValidation(),
+					openapi3.SetSchemaRegexCompiler(compileECMAScriptPattern),
 				},
 			},
 		}
@@ -181,6 +192,16 @@ func newContractServer(router routers.Router, rec *contractRecorder) *httptest.S
 		w.WriteHeader(resp.status)
 		_, _ = io.WriteString(w, resp.body)
 	}))
+}
+
+// compileECMAScriptPattern compiles a schema `pattern` written for
+// JavaScript. Console's name patterns spell code points as `\u001f`;
+// kin-openapi only rewrites the uppercase form to Go's `\x{001f}`, so the
+// lowercase one would fail to compile instead of being enforced.
+func compileECMAScriptPattern(expr string) (openapi3.RegexMatcher, error) {
+	unicodeEscape := regexp.MustCompile(`\\u([0-9A-Fa-f]{4})`)
+
+	return regexp.Compile(unicodeEscape.ReplaceAllString(expr, `\x{$1}`))
 }
 
 // TestClientRequestsMatchOpenAPIContract calls every public client method
@@ -205,6 +226,7 @@ func TestClientRequestsMatchOpenAPIContract(t *testing.T) {
 		uuid     = "123e4567-e89b-12d3-a456-426614174000"
 		sdl      = validUpdateSDL
 	)
+	scoped := console.New(srv.URL, "test-key").WithScope("acme", uuid)
 
 	// Minimal valid /v1/bid-screening resources per the vendored schema:
 	// resource{id,cpu,memory,gpu,storage} + count + price are all required.
@@ -369,6 +391,51 @@ func TestClientRequestsMatchOpenAPIContract(t *testing.T) {
 			_, err := c.GetTemplate(ctx, "tpl-1")
 			return err
 		}},
+		{"ListOrganizations", func(ctx context.Context) error {
+			_, err := c.ListOrganizations(ctx)
+			return err
+		}},
+		{"ListProjects", func(ctx context.Context) error {
+			_, err := c.ListProjects(ctx)
+			return err
+		}},
+		{"CreateProject", func(ctx context.Context) error {
+			_, err := c.CreateProject(ctx, "web", "Payments")
+			return err
+		}},
+		{"RenameProject", func(ctx context.Context) error {
+			_, err := c.RenameProject(ctx, uuid, "renamed")
+			return err
+		}},
+		{"DeleteProject", func(ctx context.Context) error {
+			return c.DeleteProject(ctx, uuid)
+		}},
+		{"MoveDeployment", func(ctx context.Context) error {
+			_, err := c.MoveDeployment(ctx, "1", uuid)
+			return err
+		}},
+		{"CreateAPIKeyForProject", func(ctx context.Context) error {
+			_, err := c.CreateAPIKeyForProject(ctx, "ci", "", uuid)
+			return err
+		}},
+		// The scope headers are declared on every authenticated route:
+		// x-organization-id as an id or slug, x-project-id as a uuid.
+		{"Scoped/ListDeployments", func(ctx context.Context) error {
+			_, err := scoped.ListDeployments(ctx, 0, 20)
+			return err
+		}},
+		{"Scoped/CreateDeployment", func(ctx context.Context) error {
+			_, err := scoped.CreateDeployment(ctx, sdl)
+			return err
+		}},
+		{"Scoped/ProjectNameResolution", func(ctx context.Context) error {
+			_, err := c.ForProject("web").WithScope("acme", "web").GetUser(ctx)
+			return err
+		}},
+		{"Scoped/CreateDeploymentJWTToken", func(ctx context.Context) error {
+			_, err := scoped.CreateDeploymentJWTToken(ctx, 300, provider, "1", []string{"logs", "status"})
+			return err
+		}},
 	}
 
 	for _, tc := range tests {
@@ -408,5 +475,33 @@ func TestContractHarnessDetectsViolations(t *testing.T) {
 	violations := rec.take()
 	if len(violations) == 0 {
 		t.Fatal("expected the harness to flag empty startDate/endDate (format=date), but no violation was recorded")
+	}
+}
+
+// TestContractHarnessEnforcesNamePatterns is the negative control for the
+// name patterns Console publishes: a project name carrying a bidi override
+// must be flagged, which proves the ECMAScript patterns compile and run
+// rather than being skipped.
+func TestContractHarnessEnforcesNamePatterns(t *testing.T) {
+	router := loadContractRouter(t)
+	rec := &contractRecorder{}
+	srv := newContractServer(router, rec)
+	defer srv.Close()
+
+	body := bytes.NewBufferString(`{"data":{"name":"web\u202eapi"}}`)
+	resp, err := http.Post(srv.URL+"/v1/projects", "application/json", body)
+	if err != nil {
+		t.Fatalf("request failed: %v", err)
+	}
+	resp.Body.Close()
+
+	violations := rec.take()
+	if len(violations) == 0 {
+		t.Fatal("expected the harness to flag a project name with a bidi override, but no violation was recorded")
+	}
+	for _, violation := range violations {
+		if !strings.Contains(violation, "/data/name") {
+			t.Errorf("unexpected violation: %s", violation)
+		}
 	}
 }
