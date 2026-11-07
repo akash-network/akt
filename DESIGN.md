@@ -136,6 +136,9 @@ client is stopped and the consumer channel closes instead of leaving the
 dashboard attached to a silent connection. Both the transport reconnect delay
 and the view model's bounded retry delay are owned by the monitor and terminate
 immediately on context cancellation.
+Cancellation tests block initial delivery with no snapshot receiver and
+separately fill the queue after startup. Each case gives cancellation the
+only way to unblock delivery, making both shutdown paths deterministic.
 The rejection test peer receives the complete subscription batch before
 replying and stays connected until the client closes. This makes the test
 exercise the server's JSON-RPC rejection without racing pending client writes

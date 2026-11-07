@@ -5556,6 +5556,9 @@ observations stale.
 Hermetic monitor tests MUST cover rejected bootstrap responses, malformed
 block/proposer events, existing precommits at attachment, cancellation under
 snapshot backpressure, and the UI's disconnected and elapsed-time states.
+Cancellation tests MUST separately block initial snapshot delivery and later
+delivery to a full queue, so each cancellation path is exercised without
+relying on scheduling between ready select cases.
 Subscription-rejection fixtures MUST receive all four subscribe requests
 before sending the rejection and wait for the client to close the connection.
 This isolates JSON-RPC rejection handling from transport write failures.
