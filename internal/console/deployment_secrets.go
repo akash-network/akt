@@ -55,6 +55,10 @@ func sanitizeSecretError(err error) error {
 	if errors.As(err, &sessionErr) {
 		return sessionErr
 	}
+	var status responseStatusError
+	if errors.As(err, &status) {
+		return status
+	}
 	var response *HTTPError
 	if errors.As(err, &response) {
 		// Team and project refusals carry no workload detail; keep their

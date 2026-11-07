@@ -37,11 +37,6 @@ func EventsCmd() *cobra.Command {
 func getEvents(ctx context.Context, cmd *cobra.Command, _ []string) error {
 	cctx := client.GetClientContextFromCmd(cmd)
 
-	node, err := cctx.GetNode()
-	if err != nil {
-		return err
-	}
-
 	bus := pubsub.NewBus()
 	defer bus.Close()
 
@@ -52,7 +47,7 @@ func getEvents(ctx context.Context, cmd *cobra.Command, _ []string) error {
 		return err
 	}
 
-	evtSvc, err := events.NewEvents(ctx, node, "akash-cli", bus)
+	evtSvc, err := events.NewEvents(ctx, cctx.NodeURI, "akash-cli", bus)
 	if err != nil {
 		return err
 	}

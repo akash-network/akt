@@ -39,7 +39,10 @@ const (
 //   - *txtypes.SimulateResponse: a --dry-run simulation (SPEC §10.11.7).
 //   - *sdk.TxResponse: a broadcast result; "pretty" renders the two-section
 //     layout, "json"/"yaml" emit the structured document of SPEC §10.11.6.
-func PrintTxResult(cmd *cobra.Command, cctx sdkclient.Context, resp interface{}) error {
+//
+// Submitted messages can supply confirmed pretty details when the receipt omits
+// its transaction body. They do not supply a fee or change structured output.
+func PrintTxResult(cmd *cobra.Command, cctx sdkclient.Context, resp interface{}, submittedMsgs ...sdk.Msg) error {
 	output, _ := cmd.Flags().GetString(flagdefs.FlagOutput)
 	checked := clioutput.NewCheckedWriter(cmd.OutOrStdout())
 	cctx = cctx.WithOutput(checked)
@@ -111,6 +114,9 @@ func PrintTxResult(cmd *cobra.Command, cctx sdkclient.Context, resp interface{})
 
 	// Section 2: Message-specific detail.
 	msgs := decodeTxMsgs(cctx, txResp)
+	if txResp.Tx == nil && TxStatus(txResp) == TxStatusConfirmed {
+		msgs = submittedMsgs
+	}
 	if len(msgs) == 0 {
 		return checked.Err()
 	}

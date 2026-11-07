@@ -591,6 +591,55 @@ escrow deposits reject a zero deployment identifier, zero amount, empty or
 invalid source set, and duplicate sources. A rejected message produces no
 transaction request or success output.
 
+Sink commands validate their parsed input and constructed SDK messages before
+broadcast. State-dependent authorization, quotas, finality and settlement
+invariants remain enforced by the chain.
+
+- `tx sink deposit` takes whole `uakt` or an exact AKT decimal (`1.5akt`).
+  Fractional micro-units, other denominations, zero and amounts above uint64
+  are rejected. `--dest-type` defaults to `1` (Solana). The SDK validates the
+  destination format; the chain checks its curve against the vault allowlist.
+- Transfer IDs use `owner/height/sequence`, parsed by the SDK's `ParseID`.
+  Height and sequence must be positive. The complete identity is always shown.
+- `report-outcome` takes `minted` or `voided`, a positive finalized Solana
+  slot and a nonzero 64-byte base58 transaction signature. These are syntax
+  checks, not proof of Solana finality. `--policy-version` defaults to the
+  current `Reporters` policy; `--round` defaults to the queried transfer's
+  settlement round. Explicit overrides must be positive.
+- Veto and resolution reasons contain 1 to 256 UTF-8 bytes and are not blank.
+  `guardian-pause` takes `deposits`, `refunds` or `all`.
+- Governance commands wrap the SDK message in `MsgSubmitProposal`, using
+  the governance account as authority unless `--authority` overrides it.
+  `--title`, `--summary`, `--deposit` and `--expedite` remain optional.
+  `propose-void` and `propose-resolve` include `expected_round`, read from
+  `Transfer` unless `--expected-round` supplies a positive value. A proposal
+  fails on execution if that round has changed; it cannot silently affect a
+  later round. `propose-resolve` builds `MsgRestartTransfer` without evidence,
+  or `MsgConfirmMint` / `MsgConfirmVoid` with slot and signature evidence.
+- `propose-params` reads the complete native proto JSON parameter object
+  emitted by `akt q sink params -o json` and runs `Params.ValidateBasic`.
+  Amount caps are Coins, reporter threshold is a decimal ratio, and the
+  challenge window is a Duration independent of the native quota epoch.
+  CLI startup must resolve Kubernetes Quantity descriptors as well as Sink
+  messages; legacy gogo import aliases are normalized in a local Amino file
+  registry without changing the SDK signer resolver or signing modes.
+- `query sink transfer <id>` uses the single `Transfer` aggregate. `transfers
+  [owner] [status]` lists all owners by default; a status may be supplied alone
+  or after an owner. Statuses are `transfer-pending`, `minted`, `voided`,
+  `refund-pending`, `refunded` and `all`. `disputes` includes held minted and
+  refunded transfers as well as unpaid transfers. Both use standard pagination
+  flags (§3.4); page keys are opaque base64, and `--height` can pin a snapshot
+  across pages. Transfers offset/page selection requires a status. A returned
+  transfer cursor retains its original filters; use it with the same height
+  and direction. No client-side record decoding or storage prefixes are used.
+- `query sink account [address]` requires an explicit address or the default
+  account. With neither configured, it fails before sending a query; this
+  single-account endpoint does not support a network-wide result.
+- `query sink reporters [version|all]` returns the current policy by default
+  (version 0), a retained version, or all policies (`all`). Params, reporters
+  and state use their separate RPCs. The removed `record` and `open-transfers`
+  commands are replaced by `transfer`, `transfers` and `disputes`.
+
 The global `--context` flag selects every context-owned resource touched by an
 invocation. This includes `context show`, `context log`, Console API key login
 and logout, keyring selection, stores, and action logs; no leaf may fall back to
@@ -785,6 +834,16 @@ akt
 │   │   ├── burn-mint <coins-to-burn> <denom-to-mint>
 │   │   ├── mint-act <coins-to-burn>
 │   │   └── burn-act <coins-to-burn>
+│   ├── sink                             # AKT to Solana transfers (§10.10 Sink)
+│   │   ├── deposit <solana-address> <amount>   # --dest-type (default 1, Solana)
+│   │   ├── guardian-pause <deposits|refunds|all>
+│   │   ├── report-outcome <id> <minted|voided> <slot> <signature>   # --policy-version, --round
+│   │   ├── veto-void <id> <reason>
+│   │   ├── finalize-refund <id>
+│   │   ├── propose-params <params.json>         # Governance proposal (MsgUpdateParams)
+│   │   ├── propose-void <id>                    # Governance proposal (MsgRequestVoid)
+│   │   ├── propose-veto <id> <reason>           # Governance proposal (MsgVetoVoid)
+│   │   └── propose-resolve <id> <restart|confirm-mint|confirm-void> <reason> [slot] [signature]
 │   ├── sign <file>
 │   ├── sign-batch <file> [file2...]
 │   ├── multisign <file> <name> <sigfile1> [sigfile2...]
@@ -799,8 +858,8 @@ akt
 │   │   ├── total
 │   │   ├── denom-metadata
 │   │   └── send-enabled [denom1...]
-│   ├── deployment [filter] [state]      # [owner/]dseq [state]; no arg → list; --state flag — **disabled pending feedback** (positional only, 2026-07)
-│   │   ├── group [filter]               # [owner/]dseq[/gseq]
+│   ├── deployment [filter] [state]      # [owner/]dseq [state]; no arg → every deployment on the network (one page); --state flag — **disabled pending feedback** (positional only, 2026-07)
+│   │   ├── group [filter]               # [owner[/dseq[/gseq]]]; no dseq → groups of one page of deployments
 │   │   └── params
 │   ├── market
 │   │   ├── order [filter] [state]       # [owner/]dseq[/gseq/oseq] [state]; --state flag — **disabled pending feedback** (positional only, 2026-07)
@@ -809,7 +868,7 @@ akt
 │   │   └── params
 │   ├── provider [address]               # List or get (address → single); `list`/`get` remain as aliases
 │   ├── contract [address-or-label]      # Alias: contracts; no argument lists addresses, labels, and code IDs
-│   ├── cert [owner] [state]             # Owner or default account, plus [state]; --owner/--state flags — **disabled pending feedback** (positional only, 2026-07)
+│   ├── cert [owner] [state]             # Owner (no arg → every certificate on the network), plus [state]; --owner/--state flags — **disabled pending feedback** (positional only, 2026-07)
 │   ├── audit [owner]                    # Owner or default account; --auditor flag
 │   ├── escrow [filter]                  # [owner[/dseq]]; --state flag
 │   │   ├── payment [filter]             # [owner[/dseq]]
@@ -878,6 +937,14 @@ akt
 │   │   ├── vault-state
 │   │   ├── status
 │   │   └── ledger
+│   ├── sink
+│   │   ├── transfer <owner/height/sequence>
+│   │   ├── transfers [owner] [status]   # Native pagination; all owners by default
+│   │   ├── disputes                     # All held transfers, including terminal disputes
+│   │   ├── account [address]            # Default account when omitted
+│   │   ├── state                        # Financial totals, epoch usage, refund candidate
+│   │   ├── reporters [version|all]      # Current policy by default
+│   │   └── params
 │   ├── ibc                              # IBC core (passthrough from cosmos-sdk, subcommands not expanded)
 │   ├── ibc-transfer                     # IBC transfer (passthrough from cosmos-sdk, subcommands not expanded)
 │   ├── upgrade
@@ -2605,7 +2672,7 @@ runtime by that template's current WebSocket-capable primary. This compatibility
 selection does not rewrite the context. Positional, `--rpc`, and `--node` endpoints are
 explicit user choices and are never substituted.
 
-An explicit positional or `--rpc` endpoint MUST work with no config file and
+An explicit positional, `--rpc`, or `--node` endpoint MUST work with no config file and
 MUST NOT trigger first-run bootstrap. Monitor cache directory creation/open
 errors are fatal startup errors. `--clean-cache` removes both `monitor.db` and
 the legacy `top.db`; a failed deletion is reported and the monitor does not
@@ -3881,7 +3948,7 @@ The filter is a single positional argument using `/` as the separator. Component
 [provider/]dseq[/gseq[/oseq[/owner]]]
 ```
 
-When no filter argument is given, the command lists all matching resources for the context's default account (in owner mode) or requires an explicit provider address (in provider mode).
+When no filter argument is given, the command lists every matching resource on the network, in either `--by` perspective, and needs no `default-account`. The list is one page, sized by `--limit` (default 100); nothing pages automatically. The next page comes from `--page-key` set to the previous response's `pagination.next_key` (shown by `-o json`). The chain rejects `--page` and `--offset` on a list without a state filter, so offset paging works only together with a state keyword (`akt query deployment closed --page 2`). A bare state keyword narrows the network-wide list (`akt query deployment closed`).
 
 #### 3.8.2 Smart Type Detection
 
@@ -3923,22 +3990,28 @@ State keywords are only recognized as the sole/first component of the filter arg
 
 | Component        | Default when omitted                                                         |
 | ---------------- | ---------------------------------------------------------------------------- |
-| Leading address  | Context `default-account` (in `--by owner` mode); **required** in `--by provider` mode |
+| Leading address  | Before a `dseq` (`--by owner` mode): the context `default-account`. With no filter argument or only a state keyword: empty — no owner or provider filter, in either `--by` mode |
 | `dseq`           | 0 — list all (no dseq filter)                                                |
 | `gseq`           | 0 in list context (no filter); 1 when needed for a unique get                |
 | `oseq`           | 0 in list context (no filter); 1 when needed for a unique get                |
 | Trailing address | Empty — no filter on the trailing identity component                         |
 
-Every owner-scoped list, including `query cert`, must resolve an omitted
-leading address from the active context before sending a request. If the
-context has no default account, the command refuses locally and explains that
-an owner address or `default-account` is required. An empty owner is never sent
-to the chain query service because it means network-wide scope.
+A list with no leading address — no filter argument, or only a state keyword —
+is network-wide, including `query cert` and `--by provider` bid and lease
+lists. The request goes to the chain query service with an empty owner (and
+provider), which it treats as no filter. Such a list never consults
+`default-account`, Console, or the keyring, so it behaves the same in every
+context. Every list row prints the resource's full ID, owner included, so
+results from different owners stay distinguishable.
 
-In any context with a resolvable Console credential, omitted owner and
-numeric-DSEQ shorthand may resolve the managed wallet owner lazily from
-authenticated Console identity and wallet metadata. An explicit full owner
-remains authoritative and triggers no owner lookup. A configured local
+The context's account is consulted only by the numeric-DSEQ shorthand, where
+the owner is part of the identity being named. With no account to resolve, the
+shorthand fails locally and asks for an owner address or `default-account`.
+
+In any context with a resolvable Console credential, the numeric-DSEQ
+shorthand may resolve the managed wallet owner lazily from authenticated
+Console identity and wallet metadata. An explicit full owner remains
+authoritative and triggers no owner lookup. A configured local
 `default-account` also remains authoritative; Console is the fallback only
 when no local default exists. The resolved full address is then used by the
 same deployment and market query filters as any other context.
@@ -3948,7 +4021,7 @@ same deployment and market query filters as any other context.
 | Command                  | Max filter depth                               | `--by` support |
 | ------------------------ | ---------------------------------------------- | -------------- |
 | `query deployment`       | `[owner/]dseq`                                 | no             |
-| `query deployment group` | `[owner/]dseq[/gseq]`                          | no             |
+| `query deployment group` | `[owner[/dseq[/gseq]]]`                        | no             |
 | `query market order`     | `[owner/]dseq[/gseq/oseq]`                     | no             |
 | `query market bid`       | `[owner/]dseq[/gseq/oseq[/provider]]`          | yes            |
 | `query market lease`     | `[owner/]dseq[/gseq/oseq[/provider]]`          | yes            |
@@ -3959,38 +4032,61 @@ same deployment and market query filters as any other context.
 | `query escrow payment`   | `[owner[/dseq]]`                                | no             |
 | `query escrow blocks-remaining` | `[owner/]dseq`                           | no             |
 
+The chain has no query that lists groups, so `query deployment group` without
+a `dseq` — no filter argument, or an owner address only — fetches one page of
+deployments (network-wide, or that owner's) and prints the groups they carry.
+The pagination flags therefore count deployments, not groups. Structured
+output (`-o json|yaml`) of this mode is an object holding `groups` and the
+deployment page's `pagination`, so the listing continues with `--page-key`.
+A group listing cannot take a state filter, so `--page` and `--offset` are
+refused locally rather than sent for the chain to reject. `owner/dseq` prints
+every group of one deployment as a bare array and `owner/dseq/gseq` gets one
+group, as before.
+
 #### 3.8.6 Examples
 
 **Deployment queries** (`akt query deployment`):
 
 ```bash
-akt query deployment                           # List all deployments for default account
+akt query deployment                           # List every deployment on the network (first page of 100)
+akt query deployment --page-key <next_key>     # Next page: pagination.next_key from the previous page (-o json)
+akt query deployment active --limit 20 --page 2 # Offset paging needs a state keyword: second page of 20 active deployments
 akt query deployment 12345                     # Get deployment dseq 12345 (owner from context)
 akt query deployment akash1abc...              # List all deployments for that owner
 akt query deployment akash1abc.../12345        # Get specific deployment
 akt query deployment --state active            # DISABLED pending feedback (2026-07): use `akt query deployment active`
-akt query deployment active                    # List active deployments (positional state keyword)
+akt query deployment active                    # List every active deployment on the network (positional state keyword)
 akt query deployment 12345 active              # Get + state verification: errors if 12345 is not active (§3.8.3)
 akt query deployment akash1abc.../12345 active # Same, with explicit owner
 akt query deployment 12345 --state active      # DISABLED pending feedback (2026-07): use `akt query deployment 12345 active`
 ```
 
+**Deployment group queries** (`akt query deployment group`):
+
+```bash
+akt query deployment group                     # Groups of every deployment on the network (first page of deployments)
+akt query deployment group akash1abc...        # Groups of that owner's deployments (one page)
+akt query deployment group akash1abc.../12345  # Every group of one deployment
+akt query deployment group 12345/1             # Get group 1 of dseq 12345 (owner from context)
+```
+
 **Market lease queries — owner perspective** (default):
 
 ```bash
-akt query market lease                         # List all leases for default account
+akt query market lease                         # List every lease on the network (first page of 100)
 akt query market lease 12345                   # List leases for dseq 12345 (owner from context)
 akt query market lease 12345/1/1               # List leases for order 12345/1/1
 akt query market lease akash1abc.../12345/1/1/akash1prov...  # Get specific lease
 akt query market lease --state active          # DISABLED pending feedback (2026-07): use `akt query market lease active`
-akt query market lease active                  # List active leases (positional state keyword)
+akt query market lease active                  # List every active lease on the network (positional state keyword)
 akt query market lease 12345 active            # Partial identity + state: filters the lease list (state verifies only on full-identity gets, §3.8.3)
-akt query market bid open                      # List open bids (positional state keyword)
+akt query market bid open                      # List every open bid on the network (positional state keyword)
 ```
 
 **Market lease queries — provider perspective** (`--by provider`):
 
 ```bash
+akt query market lease --by provider                            # No address: every lease on the network, as in owner mode
 akt query market lease --by provider akash1prov...              # List all leases for that provider
 akt query market lease --by provider akash1prov.../12345        # List leases for provider + dseq
 akt query market lease --by provider akash1prov.../12345/1/1/akash1owner...  # Get specific lease
@@ -3999,7 +4095,7 @@ akt query market lease --by provider akash1prov.../12345/1/1/akash1owner...  # G
 **Other queries:**
 
 ```bash
-akt query cert                                 # List certs for default account
+akt query cert                                 # List every certificate on the network (first page of 100)
 akt query cert akash1abc...                    # List certs for that owner
 akt query provider                             # List every provider on the network
 akt query provider akash1prov...               # Get one provider (the `get` subcommand remains an alias)
@@ -5617,7 +5713,9 @@ detail identifiers.
 
 #### 8.3.8 Consensus Monitor View (from aktop)
 
-Real-time consensus state monitoring. Polls the RPC `/consensus_state` endpoint at a configurable interval (default 1s).
+Real-time consensus state monitoring driven by WebSocket events. A single
+RPC `/consensus_state` snapshot seeds each connection before buffered and live
+events update the displayed voting power.
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────────┐
@@ -5647,7 +5745,8 @@ Real-time consensus state monitoring. Polls the RPC `/consensus_state` endpoint 
 ```
 
 **Data sources**:
-- `GET {rpc}/consensus_state` -- Round state, vote bit arrays, proposer info
+- WebSocket `Vote`, `NewRoundStep`, `NewRound`, and `NewBlock` -- Live consensus updates
+- `GET {rpc}/consensus_state` -- Initial round state and vote bit arrays after subscribing, including on reconnect
 - `GET {rpc}/validators?per_page=100` -- Validator set (refreshed at consensus-height boundaries; errors are never cached)
 
 **Displayed data**:
@@ -6846,6 +6945,43 @@ Every `Coin`/`LegacyDec` read out of a ledger record passes through
 field the node never set unmarshals with a nil inner value and any method call
 on it panics.
 
+#### Sink
+
+Amounts use `FormatCoin()`. Composite IDs, owner addresses, Solana recipients,
+vaults and base58 signatures are displayed in full. Challenge end timestamps
+use UTC RFC 3339 (`-` when unset); quota epochs are native chain epoch numbers,
+never derived UTC dates.
+
+**Transfer**: identity, owner, recipient, amount and creation height; financial
+status (`Transfer pending`, `Minted`, `Voided`, `Refund pending`, `Refunded`)
+separate from hold (`None`, `Veto`, `Conflict`); round, embedded policy version,
+quorum, vote tallies and challenge end. Show retained void authorization,
+veto policy/reason and governance evidence when present. Vote rows include
+reporter, policy version, outcome, slot and signature. A void order is not a
+confirmed Solana void or a paid refund. Terminal transfers can still be held.
+
+**Transfers / disputes**: one page of full IDs, status, hold, amount, recipient,
+round and challenge end. When present, print the opaque base64 next page key
+and remind users to retain height and direction for consistent paging.
+
+**State**: each of the five financial populations has its own amount and
+count. Locked backing sums pending, minted, voided and refund-pending amounts,
+excluding paid refunds. Show native epoch, sent and refunded usage, and refund
+queue head. The head is a candidate, not a guarantee of immediate payment;
+challenge maturity, holds, policy, enabled refunds and capacity still apply.
+
+**Params**: deposit/refund switches, min/max transfer, per-epoch sending and
+refund caps, per-account epoch cap (`No limit` when zero), reporter membership,
+decimal threshold and required quorum (`ceil(ratio * members)`), challenge
+Duration, guardian and vault allowlist. Removed count quotas and the former
+Solana daily mint cap are not displayed.
+
+**Reporters**: each retained policy's version, full members and decimal quorum.
+An empty response says no reporter policy is configured.
+
+**Account**: native epoch, lifetime sent amount and normalized epoch sent amount.
+No daily count, pending count or UTC-day interpretation is invented.
+
 #### Miscellaneous
 
 **Slashing signing info**: Table with VALIDATOR, MISSED BLOCKS, JAILED UNTIL.
@@ -7585,6 +7721,32 @@ Destination denom per message:
 The same deferred-settlement wording, and the same follow-up command, appear in
 the `Long`/`Example` help of `akt tx bme burn-mint`, `mint-act` and `burn-act`.
 
+##### Sink
+
+A sink deposit only locks AKT. Minting happens on Solana once a relayer proves
+the record, and reporters confirm it on Akash, so
+`Status: success` reports the lock, not the mint. The `MsgSink` formatter says
+so and names the follow-up command. Amounts use `FormatCoin()`; addresses,
+Solana keys and signatures are never shortened (§10.10 Sink).
+
+The SDK can return a confirmed broadcast receipt without its transaction body.
+Sink commands pass the submitted message to the shared pretty printer so its
+message details and event-derived composite ID still render in that case.
+This fallback applies only to confirmed receipts. Pending and failed receipts
+must not claim the deposit locked funds. It does not fabricate fees or a
+transaction body, and structured output remains the original receipt data.
+
+| Message | Title | Fields |
+|---|---|---|
+| `MsgSink` | "Sink Deposit" | Sender, Destination, Amount, Transfer ID (the composite `id` in typed `akash.sink.v1.EventTransferCreated`, when included), then a note that minting on Solana follows and `akt q sink transfer <owner/height/sequence>` |
+| `MsgGuardianPause` | "Guardian Pause" | Guardian, Deposits and Refunds (`Disabled` in red, or `Unchanged`) |
+| `MsgReportOutcome` | "Report Outcome" | Reporter, Transfer ID, Outcome (`Minted`/`Voided`), Slot, Signature, Policy Version, Round |
+| `MsgVetoVoid` | "Veto Void" | Signer, Transfer ID, Reason |
+| `MsgFinalizeRefund` | "Finalize Refund" | Executor, Transfer ID |
+| `MsgRequestVoid` | "Request Void" | Authority, Transfer ID, Expected Round |
+| `MsgRestartTransfer` / `MsgConfirmMint` / `MsgConfirmVoid` | "Restart Transfer" / "Confirm Mint" / "Confirm Void" | Authority, Transfer ID, Expected Round, Evidence (confirmations), Reason |
+| `MsgUpdateParams` | "Update Sink Parameters" | Authority, then the `Sink Parameters` block |
+
 #### 10.11.6 Machine-Readable Transaction Result
 
 `--output json` and `--output yaml` emit one structured document per transaction, built from the `sdk.TxResponse` rather than marshalled from it directly. Fields whose value is unknown because the transaction has not been confirmed are **absent**, never zero.
@@ -8182,6 +8344,15 @@ reject a test whose expected result was copied from the implementation without
 an independent contract or whose only assertion is successful exit when the
 command promises state or structured data.
 
+Sink boundary tests cover every financial status filter, malformed pagination,
+missing transaction signers, proposal flag failures, governance evidence and
+malformed query or receipt data. Invalid inputs must not reach the broadcaster,
+and malformed responses must not emit a successful transfer summary. Codec
+startup uses one fail-fast result check for SDK constructors: descriptor or
+signing configuration errors must panic rather than return a partial config.
+Tests exercise real invalid descriptor and signing configurations alongside
+the full CLI's successful nested Sink Amino encoding.
+
 ### 12.4 Coverage exceptions
 
 The shared checked-in exception registry covers exact active changed-line
@@ -8649,10 +8820,13 @@ harness scans its complete temporary akt home for the injected credential
 before teardown rather than checking only config and action-log files.
 For a failed Console subprocess, the error class MAY include a recognized HTTP
 status (for example, `console_http_401`) extracted from bounded stderr. It MUST
-NOT include the response body or any other captured text.
-Session-required refusals retain their body-free error type and HTTP status
-through redaction, so secret-bearing mutations record a definitive failed
-attempt when the server refuses authorization.
+NOT include the response body or any other captured text. Rate-limit, server,
+and redirect failures retain their HTTP status through secret sanitization,
+including nested request/envelope decoding boundaries. These errors carry only
+the numeric status and a fixed description; response bodies remain omitted.
+Session-required refusals likewise retain their body-free error type and
+HTTP status through redaction, so secret-bearing mutations record a definitive
+failed attempt when the server refuses authorization.
 The production Console client applies the same boundary independently of the
 test harness. It reads no more than the configured maximum response size and
 fails a larger response without retaining or reporting its contents. Before an

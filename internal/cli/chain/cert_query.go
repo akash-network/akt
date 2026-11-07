@@ -84,16 +84,8 @@ akt query cert list revoked`,
 				params.Filter.State = args[1]
 			}
 
-			if params.Filter.Owner == "" {
-				defaultOwner, err := resolveDefaultAccountAddress(cl.ClientContext())
-				if err != nil {
-					return err
-				}
-				if defaultOwner == "" {
-					return requireOwnerScope("certificate filter")
-				}
-				params.Filter.Owner = defaultOwner
-			}
+			// An empty owner lists every certificate on the network
+			// (SPEC §3.8.4).
 
 			// FEEDBACK(2026-07): the --owner flag read is disabled for the
 			// positional-only UX trial (the positional [owner] argument is

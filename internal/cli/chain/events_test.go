@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"context"
 	"testing"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/viper"
+	"github.com/stretchr/testify/require"
 
 	flagdefs "pkg.akt.dev/akt/internal/flags"
 )
@@ -20,4 +23,11 @@ func TestEventsCommandBindsCanonicalNodeFlag(t *testing.T) {
 	if got := viper.GetString(flagdefs.FlagNode); got != "tcp://localhost:26657" {
 		t.Fatalf("bound node = %q", got)
 	}
+}
+
+func TestEventsRejectsInvalidNodeURI(t *testing.T) {
+	cmd := EventsCmd()
+	cctx := sdkclient.Context{}.WithNodeURI("http://%")
+	cmd.SetContext(context.WithValue(context.Background(), ClientContextKey, &cctx))
+	require.ErrorContains(t, getEvents(cmd.Context(), cmd, nil), "invalid URL escape")
 }
