@@ -65,6 +65,13 @@ func TestAuthQueriesReadCanonicalSearchFlags(t *testing.T) {
 	require.Equal(t, 4, rpc.page)
 	require.Equal(t, 9, rpc.perPage)
 
+	flagCommand := GetQueryAuthTxsByEventsCmd()
+	require.NoError(t, flagCommand.Flags().Set(flagdefs.FlagEvents, "message.sender=akash1sender"))
+	flagCommand.SetContext(ctx)
+	require.ErrorIs(t, flagCommand.RunE(flagCommand, nil), wantErr)
+	require.Equal(t, "message.sender='akash1sender'", rpc.query)
+	require.ErrorContains(t, flagCommand.ValidateArgs([]string{"tx.height=42"}), "both positionally")
+
 	unknown := GetQueryAuthTxCmd()
 	require.NoError(t, unknown.Flags().Set(flagdefs.FlagType, "unknown"))
 	unknown.SetContext(ctx)

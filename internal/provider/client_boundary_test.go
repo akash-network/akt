@@ -562,7 +562,7 @@ func TestGatewayBoundaryStreamsRecordsAndPreservesRequestSemantics(t *testing.T)
 	}
 	id := mtypes.LeaseID{DSeq: 42, GSeq: 1, OSeq: 1}
 
-	events, err := client.LeaseEvents(context.Background(), id, "ignored", true)
+	events, err := client.LeaseEvents(context.Background(), id, "web", true)
 	if err != nil {
 		t.Fatalf("open event stream: %v", err)
 	}
@@ -576,8 +576,8 @@ func TestGatewayBoundaryStreamsRecordsAndPreservesRequestSemantics(t *testing.T)
 	if eventRequest.Path != "/lease/42/1/1/kubeevents" || eventRequest.Query().Get("follow") != "true" {
 		t.Fatalf("event request = %q, want lease path with follow=true", eventRequest.RequestURI())
 	}
-	if eventRequest.Query().Has("services") {
-		t.Fatalf("event request unexpectedly included services: %q", eventRequest.RequestURI())
+	if eventRequest.Query().Get("service") != "web" {
+		t.Fatalf("event request did not select service web: %q", eventRequest.RequestURI())
 	}
 
 	logs, err := client.LeaseLogs(context.Background(), id, "web", false, 25)

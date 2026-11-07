@@ -257,3 +257,58 @@ func TestUsageEmptyHistoryOmitsLifetime(t *testing.T) {
 		t.Errorf("empty history must omit lifetimeSpent, got %q", out)
 	}
 }
+
+func TestUsageFlagDatesMatchPositionalDates(t *testing.T) {
+	m := newTestManager(t)
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
+		t.Fatal(err)
+	}
+	requests := make(chan string, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/user/me":
+			writeJSON(t, w, `{"data":{"id":"u1"}}`)
+		case "/v1/wallets":
+			writeJSON(t, w, `{"data":[{"address":"akash1wallet"}]}`)
+		case "/v1/usage/history":
+			requests <- r.URL.RawQuery
+			writeJSON(t, w, `[]`)
+		default:
+			t.Errorf("unexpected path %s", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+	for _, args := range [][]string{
+		{"usage", "2026-07-01", "2026-07-02"},
+		{"usage", "--from", "2026-07-01", "--to", "2026-07-02"},
+	} {
+		if _, err := execConsole(t, m, server.URL, args...); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if first, second := <-requests, <-requests; first != second {
+		t.Fatalf("date filters differ: %q / %q", first, second)
+	}
+}
+
+func TestWalletSettingsFlagUpdatesInsteadOfReading(t *testing.T) {
+	m := newTestManager(t)
+	if err := aktctx.SetConsoleAPIKey(m.Root(), "prod", "sekrit"); err != nil {
+		t.Fatal(err)
+	}
+	calls := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls <- r.Method
+		writeJSON(t, w, `{"data":{"autoReloadEnabled":true}}`)
+	}))
+	defer server.Close()
+	if _, err := execConsole(t, m, server.URL, "wallet", "settings", "--auto-reload", "true"); err != nil {
+		t.Fatal(err)
+	}
+	if method := <-calls; method != http.MethodPut {
+		t.Fatalf("method = %s, want PUT", method)
+	}
+	if _, err := execConsole(t, m, server.URL, "wallet", "settings", "false", "--auto-reload", "true"); err == nil || !strings.Contains(err.Error(), "both positionally") {
+		t.Fatalf("duplicate input error = %v", err)
+	}
+}

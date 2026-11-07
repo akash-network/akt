@@ -222,6 +222,17 @@ func TestLocalIdentityModes(t *testing.T) {
 		}
 	}
 
+	for _, name := range []string{"status", "events"} {
+		cmd := &cobra.Command{Use: name}
+		root.AddCommand(cmd)
+		if got := localIdentityMode(cmd); got != aktclient.LocalIdentityNone {
+			t.Errorf("%s must not open a signing identity", name)
+		}
+		if requiresContext(cmd) {
+			t.Errorf("%s must accept a standalone --node endpoint", name)
+		}
+	}
+
 	store := &cobra.Command{Use: "store"}
 	storeStatus := &cobra.Command{Use: "status"}
 	storeSync := &cobra.Command{Use: "sync"}

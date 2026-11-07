@@ -284,19 +284,29 @@ Example:
 $ %[2]s query txs 'message.sender=akash1...&message.action=withdraw_delegator_reward' --page 1 --limit 30
 `, eventFormat, version.AppName),
 		),
-		Args:              cobra.MaximumNArgs(1),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.MaximumNArgs(1)(cmd, args); err != nil {
+				return err
+			}
+			expression, err := cflags.ExpressionFromFlagsAndArgs(cmd.Flags(), args, flagdefs.FlagEvents)
+			if err != nil {
+				return err
+			}
+			if expression == "" {
+				return fmt.Errorf("events are required: pass them positionally or with --events")
+			}
+			return nil
+		},
 		PersistentPreRunE: queryWithoutHeightPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)
 			cctx := cl.ClientContext()
 
-			// FEEDBACK(2026-07): --events disabled for the positional-only UX
-			// trial; the positional expression is the only source (zero
-			// fallback). Restore by uncommenting if users ask for the flag
-			// form back.
-			// eventsRaw, _ := cmd.Flags().GetString(flagdefs.FlagEvents)
-			eventsRaw := cflags.ExprFromArgs(args, "")
+			eventsRaw, err := cflags.ExpressionFromFlagsAndArgs(cmd.Flags(), args, flagdefs.FlagEvents)
+			if err != nil {
+				return err
+			}
 			if eventsRaw == "" {
 				return fmt.Errorf("events are required: pass them positionally")
 			}
@@ -343,10 +353,7 @@ $ %[2]s query txs 'message.sender=akash1...&message.action=withdraw_delegator_re
 	cflags.AddQueryFlagsToCmd(cmd)
 	cmd.Flags().Int(flagdefs.FlagPage, query.DefaultPage, "Query a specific page of paginated results")
 	cmd.Flags().Int(flagdefs.FlagLimit, query.DefaultLimit, "Query number of transactions results per page returned")
-	// FEEDBACK(2026-07): --events disabled for the positional-only UX trial
-	// (use the positional form instead). Restore by uncommenting if users
-	// ask for the flag form back.
-	// cmd.Flags().String(flagdefs.FlagEvents, "", fmt.Sprintf("list of transaction events in the form of %s", eventFormat))
+	cmd.Flags().String(flagdefs.FlagEvents, "", fmt.Sprintf("list of transaction events in the form of %s", eventFormat))
 
 	return cmd
 }

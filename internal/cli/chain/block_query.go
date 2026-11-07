@@ -83,7 +83,11 @@ emits.
 			if err := cobra.MaximumNArgs(1)(cmd, args); err != nil {
 				return err
 			}
-			if cflags.ExprFromArgs(args, "") == "" && !cmd.Flags().Changed(flagdefs.FlagHeight) {
+			expression, err := cflags.ExpressionFromFlagsAndArgs(cmd.Flags(), args, flagdefs.FlagQuery)
+			if err != nil {
+				return err
+			}
+			if expression == "" && !cmd.Flags().Changed(flagdefs.FlagHeight) {
 				return errors.New("query expression is required: pass it positionally")
 			}
 
@@ -91,12 +95,10 @@ emits.
 		},
 		PreRunE: directQueryWithoutHeightPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			// FEEDBACK(2026-07): --query disabled for the positional-only UX
-			// trial; the positional expression is the only source (zero
-			// fallback). Restore by uncommenting if users ask for the flag
-			// form back.
-			// query, _ := cmd.Flags().GetString(flagdefs.FlagQuery)
-			queryExpr := cflags.ExprFromArgs(args, "")
+			queryExpr, err := cflags.ExpressionFromFlagsAndArgs(cmd.Flags(), args, flagdefs.FlagQuery)
+			if err != nil {
+				return err
+			}
 			page, _ := cmd.Flags().GetInt(flagdefs.FlagPage)
 			limit, _ := cmd.Flags().GetInt(flagdefs.FlagLimit)
 			orderBy, _ := cmd.Flags().GetString(flagdefs.FlagOrderBy)
@@ -144,10 +146,7 @@ emits.
 	cflags.AddQueryFlagsToCmd(cmd)
 	cmd.Flags().Int(flagdefs.FlagPage, query.DefaultPage, "Query a specific page of paginated results")
 	cmd.Flags().Int(flagdefs.FlagLimit, query.DefaultLimit, "Query number of transactions results per page returned")
-	// FEEDBACK(2026-07): --query disabled for the positional-only UX trial
-	// (use the positional form instead). Restore by uncommenting if users
-	// ask for the flag form back.
-	// cmd.Flags().String(flagdefs.FlagQuery, "", "The blocks events query per CometBFT's query semantics")
+	cmd.Flags().String(flagdefs.FlagQuery, "", "The blocks events query per CometBFT's query semantics")
 	cmd.Flags().Var(
 		clioutput.NewEnumFlag("", "", "asc", "desc"),
 		flagdefs.FlagOrderBy,

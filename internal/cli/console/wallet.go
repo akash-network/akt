@@ -7,8 +7,10 @@ import (
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/spf13/cobra"
 
+	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	"pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
+	flagdefs "pkg.akt.dev/akt/internal/flags"
 )
 
 func walletCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
@@ -135,7 +137,7 @@ func walletSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "settings [true|false]",
 		Short: "View or change Auto Recharge, the account-level card charge",
-		Args:  cobra.MaximumNArgs(1),
+		Args:  cflags.PositionalOrFlagArgs(flagdefs.FlagAutoReload),
 		Long: "View or change Auto Recharge: the Console charges your default card to keep the " +
 			"account's credit balance up. This is the account-level setting, not per-deployment " +
 			"funding, which is always on and cannot be changed.",
@@ -150,17 +152,11 @@ func walletSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			// FEEDBACK(2026-07): --auto-reload disabled for the
-			// positional-only UX trial; the positional [true|false] argument
-			// is the only source. Restore by uncommenting if users ask for
-			// the flag form back.
-			// if len(args) > 0 || cmd.Flags().Changed("auto-reload") {
-			// 	value, _ := cmd.Flags().GetString("auto-reload")
-			// 	if len(args) > 0 {
-			// 		value = args[0]
-			// 	}
-			if len(args) > 0 {
-				value := args[0]
+			if len(args) > 0 || cmd.Flags().Changed(flagdefs.FlagAutoReload) {
+				value, _ := cmd.Flags().GetString(flagdefs.FlagAutoReload)
+				if len(args) > 0 {
+					value = args[0]
+				}
 
 				enabled, err := parseBoolValue(value, "auto-reload")
 				if err != nil {
@@ -195,10 +191,7 @@ func walletSettingsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	// FEEDBACK(2026-07): --auto-reload disabled for the positional-only UX
-	// trial (use the positional form instead). Restore by uncommenting if
-	// users ask for the flag form back.
-	// cmd.Flags().String("auto-reload", "", "Enable or disable Auto Recharge (true|false)")
+	cmd.Flags().String(flagdefs.FlagAutoReload, "", "Enable or disable Auto Recharge (true|false)")
 
 	return cmd
 }
@@ -245,7 +238,7 @@ func usageCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "usage [from] [to]",
 		Short: "Historical spend and active-deployment counts",
-		Args:  cobra.MaximumNArgs(2),
+		Args:  cflags.PositionalOrFlagArgs(flagdefs.FlagFrom, flagdefs.FlagTo),
 		Example: `  # Last 30 days (API default)
   akt console usage
 
@@ -257,12 +250,8 @@ func usageCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 				return err
 			}
 
-			// FEEDBACK(2026-07): --from/--to disabled for the positional-only
-			// UX trial; the positional [from] [to] dates are the only source.
-			// Restore by uncommenting if users ask for the flag form back.
-			// from, _ := cmd.Flags().GetString("from")
-			// to, _ := cmd.Flags().GetString("to")
-			from, to := "", ""
+			from, _ := cmd.Flags().GetString(flagdefs.FlagFrom)
+			to, _ := cmd.Flags().GetString(flagdefs.FlagTo)
 			if len(args) > 0 {
 				from = args[0]
 			}
@@ -335,14 +324,8 @@ func usageCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 		},
 	}
 
-	// FEEDBACK(2026-07): --from disabled for the positional-only UX trial
-	// (use the positional form instead). Restore by uncommenting if users
-	// ask for the flag form back.
-	// cmd.Flags().String("from", "", "Start date (YYYY-MM-DD)")
-	// FEEDBACK(2026-07): --to disabled for the positional-only UX trial
-	// (use the positional form instead). Restore by uncommenting if users
-	// ask for the flag form back.
-	// cmd.Flags().String("to", "", "End date (YYYY-MM-DD)")
+	cmd.Flags().String(flagdefs.FlagFrom, "", "Start date (YYYY-MM-DD)")
+	cmd.Flags().String(flagdefs.FlagTo, "", "End date (YYYY-MM-DD)")
 
 	return cmd
 }

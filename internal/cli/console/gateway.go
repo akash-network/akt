@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	flagdefs "pkg.akt.dev/akt/internal/flags"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -150,7 +151,12 @@ func logsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			"gateway. The provider is resolved from the deployment's active lease and access is " +
 			"authorized by a short-lived Console-minted JWT. JSON output is one compact object " +
 			"per line; YAML output is one document per record.",
-		Args: cobra.RangeArgs(1, 2),
+		Args: func(cmd *cobra.Command, args []string) error {
+			if err := cobra.RangeArgs(1, 2)(cmd, args); err != nil {
+				return err
+			}
+			return cflags.RejectDuplicateArgs(cmd.Flags(), args[1:], flagdefs.FlagService)
+		},
 		Example: `  # All services
   akt console logs 12345
 
@@ -172,12 +178,7 @@ func logsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			if err := aktprovider.ValidateLogTail(follow, tail); err != nil {
 				return err
 			}
-			// FEEDBACK(2026-07): --service disabled for the positional-only
-			// UX trial; the positional [service] argument is the only
-			// source. Restore by uncommenting if users ask for the flag form
-			// back.
-			// service, _ := cmd.Flags().GetString("service")
-			service := ""
+			service, _ := cmd.Flags().GetString(flagdefs.FlagService)
 			if len(args) > 1 {
 				service = args[1]
 			}
@@ -251,10 +252,7 @@ func logsCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 
 	cmd.Flags().BoolP(flagdefs.FlagFollow, "f", false, "Follow log output")
 	cmd.Flags().Int64(flagdefs.FlagTail, -1, "Number of lines to show from the end of the logs")
-	// FEEDBACK(2026-07): --service disabled for the positional-only UX trial
-	// (use the positional form instead). Restore by uncommenting if users
-	// ask for the flag form back.
-	// cmd.Flags().String("service", "", "Filter logs by service name; alternative to the positional argument")
+	cmd.Flags().String(flagdefs.FlagService, "", "Filter logs by service name; alternative to the positional argument")
 
 	return cmd
 }

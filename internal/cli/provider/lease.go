@@ -66,17 +66,10 @@ func (s leaseScope) leaseID(provider string) mtypes.LeaseID {
 // touching the provider, because it is the value the provider is resolved from:
 // a command missing both must report the missing sequence, not the missing
 // provider.
-//
-// Only lease-shell, send-manifest, and the migrate-* commands still register
-// --dseq (FEEDBACK 2026-07: the flag is disabled on the positional-[dseq]
-// commands for the positional-only UX trial); elsewhere the flag lookup below
-// yields zero and the positional argument is the sole source.
 func leaseScopeFromCmd(cmd *cobra.Command, args []string) (leaseScope, error) {
 	cctx := sdkclient.GetClientContextFromCmd(cmd)
 
-	dseq, _ := cmd.Flags().GetUint64(flagdefs.FlagDSeq)
-
-	dseq, err := cflags.DSeqFromArgs(args, dseq)
+	dseq, err := cflags.DSeqFromFlagsAndArgs(cmd.Flags(), args)
 	if err != nil {
 		return leaseScope{}, err
 	}
@@ -102,6 +95,9 @@ func leaseScopeFromCmd(cmd *cobra.Command, args []string) (leaseScope, error) {
 // deployment sequence. Commands whose positional slot is the dseq must not be
 // told to pass a flag they do not register, and vice versa.
 func missingDSeqError(cmd *cobra.Command) error {
+	if strings.Contains(cmd.Use, "[dseq]") {
+		return fmt.Errorf("dseq is required: pass it as the positional argument or with --dseq (e.g. %s 12345)", cmd.CommandPath())
+	}
 	if cmd.Flags().Lookup(flagdefs.FlagDSeq) != nil {
 		return fmt.Errorf("dseq is required: pass --dseq <dseq> (e.g. %s --dseq 12345)", cmd.CommandPath())
 	}
@@ -323,7 +319,7 @@ func activeLeaseProviders(ctx context.Context, scope leaseScope, leases leaseQue
 	}
 
 	seen := make(map[string]struct{}, len(found))
-	for _, lease := range found {
+	for _, lease := range leasesMatchingScope(scope, found) {
 		if lease.State == mtypes.LeaseActive && lease.ID.Provider != "" {
 			seen[lease.ID.Provider] = struct{}{}
 		}

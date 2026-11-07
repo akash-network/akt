@@ -194,32 +194,14 @@ func TestLeaseScopePositionalDSeq(t *testing.T) {
 	}
 }
 
-// TestLeaseScopePositionalWinsOverFlag pins the precedence for lease-shell,
-// the one lease command that still registers --dseq: an explicit positional
-// value must win, exactly as DSeqFromArgs documents.
-func TestLeaseScopePositionalWinsOverFlag(t *testing.T) {
+func TestLeaseScopeRejectsDuplicateDSeq(t *testing.T) {
 	cmd := newProviderCmd(t, "--dseq", "999", "--gseq", "2", "--oseq", "3")
-
-	scope, err := leaseScopeFromCmd(cmd, []string{"12345"})
-	if err != nil {
-		t.Fatalf("leaseScopeFromCmd: %v", err)
-	}
-
-	lid := scope.leaseID(testProviderAddr)
-	if lid.DSeq != 12345 {
-		t.Errorf("dseq = %d, want the positional 12345", lid.DSeq)
-	}
-	if lid.GSeq != 2 || lid.OSeq != 3 {
-		t.Errorf("gseq/oseq = %d/%d, want the flag values 2/3", lid.GSeq, lid.OSeq)
-	}
-	if !scope.GSeqSet || !scope.OSeqSet {
-		t.Error("explicit --gseq/--oseq must be recorded so lease resolution does not override them")
+	_, err := leaseScopeFromCmd(cmd, []string{"12345"})
+	if err == nil || !strings.Contains(err.Error(), "both positionally") {
+		t.Fatalf("expected duplicate dseq error, got %v", err)
 	}
 }
 
-// TestLeaseScopeUsesDSeqFlagWithoutPositional covers lease-shell's own path:
-// it consumes its positional args as the remote command, so --dseq is the
-// only source there.
 func TestLeaseScopeUsesDSeqFlagWithoutPositional(t *testing.T) {
 	cmd := newProviderCmd(t, "--dseq", "777")
 
@@ -477,11 +459,7 @@ func TestCommandsRegistersEveryGatewayOperation(t *testing.T) {
 	}
 }
 
-// TestPositionalDSeqCommandsDoNotRegisterDSeqFlag pins the positional-only UX
-// trial (FEEDBACK 2026-07). If --dseq comes back on these commands without
-// leaseIDFromFlags being revisited, the flag would silently win over the
-// positional argument for callers that pass both.
-func TestPositionalDSeqCommandsDoNotRegisterDSeqFlag(t *testing.T) {
+func TestPositionalDSeqCommandsAlsoAcceptDSeqFlag(t *testing.T) {
 	cmd := Commands()
 
 	positional := map[string]bool{
@@ -492,8 +470,8 @@ func TestPositionalDSeqCommandsDoNotRegisterDSeqFlag(t *testing.T) {
 	for _, sub := range cmd.Commands() {
 		switch {
 		case positional[sub.Name()]:
-			if sub.Flags().Lookup(flagdefs.FlagDSeq) != nil {
-				t.Errorf("%s must take dseq positionally, not via --dseq", sub.Name())
+			if sub.Flags().Lookup(flagdefs.FlagDSeq) == nil {
+				t.Errorf("%s must also accept --dseq", sub.Name())
 			}
 			if sub.Flags().Lookup(flagdefs.FlagGSeq) == nil || sub.Flags().Lookup(flagdefs.FlagOSeq) == nil {
 				t.Errorf("%s should still expose --gseq/--oseq", sub.Name())

@@ -1205,6 +1205,19 @@ Commands are copied from `akash-network/chain-sdk/go/cli` with the following cle
 
 The `chain-sdk` CLI package (`pkg.akt.dev/go/cli`) will be deprecated and eventually removed once `akt` reaches full feature parity. In the interim, the `go/cli` code is clean-copied into `internal/cli/chain` and adjusted to respect akt context defaults; all other chain-sdk packages are imported directly.
 
+Flag compatibility is audited across the complete upstream command tree,
+including inherited options and renamed query paths. The positional-only
+trial ends for existing flag alternatives: positional arguments remain easy
+to use, while scripts can use the familiar resource, state, and search flags.
+Restored alternatives reject duplicate positional/flag input; established
+precedence on existing alternatives remains unchanged. Every accepted option
+must reach its request or SDK operation. Explicit identities take precedence
+over context defaults without triggering an unnecessary account lookup.
+The audit records node/operator exclusions separately and tests all mapped
+commands against the assembled tree. Provider endpoint, signer, service, and
+replica selection follow the same rule. Status and event streaming are
+read-only RPC operations with no signing-key requirement.
+
 The clean copy is bounded by the release command tree. `internal/cli/chain`
 contains registered user-facing transaction and query commands plus helpers
 they call. It does not retain validator-node server, genesis, RPC-console, or

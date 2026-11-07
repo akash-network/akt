@@ -103,9 +103,6 @@ func DeploymentIDFromFlags(flags *pflag.FlagSet, opts ...MarketOption) (dv1.Depl
 
 	id.Owner = opt.Owner.String()
 
-	// FEEDBACK(2026-07): several commands disabled --dseq for the
-	// positional-only UX trial, so tolerate a missing flag and leave DSeq
-	// zero (the positional argument is then the only source).
 	if flags.Lookup(flagdefs.FlagDSeq) != nil {
 		if id.DSeq, err = flags.GetUint64(flagdefs.FlagDSeq); err != nil {
 			return id, err
@@ -148,9 +145,6 @@ func GroupIDFromFlags(flags *pflag.FlagSet, opts ...MarketOption) (dv1.GroupID, 
 		return id, err
 	}
 
-	// FEEDBACK(2026-07): several commands disabled --gseq for the
-	// positional-only UX trial, so tolerate a missing flag and leave GSeq
-	// zero (the positional argument is then the only source).
 	var gseq uint32
 	if flags.Lookup(flagdefs.FlagGSeq) != nil {
 		if gseq, err = flags.GetUint32(flagdefs.FlagGSeq); err != nil {
@@ -162,51 +156,36 @@ func GroupIDFromFlags(flags *pflag.FlagSet, opts ...MarketOption) (dv1.GroupID, 
 
 // AddDeploymentFilterFlags add flags to filter for deployment list
 func AddDeploymentFilterFlags(flags *pflag.FlagSet) {
-	// FEEDBACK(2026-07): --owner disabled for the positional-only UX trial
-	// (use the positional form instead). Restore by uncommenting if users
-	// ask for the flag form back.
-	// flags.String(FlagOwner, "", "deployment owner address to filter")
-	// FEEDBACK(2026-07): --state disabled for the positional-only UX trial
-	// (use the positional form instead). Restore by uncommenting if users
-	// ask for the flag form back.
-	// flags.String(FlagState, "", "deployment state to filter (active,closed)")
-	// FEEDBACK(2026-07): --dseq disabled for the positional-only UX trial
-	// (use the positional form instead). Restore by uncommenting if users
-	// ask for the flag form back.
-	// flags.Uint64(FlagDSeq, 0, "deployment sequence to filter")
-	_ = flags
+	flags.String(flagdefs.FlagOwner, "", "deployment owner address to filter")
+	flags.String(flagdefs.FlagState, "", "deployment state to filter (active,closed)")
+	flags.Uint64(flagdefs.FlagDSeq, 0, "deployment sequence to filter")
 }
 
 // DepFiltersFromFlags returns DeploymentFilters with given flags and error if occurred
 func DepFiltersFromFlags(flags *pflag.FlagSet) (dv1beta.DeploymentFilters, error) {
 	var dfilters dv1beta.DeploymentFilters
 
-	// FEEDBACK(2026-07): the --owner/--state/--dseq filter flags are disabled
-	// for the positional-only UX trial (see AddDeploymentFilterFlags), so this
-	// returns empty filters and the positional filter argument is the only
-	// source. Restore by uncommenting if the flags come back.
-	// owner, err := flags.GetString(FlagOwner)
-	// if err != nil {
-	// 	return dfilters, err
-	// }
-	//
-	// if owner != "" {
-	// 	_, err = sdk.AccAddressFromBech32(owner)
-	// 	if err != nil {
-	// 		return dfilters, err
-	// 	}
-	// }
-	//
-	// dfilters.Owner = owner
-	//
-	// if dfilters.State, err = flags.GetString(FlagState); err != nil {
-	// 	return dfilters, err
-	// }
-	//
-	// if dfilters.DSeq, err = flags.GetUint64(FlagDSeq); err != nil {
-	// 	return dfilters, err
-	// }
-	_ = flags
+	owner, err := flags.GetString(flagdefs.FlagOwner)
+	if err != nil {
+		return dfilters, err
+	}
+
+	if owner != "" {
+		_, err = sdk.AccAddressFromBech32(owner)
+		if err != nil {
+			return dfilters, err
+		}
+	}
+
+	dfilters.Owner = owner
+
+	if dfilters.State, err = flags.GetString(flagdefs.FlagState); err != nil {
+		return dfilters, err
+	}
+
+	if dfilters.DSeq, err = flags.GetUint64(flagdefs.FlagDSeq); err != nil {
+		return dfilters, err
+	}
 
 	return dfilters, nil
 }

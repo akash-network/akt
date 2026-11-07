@@ -8,7 +8,7 @@ import (
 	flagdefs "pkg.akt.dev/akt/internal/flags"
 )
 
-func TestEventsCommandBindsCanonicalNodeFlag(t *testing.T) {
+func TestEventsCommandHasIndependentNodeFlag(t *testing.T) {
 	viper.Reset()
 	t.Cleanup(viper.Reset)
 
@@ -17,7 +17,7 @@ func TestEventsCommandBindsCanonicalNodeFlag(t *testing.T) {
 	if flag == nil || flag.DefValue != "tcp://localhost:26657" {
 		t.Fatalf("events --%s flag = %#v", flagdefs.FlagNode, flag)
 	}
-	if got := viper.GetString(flagdefs.FlagNode); got != "tcp://localhost:26657" {
-		t.Fatalf("bound node = %q", got)
+	if got := viper.GetString(flagdefs.FlagNode); got != "" {
+		t.Fatalf("events changed global node binding = %q", got)
 	}
 }

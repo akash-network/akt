@@ -158,6 +158,8 @@ func TestProviderCommandsOverTLS(t *testing.T) {
 						if err := json.NewEncoder(w).Encode(uploaded); err != nil {
 							t.Errorf("return manifest: %v", err)
 						}
+					case "GET /lease/42/1/1/service/web/status":
+						_, _ = io.WriteString(w, `{"name":"web","available":1,"total":1}`)
 					case "GET /lease/42/1/1/status":
 						_, _ = io.WriteString(w, `{"services":{"web":{"name":"web","available":1,"total":1,"uris":["web.example.com"]}}}`)
 					default:
@@ -183,6 +185,10 @@ func TestProviderCommandsOverTLS(t *testing.T) {
 					{"send-manifest", "../../workflow/adapters/testdata/deployment.yaml", "--dseq", "42"},
 					{"get-manifest", "42"},
 					{"lease-status", "42"},
+					{"lease-status", "--dseq", "42"},
+					{"get-manifest", "--dseq", "42"},
+					{"service-status", "42", "web"},
+					{"service-status", "--dseq", "42", "--service", "web"},
 				} {
 					t.Run(args[0], func(t *testing.T) {
 						root := Commands()
@@ -220,6 +226,10 @@ func TestProviderCommandsOverTLS(t *testing.T) {
 							mu.Lock()
 							defer mu.Unlock()
 							require.Equal(t, uploaded, got)
+						case "service-status":
+							var got rest.ServiceStatus
+							require.NoError(t, json.Unmarshal(stdout.Bytes(), &got))
+							require.Equal(t, "web", got.Name)
 						case "lease-status":
 							var got rest.LeaseStatus
 							require.NoError(t, json.Unmarshal(stdout.Bytes(), &got))
@@ -233,7 +243,10 @@ func TestProviderCommandsOverTLS(t *testing.T) {
 				defer mu.Unlock()
 				if registration == "valid" {
 					require.Equal(t, map[string]int{
-						"PUT /deployment/42/manifest": 1, "GET /lease/42/1/1/manifest": 1, "GET /lease/42/1/1/status": 1,
+						"PUT /deployment/42/manifest":          1,
+						"GET /lease/42/1/1/manifest":           2,
+						"GET /lease/42/1/1/status":             2,
+						"GET /lease/42/1/1/service/web/status": 2,
 					}, requests)
 				} else {
 					require.Empty(t, requests, "an unverified provider must receive no HTTP request")
@@ -282,7 +295,6 @@ func TestProviderCommandsRejectInvalidQueryContextBeforeGateway(t *testing.T) {
 	for _, authType := range []string{"public", "jwt", "mtls"} {
 		t.Run(authType, func(t *testing.T) {
 			root := Commands()
-			root.PersistentFlags().String("chain-id", "", "")
 			root.SetOut(io.Discard)
 			root.SetErr(io.Discard)
 			ctx := walletlessCommandContext()

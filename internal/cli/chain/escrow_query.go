@@ -252,21 +252,16 @@ The filter argument takes the form <owner>/<dseq>, or a bare <dseq> to use
 the context's default account.`,
 		Example: `akt query escrow blocks-remaining 12345
 akt query escrow blocks-remaining akash1owner.../12345`,
-		Args:              cobra.MaximumNArgs(1),
+		Args:              cflags.ResourceFilterArgs(nil, flagdefs.FlagOwner, flagdefs.FlagDSeq),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
 			cl := MustLightClientFromContext(ctx)
 
-			// FEEDBACK(2026-07): --owner/--dseq disabled for the
-			// positional-only UX trial; start from a zero ID so the
-			// positional [owner/]dseq filter is the only source. Restore by
-			// uncommenting if users ask for the flag form back.
-			// id, err := cflags.DeploymentIDFromFlags(cmd.Flags())
-			// if err != nil {
-			// 	return err
-			// }
-			var id dv1.DeploymentID
+			id, err := cflags.DeploymentIDFromFlags(cmd.Flags())
+			if err != nil {
+				return err
+			}
 
 			// Positional [owner/]dseq; owner defaults to the context
 			// default account (SPEC §3.8).
@@ -279,6 +274,12 @@ akt query escrow blocks-remaining akash1owner.../12345`,
 				return err
 			}
 
+			if id.Owner == "" && id.DSeq != 0 {
+				id.Owner, err = resolveDefaultAccountAddress(cl.ClientContext())
+				if err != nil {
+					return err
+				}
+			}
 			if id.Owner == "" {
 				return errors.New("owner is required: pass the filter positionally as [owner/]dseq")
 			}
@@ -385,10 +386,7 @@ akt query escrow blocks-remaining akash1owner.../12345`,
 	}
 
 	cflags.AddQueryFlagsToCmd(cmd)
-	// FEEDBACK(2026-07): --owner/--dseq disabled for the positional-only UX
-	// trial (use the positional [owner/]dseq filter instead). Restore by
-	// uncommenting if users ask for the flag form back.
-	// cflags.AddDeploymentIDFlags(cmd.Flags())
+	cflags.AddDeploymentIDFlags(cmd.Flags())
 
 	return cmd
 }
