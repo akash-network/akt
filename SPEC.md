@@ -2974,7 +2974,7 @@ The `akt console` group drives the Akash Console managed-wallet API (§7): deplo
 | Command                          | Flags                                          | Description                                                    |
 | -------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------- |
 | `akt console apikey list`        |                                                | List API keys (secrets are never shown).                         |
-| `akt console apikey create <name> [expires-at]` | `--name`, `--expires-at` (RFC 3339, alternatives) — **disabled pending feedback** (positional only, 2026-07) | Create a key; the secret is printed exactly once with a warning. |
+| `akt console apikey create <name> [expires-at]` | `--name`, `--expires-at` (RFC 3339, alternatives) — **disabled pending feedback** (positional only, 2026-07) | Create a key; the secret is printed exactly once with a warning. Console creates keys only from a signed-in Console session and answers a request authenticated with an API key `403` with code `session_required`; the command then fails with a session-required error and names where to create the key (Console > Settings > API Keys). |
 | `akt console apikey delete <id>` |                                                | Delete a key. The client first requires the UUID to appear in the account's key list, then sends DELETE. An absent key is non-zero with no DELETE or acknowledgement, even when the API's delete endpoint is idempotent. Pretty output acknowledges the full ID; JSON/YAML return `{id, deleted:true}` only after a present key's successful deletion. |
 | `akt console jwt create`         | `--ttl` (300, maximum 3600), `--scope` (csv, default `status,logs,events,shell,send-manifest,get-manifest`) | Mint a short-lived provider-scoped JWT. |
 
@@ -4841,7 +4841,7 @@ All Console API requests require the `x-api-key` header. The API key is resolved
   JSON/YAML acknowledgements contain only the username (for login), context
   name, and authentication state; they never contain the key.
 
-API keys are created at [console.akash.network](https://console.akash.network) > Settings > API Keys.
+API keys are created at [console.akash.network](https://console.akash.network) > Settings > API Keys. Console creates a key only from a signed-in session and refuses a creation request authenticated with an API key (§7.6).
 
 ### 7.2 Base URL
 
@@ -5080,6 +5080,7 @@ identity boundary regardless of the preferred workflow rail.
 | ----------- | ----------------------------------------------------------------- |
 | 401         | Invalid or expired API key. Point the user at the key resolution chain (§7.1) and `akt console login`. |
 | 402         | Insufficient funds in Console account.                            |
+| 403         | With code `session_required`, the endpoint needs a signed-in Console session, which an API key never is (API key creation). Terminal: a session-required error; point the user at console.akash.network > Settings > API Keys. Any other 403 is an unexpected status. |
 | 404         | Deployment not found (dseq does not exist or not owned by user).  |
 | 429         | Rate limited. Retry with backoff only for idempotent methods (GET/HEAD/PUT/DELETE). A non-idempotent request may already have reached the service and is never replayed. |
 | 5xx         | Console API server error. Retry with backoff (max 3 attempts) for idempotent methods (GET/HEAD/PUT/DELETE) only. A non-idempotent request is never replayed: it may have been processed despite the error (e.g. a gateway 502 after a completed write), and replaying it could duplicate a deployment. |
@@ -5166,7 +5167,7 @@ Status of `akt` coverage for every Akash Console capability. "Covered" means the
 | GPU availability & pricing | `akt console gpu` | Public. |
 | Template catalog | `akt console template list/get/sdl` | `template sdl` writes raw SDL to stdout; redirect it to a file for `akt deploy` (which takes a path, not stdin). |
 | SDL authoring | `akt sdl scaffolds/init/validate` (§2.11) | Local scaffolding, generation, and lint; no context, key, or RPC required. |
-| API key management | `akt console apikey list/create/delete` | Create shows the secret exactly once. |
+| API key management | `akt console apikey list/create/delete` | Create shows the secret exactly once. Console refuses create from an API key (`session_required`, §7.6), so keys are created in Console. |
 | Provider-scoped JWT minting | `akt console jwt create` | Also the mechanism behind the live lease operations above. |
 | Action audit trail | Automatic: state-changing Console calls are recorded in the per-context action log (`akt context log`) | Beyond Console parity — Console has no client-side audit trail. |
 

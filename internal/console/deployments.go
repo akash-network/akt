@@ -134,7 +134,8 @@ func validDeploymentDSeq(dseq string) bool {
 }
 
 func definitiveCreateFailure(err error) bool {
-	if errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrInsufficientFunds) || errors.Is(err, ErrNotFound) {
+	var sessionErr *SessionRequiredError
+	if errors.Is(err, ErrUnauthorized) || errors.Is(err, ErrInsufficientFunds) || errors.Is(err, ErrNotFound) || errors.As(err, &sessionErr) {
 		return true
 	}
 
@@ -716,15 +717,9 @@ func (c *Client) CreateLease(ctx context.Context, manifest string, leases []Leas
 }
 
 func leaseResponseCode(body []byte) string {
-	var result struct {
-		Code string `json:"code"`
-	}
-	if json.Unmarshal(body, &result) != nil {
-		return ""
-	}
-	switch result.Code {
+	switch code := responseCode(body); code {
 	case "manifest_not_delivered", "provider_unreachable":
-		return result.Code
+		return code
 	default:
 		return ""
 	}
