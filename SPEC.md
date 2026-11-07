@@ -3039,7 +3039,7 @@ app and have no `akt` command.
 | Command                          | Flags                                          | Description                                                    |
 | -------------------------------- | ---------------------------------------------- | ---------------------------------------------------------------- |
 | `akt console apikey list`        |                                                | List API keys (secrets are never shown), with the `organizationId` and `projectId` each acts in when the API reports them; a key without `projectId` reaches every project. |
-| `akt console apikey create <name> [expires-at]` | `--name`, `--expires-at` (RFC 3339, alternatives) — **disabled pending feedback** (positional only, 2026-07); `--console-project` | Create a key in the organization the current key acts in; the secret is printed exactly once with a warning. Only `--console-project` given on this command binds the key to a project (`data.projectId`); the context's project and `AKT_CONSOLE_PROJECT` never do. The binding cannot be changed later. |
+| `akt console apikey create <name> [expires-at]` | `--name`, `--expires-at` (RFC 3339, alternatives) — **disabled pending feedback** (positional only, 2026-07); `--console-project` | Create a key in the organization the current key acts in; the secret is printed exactly once with a warning. Only `--console-project` given on this command binds the key to a project (`data.projectId`); the context's project and `AKT_CONSOLE_PROJECT` never do. The binding cannot be changed later. Console creates keys only from a signed-in Console session and answers API-key authentication with `403 session_required`; the command then explains how to create the key in Console > Settings > API Keys. |
 | `akt console apikey delete <id>` |                                                | Delete a key. The client first requires the UUID to appear in the account's key list, then sends DELETE. An absent key is non-zero with no DELETE or acknowledgement, even when the API's delete endpoint is idempotent. Pretty output acknowledges the full ID; JSON/YAML return `{id, deleted:true}` only after a present key's successful deletion. |
 | `akt console jwt create`         | `--ttl` (300, maximum 3600), `--scope` (csv, default `status,logs,events,shell,send-manifest,get-manifest`) | Mint a short-lived provider-scoped JWT. |
 
@@ -4877,7 +4877,7 @@ All Console API requests require the `x-api-key` header. The API key is resolved
   JSON/YAML acknowledgements contain only the username (for login), context
   name, and authentication state; they never contain the key.
 
-API keys are created at [console.akash.network](https://console.akash.network) > Settings > API Keys.
+API keys are created at [console.akash.network](https://console.akash.network) > Settings > API Keys. Console creates a key only from a signed-in session and refuses a creation request authenticated with an API key (§7.6).
 
 ### 7.1.1 Teams and projects
 
@@ -5180,6 +5180,7 @@ identity boundary regardless of the preferred workflow rail.
 | ----------- | ----------------------------------------------------------------- |
 | 401         | Invalid or expired API key. Point the user at the key resolution chain (§7.1) and `akt console login`. |
 | 402         | Insufficient funds in Console account.                            |
+| 403         | With code `session_required`, the endpoint needs a signed-in Console session, which an API key never is (API key creation). Terminal: a session-required error; point the user at console.akash.network > Settings > API Keys. Any other 403 is an unexpected status. |
 | 404         | Deployment not found (dseq does not exist or not owned by user).  |
 | 429         | Rate limited. Retry with backoff only for idempotent methods (GET/HEAD/PUT/DELETE). A non-idempotent request may already have reached the service and is never replayed. |
 | 5xx         | Console API server error. Retry with backoff (max 3 attempts) for idempotent methods (GET/HEAD/PUT/DELETE) only. A non-idempotent request is never replayed: it may have been processed despite the error (e.g. a gateway 502 after a completed write), and replaying it could duplicate a deployment. A 5xx whose body carries a code from the refusal table below is a refusal, not an ambiguous error: it is returned at once and never reconciled as an unknown outcome. |
@@ -5188,8 +5189,10 @@ identity boundary regardless of the preferred workflow rail.
 **Team and project refusals.** The Console error body carries a machine
 readable `code`. For the codes below, `akt` keeps the code on the returned
 error, prints the API's message (control characters removed, at most 300
-characters) with the code and status, and appends the remedy. Sealed requests
-(§7.9) keep only the code and the remedy.
+characters) with the code and status, and appends the remedy. A session-required
+refusal retains `SessionRequiredError` and unwraps to a body-free `HTTPError`
+with the session code, status, and remedy. Sealed requests (§7.9) preserve this
+typed refusal; other recognized refusals keep only the code and remedy.
 
 | Code | Status | Remedy printed |
 | ---- | ------ | -------------- |
@@ -5290,7 +5293,7 @@ Status of `akt` coverage for every Akash Console capability. "Covered" means the
 | GPU availability & pricing | `akt console gpu` | Public. |
 | Template catalog | `akt console template list/get/sdl` | `template sdl` writes raw SDL to stdout; redirect it to a file for `akt deploy` (which takes a path, not stdin). |
 | SDL authoring | `akt sdl scaffolds/init/validate` (§2.11) | Local scaffolding, generation, and lint; no context, key, or RPC required. |
-| API key management | `akt console apikey list/create/delete` | Create shows the secret exactly once. |
+| API key management | `akt console apikey list/create/delete` | Create shows the secret exactly once. Console refuses create from an API key (`session_required`, §7.6), so keys are created in Console. |
 | Teams: active organization and role | `akt console organization list` (aliases `org`, `team`), `akt console whoami` | The organization the API key acts in (§7.1.1). |
 | Projects | `akt console project list/get/create/rename/delete/use`; `--console-project`, `AKT_CONSOLE_PROJECT` | `use` stores the project and its organization on the context. |
 | Deploy into a project, list and move deployments by project | `akt deploy` and `akt console deployment create/list` in the selected project; `akt console deployment move <dseq> <project>` | Headers and body fields as the Console API defines them (§7.1.1). |

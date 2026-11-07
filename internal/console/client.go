@@ -57,6 +57,37 @@ var (
 	ErrAlreadyClosed = errors.New("console: deployment already closed")
 )
 
+// sessionRequiredCode is the error code Console answers with when a request
+// authenticated with an API key reaches an endpoint that needs a session.
+const sessionRequiredCode = "session_required"
+
+// responseCode returns the code field of a Console error body, or "" when the
+// body carries none.
+func responseCode(body []byte) string {
+	var result struct {
+		Code string `json:"code"`
+	}
+	if json.Unmarshal(body, &result) != nil {
+		return ""
+	}
+	return result.Code
+}
+
+// SessionRequiredError reports an endpoint that needs a signed-in Console
+// session, which an API key never is (HTTP 403, code session_required).
+type SessionRequiredError struct{}
+
+func (err *SessionRequiredError) Error() string {
+	return err.Unwrap().Error()
+}
+
+func (*SessionRequiredError) Unwrap() error {
+	return &HTTPError{
+		StatusCode: http.StatusForbidden,
+		Code:       CodeSessionRequired,
+	}
+}
+
 // HTTPError is returned for non-2xx statuses that have no dedicated mapping.
 // Code carries a recognized team or project error code (SPEC §7.6), whose
 // message then explains the refusal and its remedy instead of echoing Body.
@@ -329,6 +360,9 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, resul
 
 		case resp.StatusCode == http.StatusNotFound:
 			return fmt.Errorf("%w (HTTP 404): %s %s", ErrNotFound, method, path)
+
+		case resp.StatusCode == http.StatusForbidden && responseCode(respBody) == sessionRequiredCode:
+			return &SessionRequiredError{}
 
 		case resp.StatusCode == http.StatusTooManyRequests:
 			lastErr = fmt.Errorf("console: rate limited (HTTP 429)")

@@ -728,6 +728,11 @@ Four choices keep that boundary small:
   model, decides where an MCP server acts, so a prompt injection cannot close
   deployments in another project the key happens to reach.
 
+Session refusals preserve `SessionRequiredError` and unwrap to a body-free
+`HTTPError` so team diagnostics retain the code, HTTP status, and remedy.
+Secret redaction preserves the typed refusal before handling generic HTTP
+errors.
+
 Team refusals keep the API's `code` on `console.HTTPError`, so callers branch
 on the code rather than on text, and the rendered error names the remedy
 (SPEC §7.6). Sealed requests keep the code while still dropping the body.
