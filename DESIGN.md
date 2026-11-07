@@ -2200,6 +2200,9 @@ name only the validation class and never echo the secret-backed URL. Context
 creation uses the same bounded, redacted subprocess runner as every later live
 command, and the lifecycle revalidates the raw key/origin pair immediately
 before constructing any network client.
+Session-required refusals retain their body-free type through the same
+redaction boundary. A refused secret-bearing mutation is a definitive failed
+attempt, preserving its authorization classification in the action log.
 Loopback acceptance is an explicit test-only option that neither protected
 read setup nor mutation configuration enables. Child CLI processes receive
 only the documented runtime credential; all `AKT_E2E_CONSOLE_*` harness
@@ -2316,13 +2319,16 @@ implements the raw Console observer, attempted-request and exact
 transferred-spend limits, direct action-log inspection, bounded redacted
 diagnostics, and phased in-process cleanup for create, bid, lease, status,
 settings, update,
-logs, events, deterministic non-interactive shell, child API-key lifecycle,
+logs, events, deterministic non-interactive shell, API-key creation authorization,
 and close. The provider-reported public workload URI must also return a
 bounded non-empty successful response through a standard HTTP client that does
 not reuse the Console or provider adapters. Streaming commands must return
 non-empty structured records; shell execution must return the exact sentinel
 output and record exactly one provider mutation, while status, logs, and events
-remain unlogged reads. A child credential must authenticate the same tenant,
+remain unlogged reads. A session-required API-key creation refusal must print
+no secret, leave the independent key collection unchanged, and log one failed
+create. Where creation is allowed, a child credential must authenticate the
+same tenant,
 disappear from both independent and CLI listings after revocation, and then
 fail authentication without reaching disk or the action log. The suite does
 not yet independently observe chain or Kubernetes state, persist a run
