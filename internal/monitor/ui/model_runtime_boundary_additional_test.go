@@ -17,48 +17,6 @@ import (
 	"pkg.akt.dev/go/util/pubsub"
 )
 
-func TestFetchProposerReportsTransportFailureAndIdentity(t *testing.T) {
-	t.Run("validator failure", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-			http.Error(w, "validator service unavailable", http.StatusServiceUnavailable)
-		}))
-		t.Cleanup(server.Close)
-
-		msg, ok := (Model{
-			client:         rpc.NewClient(server.URL, server.URL),
-			runtimeContext: context.Background(),
-		}).fetchProposer().(proposerMsg)
-		if !ok || msg.err == nil {
-			t.Fatalf("fetchProposer() = %#v, want proposer error", msg)
-		}
-	})
-
-	t.Run("success", func(t *testing.T) {
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
-			switch request.URL.Path {
-			case "/validators":
-				_, _ = fmt.Fprint(w, `{"result":{"block_height":"42","validators":[{"address":"AA","voting_power":"10"},{"address":"BB","voting_power":"20"}],"count":"2","total":"2"}}`)
-			case "/consensus_state":
-				_, _ = fmt.Fprint(w, `{"result":{"round_state":{"height/round/step":"42/1/6","start_time":"2026-08-11T12:00:00Z","height_vote_set":[{"round":1,"prevotes":["vote-a","vote-b"],"precommits":["vote-a","vote-b"]}],"proposer":{"address":"BB","index":1}}}}`)
-			default:
-				http.NotFound(w, request)
-			}
-		}))
-		t.Cleanup(server.Close)
-
-		msg, ok := (Model{
-			client:         rpc.NewClient(server.URL, server.URL),
-			runtimeContext: context.Background(),
-		}).fetchProposer().(proposerMsg)
-		if !ok || msg.err != nil {
-			t.Fatalf("fetchProposer() = %#v, want success", msg)
-		}
-		if msg.height != 42 || msg.proposerIndex != 1 || msg.proposerAddr != "BB" {
-			t.Fatalf("proposer identity = %#v", msg)
-		}
-	})
-}
-
 func TestFetchInitialSigningReportsEachReadFailure(t *testing.T) {
 	tests := []struct {
 		name    string

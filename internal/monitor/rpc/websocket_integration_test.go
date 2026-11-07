@@ -28,6 +28,7 @@ func TestSubscribeConsensusStateRestoresSubscriptionsAfterReconnect(t *testing.T
 	upgrader := websocket.Upgrader{}
 
 	mux := http.NewServeMux()
+	registerEmptyConsensusSnapshot(mux)
 	mux.HandleFunc("/validators", func(w http.ResponseWriter, r *http.Request) {
 		validatorRequests.Add(1)
 		validatorHeights <- r.URL.Query().Get("height")
@@ -50,7 +51,7 @@ func TestSubscribeConsensusStateRestoresSubscriptionsAfterReconnect(t *testing.T
 		}()
 
 		connection := connections.Add(1)
-		requests, err := readTestSubscriptions(conn, 2)
+		requests, err := readTestSubscriptions(conn, 4)
 		if err != nil {
 			reportWSPeerError(peerErrors, "connection %d: %v", connection, err)
 			return
@@ -97,7 +98,7 @@ func TestSubscribeConsensusStateRestoresSubscriptionsAfterReconnect(t *testing.T
 	require.NoError(t, err)
 	snapshots := subscription.Snapshots
 
-	wantQueries := []string{"tm.event='Vote'", "tm.event='NewRoundStep'"}
+	wantQueries := []string{"tm.event='Vote'", "tm.event='NewRoundStep'", "tm.event='NewRound'", "tm.event='NewBlock'"}
 	require.Equal(t, wantQueries, testWSQueries(receiveTestSubscriptions(t, firstSubscriptions, timeout)))
 
 	initialStep := receiveConsensusSnapshot(t, snapshots, timeout)
@@ -161,6 +162,7 @@ func TestSubscribeConsensusStateStopsAfterCanceledReconnect(t *testing.T) {
 	var cancel context.CancelFunc
 
 	mux := http.NewServeMux()
+	registerEmptyConsensusSnapshot(mux)
 	mux.HandleFunc("/validators", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprint(w, `{"result":{"block_height":"42","validators":[{"address":"AA","pub_key":{"value":"key-a"},"voting_power":"10"}],"count":"1","total":"1"}}`)
 	})
@@ -177,7 +179,7 @@ func TestSubscribeConsensusStateStopsAfterCanceledReconnect(t *testing.T) {
 
 		switch connections.Add(1) {
 		case 1:
-			requests, err := readTestSubscriptions(conn, 2)
+			requests, err := readTestSubscriptions(conn, 4)
 			if err != nil {
 				reportWSPeerError(peerErrors, "initial subscriptions: %v", err)
 				return
@@ -254,6 +256,7 @@ func TestSubscribeConsensusStateCancelsDuringReconnectBackoff(t *testing.T) {
 	upgrader := websocket.Upgrader{}
 
 	mux := http.NewServeMux()
+	registerEmptyConsensusSnapshot(mux)
 	mux.HandleFunc("/validators", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprint(w, `{"result":{"block_height":"42","validators":[{"address":"AA","pub_key":{"value":"key-a"},"voting_power":"10"}],"count":"1","total":"1"}}`)
 	})
@@ -269,7 +272,7 @@ func TestSubscribeConsensusStateCancelsDuringReconnectBackoff(t *testing.T) {
 			reportWSPeerError(peerErrors, "unexpected reconnect %d", got)
 			return
 		}
-		requests, err := readTestSubscriptions(conn, 2)
+		requests, err := readTestSubscriptions(conn, 4)
 		if err != nil {
 			reportWSPeerError(peerErrors, "read subscriptions: %v", err)
 			return
@@ -325,6 +328,7 @@ func TestSubscribeConsensusStateRefreshesValidatorsBeforeNewHeight(t *testing.T)
 	upgrader := websocket.Upgrader{}
 
 	mux := http.NewServeMux()
+	registerEmptyConsensusSnapshot(mux)
 	mux.HandleFunc("/validators", func(w http.ResponseWriter, r *http.Request) {
 		if page := r.URL.Query().Get("page"); page != "1" {
 			reportWSPeerError(peerErrors, "validator page = %q, want 1", page)
@@ -353,7 +357,7 @@ func TestSubscribeConsensusStateRefreshesValidatorsBeforeNewHeight(t *testing.T)
 		defer close(peerDone)
 		defer conn.Close()
 
-		requests, err := readTestSubscriptions(conn, 2)
+		requests, err := readTestSubscriptions(conn, 4)
 		if err != nil {
 			reportWSPeerError(peerErrors, "read subscriptions: %v", err)
 			return
@@ -362,7 +366,7 @@ func TestSubscribeConsensusStateRefreshesValidatorsBeforeNewHeight(t *testing.T)
 			reportWSPeerError(peerErrors, "write height 42 frames: %v", err)
 			return
 		}
-		if err := writeTestWSResult(conn, requests[1].ID, `{"query":"tm.event='NewRoundStep'","data":{"value":{"height":"43","round":0,"step":1}}}`); err != nil {
+		if err := writeTestWSResult(conn, requests[1].ID, `{"query":"tm.event='NewRoundStep'","data":{"value":{"height":"43","round":0,"step":"RoundStepNewHeight"}}}`); err != nil {
 			reportWSPeerError(peerErrors, "write height 43 step: %v", err)
 			return
 		}
@@ -433,6 +437,7 @@ func TestSubscribeConsensusStateClosesBeforeUsingStaleValidators(t *testing.T) {
 	upgrader := websocket.Upgrader{}
 
 	mux := http.NewServeMux()
+	registerEmptyConsensusSnapshot(mux)
 	mux.HandleFunc("/validators", func(w http.ResponseWriter, r *http.Request) {
 		validatorRequests.Add(1)
 		height := r.URL.Query().Get("height")
@@ -453,7 +458,7 @@ func TestSubscribeConsensusStateClosesBeforeUsingStaleValidators(t *testing.T) {
 		defer close(peerDone)
 		defer conn.Close()
 
-		requests, err := readTestSubscriptions(conn, 2)
+		requests, err := readTestSubscriptions(conn, 4)
 		if err != nil {
 			reportWSPeerError(peerErrors, "read subscriptions: %v", err)
 			return
@@ -462,7 +467,7 @@ func TestSubscribeConsensusStateClosesBeforeUsingStaleValidators(t *testing.T) {
 			reportWSPeerError(peerErrors, "write initial frames: %v", err)
 			return
 		}
-		if err := writeTestWSResult(conn, requests[1].ID, `{"query":"tm.event='NewRoundStep'","data":{"value":{"height":"43","round":0,"step":1}}}`); err != nil {
+		if err := writeTestWSResult(conn, requests[1].ID, `{"query":"tm.event='NewRoundStep'","data":{"value":{"height":"43","round":0,"step":"RoundStepNewHeight"}}}`); err != nil {
 			reportWSPeerError(peerErrors, "write higher-height frame: %v", err)
 			return
 		}
@@ -516,6 +521,7 @@ func TestSubscribeConsensusStateReportsSetupFailuresAndStopsPeer(t *testing.T) {
 		peerErrors := make(chan error, 1)
 		upgrader := websocket.Upgrader{}
 		mux := http.NewServeMux()
+		registerEmptyConsensusSnapshot(mux)
 		mux.HandleFunc("/validators", func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, "unavailable", http.StatusServiceUnavailable)
 		})
@@ -554,6 +560,7 @@ func TestSubscribeConsensusStateReportsSetupFailuresAndStopsPeer(t *testing.T) {
 		upgrader := websocket.Upgrader{}
 		ctx, cancel := context.WithCancel(context.Background())
 		mux := http.NewServeMux()
+		registerEmptyConsensusSnapshot(mux)
 		mux.HandleFunc("/validators", func(w http.ResponseWriter, _ *http.Request) {
 			cancel()
 			_, _ = fmt.Fprint(w, `{"result":{"block_height":"42","validators":[{"address":"AA","pub_key":{"value":"key-a"},"voting_power":"10"}],"count":"1","total":"1"}}`)
@@ -593,6 +600,7 @@ func TestSubscribeConsensusStateRejectsServerSubscriptionError(t *testing.T) {
 	peerErrors := make(chan error, 1)
 	upgrader := websocket.Upgrader{}
 	mux := http.NewServeMux()
+	registerEmptyConsensusSnapshot(mux)
 	mux.HandleFunc("/validators", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprint(w, `{"result":{"block_height":"42","validators":[{"address":"AA","pub_key":{"value":"key-a"},"voting_power":"10"}],"count":"1","total":"1"}}`)
 	})
@@ -647,6 +655,7 @@ func TestSubscribeConsensusStateRejectsMalformedSubscriptionAcknowledgement(t *t
 	peerErrors := make(chan error, 1)
 	upgrader := websocket.Upgrader{}
 	mux := http.NewServeMux()
+	registerEmptyConsensusSnapshot(mux)
 	mux.HandleFunc("/validators", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprint(w, `{"result":{"block_height":"42","validators":[{"address":"AA","pub_key":{"value":"key-a"},"voting_power":"10"}],"count":"1","total":"1"}}`)
 	})
@@ -660,7 +669,7 @@ func TestSubscribeConsensusStateRejectsMalformedSubscriptionAcknowledgement(t *t
 		defer close(peerDone)
 		defer conn.Close()
 
-		requests, err := readTestSubscriptions(conn, 2)
+		requests, err := readTestSubscriptions(conn, 4)
 		if err != nil {
 			reportWSPeerError(peerErrors, "read subscriptions: %v", err)
 			return
@@ -695,6 +704,7 @@ func TestSubscribeConsensusStatePreservesEventBeforeAcknowledgements(t *testing.
 	peerErrors := make(chan error, 1)
 	upgrader := websocket.Upgrader{}
 	mux := http.NewServeMux()
+	registerEmptyConsensusSnapshot(mux)
 	mux.HandleFunc("/validators", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprint(w, `{"result":{"block_height":"42","validators":[{"address":"AA","pub_key":{"value":"key-a"},"voting_power":"10"}],"count":"1","total":"1"}}`)
 	})
@@ -708,7 +718,7 @@ func TestSubscribeConsensusStatePreservesEventBeforeAcknowledgements(t *testing.
 		defer close(peerDone)
 		defer conn.Close()
 
-		requests, err := readTestSubscriptions(conn, 2)
+		requests, err := readTestSubscriptions(conn, 4)
 		if err != nil {
 			reportWSPeerError(peerErrors, "read subscriptions: %v", err)
 			return
@@ -783,7 +793,7 @@ func writeInitialConsensusFrames(conn *websocket.Conn, requests []testWSRequest)
 	if err := writeTestWSAcks(conn, requests); err != nil {
 		return err
 	}
-	if err := writeTestWSResult(conn, requests[1].ID, `{"query":"tm.event='NewRoundStep'","data":{"value":{"height":"42","round":0,"step":3}}}`); err != nil {
+	if err := writeTestWSResult(conn, requests[1].ID, `{"query":"tm.event='NewRoundStep'","data":{"value":{"height":"42","round":0,"step":"RoundStepPropose"}}}`); err != nil {
 		return err
 	}
 	return writeTestWSResult(conn, requests[0].ID, `{"query":"tm.event='Vote'","data":{"value":{"Vote":{"type":1,"height":"42","round":0,"validator_index":0}}}}`)
@@ -836,26 +846,48 @@ func receiveTestSubscriptions(t *testing.T, subscriptions <-chan []testWSRequest
 	}
 }
 
+// receiveConsensusSnapshot waits for the next live update. Bootstrap and
+// transport notifications have separate assertions in accuracy tests.
 func receiveConsensusSnapshot(t *testing.T, snapshots <-chan ConsensusSnapshot, timeout time.Duration) ConsensusSnapshot {
 	t.Helper()
-	select {
-	case snapshot, ok := <-snapshots:
-		require.True(t, ok, "consensus snapshot channel closed early")
-		return snapshot
-	case <-time.After(timeout):
-		t.Fatal("timed out waiting for consensus snapshot")
-		return ConsensusSnapshot{}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		select {
+		case snapshot, ok := <-snapshots:
+			require.True(t, ok, "consensus snapshot channel closed early")
+			if snapshot.Reset || snapshot.Err != nil {
+				continue
+			}
+			return snapshot
+		case <-timer.C:
+			t.Fatal("timed out waiting for consensus snapshot")
+			return ConsensusSnapshot{}
+		}
 	}
 }
 
 func requireChannelClosed(t *testing.T, snapshots <-chan ConsensusSnapshot, timeout time.Duration) {
 	t.Helper()
-	select {
-	case _, ok := <-snapshots:
-		require.False(t, ok, "consensus snapshot channel remained open")
-	case <-time.After(timeout):
-		t.Fatal("timed out waiting for consensus snapshot channel to close")
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	for {
+		select {
+		case snapshot, ok := <-snapshots:
+			if !ok {
+				return
+			}
+			require.True(t, snapshot.Reset || snapshot.Err != nil, "unexpected live update while closing")
+		case <-timer.C:
+			t.Fatal("timed out waiting for consensus snapshot channel to close")
+		}
 	}
+}
+
+func registerEmptyConsensusSnapshot(mux *http.ServeMux) {
+	mux.HandleFunc("/consensus_state", func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = fmt.Fprint(w, `{"result":{"round_state":{"height/round/step":"42/0/1","height_vote_set":[]}}}`)
+	})
 }
 
 func requireDoneClosed(t *testing.T, done <-chan struct{}, timeout time.Duration) {

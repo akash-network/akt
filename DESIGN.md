@@ -87,6 +87,14 @@ exists. Cache creation/open failures are startup errors rather than a silent
 empty dashboard, and `--clean-cache` removes both the current and legacy cache
 filenames or reports why it could not.
 
+The hub and every dashboard subcommand accept `--node` as a compatibility
+alias for `--rpc`, preserving familiar node-selection commands. Endpoint
+precedence is positional URL, `--rpc`, `--node`, then the active context.
+Either flag is an explicit selection for REST derivation and bypasses implicit
+replacement of retired built-in RPC endpoints.
+Monitor startup seeds the shared SDK context without opening an SDK RPC
+connection; the monitor runtime owns connections after endpoint resolution.
+
 Governance data follows the same typed query boundary as the CLI. The monitor
 queries recent `cosmos.gov.v1` proposals through its selected RPC endpoint and
 uses the live tally query for proposals still in the voting period. The
@@ -120,10 +128,10 @@ advances to that vote's height and round and clears the prior vote set even if
 a reconnect prevented the corresponding `NewRoundStep` event from arriving.
 The CometBFT client may reconnect its transport without restoring server-side
 subscriptions. A successful transport reconnect is therefore not considered a
-restored consensus feed until both `Vote` and `NewRoundStep` subscriptions have
-been reissued and the server has acknowledged both with valid JSON-RPC
-subscribe responses. Events that race ahead of the acknowledgements are
-buffered rather than discarded. If either subscription cannot be restored, the
+restored consensus feed until `Vote`, `NewRoundStep`, `NewRound`, and `NewBlock`
+subscriptions have been reissued and the server has acknowledged all with valid
+JSON-RPC subscribe responses. Events that race ahead of the acknowledgements are
+buffered rather than discarded. If any subscription cannot be restored, the
 client is stopped and the consumer channel closes instead of leaving the
 dashboard attached to a silent connection. Both the transport reconnect delay
 and the view model's bounded retry delay are owned by the monitor and terminate
@@ -137,6 +145,26 @@ attempt; a transient startup outage cannot permanently stop consensus until
 the user restarts `akt monitor`. The initial signing-history sample uses the
 validator set from the sampled commit height, not the latest set, so an epoch
 change cannot attribute the previous block's signature to a new validator.
+
+Consensus percentages describe the selected node's observed voting power for
+one height and round, not a network-wide count of online validators. The feed
+subscribes before taking a one-time consensus snapshot at startup and
+reconnect, then merges queued WebSocket events idempotently. This initializes
+votes already seen by that node without periodic consensus polling. The
+snapshot's validator set is loaded at the same height. Round transitions
+decode CometBFT's named step values and clear previous-round votes. A newly
+attached observer must not report only votes that happened to arrive after it
+connected as complete participation.
+
+NewRound events supply proposer identity; NewBlock events supply committed
+block timestamps. Completed block intervals use consecutive header timestamps.
+Live round elapsed time is explicitly an observed interval and is separate
+from committed block timing. Gaps invalidate intervals and observations until
+reconciled. Historical vote percentages remain observations from that node,
+not a canonical commit-signature count. The 100ms UI refresh advances elapsed
+labels; every event updates accounting independently of the display cadence. A
+disconnected stream is visibly disconnected, never labeled as HTTP polling,
+and its old percentages are marked stale.
 
 Upgrade behavior is proved against a throwaway three-validator chain, not only
 mock events. The validators hold 60%, 25%, and 15% of voting power and halt at

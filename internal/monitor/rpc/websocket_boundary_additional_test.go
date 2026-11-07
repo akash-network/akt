@@ -168,7 +168,7 @@ func TestSubscribeConsensusEventsRejectsAcknowledgementFailures(t *testing.T) {
 		{
 			name: "connection closes before acknowledgement",
 			peer: func(conn *websocket.Conn) error {
-				if _, err := readTestSubscriptions(conn, 2); err != nil {
+				if _, err := readTestSubscriptions(conn, 4); err != nil {
 					return err
 				}
 				return conn.Close()
@@ -178,7 +178,7 @@ func TestSubscribeConsensusEventsRejectsAcknowledgementFailures(t *testing.T) {
 		{
 			name: "unexpected response identity",
 			peer: func(conn *websocket.Conn) error {
-				if _, err := readTestSubscriptions(conn, 2); err != nil {
+				if _, err := readTestSubscriptions(conn, 4); err != nil {
 					return err
 				}
 				return conn.WriteJSON(map[string]any{"jsonrpc": "2.0", "id": 99, "result": map[string]any{}})
@@ -188,7 +188,7 @@ func TestSubscribeConsensusEventsRejectsAcknowledgementFailures(t *testing.T) {
 		{
 			name: "server error includes detail",
 			peer: func(conn *websocket.Conn) error {
-				requests, err := readTestSubscriptions(conn, 2)
+				requests, err := readTestSubscriptions(conn, 4)
 				if err != nil {
 					return err
 				}
@@ -205,7 +205,7 @@ func TestSubscribeConsensusEventsRejectsAcknowledgementFailures(t *testing.T) {
 		{
 			name: "duplicate acknowledgement",
 			peer: func(conn *websocket.Conn) error {
-				requests, err := readTestSubscriptions(conn, 2)
+				requests, err := readTestSubscriptions(conn, 4)
 				if err != nil {
 					return err
 				}
@@ -234,6 +234,7 @@ func TestSubscribeConsensusStateClosesOnPostAcknowledgementProtocolError(t *test
 	peerDone := make(chan error, 1)
 	upgrader := websocket.Upgrader{}
 	mux := http.NewServeMux()
+	registerEmptyConsensusSnapshot(mux)
 	mux.HandleFunc("/validators", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprint(w, `{"result":{"block_height":"42","validators":[{"address":"AA","voting_power":"10"}],"total":"1"}}`)
 	})
@@ -244,7 +245,7 @@ func TestSubscribeConsensusStateClosesOnPostAcknowledgementProtocolError(t *test
 			return
 		}
 		defer conn.Close()
-		requests, err := readTestSubscriptions(conn, 2)
+		requests, err := readTestSubscriptions(conn, 4)
 		if err == nil {
 			err = writeTestWSAcks(conn, requests)
 		}
@@ -279,6 +280,7 @@ func TestOpenConsensusConnectionCancellationInterruptsAcknowledgementWait(t *tes
 	peerDone := make(chan error, 1)
 	upgrader := websocket.Upgrader{}
 	mux := http.NewServeMux()
+	registerEmptyConsensusSnapshot(mux)
 	mux.HandleFunc("/validators", func(w http.ResponseWriter, _ *http.Request) {
 		_, _ = fmt.Fprint(w, `{"result":{"block_height":"42","validators":[{"address":"AA","voting_power":"10"}],"total":"1"}}`)
 	})
@@ -289,7 +291,7 @@ func TestOpenConsensusConnectionCancellationInterruptsAcknowledgementWait(t *tes
 			return
 		}
 		defer conn.Close()
-		_, err = readTestSubscriptions(conn, 2)
+		_, err = readTestSubscriptions(conn, 4)
 		close(requestsRead)
 		if err == nil {
 			_, _, err = conn.ReadMessage()
@@ -321,6 +323,7 @@ func TestConsumeConsensusConnectionCancellationUnblocksFullSnapshotQueue(t *test
 	peerDone := make(chan error, 1)
 	upgrader := websocket.Upgrader{}
 	mux := http.NewServeMux()
+	registerEmptyConsensusSnapshot(mux)
 	mux.HandleFunc("/validators", func(w http.ResponseWriter, request *http.Request) {
 		if request.URL.Query().Get("height") != "42" {
 			http.Error(w, "exact height required", http.StatusBadRequest)
@@ -353,8 +356,8 @@ func TestConsumeConsensusConnectionCancellationUnblocksFullSnapshotQueue(t *test
 	require.NoError(t, err)
 
 	buffered := []consensusWSResponse{
-		{Result: json.RawMessage(`{"query":"tm.event='NewRoundStep'","data":{"value":{"height":"42","round":0,"step":1}}}`)},
-		{Result: json.RawMessage(`{"query":"tm.event='NewRoundStep'","data":{"value":{"height":"42","round":0,"step":2}}}`)},
+		{Result: json.RawMessage(`{"query":"tm.event='NewRoundStep'","data":{"value":{"height":"42","round":0,"step":"RoundStepNewHeight"}}}`)},
+		{Result: json.RawMessage(`{"query":"tm.event='NewRoundStep'","data":{"value":{"height":"42","round":0,"step":"RoundStepNewRound"}}}`)},
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	snapshots := make(chan ConsensusSnapshot, 1)
@@ -363,7 +366,7 @@ func TestConsumeConsensusConnectionCancellationUnblocksFullSnapshotQueue(t *test
 		result <- NewClient(server.URL, server.URL).consumeConsensusConnection(
 			ctx,
 			ws,
-			[]consensus.Validator{{Address: "AA", VotingPower: "10"}},
+			newConsensusTracker([]consensus.Validator{{Address: "AA", VotingPower: "10"}}),
 			buffered,
 			snapshots,
 		)

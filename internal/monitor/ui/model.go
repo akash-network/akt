@@ -49,7 +49,7 @@ const (
 const networkTabCount = 4
 
 const (
-	RenderInterval                 = 100 * time.Millisecond // throttle re-renders
+	RenderInterval                 = 100 * time.Millisecond // refresh observed elapsed time
 	ChainSyncInterval              = 10 * time.Minute
 	ProviderCheckInterval          = 200 * time.Millisecond
 	CacheSaveInterval              = 30 * time.Second
@@ -79,8 +79,8 @@ type BlockRecord struct {
 	PrecommitPercent float64
 	Round            int
 	Step             int
-	Elapsed          time.Duration        // total time the block took
-	Timestamp        time.Time            // when the record was captured
+	Elapsed          time.Duration        // interval between consecutive committed headers
+	Timestamp        time.Time            // committed header time, when available
 	Validators       []BlockValidatorVote // vote snapshot per validator
 }
 
@@ -173,9 +173,8 @@ type Model struct {
 	proposerHistory []int // proposer index for each historical block (newest first)
 	maxSignHistory  int   // max entries per validator
 
-	// Render throttle: accumulate state from WebSocket events but
-	// only apply to the rendered model on a periodic tick.
-	pendingState *consensus.State // latest unapplied state from WebSocket
+	// Block times come from committed headers rather than observer arrival times.
+	blockTimes map[int64]time.Time
 
 	// Peak vote percentages for the current block (tracks the highest
 	// seen values so that a transient 0% at NewHeight doesn't erase
@@ -185,11 +184,8 @@ type Model struct {
 	peakPrecommitPercent float64
 	peakRound            int
 	peakStep             int
-	blockStartTime       time.Time // StartTime of the current block
-	lastProposerHeight   int64     // height for which proposer was last fetched
-	firstHeightSeen      bool      // true after the first height change (data unreliable, skip recording)
-	knownProposerIndex   int       // last known proposer index from HTTP fetch
-	knownProposerAddr    string    // last known proposer address
+	firstHeightSeen      bool // true after the first height change (data unreliable, skip recording)
+	knownProposerIndex   int  // proposer for the current height and round
 
 	// UI state
 	width              int
@@ -332,14 +328,6 @@ type (
 		validators []consensus.Validator
 		err        error
 	}
-
-	// proposerMsg carries the current proposer info fetched via HTTP.
-	proposerMsg struct {
-		height        int64
-		proposerIndex int
-		proposerAddr  string
-		err           error
-	}
 )
 
 // ModelConfig holds configuration options for creating a new Model.
@@ -473,21 +461,6 @@ func (m Model) runRuntimeTask(task func() tea.Msg) tea.Msg {
 	return m.runtimeTasks.run(task)
 }
 
-// fetchProposer queries /consensus_state to get the current block proposer.
-func (m Model) fetchProposer() tea.Msg {
-	return m.runRuntimeTask(func() tea.Msg {
-		state, err := m.client.GetConsensusStateWithValidators(m.runtimeContext)
-		if err != nil {
-			return proposerMsg{err: err}
-		}
-		return proposerMsg{
-			height:        state.Height,
-			proposerIndex: state.ProposerIndex,
-			proposerAddr:  state.ProposerAddress,
-		}
-	})
-}
-
 // fetchInitialSigning queries the latest commit to seed signing history
 // so the oldest block in the bar shows accurate data.
 func (m Model) fetchInitialSigning() tea.Msg {
@@ -510,7 +483,6 @@ func (m Model) Init() tea.Cmd {
 		m.connectWebSocket,
 		m.fetchMonikers,
 		m.fetchInitialSigning,
-		m.fetchProposer,
 		m.fetchGovernanceProposals,
 		m.fetchGovernanceParams,
 		m.fetchOracleState,
@@ -1257,45 +1229,51 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.resizeComponents()
 		return m, nil
 
-	// Render throttle: apply pending consensus state at fixed intervals.
+	// Rendering cadence does not control consensus accounting.
 	case renderTickMsg:
-		cmd := m.renderTick()
-		if m.pendingState != nil {
-			m.handleStateMsgInPlace(m.pendingState)
-			m.pendingState = nil
+		if m.state != nil && m.wsConnected && !m.state.StartTime.IsZero() {
+			m.state.Elapsed = time.Since(m.state.StartTime)
+			m.rebuildBlockTableRows()
 		}
-		// Fetch proposer info when the height changes (WebSocket events
-		// don't include proposer data).
-		if m.state != nil && m.state.Height > m.lastProposerHeight {
-			return m, tea.Batch(cmd, m.fetchProposer)
-		}
-		return m, cmd
+		return m, m.renderTick()
 
 	// WebSocket lifecycle
 	case wsConnectedMsg:
 		m.snapshotCh = msg.ch
-		m.wsConnected = true
+		m.wsConnected = false
 		m.consensusRetryAttempt = 0
-		if m.state != nil {
-			m.state.Error = nil
-		}
 		return m, m.waitForSnapshot()
 	case consensusSnapshotMsg:
 		if !msg.ok {
 			// Channel closed — WebSocket connection lost.
 			m.wsConnected = false
 			m.snapshotCh = nil
+			if m.state != nil && m.state.Error == nil {
+				m.state.Error = errors.New("consensus stream disconnected; reconnecting")
+			}
 			return m, m.scheduleConsensusReconnect()
 		}
-		// Buffer the state — it will be applied on the next renderTick.
-		// If the new snapshot is for a higher height than the pending one,
-		// apply the pending one first so its accumulated votes aren't lost.
-		if msg.snapshot.State != nil {
-			if m.pendingState != nil && msg.snapshot.State.Height > m.pendingState.Height {
-				m.handleStateMsgInPlace(m.pendingState)
+		if msg.snapshot.Err != nil {
+			m.wsConnected = false
+			if m.state == nil {
+				m.state = &consensus.State{}
 			}
-			m.pendingState = msg.snapshot.State
+			m.state.Error = msg.snapshot.Err
 		}
+		if msg.snapshot.State != nil {
+			if msg.snapshot.Reset {
+				m.peakHeight = 0
+				m.peakPrevotePercent = 0
+				m.peakPrecommitPercent = 0
+				m.firstHeightSeen = false
+			}
+			m.wsConnected = true
+			m.handleStateMsgInPlace(msg.snapshot.State)
+		}
+		if msg.snapshot.Block != nil {
+			m.handleCommittedBlock(msg.snapshot.Block)
+		}
+
 		return m, m.waitForSnapshot()
 	case consensusReconnectMsg:
 		if m.runtimeContext != nil && m.runtimeContext.Err() != nil {
@@ -1342,14 +1320,6 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case initialSigningMsg:
 		if msg.err == nil && len(msg.signers) > 0 {
 			m.seedSigningHistory(msg.signers, msg.validators)
-		}
-		return m, nil
-	case proposerMsg:
-		if msg.err == nil {
-			m.knownProposerIndex = msg.proposerIndex
-			m.knownProposerAddr = msg.proposerAddr
-			m.lastProposerHeight = msg.height
-			m.applyProposerToState()
 		}
 		return m, nil
 	case chainSyncMsg:
@@ -1978,22 +1948,8 @@ func (m *Model) seedSigningHistory(signers map[string]bool, validators []consens
 	}
 }
 
-// applyProposerToState sets the proposer on the current state from the
-// last known proposer fetched via HTTP. Called after every state update
-// because WebSocket events don't include proposer info.
-func (m *Model) applyProposerToState() {
-	if m.state == nil || m.knownProposerIndex < 0 {
-		return
-	}
-	m.state.ProposerIndex = m.knownProposerIndex
-	m.state.ProposerAddress = m.knownProposerAddr
-	for i := range m.state.Validators {
-		m.state.Validators[i].IsProposer = i == m.knownProposerIndex
-	}
-}
-
 // handleStateMsgInPlace applies a consensus state update in-place.
-// Used by the render throttle to avoid interface conversion issues.
+// Every WebSocket snapshot reaches accounting, including intermediate rounds.
 func (m *Model) handleStateMsgInPlace(state *consensus.State) {
 	m.handleStateMsg(stateMsg{state: state})
 }
@@ -2022,18 +1978,15 @@ func (m *Model) handleStateMsg(msg stateMsg) (tea.Model, tea.Cmd) {
 			m.peakPrecommitPercent = 0
 			m.peakRound = 0
 			m.peakStep = 0
-			m.blockStartTime = time.Time{}
 			m.peakHeight = newState.Height
 			m.state = newState
-			m.applyProposerToState()
+			m.knownProposerIndex = newState.ProposerIndex
+			m.rebuildValidatorTableRows()
+			m.rebuildBlockTableRows()
 			return m, nil
 		}
 
-		now := time.Now()
-		elapsed := time.Duration(0)
-		if !m.blockStartTime.IsZero() {
-			elapsed = now.Sub(m.blockStartTime)
-		}
+		timestamp, elapsed := m.committedBlockTime(m.peakHeight)
 
 		// Snapshot validator votes from the current (outgoing) state
 		// and record per-validator signing history.
@@ -2067,7 +2020,7 @@ func (m *Model) handleStateMsg(msg stateMsg) (tea.Model, tea.Cmd) {
 			Round:            m.peakRound,
 			Step:             m.peakStep,
 			Elapsed:          elapsed,
-			Timestamp:        now,
+			Timestamp:        timestamp,
 			Validators:       valVotes,
 		}
 		// Prepend (newest first).
@@ -2087,10 +2040,13 @@ func (m *Model) handleStateMsg(msg stateMsg) (tea.Model, tea.Cmd) {
 		m.peakPrecommitPercent = 0
 		m.peakRound = 0
 		m.peakStep = 0
-		m.blockStartTime = time.Time{}
 	}
 
-	// Track peak vote percentages for the current height.
+	// Peaks belong to one round; a later round must not inherit earlier power.
+	if m.peakHeight == newState.Height && m.peakRound != newState.Round {
+		m.peakPrevotePercent = 0
+		m.peakPrecommitPercent = 0
+	}
 	m.peakHeight = newState.Height
 	if newState.PrevotePercent > m.peakPrevotePercent {
 		m.peakPrevotePercent = newState.PrevotePercent
@@ -2100,15 +2056,38 @@ func (m *Model) handleStateMsg(msg stateMsg) (tea.Model, tea.Cmd) {
 	}
 	m.peakRound = newState.Round
 	m.peakStep = newState.Step
-	if m.blockStartTime.IsZero() {
-		m.blockStartTime = newState.StartTime
-	}
-
 	m.state = newState
-	m.applyProposerToState()
+	m.knownProposerIndex = newState.ProposerIndex
 	m.rebuildValidatorTableRows()
 	m.rebuildBlockTableRows()
 	return m, nil
+}
+
+// committedBlockTime requires adjacent headers; reconnect gaps stay unknown.
+func (m Model) committedBlockTime(height int64) (time.Time, time.Duration) {
+	current := m.blockTimes[height]
+	previous := m.blockTimes[height-1]
+	if current.IsZero() || previous.IsZero() || current.Before(previous) {
+		return current, 0
+	}
+	return current, current.Sub(previous)
+}
+
+func (m *Model) handleCommittedBlock(block *rpc.CommittedBlock) {
+	if m.blockTimes == nil {
+		m.blockTimes = make(map[int64]time.Time)
+	}
+	m.blockTimes[block.Height] = block.Time
+	for i := range m.blockHistory {
+		record := &m.blockHistory[i]
+		record.Timestamp, record.Elapsed = m.committedBlockTime(record.Height)
+	}
+	for height := range m.blockTimes {
+		if height < block.Height-MaxBlockHistory-1 {
+			delete(m.blockTimes, height)
+		}
+	}
+	m.rebuildBlockTableRows()
 }
 
 func (m *Model) handleChainSyncMsg(msg chainSyncMsg) (tea.Model, tea.Cmd) {

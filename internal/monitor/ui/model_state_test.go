@@ -27,43 +27,35 @@ func TestStatusInfoReportsActiveMonitorState(t *testing.T) {
 	}
 }
 
-func TestConsensusSnapshotBufferPreservesLastStateAtHeightBoundary(t *testing.T) {
-	first := testConsensusStateAt(100, 0.75, 0.60)
-	second := testConsensusStateAt(101, 0.10, 0.05)
-	snapshots := make(chan rpc.ConsensusSnapshot)
+func TestConsensusSnapshotsAccountForEachRoundBeforeRender(t *testing.T) {
 	m := Model{
-		pendingState:   first,
-		snapshotCh:     snapshots,
+		snapshotCh:     make(chan rpc.ConsensusSnapshot),
 		valSignHistory: make(map[int][]bool),
 		maxSignHistory: 5,
 		validatorTable: newTestValidatorTableModel(nil, nil, nil, nil),
 		blockTable:     newTestBlockTableModel(nil, nil),
 	}
-
-	updated, cmd := m.Update(consensusSnapshotMsg{
-		snapshot: rpc.ConsensusSnapshot{State: second},
-		ok:       true,
-	})
-	m = lifecycleModelValue(t, updated)
-	if cmd == nil {
-		t.Fatal("snapshot handler did not rearm the subscription")
+	first := testConsensusStateAt(100, .85, .60)
+	next := testConsensusStateAt(100, .25, .15)
+	next.Round = 1
+	for _, state := range []*consensus.State{first, next} {
+		updated, cmd := m.Update(consensusSnapshotMsg{
+			snapshot: rpc.ConsensusSnapshot{State: state},
+			ok:       true,
+		})
+		m = lifecycleModelValue(t, updated)
+		if cmd == nil {
+			t.Fatal("snapshot did not rearm subscription")
+		}
 	}
-	if m.state == nil || m.state.Height != first.Height {
-		t.Fatalf("applied state height = %v, want %d before buffering next height", m.state, first.Height)
-	}
-	if m.pendingState != second {
-		t.Fatalf("pending state = %p, want second snapshot %p", m.pendingState, second)
-	}
-	if m.peakPrevotePercent != first.PrevotePercent || m.peakPrecommitPercent != first.PrecommitPercent {
-		t.Fatalf("outgoing vote peaks = %.2f/%.2f, want %.2f/%.2f",
-			m.peakPrevotePercent, m.peakPrecommitPercent, first.PrevotePercent, first.PrecommitPercent)
+	if m.state != next || m.peakPrevotePercent != .25 || m.peakPrecommitPercent != .15 {
+		t.Fatalf("round accounting retained previous votes: state=%+v peaks=%v/%v", m.state, m.peakPrevotePercent, m.peakPrecommitPercent)
 	}
 }
 
 func TestConsensusStateBuildsExactCompletedBlockHistory(t *testing.T) {
 	m := Model{
 		knownProposerIndex: 1,
-		knownProposerAddr:  "BB",
 		valSignHistory: map[int][]bool{
 			0: {false, true},
 			1: {true, true},
@@ -79,6 +71,7 @@ func TestConsensusStateBuildsExactCompletedBlockHistory(t *testing.T) {
 	start := testConsensusStateAt(200, 0.40, 0.20)
 	m.handleStateMsg(stateMsg{state: start})
 	firstComplete := testConsensusStateAt(201, 0.10, 0.05)
+	firstComplete.ProposerIndex = 1
 	m.handleStateMsg(stateMsg{state: firstComplete})
 	if len(m.blockHistory) != 0 || !m.firstHeightSeen {
 		t.Fatalf("first height transition history=%d firstHeightSeen=%t", len(m.blockHistory), m.firstHeightSeen)
@@ -87,12 +80,14 @@ func TestConsensusStateBuildsExactCompletedBlockHistory(t *testing.T) {
 	// Vote percentages may dip in an intermediate snapshot. The completed
 	// record must retain the high-water marks for the exact outgoing height.
 	high := testConsensusStateAt(201, 0.90, 0.80)
+	high.ProposerIndex = 1
 	high.Round = 2
 	high.Step = 6
 	high.Validators[0].Precommited = true
 	high.Validators[1].Precommited = false
 	m.handleStateMsg(stateMsg{state: high})
 	low := testConsensusStateAt(201, 0.20, 0.10)
+	low.ProposerIndex = 1
 	low.Round = 2
 	low.Step = 7
 	low.Validators = high.Validators
@@ -124,13 +119,17 @@ func TestConsensusStateBuildsExactCompletedBlockHistory(t *testing.T) {
 func TestConsensusProposerIsAppliedToEveryNewState(t *testing.T) {
 	m := Model{
 		knownProposerIndex: 1,
-		knownProposerAddr:  "full-consensus-address",
 		valSignHistory:     make(map[int][]bool),
 		maxSignHistory:     5,
 		validatorTable:     newTestValidatorTableModel(nil, nil, nil, nil),
 		blockTable:         newTestBlockTableModel(nil, nil),
 	}
 	state := testConsensusStateAt(300, 0.7, 0.6)
+	state.ProposerIndex = 1
+	state.ProposerAddress = "full-consensus-address"
+	for i := range state.Validators {
+		state.Validators[i].IsProposer = i == 1
+	}
 	m.handleStateMsg(stateMsg{state: state})
 
 	if m.state.ProposerIndex != 1 || m.state.ProposerAddress != "full-consensus-address" {
@@ -157,7 +156,7 @@ func TestConsensusErrorRemainsVisibleUntilConnectionRecovers(t *testing.T) {
 	m.consensusRetryAttempt = 5
 	updated, wait := m.Update(wsConnectedMsg{ch: updates})
 	m = lifecycleModelValue(t, updated)
-	if wait == nil || !m.wsConnected || m.consensusRetryAttempt != 0 || m.state.Error != nil {
+	if wait == nil || m.wsConnected || m.consensusRetryAttempt != 0 || !errors.Is(m.state.Error, wantErr) {
 		t.Fatalf("recovered state connected=%t retry=%d error=%v", m.wsConnected, m.consensusRetryAttempt, m.state.Error)
 	}
 }

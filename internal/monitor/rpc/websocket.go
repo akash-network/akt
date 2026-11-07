@@ -10,15 +10,24 @@ import (
 	"strings"
 	"time"
 
+	cstypes "github.com/cometbft/cometbft/consensus/types"
 	"github.com/gorilla/websocket"
 
 	"pkg.akt.dev/akt/internal/monitor/consensus"
 )
 
-// ConsensusSnapshot is a real-time consensus state built from WebSocket
-// Vote events.
+// ConsensusSnapshot carries a live update, committed timestamp, or stream status.
 type ConsensusSnapshot struct {
 	State *consensus.State
+	Block *CommittedBlock
+	Err   error
+	Reset bool // connection bootstrap invalidates incomplete live history
+}
+
+// CommittedBlock carries chain time, independent of when the observer receives it.
+type CommittedBlock struct {
+	Height int64
+	Time   time.Time
 }
 
 // ConsensusSubscription exposes snapshots and the lifetime of their producer.
@@ -39,12 +48,12 @@ const (
 )
 
 // SubscribeConsensusState connects to the RPC endpoint over WebSocket,
-// subscribes to Vote and NewRoundStep events, and locally tracks
+// subscribes to vote, round, step, and block events, and locally tracks
 // prevote/precommit power to produce real-time consensus snapshots.
 //
 // The returned subscription delivers a snapshot after every vote and step
-// transition. Successful transport reconnects restore both subscriptions. Its
-// snapshot and completion channels close when reconnect/resubscribe is
+// transition. Reconnects restore subscriptions and bootstrap current votes.
+// Snapshot and completion channels close when reconnect/resubscribe is
 // exhausted or ctx is cancelled.
 func (c *Client) SubscribeConsensusState(ctx context.Context) (*ConsensusSubscription, error) {
 	wsURL, err := consensusWebSocketURL(c.rpcEndpoint)
@@ -52,7 +61,7 @@ func (c *Client) SubscribeConsensusState(ctx context.Context) (*ConsensusSubscri
 		return nil, fmt.Errorf("create websocket client: %w", err)
 	}
 
-	ws, validators, buffered, err := c.openConsensusConnection(ctx, wsURL)
+	ws, tracker, buffered, err := c.openConsensusConnection(ctx, wsURL)
 	if err != nil {
 		return nil, err
 	}
@@ -64,8 +73,15 @@ func (c *Client) SubscribeConsensusState(ctx context.Context) (*ConsensusSubscri
 		defer close(done)
 		defer close(ch)
 		for ws != nil {
-			consumeErr := c.consumeConsensusConnection(ctx, ws, validators, buffered, ch)
+			consumeErr := c.consumeConsensusConnection(ctx, ws, tracker, buffered, ch)
 			_ = ws.Close()
+			if ctx.Err() == nil {
+				select {
+				case ch <- ConsensusSnapshot{Err: fmt.Errorf("consensus stream disconnected: %w", consumeErr)}:
+				case <-ctx.Done():
+					return
+				}
+			}
 			if ctx.Err() != nil {
 				return
 			}
@@ -81,14 +97,17 @@ func (c *Client) SubscribeConsensusState(ctx context.Context) (*ConsensusSubscri
 
 			// A failed reconnect setup closes this channel. The UI owns the
 			// longer-lived capped retry schedule and will start a fresh cycle.
-			ws, validators, buffered, err = c.openConsensusConnection(ctx, wsURL)
+			ws, tracker, buffered, err = c.openConsensusConnection(ctx, wsURL)
 			if err != nil {
 				return
 			}
 		}
 	}()
 
-	return &ConsensusSubscription{Snapshots: ch, done: done}, nil
+	return &ConsensusSubscription{
+		Snapshots: ch,
+		done:      done,
+	}, nil
 }
 
 type consensusTransportError struct {
@@ -106,7 +125,7 @@ func isConsensusTransportError(err error) bool {
 func (c *Client) openConsensusConnection(
 	ctx context.Context,
 	wsURL string,
-) (*websocket.Conn, []consensus.Validator, []consensusWSResponse, error) {
+) (*websocket.Conn, *consensusTracker, []consensusWSResponse, error) {
 	setupCtx, cancel := context.WithTimeout(ctx, consensusWebSocketTimeout)
 	defer cancel()
 
@@ -142,7 +161,7 @@ func (c *Client) openConsensusConnection(
 
 	// Each connection cycle starts with a fresh validator set. A prior
 	// successful response may belong to an earlier height.
-	validators, err := c.refreshValidators(setupCtx)
+	_, err = c.refreshValidators(setupCtx)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("load validators: %w", err)
 	}
@@ -154,18 +173,43 @@ func (c *Client) openConsensusConnection(
 		return nil, nil, nil, err
 	}
 
+	snapshotResponse, err := c.GetConsensusState(setupCtx)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("bootstrap consensus: %w", err)
+	}
+	height, _, _, err := consensus.ParseHeightRoundStep(snapshotResponse.Result.RoundState.HeightRoundStep)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("bootstrap consensus at height %d: %w", height, err)
+	}
+	validators, err := c.refreshValidatorsAtHeight(setupCtx, height)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("bootstrap consensus at height %d: %w", height, err)
+	}
+	state, err := consensus.ParseConsensusState(snapshotResponse, validators)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("bootstrap consensus at height %d: %w", height, err)
+	}
+	tracker := newConsensusTracker(validators)
+	tracker.seed(state)
 	closeOnError = false
-	return ws, validators, buffered, nil
+	return ws, tracker, buffered, nil
 }
 
 func (c *Client) consumeConsensusConnection(
 	ctx context.Context,
 	ws *websocket.Conn,
-	validators []consensus.Validator,
+	tracker *consensusTracker,
 	buffered []consensusWSResponse,
 	ch chan<- ConsensusSnapshot,
 ) error {
-	tracker := newConsensusTracker(validators)
+	select {
+	case ch <- ConsensusSnapshot{
+		State: tracker.buildState(),
+		Reset: true,
+	}:
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	readDone := make(chan struct{})
 	watchDone := make(chan struct{})
 	go func() {
@@ -254,7 +298,7 @@ func consensusMessageHeight(raw json.RawMessage) (int64, bool) {
 			return 0, false
 		}
 		height = event.Value.Vote.Height
-	case strings.Contains(result.Query, "NewRoundStep"):
+	case strings.Contains(result.Query, "NewRound"):
 		var event struct {
 			Value struct {
 				Height string `json:"height"`
@@ -324,6 +368,8 @@ func subscribeConsensusEvents(ctx context.Context, ws consensusSubscriptionSocke
 	}{
 		{name: "Vote", query: "tm.event='Vote'"},
 		{name: "NewRoundStep", query: "tm.event='NewRoundStep'"},
+		{name: "NewRound", query: "tm.event='NewRound'"},
+		{name: "NewBlock", query: "tm.event='NewBlock'"},
 	}
 
 	if deadline, ok := ctx.Deadline(); ok {
@@ -350,8 +396,12 @@ func subscribeConsensusEvents(ctx context.Context, ws consensusSubscriptionSocke
 		}
 	}
 
-	subscriptions := map[int]string{1: queries[0].name, 2: queries[1].name}
-	pending := map[int]struct{}{1: {}, 2: {}}
+	subscriptions := make(map[int]string, len(queries))
+	pending := make(map[int]struct{}, len(queries))
+	for index, query := range queries {
+		subscriptions[index+1] = query.name
+		pending[index+1] = struct{}{}
+	}
 	buffered := make([]consensusWSResponse, 0)
 	for len(pending) > 0 {
 		var response consensusWSResponse
@@ -442,7 +492,7 @@ func newConsensusTracker(validators []consensus.Validator) *consensusTracker {
 		validators:      validators,
 		validatorPowers: powers,
 		totalPower:      totalPower,
-		proposerIndex:   -1, // unknown until fetched via HTTP
+		proposerIndex:   -1, // unknown until the bootstrap snapshot or a NewRound event
 		prevoted:        make(map[int]bool),
 		precommited:     make(map[int]bool),
 	}
@@ -468,8 +518,32 @@ func (t *consensusTracker) handleMessage(raw json.RawMessage) (ConsensusSnapshot
 	switch {
 	case strings.Contains(result.Query, "Vote"):
 		return t.handleVoteEvent(result.Data)
-	case strings.Contains(result.Query, "NewRoundStep"):
+	case strings.Contains(result.Query, "NewRound"):
 		return t.handleNewRoundStepEvent(result.Data)
+	case strings.Contains(result.Query, "NewBlock"):
+		var event struct {
+			Value struct {
+				Block struct {
+					Header struct {
+						Height string    `json:"height"`
+						Time   time.Time `json:"time"`
+					} `json:"header"`
+				} `json:"block"`
+			} `json:"value"`
+		}
+		if err := json.Unmarshal(result.Data, &event); err != nil {
+			return ConsensusSnapshot{}, false
+		}
+		height, err := strconv.ParseInt(event.Value.Block.Header.Height, 10, 64)
+		if err != nil || height <= 0 || event.Value.Block.Header.Time.IsZero() {
+			return ConsensusSnapshot{}, false
+		}
+		return ConsensusSnapshot{
+			Block: &CommittedBlock{
+				Height: height,
+				Time:   event.Value.Block.Header.Time,
+			},
+		}, true
 	}
 
 	return ConsensusSnapshot{}, false
@@ -526,9 +600,13 @@ func (t *consensusTracker) handleNewRoundStepEvent(data json.RawMessage) (Consen
 	var evt struct {
 		Type  string `json:"type"`
 		Value struct {
-			Height string `json:"height"`
-			Round  int32  `json:"round"`
-			Step   int32  `json:"step"`
+			Height   string `json:"height"`
+			Round    int32  `json:"round"`
+			Step     string `json:"step"`
+			Proposer *struct {
+				Address string `json:"address"`
+				Index   int    `json:"index"`
+			} `json:"proposer"`
 		} `json:"value"`
 	}
 	if err := json.Unmarshal(data, &evt); err != nil {
@@ -536,20 +614,43 @@ func (t *consensusTracker) handleNewRoundStepEvent(data json.RawMessage) (Consen
 	}
 
 	height, err := strconv.ParseInt(evt.Value.Height, 10, 64)
-	if err != nil || height < 0 || evt.Value.Round < 0 || evt.Value.Step < 0 {
+	if err != nil || height < 0 || evt.Value.Round < 0 {
 		return ConsensusSnapshot{}, false
 	}
 
 	round := int(evt.Value.Round)
-	step := int(evt.Value.Step)
-	if t.initialized && height == t.height && round == t.round && step < t.step {
+	step := 0
+	for candidate := cstypes.RoundStepNewHeight; candidate <= cstypes.RoundStepCommit; candidate++ {
+		if candidate.String() == evt.Value.Step {
+			step = int(candidate)
+			break
+		}
+	}
+	if step == 0 {
 		return ConsensusSnapshot{}, false
+	}
+	proposer := evt.Value.Proposer
+	if proposer != nil && (proposer.Index < 0 || proposer.Index >= len(t.validators) ||
+		!strings.EqualFold(t.validators[proposer.Index].Address, proposer.Address)) {
+		return ConsensusSnapshot{}, false
+	}
+	if t.initialized && height == t.height && round == t.round && step < t.step {
+		if proposer == nil {
+			return ConsensusSnapshot{}, false
+		}
+		// Separate subscriptions can deliver NewRound after a later step. Its
+		// proposer is still valid for this round, but its step must not rewind it.
+		step = t.step
 	}
 	if !t.advanceTo(height, round) {
 		return ConsensusSnapshot{}, false
 	}
 
 	t.step = step
+	if proposer != nil {
+		t.proposerAddr = proposer.Address
+		t.proposerIndex = proposer.Index
+	}
 
 	return ConsensusSnapshot{State: t.buildState()}, true
 }
@@ -574,11 +675,32 @@ func (t *consensusTracker) advanceTo(height int64, round int) bool {
 func (t *consensusTracker) resetForRound(round int) {
 	t.round = round
 	t.step = 0
+	t.proposerAddr = ""
+	t.proposerIndex = -1
 	t.startTime = time.Now()
 	t.prevoted = make(map[int]bool)
 	t.precommited = make(map[int]bool)
 	t.pvPower = 0
 	t.pcPower = 0
+}
+
+// seed merges the node's existing votes before queued events are replayed.
+// Percentages use integer power, not the rounded fractions in bit-array text.
+func (t *consensusTracker) seed(state *consensus.State) {
+	t.advanceTo(state.Height, state.Round)
+	t.step = state.Step
+	t.proposerAddr = state.ProposerAddress
+	t.proposerIndex = state.ProposerIndex
+	for _, validator := range state.Validators {
+		if validator.Prevoted {
+			t.prevoted[validator.Index] = true
+			t.pvPower += validator.VotingPower
+		}
+		if validator.Precommited {
+			t.precommited[validator.Index] = true
+			t.pcPower += validator.VotingPower
+		}
+	}
 }
 
 func (t *consensusTracker) buildState() *consensus.State {
