@@ -294,6 +294,9 @@ func ReadPersistentCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) 
 			}
 		} else {
 			rpcURI = GetRPCURIFromContext(cctx.CmdContext)
+			if rpcURI == "" {
+				rpcURI = cctx.NodeURI
+			}
 
 			// Fall back to the command default when the context does not provide
 			// an RPC URI.

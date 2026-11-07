@@ -1,0 +1,1 @@
+- Render Sink details and the composite transfer ID after a confirmed broadcast even when the SDK receipt omits its transaction body. Preserve unknown fees and the distinction between pending, failed and confirmed transactions.

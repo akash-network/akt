@@ -527,6 +527,29 @@ func TestVendoredQueryTreeHasUniqueSiblingNames(t *testing.T) {
 }
 
 func TestQueryNodeFlagOverridesContextEndpoint(t *testing.T) {
+	for _, contextURI := range []string{"", "http://127.0.0.1:29998"} {
+		t.Run("initialize client with context URI "+contextURI, func(t *testing.T) {
+			base, cancel := context.WithCancel(context.Background())
+			t.Cleanup(cancel)
+			cmd := &cobra.Command{Use: "query"}
+			cflags.AddQueryFlagsToCmd(cmd)
+			var out bytes.Buffer
+			cctx := queryTestClientContext(&out).WithClient(nil).WithNodeURI("http://127.0.0.1:29997")
+			ctx := context.WithValue(base, ClientContextKey, &cctx)
+			ctx = context.WithValue(ctx, ContextTypeRPCURI, contextURI)
+			cmd.SetContext(ctx)
+
+			got, err := GetClientQueryContext(cmd)
+			require.NoError(t, err)
+			wantURI := cctx.NodeURI
+			if contextURI != "" {
+				wantURI = contextURI
+			}
+			require.Equal(t, wantURI, got.NodeURI)
+			require.NotNil(t, got.Client)
+		})
+	}
+
 	t.Run("explicit endpoint wins", func(t *testing.T) {
 		cmd := &cobra.Command{Use: "query"}
 		cflags.AddQueryFlagsToCmd(cmd)
