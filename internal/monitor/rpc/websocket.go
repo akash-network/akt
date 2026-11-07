@@ -177,7 +177,8 @@ func (c *Client) openConsensusConnection(
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("bootstrap consensus: %w", err)
 	}
-	height, _, _, err := consensus.ParseHeightRoundStep(snapshotResponse.Result.RoundState.HeightRoundStep)
+	heightText, _, _ := strings.Cut(snapshotResponse.Result.RoundState.HeightRoundStep, "/")
+	height, err := strconv.ParseInt(heightText, 10, 64)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("bootstrap consensus at height %d: %w", height, err)
 	}
@@ -202,11 +203,12 @@ func (c *Client) consumeConsensusConnection(
 	buffered []consensusWSResponse,
 	ch chan<- ConsensusSnapshot,
 ) error {
-	select {
-	case ch <- ConsensusSnapshot{
+	initial := ConsensusSnapshot{
 		State: tracker.buildState(),
 		Reset: true,
-	}:
+	}
+	select {
+	case ch <- initial:
 	case <-ctx.Done():
 		return ctx.Err()
 	}

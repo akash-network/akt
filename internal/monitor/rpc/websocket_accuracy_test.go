@@ -105,7 +105,7 @@ func TestLateObserverSeedsExistingVotesBeforeReplayingEvents(t *testing.T) {
 		}
 		// The rounded textual percentage deliberately disagrees. Integer powers
 		// and actual per-validator votes must determine the monitor percentage.
-		_, _ = fmt.Fprint(w, `{"result":{"round_state":{"height/round/step":"42/0/6","height_vote_set":[{"round":0,"prevotes":["vote-a","nil-Vote","nil-Vote"],"precommits":["nil-Vote","nil-Vote","nil-Vote"],"prevotes_bit_array":"BA{3:x__} 60/100 = 0.59"}],"proposer":{"address":"AA","index":0}}}}`)
+		_, _ = fmt.Fprint(w, `{"result":{"round_state":{"height/round/step":"42/0/6","height_vote_set":[{"round":0,"prevotes":["vote-a","nil-Vote","nil-Vote"],"precommits":["nil-Vote","vote-b","nil-Vote"],"prevotes_bit_array":"BA{3:x__} 60/100 = 0.59"}],"proposer":{"address":"AA","index":0}}}}`)
 	})
 	mux.HandleFunc("/websocket", func(w http.ResponseWriter, request *http.Request) {
 		conn, err := upgrader.Upgrade(w, request, nil)
@@ -149,6 +149,7 @@ func TestLateObserverSeedsExistingVotesBeforeReplayingEvents(t *testing.T) {
 		require.True(t, initial.Reset)
 		require.Equal(t, int64(60), initial.State.PrevotePower)
 		require.Equal(t, .60, initial.State.PrevotePercent)
+		require.Equal(t, .25, initial.State.PrecommitPercent)
 	case <-time.After(3 * time.Second):
 		t.Fatal("late observer did not receive existing votes")
 	}
@@ -156,6 +157,7 @@ func TestLateObserverSeedsExistingVotesBeforeReplayingEvents(t *testing.T) {
 		snapshot := receiveConsensusSnapshot(t, subscription.Snapshots, 3*time.Second)
 		require.Equal(t, want, snapshot.State.PrevotePower)
 		require.Equal(t, int64(100), snapshot.State.TotalVotingPower)
+		require.Equal(t, int64(25), snapshot.State.PrecommitPower)
 	}
 	require.Equal(t, int32(1), snapshotReads.Load())
 	cancel()

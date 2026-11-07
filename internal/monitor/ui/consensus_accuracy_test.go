@@ -5,8 +5,73 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
+	"pkg.akt.dev/akt/internal/monitor/consensus"
 	"pkg.akt.dev/akt/internal/monitor/rpc"
 )
+
+func TestRenderTickAdvancesOnlyLiveElapsedTime(t *testing.T) {
+	for _, connected := range []bool{true, false} {
+		m := Model{
+			state: &consensus.State{
+				Height:         42,
+				StartTime:      time.Now().Add(-time.Second),
+				Elapsed:        time.Millisecond,
+				PrevotePercent: .60,
+			},
+			wsConnected: connected,
+			blockTable:  newTestBlockTableModel(nil, nil),
+		}
+		updated, next := m.Update(renderTickMsg(time.Now()))
+		m = lifecycleModelValue(t, updated)
+		require.NotNil(t, next)
+		require.Equal(t, .60, m.state.PrevotePercent)
+		if connected {
+			require.GreaterOrEqual(t, m.state.Elapsed, time.Second)
+		} else {
+			require.Equal(t, time.Millisecond, m.state.Elapsed)
+		}
+	}
+}
+
+func TestSnapshotErrorBeforeBootstrapIsVisible(t *testing.T) {
+	wantErr := errors.New("bootstrap unavailable")
+	m := Model{}
+	updated, _ := m.Update(consensusSnapshotMsg{
+		ok:       true,
+		snapshot: rpc.ConsensusSnapshot{Err: wantErr},
+	})
+	m = lifecycleModelValue(t, updated)
+	require.False(t, m.wsConnected)
+	require.ErrorIs(t, m.state.Error, wantErr)
+}
+
+func TestSnapshotBlockPrunesExpiredHeadersAndPreservesIntervalBoundary(t *testing.T) {
+	stamp := time.Date(2026, time.November, 7, 12, 0, 0, 0, time.UTC)
+	const height = MaxBlockHistory + 50
+	const boundary = height - MaxBlockHistory - 1
+	m := Model{
+		blockTimes: map[int64]time.Time{
+			boundary - 1: stamp.Add(-2 * time.Second),
+			boundary:     stamp.Add(-time.Second),
+		},
+		blockTable: newTestBlockTableModel(nil, nil),
+	}
+	updated, _ := m.Update(consensusSnapshotMsg{
+		ok: true,
+		snapshot: rpc.ConsensusSnapshot{
+			Block: &rpc.CommittedBlock{
+				Height: height,
+				Time:   stamp,
+			},
+		},
+	})
+	m = lifecycleModelValue(t, updated)
+	require.NotContains(t, m.blockTimes, int64(boundary-1))
+	require.Equal(t, stamp.Add(-time.Second), m.blockTimes[boundary])
+	require.Equal(t, stamp, m.blockTimes[height])
+}
 
 func TestBlockIntervalsUseHeadersDespiteDelayedOrMissingDelivery(t *testing.T) {
 	start := time.Date(2026, time.November, 6, 12, 0, 0, 0, time.UTC)

@@ -5553,6 +5553,12 @@ restore every subscription and seed current state again. The UI MUST
 distinguish connecting/disconnected from live WebSocket data and mark retained
 observations stale.
 
+Hermetic monitor tests MUST cover rejected bootstrap responses, malformed
+block/proposer events, existing precommits at attachment, cancellation under
+snapshot backpressure, and the UI's disconnected and elapsed-time states.
+Bootstrap first reads the height needed to fetch its validator set, then
+validates the complete snapshot against that set before publishing any state.
+
 The upgrade check MUST run the public `akt monitor` binary in real terminals
 against at least two local validators and attach an additional monitor late to
 the same RPC. Evidence includes raw WebSocket events, same-node consensus

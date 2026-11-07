@@ -1,11 +1,40 @@
 package cli
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"strings"
 	"testing"
 )
+
+func TestRootRejectsMissingClientContext(t *testing.T) {
+	for _, command := range []string{"monitor", "version"} {
+		t.Run(command, func(t *testing.T) {
+			root := NewRootCmd(BuildInfo{})
+			cmd, _, err := root.Find([]string{command})
+			if err != nil {
+				t.Fatal(err)
+			}
+			cmd.SetContext(context.Background())
+			err = root.PersistentPreRunE(cmd, nil)
+			if err == nil || !strings.Contains(err.Error(), "client context not set") {
+				t.Fatalf("pre-run error = %v", err)
+			}
+		})
+	}
+}
+
+func TestMonitorWithoutEndpointExplainsSelectionOptions(t *testing.T) {
+	root := NewRootCmd(BuildInfo{})
+	root.SetOut(io.Discard)
+	root.SetErr(io.Discard)
+	root.SetArgs([]string{"--home", t.TempDir(), "monitor"})
+	err := Execute(root)
+	if err == nil || !strings.Contains(err.Error(), "no RPC endpoint; provide one via --rpc/--node flag, positional argument, or configure an akt context") {
+		t.Fatalf("monitor error = %v", err)
+	}
+}
 
 func TestMonitorNodeAliasEndpointSelection(t *testing.T) {
 	// Scheme-less endpoints stop at validation before opening the TUI. The
