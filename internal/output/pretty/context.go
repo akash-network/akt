@@ -81,7 +81,8 @@ func RenderContextShow(rc aktctx.Context, effectiveKeyringBackend string) string
 	}
 	ctxKV(w, "Deploy Via", deployVia)
 
-	if authMethod == aktctx.AuthMethodConsoleAPI || rc.ConsoleAPIKey != "" {
+	consoleScoped := rc.ConsoleOrganization != "" || rc.ConsoleProject != ""
+	if authMethod == aktctx.AuthMethodConsoleAPI || rc.ConsoleAPIKey != "" || consoleScoped {
 		KVHeader(w, "  Console API")
 		ctxSubKV(w, "URL", rc.ConsoleAPIURL)
 
@@ -90,6 +91,15 @@ func RenderContextShow(rc aktctx.Context, effectiveKeyringBackend string) string
 			ctxSubKV(w, "API Key", "configured")
 		} else {
 			ctxSubKV(w, "API Key", Dim("(not set)"))
+		}
+
+		// Shown only once selected, so a context without teams renders as
+		// it always has (SPEC §7.1.1).
+		if rc.ConsoleOrganization != "" {
+			ctxSubKV(w, "Organization", rc.ConsoleOrganization)
+		}
+		if rc.ConsoleProject != "" {
+			ctxSubKV(w, "Project", rc.ConsoleProject)
 		}
 	}
 

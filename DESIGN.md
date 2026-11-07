@@ -693,6 +693,50 @@ the requested machine-readable format.
 
 This is the only point at which a `console-api` context talks to a provider gateway. Deployment lifecycle operations still route through the Console API, which submits manifests internally during lease creation (SPEC §7.4).
 
+Inside a Console team, a caller limited to some projects cannot mint the
+provider-scoped token of step 3. The client then asks for a granular token
+that names only this provider and dseq; without a selected project it tries
+the provider-scoped token first and falls back only on `project_forbidden`, so
+accounts without teams send the same request as before.
+
+#### 3.1.6 Console Teams and Projects
+
+The Console scope is a property of the Console client, not of each command.
+`cliutil.ConsoleScope` resolves the organization and project from the command's
+flags, `AKT_CONSOLE_ORGANIZATION`/`AKT_CONSOLE_PROJECT`, and the context, and
+`console.Client.WithScope` attaches them. Every request then carries
+`x-organization-id` and `x-project-id` exactly when a value is selected, so the
+direct `akt console` commands, the Console workflow rail, and `akt mcp` share
+one implementation and a context without teams sends nothing new (SPEC §7.1.1).
+
+Four choices keep that boundary small:
+
+- **Ids at rest, names at the edge.** The context stores only a project id.
+  Flags and arguments may name a project by slug or name; the client resolves
+  it once per process through `GET /v1/projects` and reuses the id, so a rename
+  in the web app cannot silently move a context to another project.
+- **Management never narrows.** Listing, creating, renaming, deleting projects,
+  managing API keys, and moving deployments call `ForProject("")`, which drops
+  the project header. A stale or revoked project selection therefore cannot
+  lock the user out of the commands that fix it.
+- **Binding is explicit.** `apikey create` binds a key to a project only when
+  `--console-project` is given on that command. Working in a project never
+  narrows the keys created from it, because the binding cannot be changed
+  later.
+- **The operator pins MCP.** When `akt mcp` starts with a project, a tool call
+  may name only that project, compared by resolved id. The operator, not the
+  model, decides where an MCP server acts, so a prompt injection cannot close
+  deployments in another project the key happens to reach.
+
+Session refusals preserve `SessionRequiredError` and unwrap to a body-free
+`HTTPError` so team diagnostics retain the code, HTTP status, and remedy.
+Secret redaction preserves the typed refusal before handling generic HTTP
+errors.
+
+Team refusals keep the API's `code` on `console.HTTPError`, so callers branch
+on the code rather than on text, and the rendered error names the remedy
+(SPEC §7.6). Sealed requests keep the code while still dropping the body.
+
 ### 3.2 Dual-Mode Architecture
 
 ```mermaid
@@ -1285,6 +1329,32 @@ change that public behavior.
   These commands enforce the required deployment identity and run the SDK
   message's `ValidateBasic` contract after parsing, so a node never receives an
   action the local boundary or message type already rejects.
+- **Sink follows the public SDK contract**: the CLI parses composite
+  `owner/height/sequence` IDs through the SDK and consumes typed transfer
+  aggregates. Storage codecs and query-prefix layouts remain in node.
+  Transfers and disputes use opaque native pagination; terminal disputes are
+  visible independently of financial status. Reports name policy versions,
+  governance voids/resolutions name the expected round, and all constructed
+  messages run SDK validation before broadcast. Amount caps use Coins,
+  reporter quorum is a decimal ratio, and quota usage follows native chain
+  epochs separately from the challenge Duration. Pretty renderers share the
+  same typed data as JSON output and preserve full identities and evidence.
+  Sink uses the existing chain transport, capability gating and action log.
+  Its single-account query requires an explicit or default account even when
+  resource list queries accept an empty filter for network-wide results.
+  Confirmed Sink broadcasts pass their submitted messages to the shared pretty
+  printer because the SDK receipt can omit its transaction body. Receipt events
+  still supply the transfer ID; missing fee and body data remain unknown. This
+  does not turn a pending or failed broadcast into a successful deposit.
+  The updated SDK event service accepts the selected node URI and owns its
+  RPC connection; the event command passes that URI through.
+  Codec initialization uses the SDK's options and gogoreflection registration
+  for Kubernetes Quantity. The CLI resolves Amino descriptors in a local
+  registry, normalizing Quantity's legacy gogo import path before validating
+  that graph. Signer lookups retain the SDK global resolver and address codecs;
+  direct, direct-aux and Amino signing remain available. SDK constructor results
+  share a fail-fast check so startup cannot return a partially initialized codec;
+  tests cover invalid descriptors and signing options as well as valid encoding.
 - **Wasm artifacts and intent are validated before broadcast**: upload parsing
   distinguishes raw Wasm from gzip, rejects truncated or corrupt streams, and
   verifies optional reproducible-build provenance against the uncompressed
@@ -2453,7 +2523,7 @@ with the same tag resumes from the PR's state instead of starting over.
 - Keyring management: shared keyrings, keys visible to all referencing contexts
 - Action log: append-only JSONL log per context, reading/filtering
 - Chain client with multi-endpoint failover
-- Core tx commands: bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, slashing, vesting, upgrade, IBC
+- Core tx commands: bank, deployment, market, provider, cert, audit, staking, distribution, gov, authz, feegrant, escrow, wasm, oracle, bme, sink, slashing, vesting, upgrade, IBC
 - Core query commands: all matching modules
 - Key management commands
 - Output formatting with pretty output: registry-based per-type formatters for all query results, lipgloss color-coded states. `--output json` and `--output yaml` for machine-readable output
@@ -2561,6 +2631,7 @@ never handle.
 | `akash tx wasm *`             | `akt tx wasm *`             | Identical behavior                 |
 | `akash tx oracle *`           | `akt tx oracle *`           | Identical behavior                 |
 | `akash tx bme *`              | `akt tx bme *`              | Identical behavior                 |
+| `akash tx sink *`             | `akt tx sink *`             | Superset: adds reporter, refund and governance proposal commands |
 | `akash query *`               | `akt query *`               | Cosmos SDK modules: identical. Akash modules: simplified (see below). |
 
 **Akash query command simplifications** (non-breaking -- same backend queries, different CLI surface):

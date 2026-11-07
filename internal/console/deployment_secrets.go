@@ -61,6 +61,11 @@ func sanitizeSecretError(err error) error {
 	}
 	var response *HTTPError
 	if errors.As(err, &response) {
+		// Team and project refusals carry no workload detail; keep their
+		// code so the explanation and remedy survive sanitization.
+		if response.Code != "" {
+			return &HTTPError{StatusCode: response.StatusCode, Body: response.Code, Code: response.Code}
+		}
 		var body struct {
 			Code string `json:"code"`
 		}
@@ -69,7 +74,7 @@ func sanitizeSecretError(err error) error {
 			body.Code = response.Body
 		}
 		switch body.Code {
-		case "deployment_definition_changed", "deployment_resources_changed", "stored_secrets_unreadable", "stored_sdl_unreadable", "inherited_secrets_unreadable", "deployment_definition_exists", "deployment_definition_mismatch", "manifest_not_delivered", "provider_unreachable":
+		case "deployment_definition_changed", "deployment_resources_changed", "stored_secrets_unreadable", "stored_sdl_unreadable", "inherited_secrets_unreadable", "deployment_definition_exists", "deployment_definition_mismatch", "manifest_not_delivered", "provider_unreachable", "provider_manifest_invalid":
 			return &HTTPError{StatusCode: response.StatusCode, Body: body.Code}
 		default:
 			return &HTTPError{StatusCode: response.StatusCode, Body: "sensitive response details omitted"}
@@ -93,6 +98,11 @@ func (c *Client) createDeploymentWithSecrets(ctx context.Context, rawSDL string,
 		client.record("create-deployment", "", err)
 		return nil, err
 	}
+	projectID, err := client.scopeProjectID(ctx)
+	if err != nil {
+		client.record("create-deployment", "", err)
+		return nil, err
+	}
 	seal, err := client.sealSecrets(ctx, options.Secrets, rawSDL)
 	if err != nil {
 		client.record("create-deployment", "", err)
@@ -102,6 +112,7 @@ func (c *Client) createDeploymentWithSecrets(ctx context.Context, rawSDL string,
 	if options.InheritSecretsFrom != "" {
 		body["inheritSecretsFrom"] = options.InheritSecretsFrom
 	}
+	fileInProject(body, projectID)
 	var result CreateDeploymentResult
 	err = client.doData(ctx, http.MethodPost, "/v1/deployments", envelope(body), &result)
 	if err == nil {

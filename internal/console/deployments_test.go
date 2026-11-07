@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -426,6 +427,48 @@ func TestUpdateDeploymentRejectsInvalidSDLBeforeNetwork(t *testing.T) {
 	)
 	require.ErrorContains(t, err, "prepare deployment SDL")
 	assert.Equal(t, int32(0), requests.Load(), "invalid SDL must fail before an update is submitted")
+}
+
+// Console refuses an SDL that exposes no port globally (#4581); the SDL
+// library's manifest validation already refuses it locally, so no create or
+// update may reach the network with one.
+func TestSDLWithoutGlobalPortIsRefusedBeforeNetwork(t *testing.T) {
+	internalOnlySDL := strings.Replace(validUpdateSDL, "global: true", "global: false", 1)
+	tests := []struct {
+		name string
+		want string
+		call func(*console.Client) error
+	}{
+		{"create", "zero global services", func(c *console.Client) error {
+			_, err := c.CreateDeployment(context.Background(), internalOnlySDL)
+			return err
+		}},
+		{"create sealed", "invalid deployment SDL", func(c *console.Client) error {
+			_, err := c.CreateDeployment(context.Background(), internalOnlySDL, console.CreateDeploymentOptions{Secrets: console.SecretValues{}})
+			return err
+		}},
+		{"update", "zero global services", func(c *console.Client) error {
+			_, err := c.UpdateDeployment(context.Background(), "555", internalOnlySDL)
+			return err
+		}},
+		{"update sealed", "invalid deployment SDL", func(c *console.Client) error {
+			_, err := c.UpdateDeployment(context.Background(), "555", internalOnlySDL, console.UpdateDeploymentOptions{Secrets: console.SecretValues{}})
+			return err
+		}},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var requests atomic.Int32
+			srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				requests.Add(1)
+			}))
+			defer srv.Close()
+
+			err := tc.call(console.New(srv.URL, "test-key"))
+			require.ErrorContains(t, err, tc.want)
+			assert.Equal(t, int32(0), requests.Load(), "an SDL Console refuses must fail before any request")
+		})
+	}
 }
 
 func TestUpdateDeploymentReconcilesMalformedAcknowledgement(t *testing.T) {
