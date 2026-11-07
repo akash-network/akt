@@ -1,6 +1,7 @@
 package console
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -13,6 +14,9 @@ import (
 	consoleapi "pkg.akt.dev/akt/internal/console"
 	aktctx "pkg.akt.dev/akt/internal/context"
 )
+
+// apiKeysPage is where Console creates API keys from a signed-in session.
+const apiKeysPage = "console.akash.network > Settings > API Keys"
 
 func apikeyCmds(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
@@ -56,7 +60,10 @@ func apikeyCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "create [name] [expires-at]",
 		Short: "Create an API key (the secret is shown ONCE)",
-		Args:  cflags.PositionalOrFlagArgs(flagdefs.FlagName, flagdefs.FlagExpiresAt),
+		Long: "Create an API key. Console creates keys only from a signed-in Console session and " +
+			"refuses a request authenticated with an API key, which is how akt authenticates. When " +
+			"it refuses, create the key at " + apiKeysPage + " and store it with `akt console login`.",
+		Args: cflags.PositionalOrFlagArgs(flagdefs.FlagName, flagdefs.FlagExpiresAt),
 		Example: `  # Name (and optional RFC 3339 expiry) as positional arguments
   akt console apikey create ci 2027-01-01T00:00:00Z`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -78,6 +85,10 @@ func apikeyCreateCmd(mgrFn func() *aktctx.Manager) *cobra.Command {
 			}
 
 			created, err := cl.CreateAPIKey(cmd.Context(), name, expiresAt)
+			var sessionErr *consoleapi.SessionRequiredError
+			if errors.As(err, &sessionErr) {
+				return fmt.Errorf("create API key: %w; create the key at %s, then store it with `akt console login`", err, apiKeysPage)
+			}
 			if err != nil {
 				return fmt.Errorf("create API key: %w", err)
 			}
