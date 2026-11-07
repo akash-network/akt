@@ -641,17 +641,21 @@ func TestConsoleLiveManagedWalletLifecycle(t *testing.T) {
 	}
 
 	childName := runID + "-child"
+	createResult := runConsoleAkt(lifecycleCtx, t, home, "console", "apikey", "create", childName)
+	if createResult.Exit != 0 && strings.Contains(createResult.Stderr, "signed-in Console session") {
+		assertConsoleAPIKeyCreateRefused(lifecycleCtx, t, home, contextName, observer, apiKeyBaseline, actionBaselineCount, createResult)
+		assertConsoleSecretAbsent(t, home, contextName, key)
+		t.Logf("completed real Console managed-wallet lifecycle run_id=%s dseq=%s requested_usd=%.2f; Console refused API-key creation for an API key",
+			runID, dseq, budget.requestedUSD)
+		return
+	}
 	var childKey struct {
 		ID      string `json:"id"`
 		Name    string `json:"name"`
 		APIKey  string `json:"apiKey"`
 		Warning string `json:"warning"`
 	}
-	requireConsoleJSON(t,
-		runConsoleAkt(lifecycleCtx, t, home, "console", "apikey", "create", childName),
-		"akt console apikey create",
-		&childKey,
-	)
+	requireConsoleJSON(t, createResult, "akt console apikey create", &childKey)
 	childDeleted := false
 	if strings.TrimSpace(childKey.ID) != "" {
 		t.Cleanup(func() {
@@ -794,6 +798,42 @@ func TestConsoleLiveManagedWalletLifecycle(t *testing.T) {
 
 	t.Logf("completed real Console managed-wallet lifecycle run_id=%s dseq=%s requested_usd=%.2f",
 		runID, dseq, budget.requestedUSD)
+}
+
+// assertConsoleAPIKeyCreateRefused checks a Console that creates API keys only
+// from a signed-in session: the refusal names where to create the key, prints
+// no key, leaves the key collection unchanged, and logs one failed create.
+func assertConsoleAPIKeyCreateRefused(
+	ctx context.Context,
+	t *testing.T,
+	home, contextName string,
+	observer *consoleAPIObserver,
+	apiKeyBaseline []consoleAPIKeyObservation,
+	actionBaselineCount int,
+	result consoleCommandResult,
+) {
+	t.Helper()
+
+	if result.Err == nil || result.CredentialLeak || strings.TrimSpace(result.Stdout) != "" || !strings.Contains(result.Stderr, "Settings > API Keys") {
+		t.Fatalf("refused API-key creation did not fail closed with where to create the key (%s)", consoleCommandDiagnostic(result))
+	}
+	keys, err := observer.listAPIKeys(ctx)
+	if err != nil {
+		t.Fatalf("list API keys after the refused create: %v", err)
+	}
+	if !sameConsoleAPIKeyRecords(keys, apiKeyBaseline) {
+		t.Fatal("refused API-key creation changed the independent API-key collection")
+	}
+	entries, err := readConsoleActions(home, contextName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != actionBaselineCount+1 {
+		t.Fatalf("refused API-key creation action log has %d entries, want %d", len(entries), actionBaselineCount+1)
+	}
+	if refused := entries[0]; refused.Type != "console" || refused.Action != "create-api-key" || refused.Status != "failed" || refused.DSeq != 0 {
+		t.Fatalf("refused API-key creation action = %s, want one failed create", consoleActionSummary(refused))
+	}
 }
 
 func parseConsoleDollarAmount(value string) (float64, error) {

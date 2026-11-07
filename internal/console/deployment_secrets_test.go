@@ -99,6 +99,9 @@ func TestCreateWithSecretsNeverReconcilesUnresolvedHash(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "outcome unknown") || strings.Contains(err.Error(), "private-value") {
 		t.Fatalf("error=%v", err)
 	}
+	if !strings.Contains(err.Error(), "(HTTP 503)") {
+		t.Fatalf("create failure lost its HTTP status: %v", err)
+	}
 	if posts != 1 || reads != 0 {
 		t.Fatalf("posts=%d unexpected reconciliation reads=%d", posts, reads)
 	}

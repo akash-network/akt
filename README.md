@@ -673,25 +673,25 @@ akt deploy deployment.yaml --bid-select cheapest --yes -o jsonl \
 
 ### Queries
 
-Akash query commands use a **positional filter argument** instead of `--owner`/`--dseq` flags (see the UX trial note in the [Overview](#overview)). The filter follows the resource hierarchy (`owner/dseq/gseq/oseq/provider`) with smart type detection: a bech32 address is an owner, a number is a dseq. When no owner is given, the context's default account is used. State keywords are also positional: `akt query deployment active` lists active deployments, and identity + state combine as two positional arguments (`akt query deployment 12345 active`). When the identity pins down a single record, the state argument verifies it — the command fails if the record is in a different state instead of printing it. See [SPEC.md §3.8](SPEC.md#38-resource-filter-argument) for full details.
+Akash query commands use a **positional filter argument** instead of `--owner`/`--dseq` flags (see the UX trial note in the [Overview](#overview)). The filter follows the resource hierarchy (`owner/dseq/gseq/oseq/provider`) with smart type detection: a bech32 address is an owner, a number is a dseq. A bare dseq takes its owner from the context's default account. With no filter at all, the query lists every matching resource on the network, one page at a time (`--limit`, default 100), so no default account is needed. Continue with `--page-key` set to the previous page's `pagination.next_key` (shown by `-o json`); the chain accepts `--page` and `--offset` only together with a state keyword. State keywords are also positional: `akt query deployment active` lists every active deployment, and identity + state combine as two positional arguments (`akt query deployment 12345 active`). When the identity pins down a single record, the state argument verifies it — the command fails if the record is in a different state instead of printing it. See [SPEC.md §3.8](SPEC.md#38-resource-filter-argument) for full details.
 
 ```bash
 # Check balances
 akt query bank balances akash1abc...
 
-# List your deployments (owner defaults to context account)
+# List every deployment on the network (first page of 100)
 akt query deployment
 
 # Get a specific deployment by dseq (owner from context)
 akt query deployment 12345
 
-# List deployments for a specific owner
+# List deployments for a specific owner, such as your own
 akt query deployment akash1abc...
 
 # Get a specific deployment by owner and dseq
 akt query deployment akash1abc.../12345
 
-# List active leases (positional state keyword)
+# List every active lease on the network (positional state keyword)
 akt query market lease active
 
 # Leases for a specific deployment
@@ -792,8 +792,9 @@ akt console login
 # Deploy using the Console managed wallet (no deposit -- credits fund it)
 akt deploy deploy.yaml
 
-# List your deployments
-akt query deployment
+# List your deployments: pass your managed wallet address (from
+# `akt console wallet address`); with no address the list is network-wide
+akt query deployment akash1abc...
 
 # Update a deployment
 akt tx deployment update deploy.yaml 12345

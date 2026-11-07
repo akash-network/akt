@@ -57,6 +57,30 @@ var (
 	ErrAlreadyClosed = errors.New("console: deployment already closed")
 )
 
+// sessionRequiredCode is the error code Console answers with when a request
+// authenticated with an API key reaches an endpoint that needs a session.
+const sessionRequiredCode = "session_required"
+
+// responseCode returns the code field of a Console error body, or "" when the
+// body carries none.
+func responseCode(body []byte) string {
+	var result struct {
+		Code string `json:"code"`
+	}
+	if json.Unmarshal(body, &result) != nil {
+		return ""
+	}
+	return result.Code
+}
+
+// SessionRequiredError reports an endpoint that needs a signed-in Console
+// session, which an API key never is (HTTP 403, code session_required).
+type SessionRequiredError struct{}
+
+func (*SessionRequiredError) Error() string {
+	return "console: a signed-in Console session is required (HTTP 403)"
+}
+
 // HTTPError is returned for non-2xx statuses that have no dedicated mapping.
 type HTTPError struct {
 	StatusCode int
@@ -65,6 +89,21 @@ type HTTPError struct {
 
 func (e *HTTPError) Error() string {
 	return fmt.Sprintf("console: unexpected status %d: %s", e.StatusCode, e.Body)
+}
+
+// responseStatusError contains no server-supplied text, so secret operations
+// can retain its status without exposing the response body.
+type responseStatusError int
+
+func (e responseStatusError) Error() string {
+	switch {
+	case e == http.StatusTooManyRequests:
+		return fmt.Sprintf("console: rate limited (HTTP %d)", e)
+	case e >= http.StatusInternalServerError:
+		return fmt.Sprintf("console: server error (HTTP %d)", e)
+	default:
+		return fmt.Sprintf("console: HTTP redirects are not allowed (HTTP %d)", e)
+	}
 }
 
 // Client interacts with the Akash Console API.
@@ -316,14 +355,17 @@ func (c *Client) doJSON(ctx context.Context, method, path string, reqBody, resul
 		case resp.StatusCode == http.StatusNotFound:
 			return fmt.Errorf("%w (HTTP 404): %s %s", ErrNotFound, method, path)
 
+		case resp.StatusCode == http.StatusForbidden && responseCode(respBody) == sessionRequiredCode:
+			return &SessionRequiredError{}
+
 		case resp.StatusCode == http.StatusTooManyRequests:
-			lastErr = fmt.Errorf("console: rate limited (HTTP 429)")
+			lastErr = responseStatusError(resp.StatusCode)
 
 		case resp.StatusCode >= 500:
-			lastErr = fmt.Errorf("console: server error (HTTP %d)", resp.StatusCode)
+			lastErr = responseStatusError(resp.StatusCode)
 
 		case resp.StatusCode >= 300 && resp.StatusCode < 400:
-			return fmt.Errorf("console: HTTP redirects are not allowed (HTTP %d)", resp.StatusCode)
+			return responseStatusError(resp.StatusCode)
 
 		default:
 			return &HTTPError{
