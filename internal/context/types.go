@@ -67,17 +67,24 @@ type ProviderDefaults struct {
 // TrackedAccounts names the accounts store reconciliation covers (SPEC §6.7):
 // empty means the default account alone, ["*"] every account in the context's
 // keyring.
+//
+// ConsoleOrganization and ConsoleProject select the Console organization
+// (team) and project that Console calls act in (SPEC §7.1.1). Empty means the
+// API key's own scope, which is how every context behaved before teams.
+// Manager.Resolve applies their environment overrides.
 type Context struct {
-	Name             string           `yaml:"-"                           json:"name"`
-	Network          Network          `yaml:"-"                           json:"network"`
-	Keyring          Keyring          `yaml:"-"                           json:"keyring"`
-	AuthMethod       string           `yaml:"auth-method,omitempty"       json:"auth_method,omitempty"`
-	ConsoleAPIURL    string           `yaml:"console-api-url,omitempty"   json:"console_api_url,omitempty"`
-	DefaultAccount   string           `yaml:"default-account,omitempty"   json:"default_account,omitempty"`
-	TrackedAccounts  []string         `yaml:"tracked-accounts,omitempty"  json:"tracked_accounts,omitempty"`
-	Gas              string           `yaml:"gas,omitempty"               json:"gas,omitempty"`
-	Fees             string           `yaml:"fees,omitempty"              json:"fees,omitempty"`
-	ProviderDefaults ProviderDefaults `yaml:"provider-defaults,omitempty" json:"provider_defaults,omitempty"`
+	Name                string           `yaml:"-"                              json:"name"`
+	Network             Network          `yaml:"-"                              json:"network"`
+	Keyring             Keyring          `yaml:"-"                              json:"keyring"`
+	AuthMethod          string           `yaml:"auth-method,omitempty"          json:"auth_method,omitempty"`
+	ConsoleAPIURL       string           `yaml:"console-api-url,omitempty"      json:"console_api_url,omitempty"`
+	ConsoleOrganization string           `yaml:"console-organization,omitempty" json:"console_organization,omitempty"`
+	ConsoleProject      string           `yaml:"console-project,omitempty"      json:"console_project,omitempty"`
+	DefaultAccount      string           `yaml:"default-account,omitempty"      json:"default_account,omitempty"`
+	TrackedAccounts     []string         `yaml:"tracked-accounts,omitempty"  json:"tracked_accounts,omitempty"`
+	Gas                 string           `yaml:"gas,omitempty"               json:"gas,omitempty"`
+	Fees                string           `yaml:"fees,omitempty"              json:"fees,omitempty"`
+	ProviderDefaults    ProviderDefaults `yaml:"provider-defaults,omitempty" json:"provider_defaults,omitempty"`
 
 	// Resolved fields -- populated by Manager.Resolve(), not serialized.
 	// These are convenience accessors that flatten nested values.
@@ -97,6 +104,8 @@ type contextYAML struct {
 	Keyring          string           `yaml:"keyring,omitempty"`
 	AuthMethod       string           `yaml:"auth-method,omitempty"`
 	ConsoleAPIURL    string           `yaml:"console-api-url,omitempty"`
+	ConsoleOrg       string           `yaml:"console-organization,omitempty"`
+	ConsoleProject   string           `yaml:"console-project,omitempty"`
 	DefaultAccount   string           `yaml:"default-account,omitempty"`
 	TrackedAccounts  []string         `yaml:"tracked-accounts,omitempty"`
 	Gas              string           `yaml:"gas,omitempty"`
@@ -112,6 +121,8 @@ func (c Context) MarshalYAML() (interface{}, error) {
 		Keyring:          c.Keyring.Name,
 		AuthMethod:       c.AuthMethod,
 		ConsoleAPIURL:    c.ConsoleAPIURL,
+		ConsoleOrg:       c.ConsoleOrganization,
+		ConsoleProject:   c.ConsoleProject,
 		DefaultAccount:   c.DefaultAccount,
 		TrackedAccounts:  c.TrackedAccounts,
 		Gas:              c.Gas,
@@ -134,6 +145,8 @@ func (c *Context) UnmarshalYAML(value *yaml.Node) error {
 	c.Keyring = Keyring{Name: raw.Keyring}
 	c.AuthMethod = raw.AuthMethod
 	c.ConsoleAPIURL = raw.ConsoleAPIURL
+	c.ConsoleOrganization = raw.ConsoleOrg
+	c.ConsoleProject = raw.ConsoleProject
 	c.DefaultAccount = raw.DefaultAccount
 	c.TrackedAccounts = raw.TrackedAccounts
 	c.Gas = raw.Gas
