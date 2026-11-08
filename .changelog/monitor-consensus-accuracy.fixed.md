@@ -1,2 +1,0 @@
-- Fix monitor consensus percentages for late connections and reconnects by seeding existing votes before merging WebSocket events. Decode real CometBFT round steps, obtain proposer changes from round events, derive block intervals from committed timestamps, and label disconnected observations stale.
-- Accept `--node` as a compatibility alias for `--rpc` on monitor and all dashboard subcommands, with positional endpoints and `--rpc` retaining precedence.
