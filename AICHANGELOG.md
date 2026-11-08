@@ -4,6 +4,201 @@
 
 ### Added
 
+<!-- changelog: command-flag-parity.added.md -->
+- Restore optional resource, state, and search flags across chain queries and
+  transactions while preserving positional commands and context defaults.
+  Add bid reclamation windows, provider RPC/account and replica/service
+  selection, service-status, remote status/events, and Console flag alternatives.
+  Audit the full Akash command tree with a checked-in compatibility fixture and
+  explicit operator/runtime exclusions.
+  Stop remote event subscriptions on cancellation or output failure, including
+  when no further blocks arrive.
+<!-- /changelog -->
+
+<!-- changelog: keys-flag-parity.added.md -->
+- Add the missing `akash keys` flags and key commands to `akt context keys`, including JSON/base64 public-key imports for multisig accounts, dry runs, names-only listing, raw private-key import/export, and keyring migration. Honor the selected signing algorithm and sort new multisig members by address by default; `--nosort` preserves the supplied order. Existing stored keys are unchanged.
+<!-- /changelog -->
+
+<!-- changelog: sink-module.added.md -->
+- Add the sink module (AKT to Solana transfers) to the chain commands.
+  `akt tx sink` covers deposits, the pause guardian, reporter outcome
+  reports, vetoes and refunds, plus governance proposals that update
+  parameters, order a void, veto a void or resolve a held transfer.
+  `akt q sink` covers a transfer, paginated transfers and disputes, reporter
+  policies, account usage, totals and parameters.
+- Validate sink input before broadcast the way the module does: exact uakt
+  amounts (fractional uakt is rejected, never truncated), composite transfer
+  IDs, base58 Solana addresses and 64-byte signatures, reason length, and
+  resolution evidence. Reports read the current reporter policy and transfer
+  round from the chain unless `--policy-version` and `--round` are given.
+  Governance voids and resolutions bind to an expected settlement round.
+- Render sink queries and messages in pretty output with full addresses,
+  Solana keys and signatures, and register the sink codec so proposals and
+  transactions that carry sink messages decode.
+- Pin the published SDK module to the same commit as node `feat/sink-review`
+  and use its existing descriptor registration for Amino signing.
+<!-- /changelog -->
+
+<!-- changelog: teams-and-projects.added.md -->
+- Work in Akash Console teams and projects. A context can store a Console
+  team and project (`akt console project use`), and `--console-organization`,
+  `--console-project`, `AKT_CONSOLE_ORGANIZATION`, and `AKT_CONSOLE_PROJECT`
+  override them for one command. Console calls send the `x-organization-id`
+  and `x-project-id` headers only when a value is selected, so accounts without
+  teams see no change.
+- Add `akt console organization list` (alias `team list`) and
+  `akt console project list/get/create/rename/delete/use`. `akt deploy` and
+  `akt console deployment create/list` act in the selected project, and
+  `akt console deployment move <dseq> <project>` files a deployment in another
+  project.
+- `akt console apikey create --console-project` creates a key limited to one
+  project, and `apikey list` shows the team and project of each key.
+  `akt console whoami` shows the active team, role, and project.
+- Explain the Console team refusals `project_required`, `project_forbidden`,
+  `organization_mismatch`, `project_budget_exceeded`, and
+  `project_limit_reached` with the command that fixes each. Provider gateway
+  commands mint a token naming the deployment for keys limited to some
+  projects.
+- `akt mcp` accepts `--console-organization` and `--console-project`, adds the
+  `console_list_organizations` and `console_list_projects` tools, and the
+  Console deployment tools take an optional `project`. A server started with
+  a project refuses tool calls that name another one.
+<!-- /changelog -->
+
+### Changed
+
+<!-- changelog: sink-current-api.changed.md -->
+- Update Sink commands for composite transfer IDs, native transfer/dispute pagination, reporter policy versions and round-bound governance messages.
+- Match the node SDK dependency, current parameter and epoch accounting, five settlement states, and typed deposit receipts.
+- Resolve the CLI's Kubernetes protobuf import aliases locally so startup and nested Amino signing work with the updated SDK.
+<!-- /changelog -->
+
+<!-- changelog: unscoped-query-lists.changed.md -->
+- List queries no longer need a default account. With no filter argument,
+  `akt query deployment`, `market order`, `market bid`, `market lease` and
+  `cert list` list every matching resource on the network, one page at a time
+  (`--limit`, default 100), in either `--by` perspective. A bare state keyword
+  narrows that list, so `akt query deployment closed` returns closed
+  deployments network-wide instead of failing with "no default account set".
+  The default account now fills in only the numeric dseq shorthand. Help text
+  and docs point unfiltered lists at `--page-key` for the next page, since the
+  chain accepts `--page` and `--offset` only together with a state filter.
+- `akt query deployment group` gains a list mode: with no filter, or an owner
+  address only, it pages through deployments and prints their groups, since
+  the chain has no query that lists groups. Its structured output is an object
+  with `groups` and the deployment page's `pagination`, and it refuses
+  `--page` and `--offset`, which need a state filter it cannot take.
+<!-- /changelog -->
+
+### Fixed
+
+<!-- changelog: console-api-refusals.fixed.md -->
+- Stop reporting a lease as created when its provider refused the manifest
+  as invalid. Console answers `provider_manifest_invalid` (422) once the lease
+  exists; `akt` now fails with a message that sending the manifest again
+  cannot help and that the deployment should be closed and redeployed with a
+  corrected SDL, on both the default and `--manifest` paths.
+- Treat Console's `deposit_price_unavailable` (503) on a deployment create as a
+  refusal made before signing. `akt` used to drop the body of every 5xx and
+  report an unknown outcome; it now says nothing was signed and to run the
+  same command again.
+- Refuse project names, project descriptions, and API key names that Console
+  rejects (control or bidi characters, or no visible character) before
+  sending them, naming the offending code point.
+- Pin the vendored Console API contract to `console-api/v3.332.0` and compile
+  Console's JavaScript-style name patterns so the contract test enforces them.
+<!-- /changelog -->
+
+<!-- changelog: console-apikey-session-required.fixed.md -->
+- Explain why `akt console apikey create` fails against a Console that creates
+  API keys only from a signed-in session. Console answers a creation request
+  authenticated with an API key `403` with code `session_required`; the client
+  now returns a `SessionRequiredError` for it, records the create as failed rather
+  than pending, and the command names where to create the key (Console >
+  Settings > API Keys) and how to store it (`akt console login`). The live
+  sandbox lifecycle checks that refusal when Console enforces it and keeps the
+  create and delete round trip otherwise.
+<!-- /changelog -->
+
+<!-- changelog: console-ci-http-status.fixed.md -->
+- Preserve HTTP rate-limit, server and redirect status codes through Console secret sanitization so live CI failures remain diagnosable without exposing response bodies.
+<!-- /changelog -->
+
+<!-- changelog: console-project-flag-compat.fixed.md -->
+- Preserve explicit project binding when API-key creation uses `--name` and
+  `--expires-at`, with coverage that checks the combined request and scope.
+<!-- /changelog -->
+
+<!-- changelog: console-session-error-redaction.fixed.md -->
+- Preserve the session-required error type through Console secret redaction,
+  so refused mutations retain HTTP 403 diagnostics and record a failed attempt.
+<!-- /changelog -->
+
+<!-- changelog: console-session-team-error-compat.fixed.md -->
+- Preserve session-required refusals as both a typed error and a classified
+  HTTP error when combining team support with the Console session policy.
+  Keep the web-app remedy and failed action-log result through secret redaction
+  without retaining the server's response body.
+<!-- /changelog -->
+
+<!-- changelog: events-sdk-node-compat.fixed.md -->
+- Preserve the resolved node URI when creating an RPC client, and verify
+  event output, write failures, and cancellation through the SDK's own
+  HTTP/WebSocket connections after the Sink SDK update.
+<!-- /changelog -->
+
+<!-- changelog: monitor-consensus-accuracy.fixed.md -->
+- Fix monitor consensus percentages for late connections and reconnects by seeding existing votes before merging WebSocket events. Decode real CometBFT round steps, obtain proposer changes from round events, derive block intervals from committed timestamps, and label disconnected observations stale.
+- Accept `--node` as a compatibility alias for `--rpc` on monitor and all dashboard subcommands, with positional endpoints and `--rpc` retaining precedence.
+<!-- /changelog -->
+
+<!-- changelog: monitor-consensus-transport-docs.fixed.md -->
+- Align the consensus monitor overview with its WebSocket updates and
+  one-time HTTP bootstrap on each connection; document config-free `--node`
+  startup alongside the positional and `--rpc` forms.
+<!-- /changelog -->
+
+<!-- changelog: monitor-startup-cancellation-coverage.fixed.md -->
+- Make monitor startup-cancellation coverage deterministic by blocking initial
+  snapshot delivery until cancellation, independently of later full-queue
+  shutdown coverage. The test verifies prompt return and connection cleanup.
+<!-- /changelog -->
+
+<!-- changelog: monitor-subscription-rejection-test.fixed.md -->
+- Stabilize the monitor subscription-rejection test by receiving the full
+  subscription batch before returning its JSON-RPC error, then verifying
+  client-initiated closure. This prevents a peer disconnect from masking the
+  expected rejection with a broken pipe during coverage runs.
+<!-- /changelog -->
+
+<!-- changelog: query-flag-scope-compat.fixed.md -->
+- Preserve network-wide query defaults and deployment-group pagination when
+  using restored flags. Positive dseq flags retain default-owner resolution;
+  zero sequence filters stay unscoped, and group sequences require a deployment.
+<!-- /changelog -->
+
+<!-- changelog: sink-account-query-compat.fixed.md -->
+- Preserve Sink account queries when resource lists become network-wide:
+  an explicit or default account remains required, and a missing account
+  fails locally before any query is sent.
+<!-- /changelog -->
+
+<!-- changelog: sink-broadcast-receipt.fixed.md -->
+- Render Sink details and the composite transfer ID after a confirmed broadcast even when the SDK receipt omits its transaction body. Preserve unknown fees and the distinction between pending, failed and confirmed transactions.
+<!-- /changelog -->
+
+<!-- changelog: sink-ci-boundaries.fixed.md -->
+- Complete Sink command, output and codec failure coverage for PR #124's changed-line CI gate, including missing signers, proposal flags, malformed responses and startup errors.
+<!-- /changelog -->
+
+<!-- changelog: sink-module.fixed.md -->
+- Format micro-denom amounts above the int64 range instead of panicking.
+  Sink parameters on uncapped networks use the uint64 maximum, which made
+  `FormatCoin` panic in `Int64()`; amounts are now compared as `math.Int`.
+<!-- /changelog -->
+
+### Added
+
 <!-- changelog: tag-release.added.md -->
 - Add `make tag-release` to run the maintainer release end to end. It opens
   the `chore(release): prepare <tag>` changelog-assembly PR, waits for it to
