@@ -271,6 +271,19 @@ func ReadPersistentCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) 
 		cctx = cctx.WithSimulation(dryRun)
 	}
 
+	// Resolve construction mode before startup can open a node connection.
+	if !cctx.GenerateOnly || flagSet.Changed(flagdefs.FlagGenerateOnly) {
+		genOnly, _ := flagSet.GetBool(flagdefs.FlagGenerateOnly)
+		cctx = cctx.WithGenerateOnly(genOnly)
+	}
+	if !cctx.Offline || flagSet.Changed(flagdefs.FlagOffline) {
+		offline, _ := flagSet.GetBool(flagdefs.FlagOffline)
+		cctx = cctx.WithOffline(offline)
+	}
+	if cctx.GenerateOnly && cctx.Simulate {
+		return cctx, fmt.Errorf("--%s and --%s cannot be used together", flagdefs.FlagGenerateOnly, flagdefs.FlagDryRun)
+	}
+
 	if cctx.KeyringDir == "" || flagSet.Changed(flagdefs.FlagKeyringDir) {
 		keyringDir, _ := flagSet.GetString(flagdefs.FlagKeyringDir)
 
@@ -298,6 +311,10 @@ func ReadPersistentCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet) 
 	// value would bypass that check and, because this runs from the root's
 	// own pre-run on every command, would open a key store for commands that
 	// declare no local identity at all (SPEC §1.7).
+
+	if cctx.Offline || cctx.GenerateOnly {
+		return cctx, nil
+	}
 
 	nodeChanged := flagSet.Lookup(flagdefs.FlagNode) != nil && flagSet.Changed(flagdefs.FlagNode)
 	if cctx.Client == nil || nodeChanged {
@@ -378,14 +395,13 @@ func ReadTxCommandFlags(cctx sdkclient.Context, flagSet *pflag.FlagSet, diagnost
 		return cctx, err
 	}
 
-	if !cctx.GenerateOnly || flagSet.Changed(flagdefs.FlagGenerateOnly) {
-		genOnly, _ := flagSet.GetBool(flagdefs.FlagGenerateOnly)
-		cctx = cctx.WithGenerateOnly(genOnly)
-	}
-
-	if !cctx.Offline || flagSet.Changed(flagdefs.FlagOffline) {
-		offline, _ := flagSet.GetBool(flagdefs.FlagOffline)
-		cctx = cctx.WithOffline(offline)
+	if cctx.GenerateOnly {
+		gas, _ := flagSet.GetString(flagdefs.FlagGas)
+		if gas == cflags.GasFlagAuto {
+			// Both SDK transaction factories read this flag. Unsigned output
+			// must not simulate to replace an automatic gas estimate.
+			_ = flagSet.Lookup(flagdefs.FlagGas).Value.Set(strconv.FormatUint(cflags.DefaultGasLimit, 10))
+		}
 	}
 
 	if !cctx.UseLedger || flagSet.Changed(flagdefs.FlagUseLedger) {

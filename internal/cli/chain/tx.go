@@ -75,8 +75,14 @@ func TxPersistentPreRunE(cmd *cobra.Command, args []string) error {
 
 // clientContextForTxClient prevents the downstream transaction client from
 // interpreting an already parsed address as a key name. Unsigned construction
-// needs the address for messages but does not sign.
+// needs the address for messages but does not sign. The discovery/broadcast
+// client uses offline mode to avoid version and account queries. Keep that
+// internal mode separate from explicit --offline on the command context: SDK
+// factories otherwise require account/sequence flags even for unsigned output.
 func clientContextForTxClient(cctx sdkclient.Context) sdkclient.Context {
+	if cctx.GenerateOnly {
+		cctx = cctx.WithOffline(true)
+	}
 	addressOnly := cctx.FromName == "" && len(cctx.FromAddress) != 0
 	if addressOnly && cctx.GenerateOnly {
 		return cctx.WithFrom("")

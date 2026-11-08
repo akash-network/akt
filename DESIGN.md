@@ -1726,6 +1726,14 @@ payload already returned as bytes is treated as encoded JSON, not serialized
 again as a byte slice. This keeps locally implemented and SDK-owned
 `--generate-only` leaves interchangeable in scripts.
 
+Generation mode is resolved before shared startup can open an RPC client.
+It uses the SDK's offline context for client selection and account handling,
+and replaces automatic gas estimation with the fixed 200000 construction
+default before either transaction factory reads the flags. Explicit numeric
+gas values and transaction contents are preserved. Generation and simulation
+are mutually exclusive; missing message fields are not fetched from the node.
+Normal simulation and broadcast retain their online setup and gas estimation.
+
 **Section 1: Transaction Summary (common to all transactions)**
 
 Every transaction result renders the same header block with chain-level metadata: hash, signer, block height, gas consumption, fee paid, and success/failure status. This gives the user immediate confirmation that their transaction landed and what it cost, regardless of what the transaction did.
