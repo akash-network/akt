@@ -7,23 +7,18 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"strconv"
 	"strings"
 
 	flagdefs "pkg.akt.dev/akt/internal/flags"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
-	"github.com/cosmos/cosmos-sdk/crypto/hd"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
-	"github.com/cosmos/cosmos-sdk/crypto/keys/multisig"
 	"github.com/cosmos/cosmos-sdk/crypto/ledger"
-	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/bech32"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 
-	aktkeyring "pkg.akt.dev/akt/internal/keyring"
 	"pkg.akt.dev/akt/internal/output"
 )
 
@@ -38,14 +33,16 @@ const (
 	actionKeysRename  = "keys.rename"
 	actionKeysImport  = "keys.import"
 	actionKeysExport  = "keys.export"
+	actionKeysMigrate = "keys.migrate"
 )
 
 // Key types as recorded in the action log when the keyring cannot report one
 // itself, i.e. when the mutation failed.
 const (
-	keyTypeLocal  = "local"
-	keyTypeLedger = "ledger"
-	keyTypeMulti  = "multi"
+	keyTypeLocal   = "local"
+	keyTypeLedger  = "ledger"
+	keyTypeMulti   = "multi"
+	keyTypeOffline = "offline"
 )
 
 // Recorder records one key-management action in the action log of the context
@@ -138,234 +135,18 @@ func Commands(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) 
 		showCmd(getKeyring, ledger.ShowAddress),
 		exportCmd(getKeyring, recorder),
 		importCmd(getKeyring, recorder),
+		importHexCmd(getKeyring, recorder),
+		listKeyTypesCmd(getKeyring),
+		migrateCmd(getKeyring, recorder),
 		renameCmd(getKeyring, recorder),
-		mnemonicCmd(),
+		mnemonicCmd(generateMnemonic, bip39Mnemonic),
 		parseCmd(),
 	)
 
-	return cmd
-}
-
-func addCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "add <name>",
-		Short: "Add a new key or recover an existing one",
-		Args:  cobra.ExactArgs(1),
-		Example: `  # Generate a new key
-  akt context keys add alice
-
-  # Recover from mnemonic
-  akt context keys add alice --recover
-
-  # Add a Ledger key
-  akt context keys add alice --ledger
-
-  # Scripted creation without printing the mnemonic
-  akt context keys add ci --yes --no-backup`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			name := strings.TrimSpace(args[0])
-			if name == "" {
-				return fmt.Errorf("key name must not be blank")
-			}
-
-			kr, err := getKeyring()
-			if err != nil {
-				return err
-			}
-
-			// Check if key already exists.
-			if _, err := kr.Key(name); err == nil {
-				return fmt.Errorf("key %q already exists; delete it first or use a different name", name)
-			}
-
-			algo := aktkeyring.DefaultAlgo()
-
-			// Multisig key.
-			multisigKeys, _ := cmd.Flags().GetString(flagdefs.FlagMultisig)
-			if multisigKeys != "" {
-				threshold, _ := cmd.Flags().GetInt(flagdefs.FlagMultisigThreshold)
-				return addMultisig(cmd, kr, recorder, name, multisigKeys, threshold)
-			}
-
-			coinType, _ := cmd.Flags().GetUint32(flagdefs.FlagCoinType)
-			account, _ := cmd.Flags().GetUint32(flagdefs.FlagAccount)
-			index, _ := cmd.Flags().GetUint32(flagdefs.FlagIndex)
-
-			// Resolve HD path.
-			path, _ := cmd.Flags().GetString(flagdefs.FlagHDPath)
-			if path == "" {
-				path = hd.CreateHDPath(coinType, account, index).String()
-			}
-
-			// Ledger hardware wallet key.
-			useLedger, _ := cmd.Flags().GetBool(flagdefs.FlagUseLedger)
-			if useLedger {
-				bech32PrefixAccAddr := sdk.GetConfig().GetBech32AccountAddrPrefix()
-				record, err := kr.SaveLedgerKey(name, algo, bech32PrefixAccAddr, coinType, account, index)
-				recorder.record(cmd, actionKeysAdd, err, keyMutationDetails(name, keyTypeLedger, record))
-
-				if err != nil {
-					return fmt.Errorf("add ledger key: %w", err)
-				}
-
-				addr, err := record.GetAddress()
-				if err != nil {
-					return fmt.Errorf("get address: %w", err)
-				}
-
-				return printAddedKey(cmd, keyAddResult{
-					Name:    record.Name,
-					Address: addr.String(),
-					Type:    "ledger",
-				})
-			}
-
-			recoverKey, _ := cmd.Flags().GetBool(flagdefs.FlagRecover)
-			source, _ := cmd.Flags().GetString(flagdefs.FlagMnemonicSource)
-
-			var mnemonic string
-
-			if source != "" {
-				data, err := os.ReadFile(source)
-				if err != nil {
-					return fmt.Errorf("read mnemonic source: %w", err)
-				}
-
-				mnemonic = strings.TrimSpace(string(data))
-			} else if recoverKey {
-				if _, err := fmt.Fprint(cmd.ErrOrStderr(), "Enter your mnemonic: "); err != nil {
-					return err
-				}
-
-				reader := bufio.NewReader(cmd.InOrStdin())
-				mnemonic, err = reader.ReadString('\n')
-				if err != nil && strings.TrimSpace(mnemonic) == "" {
-					return fmt.Errorf("read mnemonic: %w", err)
-				}
-				mnemonic = strings.TrimSpace(mnemonic)
-			} else {
-				// Generate new mnemonic.
-				var err error
-				mnemonic, err = generateMnemonic()
-				if err != nil {
-					return err
-				}
-			}
-
-			var bip39Passphrase string
-
-			interactive, _ := cmd.Flags().GetBool(flagdefs.FlagInteractive)
-			if interactive {
-				if _, err := fmt.Fprint(cmd.ErrOrStderr(), "Enter BIP39 passphrase (leave empty for none): "); err != nil {
-					return err
-				}
-
-				reader := bufio.NewReader(cmd.InOrStdin())
-				bip39Passphrase, err = reader.ReadString('\n')
-				if err != nil && bip39Passphrase == "" {
-					return fmt.Errorf("read BIP39 passphrase: %w", err)
-				}
-				bip39Passphrase = strings.TrimSpace(bip39Passphrase)
-			}
-
-			record, err := kr.NewAccount(name, mnemonic, bip39Passphrase, path, algo)
-
-			// Recovering an existing key and generating a new one are
-			// different events for an audit reader; neither records the
-			// mnemonic or the BIP39 passphrase.
-			addAction := actionKeysAdd
-			if recoverKey || source != "" {
-				addAction = actionKeysRecover
-			}
-
-			recorder.record(cmd, addAction, err, keyMutationDetails(name, keyTypeLocal, record))
-
-			if err != nil {
-				return fmt.Errorf("create key: %w", err)
-			}
-
-			addr, err := record.GetAddress()
-			if err != nil {
-				return fmt.Errorf("get address: %w", err)
-			}
-
-			keyType, _ := cmd.Flags().GetString(flagdefs.FlagKeyType)
-			noBackup, _ := cmd.Flags().GetBool(flagdefs.FlagNoBackup)
-
-			result := keyAddResult{
-				Name:    record.Name,
-				Address: addr.String(),
-				Type:    keyType,
-			}
-			if !noBackup && !recoverKey && source == "" {
-				result.Mnemonic = mnemonic
-			}
-
-			return printAddedKey(cmd, result)
-		},
-	}
-
-	cmd.Flags().Bool(flagdefs.FlagRecover, false, "Recover key from existing mnemonic")
-	cmd.Flags().Bool(flagdefs.FlagNoBackup, false, "Don't print mnemonic after creation")
-	cmd.Flags().BoolP(flagdefs.FlagSkipConfirmation, "y", false, "Skip confirmation prompts (accepted for Cosmos CLI compatibility; key add never overwrites)")
-	cmd.Flags().BoolP(flagdefs.FlagInteractive, "i", false, "Interactive BIP39 passphrase prompt")
-	cmd.Flags().Bool(flagdefs.FlagUseLedger, false, "Use Ledger hardware wallet")
-	cmd.Flags().Uint32(flagdefs.FlagCoinType, 118, "BIP44 coin type")
-	cmd.Flags().Uint32(flagdefs.FlagAccount, 0, "BIP44 account number")
-	cmd.Flags().Uint32(flagdefs.FlagIndex, 0, "BIP44 address index")
-	cmd.Flags().String(flagdefs.FlagHDPath, "", "Manual HD path override")
-	cmd.Flags().String(flagdefs.FlagKeyType, "secp256k1", "Signing algorithm")
-	cmd.Flags().String(flagdefs.FlagMultisig, "", "Comma-separated list of key names for multisig")
-	cmd.Flags().Int(flagdefs.FlagMultisigThreshold, 1, "K-of-N threshold for multisig")
-	cmd.Flags().String(flagdefs.FlagMnemonicSource, "", "File path to read mnemonic from")
+	cmd.PersistentFlags().Bool(flagdefs.FlagOffline, true, "Keys commands always run offline")
+	_ = cmd.PersistentFlags().MarkHidden(flagdefs.FlagOffline)
 
 	return cmd
-}
-
-func addMultisig(cmd *cobra.Command, kr sdkkeyring.Keyring, recorder Recorder, name, keyNames string, threshold int) error {
-	names := strings.Split(keyNames, ",")
-	pks := make([]cryptotypes.PubKey, 0, len(names))
-
-	for _, n := range names {
-		n = strings.TrimSpace(n)
-		rec, err := kr.Key(n)
-		if err != nil {
-			return fmt.Errorf("key %q not found: %w", n, err)
-		}
-
-		pk, err := rec.GetPubKey()
-		if err != nil {
-			return fmt.Errorf("get pubkey for %q: %w", n, err)
-		}
-
-		pks = append(pks, pk)
-	}
-
-	pk := multisig.NewLegacyAminoPubKey(threshold, pks)
-
-	record, err := kr.SaveMultisig(name, pk)
-
-	multisigDetails := keyMutationDetails(name, keyTypeMulti, record)
-	multisigDetails["threshold"] = strconv.Itoa(threshold)
-	multisigDetails["pubkeys"] = strconv.Itoa(len(pks))
-	recorder.record(cmd, actionKeysAdd, err, multisigDetails)
-
-	if err != nil {
-		return fmt.Errorf("save multisig: %w", err)
-	}
-
-	addr, err := record.GetAddress()
-	if err != nil {
-		return fmt.Errorf("get address: %w", err)
-	}
-
-	return printAddedKey(cmd, keyAddResult{
-		Name:      record.Name,
-		Address:   addr.String(),
-		Type:      "multi",
-		Threshold: threshold,
-		PubKeys:   len(pks),
-	})
 }
 
 func printAddedKey(cmd *cobra.Command, result keyAddResult) error {
@@ -444,12 +225,13 @@ func deleteCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder)
 	}
 
 	cmd.Flags().BoolP(flagdefs.FlagSkipConfirmation, "y", false, "Skip confirmation")
+	cmd.Flags().BoolP(flagdefs.FlagForce, "f", false, "Deprecated compatibility flag; does not bypass confirmation")
 
 	return cmd
 }
 
 func listCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:     "list",
 		Short:   "List all keys in the current keyring",
 		Args:    cobra.NoArgs,
@@ -463,6 +245,15 @@ func listCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 			records, err := kr.List()
 			if err != nil {
 				return err
+			}
+
+			namesOnly, _ := cmd.Flags().GetBool(flagdefs.FlagListNames)
+			if namesOnly {
+				names := make([]string, 0, len(records))
+				for _, rec := range records {
+					names = append(names, rec.Name)
+				}
+				return printKeyStrings(cmd, names)
 			}
 
 			// See the action-log listing: the hint is for humans, and a
@@ -521,21 +312,32 @@ func listCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 			return output.PrintData(cmd, columns, rows, data)
 		},
 	}
+	cmd.Flags().BoolP(flagdefs.FlagListNames, "n", false, "List key names only")
+	return cmd
 }
 
 func exportCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:     "export <name>",
 		Short:   "Export a private key (encrypted armor)",
 		Args:    cobra.ExactArgs(1),
 		Example: `  akt context keys export alice`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			raw, _ := cmd.Flags().GetBool(flagdefs.FlagUnarmoredHex)
+			unsafe, _ := cmd.Flags().GetBool(flagdefs.FlagUnsafe)
+			if raw != unsafe {
+				return fmt.Errorf("raw private-key export requires both --unarmored-hex and --unsafe")
+			}
+
 			kr, err := getKeyring()
 			if err != nil {
 				return err
 			}
 
 			name := args[0]
+			if raw {
+				return exportRawKey(cmd, kr, recorder, name)
+			}
 
 			if _, err := fmt.Fprint(cmd.ErrOrStderr(), "Enter passphrase to encrypt the key: "); err != nil {
 				return err
@@ -568,6 +370,10 @@ func exportCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder)
 			return err
 		},
 	}
+	cmd.Flags().Bool(flagdefs.FlagUnarmoredHex, false, "Export unencrypted private key as hex (requires --unsafe)")
+	cmd.Flags().Bool(flagdefs.FlagUnsafe, false, "Allow unencrypted private-key export (requires --unarmored-hex)")
+	cmd.Flags().BoolP(flagdefs.FlagSkipConfirmation, "y", false, "Skip raw export confirmation")
+	return cmd
 }
 
 func importCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *cobra.Command {
@@ -623,7 +429,7 @@ func importCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder)
 }
 
 func renameCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *cobra.Command {
-	return &cobra.Command{
+	cmd := &cobra.Command{
 		Use:     "rename <old> <new>",
 		Short:   "Rename a key",
 		Args:    cobra.ExactArgs(2),
@@ -645,24 +451,8 @@ func renameCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder)
 			return err
 		},
 	}
-}
-
-func mnemonicCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:     "mnemonic",
-		Short:   "Generate a new BIP39 mnemonic",
-		Args:    cobra.NoArgs,
-		Example: `  akt context keys mnemonic`,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			mnemonic, err := generateMnemonic()
-			if err != nil {
-				return err
-			}
-
-			_, err = fmt.Fprintln(cmd.OutOrStdout(), mnemonic)
-			return err
-		},
-	}
+	cmd.Flags().BoolP(flagdefs.FlagSkipConfirmation, "y", false, "Skip confirmation (accepted for Cosmos CLI compatibility)")
+	return cmd
 }
 
 func parseCmd() *cobra.Command {

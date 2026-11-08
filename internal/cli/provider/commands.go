@@ -28,6 +28,7 @@ import (
 
 	"pkg.akt.dev/akt/internal/capability"
 	chaincli "pkg.akt.dev/akt/internal/cli/chain"
+	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
 	aktclient "pkg.akt.dev/akt/internal/client"
 	"pkg.akt.dev/akt/internal/output"
 	"pkg.akt.dev/akt/internal/output/pretty"
@@ -50,6 +51,9 @@ func Commands() *cobra.Command {
 		Annotations: map[string]string{capability.AnnotationKey: string(capability.Provider)},
 	}
 
+	cmd.PersistentFlags().String(flagdefs.FlagNode, "", "Chain RPC endpoint (default: context RPC)")
+	cmd.PersistentFlags().String(flagdefs.FlagChainID, "", "Chain ID (default: context chain ID)")
+	cmd.PersistentFlags().String(flagdefs.FlagFrom, "", "Signing account name or address (default: context account)")
 	cmd.PersistentFlags().String(flagdefs.FlagAuthType, "", "Provider auth type: jwt (default) or mtls")
 	cmd.PersistentFlags().String(flagdefs.FlagProvider, "", "Provider address (bech32); default: the deployment's active lease")
 	cmd.PersistentFlags().String(flagdefs.FlagProviderURL, "", "Provider gateway URL (e.g. https://provider.example.com:8443)")
@@ -57,6 +61,7 @@ func Commands() *cobra.Command {
 	cmd.AddCommand(
 		statusCmd(),
 		leaseStatusCmd(),
+		serviceStatusCmd(),
 		leaseAttestationCmd(),
 		leaseLogsCmd(),
 		leaseEventsCmd(),
@@ -290,7 +295,7 @@ func leaseLogsCmd() *cobra.Command {
 	addLeaseFlags(cmd)
 	cmd.Flags().BoolP(flagdefs.FlagFollow, "f", false, "Follow log output")
 	cmd.Flags().String(flagdefs.FlagService, "", "Filter logs by service name")
-	cmd.Flags().Int64(flagdefs.FlagTail, -1, "Number of lines to show from the end of the logs")
+	cmd.Flags().Int64P(flagdefs.FlagTail, "t", -1, "Number of lines to show from the end of the logs")
 
 	return cmd
 }
@@ -327,7 +332,8 @@ func leaseEventsCmd() *cobra.Command {
 				return err
 			}
 
-			events, err := cl.LeaseEvents(ctx, lid, "", follow)
+			service, _ := cmd.Flags().GetString(flagdefs.FlagService)
+			events, err := cl.LeaseEvents(ctx, lid, service, follow)
 			if err != nil {
 				return aktprovider.GatewayError("stream lease events", err)
 			}
@@ -336,6 +342,7 @@ func leaseEventsCmd() *cobra.Command {
 		},
 	}
 
+	cmd.Flags().String(flagdefs.FlagService, "", "Service name (empty selects all services)")
 	addLeaseFlags(cmd)
 	cmd.Flags().BoolP(flagdefs.FlagFollow, "f", false, "Follow event output")
 
@@ -388,6 +395,7 @@ func leaseShellCmd() *cobra.Command {
 			if service == "" {
 				return fmt.Errorf("--service is required for lease-shell")
 			}
+			replicaIndex, _ := cmd.Flags().GetUint(flagdefs.FlagReplicaIndex)
 			tty, _ := cmd.Flags().GetBool(flagdefs.FlagTTY)
 			stdinOverride, _ := cmd.Flags().GetBool(flagdefs.FlagStdin)
 			stdin := aktprovider.SelectShellStdin(
@@ -400,7 +408,7 @@ func leaseShellCmd() *cobra.Command {
 			)
 
 			err = output.RunShellOutput(cmd, interactive, tty, func(stdout, stderr io.Writer, shellTTY bool) error {
-				return aktprovider.RunLeaseShell(shellCtx, cl, lid, service, 0, leaseShellCommand(args),
+				return aktprovider.RunLeaseShell(shellCtx, cl, lid, service, replicaIndex, leaseShellCommand(args),
 					stdin, stdout, stderr, shellTTY, nil)
 			})
 			recordProviderAction(ctx, "lease-shell", lid.Provider, lid.DSeq, err)
@@ -410,6 +418,7 @@ func leaseShellCmd() *cobra.Command {
 	}
 
 	addLeaseShellFlags(cmd)
+	cmd.Flags().Uint(flagdefs.FlagReplicaIndex, 0, "Index of the service replica to connect to")
 	cmd.Flags().String(flagdefs.FlagService, "", "Service name (required)")
 	cmd.Flags().BoolP(flagdefs.FlagTTY, "t", true, "Allocate a TTY")
 	cmd.Flags().Bool(flagdefs.FlagStdin, false, "Force stdin attachment for an explicit terminal command")
@@ -477,7 +486,7 @@ func sendManifestCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().Uint64(flagdefs.FlagDSeq, 0, "Deployment sequence number")
+	addLeaseShellFlags(cmd)
 
 	return cmd
 }
@@ -674,10 +683,16 @@ func migrateEndpointsCmd() *cobra.Command {
 // that take a positional [dseq] (lease-status, lease-logs, lease-events,
 // get-manifest). lease-shell keeps its --dseq via addLeaseShellFlags.
 func addLeaseFlags(cmd *cobra.Command) {
-	// FEEDBACK(2026-07): --dseq disabled for the positional-only UX trial
-	// (use the positional [dseq] argument instead). Restore by uncommenting
-	// if users ask for the flag form back.
-	// cmd.Flags().Uint64("dseq", 0, "Deployment sequence number")
+	cmd.Flags().Uint64(flagdefs.FlagDSeq, 0, "Deployment sequence number")
+	validateArgs := cmd.Args
+	cmd.Args = func(cmd *cobra.Command, args []string) error {
+		if validateArgs != nil {
+			if err := validateArgs(cmd, args); err != nil {
+				return err
+			}
+		}
+		return cflags.RejectDuplicateArgs(cmd.Flags(), args, flagdefs.FlagDSeq)
+	}
 	cmd.Flags().Uint32(flagdefs.FlagGSeq, 1, "Group sequence number")
 	cmd.Flags().Uint32(flagdefs.FlagOSeq, 1, "Order sequence number")
 }

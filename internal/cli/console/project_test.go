@@ -419,8 +419,18 @@ func TestAPIKeyCreateBindsOnlyAnExplicitProject(t *testing.T) {
 		t.Errorf("bound key output = %s", out)
 	}
 
+	out, err = execConsole(t, m, srv.URL, "apikey", "create",
+		"--name", "flag-ci", "--expires-at", "2027-01-01T00:00:00Z",
+		"--console-project", "default")
+	if err != nil {
+		t.Fatalf("apikey create with flags: %v", err)
+	}
+	if !strings.Contains(out, `"projectId": "`+cliOtherProjectID+`"`) {
+		t.Errorf("flag-bound key output = %s", out)
+	}
+
 	creates := srv.find(http.MethodPost, "/v1/api-keys")
-	if len(creates) != 2 {
+	if len(creates) != 3 {
 		t.Fatalf("create requests = %+v", creates)
 	}
 	if _, bound := creates[0].body["projectId"]; bound || creates[0].project != "" {
@@ -428,6 +438,12 @@ func TestAPIKeyCreateBindsOnlyAnExplicitProject(t *testing.T) {
 	}
 	if creates[1].body["projectId"] != cliOtherProjectID || creates[1].project != "" {
 		t.Errorf("an explicit --console-project binds the key in the body only, got %+v", creates[1])
+	}
+	if creates[2].body["name"] != "flag-ci" || creates[2].body["expiresAt"] != "2027-01-01T00:00:00Z" {
+		t.Errorf("name and expiry flags must reach the create request, got %+v", creates[2])
+	}
+	if creates[2].body["projectId"] != cliOtherProjectID || creates[2].project != "" {
+		t.Errorf("flag-based creation must bind the project in the body only, got %+v", creates[2])
 	}
 }
 

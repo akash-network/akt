@@ -1284,6 +1284,30 @@ Commands are copied from `akash-network/chain-sdk/go/cli` with the following cle
 
 The `chain-sdk` CLI package (`pkg.akt.dev/go/cli`) will be deprecated and eventually removed once `akt` reaches full feature parity. In the interim, the `go/cli` code is clean-copied into `internal/cli/chain` and adjusted to respect akt context defaults; all other chain-sdk packages are imported directly.
 
+Flag compatibility is audited across the complete upstream command tree,
+including inherited options and renamed query paths. The positional-only
+trial ends for existing flag alternatives: positional arguments remain easy
+to use, while scripts can use the familiar resource, state, and search flags.
+Restored alternatives reject duplicate positional/flag input; established
+precedence on existing alternatives remains unchanged. Every accepted option
+must reach its request or SDK operation. Explicit identities take precedence
+over context defaults without triggering an unnecessary account lookup.
+Network-wide query defaults also apply to state-only and zero-sequence flag
+filters. A positive dseq in owner mode still needs an owner: both positional
+and flag forms resolve the default account only when no owner was supplied,
+and fail locally if none is available. Group queries keep network-wide and
+owner-scoped pagination while accepting identity flags for single-deployment
+and single-group reads; a group sequence without a deployment is rejected.
+Console API-key name and expiry flags compose with explicit project binding;
+selecting a context project never silently binds a newly created key.
+The audit records node/operator exclusions separately and tests all mapped
+commands against the assembled tree. Provider endpoint, signer, service, and
+replica selection follow the same rule. Status and event streaming are
+read-only RPC operations with no signing-key requirement.
+Event streaming passes the resolved node URI to the SDK-owned RPC and
+WebSocket connections. Client initialization preserves a supplied node URI
+when no active-context endpoint or explicit override replaces it.
+
 The clean copy is bounded by the release command tree. `internal/cli/chain`
 contains registered user-facing transaction and query commands plus helpers
 they call. It does not retain validator-node server, genesis, RPC-console, or
@@ -1565,6 +1589,22 @@ Cosmos CLI compatibility even though add has no confirmation prompt. It never
 authorizes overwriting an existing key and cannot bypass mnemonic, Ledger, or
 keyring-passphrase input; `--no-backup` remains the separate control that keeps
 a newly generated mnemonic out of command output.
+
+Key management preserves the `akash keys` flag surface beneath
+`akt context keys`, including public-only imports needed to assemble multisig
+accounts. JSON and base64 public keys are decoded at the CLI boundary and
+saved through the SDK's offline-key API. Signing algorithms are resolved from
+the keyring's supported algorithms. Multisig construction uses node-compatible
+address sorting unless `--nosort` is selected; stored keys are never reordered.
+
+Dry runs use an isolated in-memory destination and suppress mutation logging.
+They do not open persistent storage except to read existing multisig members.
+Unarmored export requires both explicit unsafe-export flags and confirmation
+(or `--yes`), and shares the existing security-event recorder. Hex import and
+record migration use SDK operations on the selected keyring. No compatibility
+command implicitly imports keys from `~/.akash` or changes storage backends.
+The compatibility matrix in SPEC §2.2.3 distinguishes retained akt output and
+confirmation conventions from node-specific server logging flags.
 
 The output flag is an enum at the parsing boundary. A misspelling such as
 `-o josn` is a usage error; it must never fall through to pretty output. The

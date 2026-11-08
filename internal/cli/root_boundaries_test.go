@@ -43,7 +43,7 @@ func TestRootPostRunReportsActionLogCloseFailure(t *testing.T) {
 func TestRootConfigurationBoundaries(t *testing.T) {
 	root := &cobra.Command{Use: "akt"}
 
-	for _, name := range []string{"version", "completion", "monitor", "mcp", "sdl", "context create", "context network create"} {
+	for _, name := range []string{"version", "completion", "monitor", "status", "events", "mcp", "sdl", "context create", "context network create"} {
 		parts := strings.Split(name, " ")
 		cmd := &cobra.Command{Use: parts[len(parts)-1]}
 		if len(parts) == 1 {

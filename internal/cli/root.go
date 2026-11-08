@@ -184,7 +184,7 @@ the deployment is created.`,
 			_ = v.BindPFlag(flagdefs.FlagInteractive, cmd.Flags().Lookup(flagdefs.FlagInteractive))
 			_ = v.BindPFlag(flagdefs.FlagVerbose, cmd.Flags().Lookup(flagdefs.FlagVerbose))
 			_ = v.BindPFlag(flagdefs.FlagQuiet, cmd.Flags().Lookup(flagdefs.FlagQuiet))
-			if fromFlag := cmd.Flags().Lookup(flagdefs.FlagFrom); fromFlag != nil {
+			if fromFlag := cmd.Flags().Lookup(flagdefs.FlagFrom); fromFlag != nil && !strings.HasPrefix(cmd.CommandPath(), "akt console") {
 				_ = v.BindPFlag(flagdefs.FlagFrom, fromFlag)
 			}
 
@@ -457,6 +457,8 @@ the deployment is created.`,
 	// TX and Query command trees from local chain CLI copy.
 	root.AddCommand(chaincli.TxCmd())
 	root.AddCommand(chaincli.QueryCmd())
+	root.AddCommand(chaincli.StatusCmd())
+	root.AddCommand(chaincli.EventsCmd())
 
 	homeFn := func() string { return resolvedCfgRoot }
 	root.AddCommand(monitorCmd(v, homeFn, mgrFn, mainnetChainIDFn))
@@ -722,7 +724,7 @@ func requiresConfig(cmd *cobra.Command) bool {
 	case strings.HasPrefix(path, "akt completion"):
 		return false
 	// A monitor invocation with its own RPC is a complete standalone setup.
-	case strings.HasPrefix(path, "akt monitor"):
+	case strings.HasPrefix(path, "akt monitor"), path == "akt status", path == "akt events":
 		return false
 	// MCP owns a stdio protocol and must never launch an interactive wizard.
 	// It either resolves an existing chain/context rail, starts read-only from
@@ -764,7 +766,7 @@ func localIdentityMode(cmd *cobra.Command) aktclient.LocalIdentityMode {
 	case strings.HasPrefix(path, "akt sdl"):
 		return aktclient.LocalIdentityNone
 	// Monitoring reads public chain state over RPC.
-	case strings.HasPrefix(path, "akt monitor"):
+	case strings.HasPrefix(path, "akt monitor"), path == "akt status", path == "akt events":
 		return aktclient.LocalIdentityNone
 	// Build metadata and completion scripts come from the binary alone.
 	case strings.HasPrefix(path, "akt version"),
@@ -863,7 +865,7 @@ func requiresContext(cmd *cobra.Command) bool {
 		return false
 	case strings.HasPrefix(path, "akt version"):
 		return false
-	case strings.HasPrefix(path, "akt monitor"):
+	case strings.HasPrefix(path, "akt monitor"), path == "akt status", path == "akt events":
 		return false
 	case strings.HasPrefix(path, "akt completion"):
 		return false

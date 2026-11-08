@@ -817,3 +817,47 @@ func TestAuthenticatedCommandsCarryConsoleCapability(t *testing.T) {
 		}
 	}
 }
+
+func TestRestoredConsoleFlagsMatchMutationRequests(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		positional []string
+		flagged    []string
+		response   string
+	}{
+		{
+			name:       "lease",
+			positional: []string{"lease", "create", "9911", "akash1provider"},
+			flagged:    []string{"lease", "create", "9911", "--provider", "akash1provider"},
+			response:   `{"data":{"deployment":{"id":{"dseq":"9911"}},"leases":[{"id":{"dseq":"9911","gseq":1,"oseq":1,"provider":"akash1provider"},"state":"active"}]}}`,
+		},
+		{
+			name:       "apikey",
+			positional: []string{"apikey", "create", "ci", "2027-01-01T00:00:00Z"},
+			flagged:    []string{"apikey", "create", "--name", "ci", "--expires-at", "2027-01-01T00:00:00Z"},
+			response:   `{"data":{"id":"test","name":"ci","apiKey":"synthetic-test-key"}}`,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newAuthedManager(t)
+			bodies := make(chan string, 2)
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Error(err)
+				}
+				bodies <- string(body)
+				writeJSON(t, w, tc.response)
+			}))
+			defer server.Close()
+			for _, args := range [][]string{tc.positional, tc.flagged} {
+				if _, err := execConsole(t, m, server.URL, args...); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if first, second := <-bodies, <-bodies; first != second {
+				t.Fatalf("requests differ: %q / %q", first, second)
+			}
+		})
+	}
+}

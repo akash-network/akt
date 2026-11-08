@@ -37,6 +37,7 @@ require (
 	github.com/cosmos/gogoproto v1.7.2
 	github.com/cosmos/ibc-go/v10 v10.5.0
 	github.com/creack/pty v1.1.9
+	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0
 	github.com/distribution/reference v0.6.0
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/gagliardetto/solana-go v1.14.0
@@ -148,7 +149,6 @@ require (
 	github.com/cosmos/ledger-cosmos-go v1.0.0 // indirect
 	github.com/danieljoos/wincred v1.2.2 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
-	github.com/decred/dcrd/dcrec/secp256k1/v4 v4.4.0 // indirect
 	github.com/desertbit/timer v1.0.1 // indirect
 	github.com/dgraph-io/badger/v4 v4.6.0 // indirect
 	github.com/dgraph-io/ristretto/v2 v2.1.0 // indirect

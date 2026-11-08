@@ -40,7 +40,7 @@ func GetQueryCertCertificatesCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:               "list [owner] [state]",
 		Short:             "Query for all certificates",
-		Args:              cobra.MaximumNArgs(2),
+		Args:              cflags.ResourceFilterArgs(certificateStateFromArg, flagdefs.FlagOwner),
 		SilenceUsage:      true,
 		PersistentPreRunE: QueryPersistentPreRunE,
 		Example: `akt query cert list
@@ -59,6 +59,9 @@ akt query cert list revoked`,
 			params := &types.QueryCertificatesRequest{
 				Pagination: pageReq,
 			}
+
+			params.Filter.Owner, _ = cmd.Flags().GetString(flagdefs.FlagOwner)
+			params.Filter.State, _ = cmd.Flags().GetString(flagdefs.FlagState)
 
 			// Positional [owner] [state] filters with smart type detection
 			// on the first component (SPEC §3.8.2): a bech32 address is the
@@ -87,19 +90,6 @@ akt query cert list revoked`,
 			// An empty owner lists every certificate on the network
 			// (SPEC §3.8.4).
 
-			// FEEDBACK(2026-07): the --owner flag read is disabled for the
-			// positional-only UX trial (the positional [owner] argument is
-			// the only source). Restore by uncommenting if users ask for the
-			// flag form back.
-			// if value := cmd.Flag("owner").Value.String(); value != "" {
-			// 	var owner sdk.Address
-			// 	if owner, err = sdk.AccAddressFromBech32(value); err != nil {
-			// 		return err
-			// 	}
-			//
-			// 	params.Filter.Owner = owner.String()
-			// }
-
 			if value := cmd.Flag("serial").Value.String(); value != "" {
 				if params.Filter.Owner == "" {
 					return fmt.Errorf("--serial flag requires the positional [owner] argument to be set")
@@ -111,18 +101,6 @@ akt query cert list revoked`,
 
 				params.Filter.Serial = val.String()
 			}
-
-			// FEEDBACK(2026-07): the --state flag read is disabled for the
-			// positional-only UX trial (the positional [state] argument is
-			// the only source). Restore by uncommenting if users ask for the
-			// flag form back.
-			// if value := cmd.Flag("state").Value.String(); value != "" {
-			// 	if val, exists := types.State_value[value]; !exists || types.State(val) == types.CertificateStateInvalid {
-			// 		return fmt.Errorf("invalid value of --state flag. expected valid|revoked")
-			// 	}
-			//
-			// 	params.Filter.State = value
-			// }
 
 			res, err := cl.Query().Certs().Certificates(cmd.Context(), params)
 			if err != nil {
@@ -137,14 +115,15 @@ akt query cert list revoked`,
 	cflags.AddPaginationFlagsToCmd(cmd, "certificates")
 
 	cmd.Flags().String(flagdefs.FlagSerial, "", "filter certificates by serial number")
-	// FEEDBACK(2026-07): --owner disabled for the positional-only UX trial
-	// (use the positional form instead). Restore by uncommenting if users
-	// ask for the flag form back.
-	// cmd.Flags().String("owner", "", "filter certificates by owner")
-	// FEEDBACK(2026-07): --state disabled for the positional-only UX trial
-	// (use the positional form instead). Restore by uncommenting if users
-	// ask for the flag form back.
-	// cmd.Flags().String("state", "", "filter certificates by valid|revoked")
+	cmd.Flags().String(flagdefs.FlagOwner, "", "Filter certificates by owner")
+	cmd.Flags().String(flagdefs.FlagState, "", "Filter certificates by valid|revoked")
 
 	return cmd
+}
+
+func certificateStateFromArg(value string) (string, error) {
+	if state, exists := types.State_value[value]; !exists || types.State(state) == types.CertificateStateInvalid {
+		return "", fmt.Errorf("certificate filter: %q is not a valid state (valid|revoked)", value)
+	}
+	return value, nil
 }

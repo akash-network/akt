@@ -60,7 +60,7 @@ The optional [state] argument narrows the result: with a partial identity it
 filters the list; when the identity pins down a single order it verifies the
 record instead — the command fails if the order is in a different state
 rather than printing it.`,
-		Args:              cobra.MaximumNArgs(2),
+		Args:              cflags.ResourceFilterArgs(cflags.OrderStateFromArg, flagdefs.FlagOwner, flagdefs.FlagDSeq, flagdefs.FlagGSeq, flagdefs.FlagOSeq),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -111,8 +111,11 @@ rather than printing it.`,
 				}
 			}
 
-			// An empty owner lists the whole network (SPEC §3.8.4); only the
-			// numeric dseq shorthand above takes the default account.
+			ofilters.Owner, err = ownerForQueryDSeq(cl.ClientContext(), ofilters.Owner, ofilters.DSeq)
+			if err != nil {
+				return err
+			}
+
 			if cflags.OrderFiltersIsID(ofilters) {
 				id := mv1.OrderID{
 					Owner: ofilters.Owner,
@@ -190,7 +193,7 @@ The optional [state] argument narrows the result: with a partial identity it
 filters the list; when the identity pins down a single bid it verifies the
 record instead — the command fails if the bid is in a different state rather
 than printing it.`,
-		Args:              cobra.MaximumNArgs(2),
+		Args:              cflags.ResourceFilterArgs(cflags.BidStateFromArg, flagdefs.FlagOwner, flagdefs.FlagDSeq, flagdefs.FlagGSeq, flagdefs.FlagOSeq, flagdefs.FlagProvider),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -254,9 +257,13 @@ than printing it.`,
 				}
 			}
 
-			// No leading address lists the whole network in either
-			// perspective (SPEC §3.8.4); only the numeric dseq shorthand
-			// above takes the default account.
+			if !isByProvider {
+				bfilters.Owner, err = ownerForQueryDSeq(cl.ClientContext(), bfilters.Owner, bfilters.DSeq)
+				if err != nil {
+					return err
+				}
+			}
+
 			if cflags.BidFiltersIsID(bfilters) {
 				id := mv1.BidID{
 					Owner:    bfilters.Owner,
@@ -336,7 +343,7 @@ The optional [state] argument narrows the result: with a partial identity it
 filters the list; when the identity pins down a single lease it verifies the
 record instead — the command fails if the lease is in a different state
 rather than printing it.`,
-		Args:              cobra.MaximumNArgs(2),
+		Args:              cflags.ResourceFilterArgs(cflags.LeaseStateFromArg, flagdefs.FlagOwner, flagdefs.FlagDSeq, flagdefs.FlagGSeq, flagdefs.FlagOSeq, flagdefs.FlagProvider),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -400,9 +407,13 @@ rather than printing it.`,
 				}
 			}
 
-			// No leading address lists the whole network in either
-			// perspective (SPEC §3.8.4); only the numeric dseq shorthand
-			// above takes the default account.
+			if !isByProvider {
+				lfilters.Owner, err = ownerForQueryDSeq(cl.ClientContext(), lfilters.Owner, lfilters.DSeq)
+				if err != nil {
+					return err
+				}
+			}
+
 			if cflags.LeaseFiltersIsID(lfilters) {
 				id := mv1.LeaseID{
 					Owner:    lfilters.Owner,

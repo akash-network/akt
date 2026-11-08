@@ -8,6 +8,7 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	cflags "pkg.akt.dev/akt/internal/cli/chain/flags"
+	flagdefs "pkg.akt.dev/akt/internal/flags"
 	"pkg.akt.dev/akt/internal/output/pretty"
 	dv1 "pkg.akt.dev/go/node/deployment/v1"
 	dvbeta "pkg.akt.dev/go/node/deployment/v1beta4"
@@ -59,7 +60,7 @@ the command fails if the deployment is in a different one.`,
 
   # Fails unless that deployment is closed
   akt query deployment akash1zn43lm.../25354313 closed`,
-		Args:                       cobra.MaximumNArgs(2),
+		Args:                       cflags.ResourceFilterArgs(cflags.DeploymentStateFromArg, flagdefs.FlagOwner, flagdefs.FlagDSeq),
 		SuggestionsMinimumDistance: 2,
 		PersistentPreRunE:          QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -105,8 +106,11 @@ the command fails if the deployment is in a different one.`,
 				}
 			}
 
-			// An empty owner lists the whole network (SPEC §3.8.4); only the
-			// numeric dseq shorthand above takes the default account.
+			dfilters.Owner, err = ownerForQueryDSeq(cl.ClientContext(), dfilters.Owner, dfilters.DSeq)
+			if err != nil {
+				return err
+			}
+
 			if cflags.DepFiltersIsID(dfilters) {
 				id := dv1.DeploymentID{
 					Owner: dfilters.Owner,
@@ -190,7 +194,7 @@ filter, which a group listing cannot take.
 
   # Group 1 of a deployment of the default account
   akt query deployment group 25354313/1`,
-		Args:              cobra.MaximumNArgs(1),
+		Args:              cflags.ResourceFilterArgs(nil, flagdefs.FlagOwner, flagdefs.FlagDSeq, flagdefs.FlagGSeq),
 		PersistentPreRunE: QueryPersistentPreRunE,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -223,24 +227,23 @@ filter, which a group listing cannot take.
 						gseq = parsed.GSeq
 					}
 				}
+			} else {
+				id, err := cflags.DeploymentIDFromFlags(cmd.Flags())
+				if err != nil {
+					return err
+				}
+				owner, dseq = id.Owner, id.DSeq
+				if cmd.Flags().Changed(flagdefs.FlagGSeq) {
+					gseq, _ = cmd.Flags().GetUint32(flagdefs.FlagGSeq)
+				}
 			}
-			// FEEDBACK(2026-07): the --owner/--dseq/--gseq flag path is
-			// disabled for the positional-only UX trial; the positional
-			// [owner/]dseq[/gseq] argument is the only source. Restore by
-			// uncommenting if users ask for the flag form back.
-			// } else {
-			// 	// Read from flags
-			// 	id, err := cflags.DeploymentIDFromFlags(cmd.Flags())
-			// 	if err != nil {
-			// 		return err
-			// 	}
-			// 	owner = id.Owner
-			// 	dseq = id.DSeq
-			//
-			// 	if cmd.Flags().Changed(flagdefs.FlagGSeq) {
-			// 		gseq, _ = cmd.Flags().GetUint32(flagdefs.FlagGSeq)
-			// 	}
-			// }
+			owner, err = ownerForQueryDSeq(cl.ClientContext(), owner, dseq)
+			if err != nil {
+				return err
+			}
+			if gseq != 0 && dseq == 0 {
+				return fmt.Errorf("deployment group: --gseq requires --dseq")
+			}
 
 			// Without a dseq there is no single deployment to read, and no
 			// chain query lists groups: list one page of deployments (the
@@ -297,10 +300,7 @@ filter, which a group listing cannot take.
 
 	cflags.AddQueryFlagsToCmd(cmd)
 	cflags.AddPaginationFlagsToCmd(cmd, "deployments")
-	// FEEDBACK(2026-07): --owner/--dseq/--gseq disabled for the
-	// positional-only UX trial (use the positional owner/dseq[/gseq] form
-	// instead). Restore by uncommenting if users ask for the flag form back.
-	// cflags.AddGroupIDFlags(cmd.Flags())
+	cflags.AddGroupIDFlags(cmd.Flags())
 
 	return cmd
 }
