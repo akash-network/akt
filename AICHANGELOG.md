@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fixed
+
+<!-- changelog: generate-only-offline.fixed.md -->
+- Make `tx --generate-only` construct unsigned transactions without RPC discovery, account queries, or gas simulation, including Sink guardian pause. Use the fixed gas default for `auto`, preserve numeric gas limits, and reject conflicting simulation mode.
+<!-- /changelog -->
+
 ### Added
 
 <!-- changelog: command-flag-parity.added.md -->
