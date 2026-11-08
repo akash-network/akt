@@ -3914,6 +3914,17 @@ signing-key lookup or even opening the configured backend. `--dry-run` has the
 same address-only identity contract because simulation does not sign. A signer
 name still resolves through the selected keyring on demand. A transaction that
 will sign opens and validates its keyring during startup.
+
+`--generate-only` constructs locally: it MUST NOT connect to RPC, discover the
+node API, look up an on-chain account, simulate, sign, or broadcast. It implies
+offline transaction construction without requiring `--offline`. When the
+resolved gas setting is `auto`, generation uses the fixed default of 200000;
+numeric gas limits, fixed fees, gas prices, memo, and signer remain intact.
+This applies to both akt and SDK-owned transaction handlers. Combining
+`--generate-only` with `--dry-run` is a usage error, since simulation requires
+the node. Commands that normally query message fields need explicit input
+where supported; generation does not fetch missing chain state.
+
 `akt tx staking create-validator` additionally accepts `--node-id`, `--ip`,
 and `--p2p-port` (default `26656`). During `--generate-only`, when node ID and
 IP are both present, the unsigned transaction note is exactly

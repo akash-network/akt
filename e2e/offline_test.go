@@ -870,24 +870,30 @@ func TestQueryMarketPositionalStateArgsOffline(t *testing.T) {
 }
 
 func TestTxDeploymentClosePositionalArgsOffline(t *testing.T) {
-	// tx deployment close <dseq> requires a node for account/sequence
-	// resolution even with --generate-only, so offline we can only assert
-	// the positional dseq passes cobra validation and the failure is at the
-	// connection stage. The full path is exercised on the localnet.
 	home := setupContextHome(t)
 
 	stdout, stderr, exitCode := runAkt(t, home,
-		"tx", "deployment", "close", "12345", "--generate-only", "--node", unreachableNode)
-	combined := stdout + stderr
-
-	if exitCode == 0 {
-		t.Fatalf("expected non-zero exit against unreachable node, got 0:\n%s", combined)
+		"tx", "deployment", "close", "12345", "--generate-only", "--from", testMnemonicAddr,
+		"--node", unreachableNode, "-o", "json")
+	if exitCode != 0 {
+		t.Fatalf("generate-only exited %d\nstdout: %s\nstderr: %s", exitCode, stdout, stderr)
 	}
-	if strings.Contains(combined, "not a valid") || strings.Contains(combined, "unknown command") {
-		t.Fatalf("positional dseq was rejected before connection stage:\n%s", combined)
+	var tx struct {
+		Body struct {
+			Messages []struct {
+				ID struct {
+					Owner string `json:"owner"`
+					DSeq  string `json:"dseq"`
+				} `json:"id"`
+			} `json:"messages"`
+		} `json:"body"`
+		Signatures []string `json:"signatures"`
 	}
-	if !strings.Contains(combined, "127.0.0.1") {
-		t.Fatalf("expected a connection-stage error, got:\n%s", combined)
+	if err := json.Unmarshal([]byte(stdout), &tx); err != nil {
+		t.Fatalf("invalid generated transaction: %v\n%s", err, stdout)
+	}
+	if len(tx.Body.Messages) != 1 || tx.Body.Messages[0].ID.Owner != testMnemonicAddr || tx.Body.Messages[0].ID.DSeq != "12345" || len(tx.Signatures) != 0 {
+		t.Fatalf("unexpected unsigned deployment close: %s", stdout)
 	}
 }
 

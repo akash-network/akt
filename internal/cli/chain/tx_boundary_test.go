@@ -329,6 +329,9 @@ func TestClientContextForTxClientPreservesAddressWithoutKeyLookup(t *testing.T) 
 		WithFromAddress(address)
 
 	got := clientContextForTxClient(base.WithGenerateOnly(true))
+	if !got.Offline {
+		t.Fatal("unsigned client may query the node")
+	}
 	if got.From != "" || got.FromName != "" {
 		t.Fatalf("signer lookup fields remain: from=%q name=%q", got.From, got.FromName)
 	}
@@ -339,5 +342,8 @@ func TestClientContextForTxClientPreservesAddressWithoutKeyLookup(t *testing.T) 
 	named := base.WithFrom("ordinary").WithFromName("ordinary").WithGenerateOnly(true)
 	if got := clientContextForTxClient(named); got.From != "ordinary" || got.FromName != "ordinary" {
 		t.Fatalf("named signer was cleared: from=%q name=%q", got.From, got.FromName)
+	}
+	if got := clientContextForTxClient(base); got.Offline || got.From != base.From {
+		t.Fatal("online transaction context changed")
 	}
 }
