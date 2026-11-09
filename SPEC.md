@@ -1524,6 +1524,14 @@ double and MUST NOT require physical Ledger hardware.
 names in JSON/YAML. `list-key-types` reports the selected keyring's supported
 signing algorithms, with an array in machine formats.
 
+Full `list` and `show` output use the node CLI's typed Protobuf JSON public
+key, including base64 key bytes and the algorithm type. In JSON/YAML records,
+`pubkey` remains a string containing that JSON, matching `akash keys show -o
+json`; pretty output prints the same complete public-key JSON. The extracted
+string MUST round-trip through `keys add --pubkey` without conversion,
+including multisig thresholds and constituent public keys. Do not emit raw hex
+or truncate public keys. Encoding errors fail the command before output.
+
 `export --unarmored-hex --unsafe` emits raw private-key hex only when both
 flags are present. It requires confirmation unless `--yes` is set; either
 flag alone is an error. Cancellation exports and logs nothing. Armored
@@ -1544,7 +1552,7 @@ characters as in `akash`, confirms unless `--yes` is set, and derives its
 
 Show key details using the current context's keyring. Restore the Akash node
 command's show flags and multiple-key form. By default print name, type,
-address, and the existing hexadecimal public key. Showing keys is read-only
+address, and the typed Protobuf JSON public key. Showing keys is read-only
 and MUST NOT write an action log entry or save an ephemeral multisig key.
 
 | Flag | Short | Type | Default | Description |
@@ -1574,8 +1582,8 @@ address in both scalar and full output without changing key lookup or the
 underlying key. `--pubkey` emits raw Protobuf JSON in pretty output and that
 JSON text as a quoted scalar in JSON/YAML output. This preserves akt's scalar
 machine-output convention even though the node CLI rejects `--output` with
-`--address` or `--pubkey`. Full output retains its existing hexadecimal
-`pubkey` field for compatibility.
+`--address` or `--pubkey`. Full output and `--pubkey` carry the same typed
+public-key JSON; the flag only selects which information is printed.
 
 `--address` and `--pubkey` are mutually exclusive. `--device` requires an
 account prefix, a Ledger record with a stored BIP44 path, and no `--pubkey`.

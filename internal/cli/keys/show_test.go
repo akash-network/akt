@@ -247,6 +247,11 @@ func (kr showRecordKeyring) Key(name string) (*sdkkeyring.Record, error) {
 	return kr.Keyring.Key(name)
 }
 
+func (kr showRecordKeyring) List() ([]*sdkkeyring.Record, error) {
+	records, err := kr.Keyring.List()
+	return append(records, kr.record), err
+}
+
 func TestKeysShowLedger(t *testing.T) {
 	kr := testKeyring(t)
 	alice, _ := kr.Key("alice")
@@ -395,6 +400,8 @@ func TestKeysShowReadErrors(t *testing.T) {
 		{&sdkkeyring.Record{Name: "corrupt", PubKey: &codectypes.Any{}}, []string{"show", "corrupt"}, "get pubkey:"},
 		{&sdkkeyring.Record{Name: "corrupt", PubKey: &codectypes.Any{}}, []string{"show", "alice", "corrupt"}, "get pubkey for \"corrupt\":"},
 		{unregistered, []string{"show", "unregistered", "-p"}, "encode pubkey:"},
+		{unregistered, []string{"show", "unregistered"}, "encode pubkey:"},
+		{unregistered, []string{"list", "-o", "json"}, "encode pubkey for \"unregistered\":"},
 	} {
 		t.Run(strings.Join(tc.args, " "), func(t *testing.T) {
 			out, err := runKeysCommand(t, showRecordKeyring{Keyring: kr, record: tc.record}, tc.args...)

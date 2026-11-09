@@ -1,7 +1,6 @@
 package keys
 
 import (
-	"encoding/hex"
 	"fmt"
 	"io"
 
@@ -98,14 +97,19 @@ func showCmd(
 				}
 			}
 
+			var pubkeyJSON string
+			if !addressOnly {
+				encoded, err := codec.ProtoMarshalJSON(rec.PubKey, nil)
+				if err != nil {
+					return fmt.Errorf("encode pubkey: %w", err)
+				}
+				pubkeyJSON = string(encoded)
+			}
+
 			if addressOnly || pubkeyOnly {
 				value := address
 				if pubkeyOnly {
-					encoded, err := codec.ProtoMarshalJSON(rec.PubKey, nil)
-					if err != nil {
-						return fmt.Errorf("encode pubkey: %w", err)
-					}
-					value = string(encoded)
+					value = pubkeyJSON
 				}
 				if format != output.FormatTable {
 					return output.Fprint(cmd.OutOrStdout(), format, quotedMachineScalar(value))
@@ -122,7 +126,7 @@ func showCmd(
 				Name:    rec.Name,
 				Type:    rec.GetType().String(),
 				Address: address,
-				PubKey:  hex.EncodeToString(pk.Bytes()),
+				PubKey:  pubkeyJSON,
 			}
 			if format != output.FormatTable {
 				return output.Fprint(cmd.OutOrStdout(), format, details)

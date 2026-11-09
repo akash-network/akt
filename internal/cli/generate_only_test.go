@@ -9,7 +9,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/cosmos/cosmos-sdk/crypto/keys/multisig"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
+	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
@@ -47,6 +49,16 @@ func TestGenerateOnlyDoesNotContactNode(t *testing.T) {
 	_, err = kr.SaveOfflineKey("cheng", pub)
 	require.NoError(t, err)
 	address := sdk.AccAddress(pub.Address()).String()
+	constituents := make([]cryptotypes.PubKey, 5)
+	for i := range constituents {
+		constituents[i] = secp256k1.GenPrivKey().PubKey()
+	}
+	guardian := multisig.NewLegacyAminoPubKey(3, constituents)
+	_, err = kr.SaveMultisig("guardian", guardian)
+	require.NoError(t, err)
+	_, err = kr.SaveOfflineKey("imported-guardian", guardian)
+	require.NoError(t, err)
+	guardianAddress := sdk.AccAddress(guardian.Address()).String()
 
 	for _, tc := range []struct {
 		name        string
@@ -57,7 +69,49 @@ func TestGenerateOnlyDoesNotContactNode(t *testing.T) {
 		wantType    string
 		wantError   string
 		contextNode bool
+		wantSigner  string
+		defaultFees bool
 	}{
+		{
+			name:        "five-key multisig guardian with default fees",
+			args:        []string{"sink", "guardian-pause", "all"},
+			signer:      "guardian",
+			wantSigner:  guardianAddress,
+			wantGas:     "200000",
+			wantType:    "/akash.sink.v1.MsgGuardianPause",
+			contextNode: true,
+			defaultFees: true,
+		},
+		{
+			name:        "imported multisig guardian with default fees",
+			args:        []string{"sink", "guardian-pause", "all"},
+			signer:      "imported-guardian",
+			wantSigner:  guardianAddress,
+			wantGas:     "200000",
+			wantType:    "/akash.sink.v1.MsgGuardianPause",
+			contextNode: true,
+			defaultFees: true,
+		},
+		{
+			name:        "multisig address with default fees",
+			args:        []string{"sink", "guardian-pause", "all"},
+			signer:      guardianAddress,
+			wantSigner:  guardianAddress,
+			wantGas:     "200000",
+			wantType:    "/akash.sink.v1.MsgGuardianPause",
+			contextNode: true,
+			defaultFees: true,
+		},
+		{
+			name:        "address absent from keyring with default fees",
+			args:        []string{"sink", "guardian-pause", "all"},
+			signer:      "akash1aagclq778tq4ga0lke3wrd3mgw0rt3cc6670dp",
+			wantSigner:  "akash1aagclq778tq4ga0lke3wrd3mgw0rt3cc6670dp",
+			wantGas:     "200000",
+			wantType:    "/akash.sink.v1.MsgGuardianPause",
+			contextNode: true,
+			defaultFees: true,
+		},
 		{
 			name:        "guardian pause with public key and default gas",
 			args:        []string{"sink", "guardian-pause", "all"},
@@ -128,7 +182,10 @@ func TestGenerateOnlyDoesNotContactNode(t *testing.T) {
 				return chaincli.SetCmdClientContext(cmd, cctx)
 			}
 			args := append([]string{"--home", m.Root(), "tx"}, tc.args...)
-			args = append(args, "--generate-only", "--from", tc.signer, "--note", "offline payload", "--fees", "77uakt")
+			args = append(args, "--generate-only", "--from="+tc.signer, "--note", "offline payload")
+			if !tc.defaultFees {
+				args = append(args, "--fees", "77uakt")
+			}
 			if !tc.contextNode {
 				args = append(args, "--node", server.URL)
 			}
@@ -163,10 +220,18 @@ func TestGenerateOnlyDoesNotContactNode(t *testing.T) {
 			require.Equal(t, tc.wantType, tx.Body.Messages[0]["@type"])
 			require.Equal(t, "offline payload", tx.Body.Memo)
 			require.Equal(t, tc.wantGas, tx.AuthInfo.Fee.GasLimit)
-			require.Equal(t, "77uakt", tx.AuthInfo.Fee.Amount.String())
+			if tc.defaultFees {
+				require.Equal(t, "5000uakt", tx.AuthInfo.Fee.Amount.String())
+			} else {
+				require.Equal(t, "77uakt", tx.AuthInfo.Fee.Amount.String())
+			}
 			require.Empty(t, tx.Signatures)
 			if tc.args[0] == "sink" {
-				require.Equal(t, address, tx.Body.Messages[0]["guardian"])
+				wantSigner := tc.wantSigner
+				if wantSigner == "" {
+					wantSigner = address
+				}
+				require.Equal(t, wantSigner, tx.Body.Messages[0]["guardian"])
 				require.Equal(t, true, tx.Body.Messages[0]["deposits"])
 				require.Equal(t, true, tx.Body.Messages[0]["refunds"])
 			}

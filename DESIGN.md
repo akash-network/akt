@@ -859,6 +859,11 @@ regression fails before a device is contacted.
 Ledger display, QR, and ephemeral multisig options. Prefixes come from the SDK
 configuration, and Protobuf public-key output uses the SDK's encoding. The
 command keeps akt's existing full-output fields and JSON/YAML scalar behavior.
+Full `keys show` and `keys list` records encode `pubkey` as a string containing
+the node CLI's typed Protobuf JSON, with base64 key bytes, instead of raw hex.
+Pretty output displays the same complete JSON. Public-key-only and full output
+use the same encoding, so an extracted key can be imported with `--pubkey`
+without losing the algorithm or multisig structure.
 Multiple keys form an in-memory multisig record without changing the keyring
 or action log. Ledger address display is an injected boundary that defaults to
 the SDK's `ShowAddress`, allowing tests to verify the BIP44 path, public key,
