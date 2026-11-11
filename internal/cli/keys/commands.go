@@ -12,6 +12,7 @@ import (
 	flagdefs "pkg.akt.dev/akt/internal/flags"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
+	"github.com/cosmos/cosmos-sdk/codec"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"github.com/cosmos/cosmos-sdk/crypto/ledger"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -289,23 +290,23 @@ func listCmd(getKeyring func() (sdkkeyring.Keyring, error)) *cobra.Command {
 					continue
 				}
 
-				pk, err := rec.GetPubKey()
+				encoded, err := codec.ProtoMarshalJSON(rec.PubKey, nil)
 				if err != nil {
-					continue
+					return fmt.Errorf("encode pubkey for %q: %w", rec.Name, err)
 				}
 
-				pubkeyHex := hex.EncodeToString(pk.Bytes())
+				pubkeyJSON := string(encoded)
 				rows = append(rows, []string{
 					rec.Name,
 					rec.GetType().String(),
 					addr.String(),
-					pubkeyHex,
+					pubkeyJSON,
 				})
 				data = append(data, keyRow{
 					Name:    rec.Name,
 					Type:    rec.GetType().String(),
 					Address: addr.String(),
-					PubKey:  pubkeyHex,
+					PubKey:  pubkeyJSON,
 				})
 			}
 

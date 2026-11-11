@@ -9,7 +9,6 @@ import (
 	"context"
 	"debug/buildinfo"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -173,8 +172,15 @@ func TestKeysLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	publicKeyBytes, err := base64.StdEncoding.DecodeString(publicKey.Key)
-	if err != nil || publicKey.Type != "/cosmos.crypto.secp256k1.PubKey" || hex.EncodeToString(publicKeyBytes) != keyJSON["pubkey"] {
+	if err != nil || len(publicKeyBytes) != 33 || publicKey.Type != "/cosmos.crypto.secp256k1.PubKey" || strings.TrimSpace(pubkey) != keyJSON["pubkey"] {
 		t.Fatalf("--pubkey = %q, error %v", pubkey, err)
+	}
+	publicHome := t.TempDir()
+	initHome(t, publicHome)
+	mustRunAkt(t, publicHome, "context", "keys", "add", "alice-public", "--pubkey", keyJSON["pubkey"])
+	importedAddress := mustRunAkt(t, publicHome, "context", "keys", "show", "alice-public", "-a")
+	if strings.TrimSpace(importedAddress) != addr {
+		t.Fatalf("imported public-key address = %q, want %q", importedAddress, addr)
 	}
 	multi := mustRunAkt(t, home, "context", "keys", "show", "alice", "bob", "--multisig-threshold", "2", "-o", "json")
 	var preview map[string]string

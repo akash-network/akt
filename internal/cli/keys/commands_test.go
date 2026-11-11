@@ -4,7 +4,6 @@ import (
 	flagdefs "pkg.akt.dev/akt/internal/flags"
 
 	"bytes"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"os"
@@ -13,9 +12,14 @@ import (
 	"testing"
 
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
+	"github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	kmultisig "github.com/cosmos/cosmos-sdk/crypto/keys/multisig"
+	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
+	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256r1"
+	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/require"
 	"gopkg.in/yaml.v3"
 
 	aktcodec "pkg.akt.dev/akt/internal/codec"
@@ -25,29 +29,78 @@ import (
 
 const keysTestAddress = "akash1qypqxpq9qcrsszg2pvxq6rs0zqg3yyc5jepelx"
 
-func TestListPreservesPublicKey(t *testing.T) {
+func TestKeyOutputRoundTrip(t *testing.T) {
 	kr := testKeyring(t)
 	record, err := kr.Key("alice")
-	if err != nil {
-		t.Fatal(err)
-	}
+	require.NoError(t, err)
 	key, err := record.GetPubKey()
-	if err != nil {
-		t.Fatal(err)
+	require.NoError(t, err)
+	r1, err := secp256r1.GenPrivKey()
+	require.NoError(t, err)
+	publicKeys := map[string]cryptotypes.PubKey{
+		"alice":     key,
+		"ed25519":   ed25519.GenPrivKey().PubKey(),
+		"secp256r1": r1.PubKey(),
+		"guardian": kmultisig.NewLegacyAminoPubKey(2, []cryptotypes.PubKey{
+			key,
+			secp256k1.GenPrivKey().PubKey(),
+			secp256k1.GenPrivKey().PubKey(),
+		}),
 	}
-	want := hex.EncodeToString(key.Bytes())
+	for name, pk := range publicKeys {
+		if name != "alice" {
+			_, err := kr.SaveOfflineKey(name, pk)
+			require.NoError(t, err)
+		}
+	}
 	for _, format := range []string{"pretty", "json", "yaml"} {
-		t.Run(format, func(t *testing.T) {
-			for _, args := range [][]string{{"list", "-o", format}, {"show", "alice", "-o", format}} {
-				out, err := runKeysCommand(t, kr, args...)
-				if err != nil {
-					t.Fatal(err)
+		for _, command := range []string{"show", "list"} {
+			t.Run(command+"/"+format, func(t *testing.T) {
+				for name, pk := range publicKeys {
+					args := []string{command, "-o", format}
+					if command == "show" {
+						args = append(args, name)
+					}
+					out, actions, err := runKeysCommandRecorded(t, kr, args...)
+					require.NoError(t, err)
+					require.Empty(t, actions, "reading public keys must not log mutations")
+					want := publicKeyJSON(t, pk)
+					var encoded string
+					if format == "pretty" {
+						require.Contains(t, out, want)
+						encoded = want
+					} else {
+						var records []keyDetails
+						if command == "show" {
+							records = make([]keyDetails, 1)
+							require.NoError(t, yaml.Unmarshal([]byte(out), &records[0]))
+						} else {
+							require.NoError(t, yaml.Unmarshal([]byte(out), &records))
+							require.Len(t, records, len(publicKeys))
+						}
+						for _, rec := range records {
+							if rec.Name == name {
+								encoded = rec.PubKey
+								require.Equal(t, sdk.AccAddress(pk.Address()).String(), rec.Address)
+							}
+						}
+						require.JSONEq(t, want, encoded)
+					}
+					pubkeyOnly, err := runKeysCommand(t, kr, "show", name, "--pubkey", "-o", "pretty")
+					require.NoError(t, err)
+					require.JSONEq(t, pubkeyOnly, encoded)
+					target := sdkkeyring.NewInMemory(keyCodec())
+					_, err = runKeysCommand(t, target, "add", name, "--pubkey", encoded)
+					require.NoError(t, err)
+					imported, err := target.Key(name)
+					require.NoError(t, err)
+					actual, err := imported.GetPubKey()
+					require.NoError(t, err)
+					require.True(t, actual.Equals(pk), "public-key output changed its type or contents")
+					require.Equal(t, sdk.AccAddress(pk.Address()).String(), keyAddress(t, target, name))
 				}
-				if !strings.Contains(out, want) {
-					t.Errorf("%v omitted full public key %s: %s", args, want, out)
-				}
-			}
-		})
+			})
+		}
 	}
 }
 
