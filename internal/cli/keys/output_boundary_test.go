@@ -98,26 +98,12 @@ func TestKeyAddPromptFailuresDoNotCreateKeys(t *testing.T) {
 		wantError string
 	}{
 		{
-			name: "recovery destination",
-			args: func(*testing.T) []string {
-				return []string{"add", "recovered", "--recover"}
-			},
-			stderr: func(writeErr error) io.Writer { return keysFaultWriter{err: writeErr} },
-		},
-		{
 			name: "recovery empty input",
 			args: func(*testing.T) []string {
 				return []string{"add", "recovered", "--recover"}
 			},
 			stderr:    func(error) io.Writer { return &bytes.Buffer{} },
 			wantError: "read mnemonic",
-		},
-		{
-			name: "BIP39 destination",
-			args: func(t *testing.T) []string {
-				return []string{"add", "recovered", "--recover", "--source", mnemonicSource(t), "--interactive"}
-			},
-			stderr: func(writeErr error) io.Writer { return keysFaultWriter{err: writeErr} },
 		},
 		{
 			name: "BIP39 empty input",

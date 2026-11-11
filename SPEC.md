@@ -1511,6 +1511,27 @@ Ledger, or keyring-passphrase input. `--no-backup` suppresses mnemonic output
 for unattended creation. A name that is empty or whitespace-only is rejected
 before the keyring is opened.
 
+`--recover` reads one BIP39 mnemonic line from the command's stdin unless
+`--source` supplies a file. Like Akash node's `keys add --recover`, it prompts
+only when stdin is a terminal; piped or redirected input is consumed without
+a mnemonic prompt. A final line without a newline is accepted. Empty input,
+invalid mnemonics (including bad checksums), and read errors fail recovery
+without creating a key; a partial read must not hide an error other than EOF.
+Recovery never generates a replacement mnemonic when input is missing.
+
+Mnemonic, BIP39 passphrase, and keyring-password reads share one buffered
+input stream so reading one line cannot discard later piped lines.
+`--interactive` reads the optional BIP39 passphrase after the mnemonic and
+requires a matching repeat when it is nonempty, as Akash node does. These
+line-based secret inputs accept pipes even though interactive selection
+widgets require a TTY (§3.9.3). Prompts appear only on terminals, secrets are
+never echoed by the command or logged, and keyring password validation and
+retry limits remain enforced by the Cosmos SDK.
+
+```bash
+printf '%s\n' "$MNEMONIC" | akt context keys add alice --recover
+```
+
 When `--ledger` is selected, the command MUST pass the current Cosmos SDK
 Bech32 account-address prefix to `SaveLedgerKey`. It MUST NOT hardcode either
 `cosmos` or `akash`: the SDK configuration is authoritative for the active
@@ -4344,7 +4365,7 @@ Commands auto-detect whether a TTY is attached to stdin. When no TTY is present:
 | Multi-select | Uses all items (the default-selected state) |
 | Value input | Uses the default value; errors if no default and no flag override |
 
-The `--interactive` / `-i` flag does **not** override TTY detection for prompts. If there is no TTY, prompts cannot render regardless of `-i`. The `-i` flag only affects TUI-mode launch and workflow execution mode selection (see §3.1).
+The `--interactive` / `-i` flag does **not** override TTY detection for prompts. If there is no TTY, prompts cannot render regardless of `-i`. For TUI and workflow commands, `-i` affects launch and execution mode selection (see §3.1). The keys command's local `-i` instead requests line-based BIP39 mnemonic and passphrase input, which also accepts stdin without rendering prompts (§2.2.3).
 
 #### 3.9.4 Fork-vs-Edit-Parent Flow
 

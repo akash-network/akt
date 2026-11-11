@@ -200,6 +200,13 @@ func initClientContext(
 		ctx = context.Background()
 	}
 
+	// Retain the input buffer shared with the keyring during root setup.
+	in := cmd.InOrStdin()
+	if previous, ok := ctx.Value(sdkclient.ClientContextKey).(*sdkclient.Context); ok && previous.Input != nil {
+		in = previous.Input
+	}
+	cctx = cctx.WithInput(in)
+
 	// Set the RPC URI from the resolved network so that downstream
 	// PersistentPreRunE hooks (QueryPersistentPreRunE, TxPersistentPreRunE)
 	// can discover the endpoint via GetRPCURIFromContext.

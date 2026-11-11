@@ -357,8 +357,8 @@ func TestKeyRecoveryReadsConfiguredInput(t *testing.T) {
 	if err != nil {
 		t.Fatalf("recover from command stdin: %v", err)
 	}
-	if !strings.Contains(stderr, "Enter your mnemonic") {
-		t.Fatalf("recovery prompt = %q", stderr)
+	if stderr != "" {
+		t.Fatalf("piped recovery printed a prompt: %q", stderr)
 	}
 	var result map[string]any
 	if err := json.Unmarshal([]byte(stdout), &result); err != nil {

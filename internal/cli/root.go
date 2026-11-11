@@ -155,7 +155,7 @@ the deployment is created.`,
 				WithInterfaceRegistry(encCfg.InterfaceRegistry).
 				WithTxConfig(encCfg.TxConfig).
 				WithLegacyAmino(encCfg.Amino).
-				WithInput(os.Stdin).
+				WithInput(cmd.InOrStdin()).
 				WithAccountRetriever(authtypes.AccountRetriever{}).
 				WithHomeDir(aktctx.DefaultHome)
 
@@ -268,6 +268,7 @@ the deployment is created.`,
 				aktkeyring.ApplyOverrides(cfg.Keyrings, keyringBackend, v.GetString(flagdefs.FlagKeyringDir)),
 				encCfg.Codec,
 			)
+			krMgr.SetInput(initCctx.Input)
 
 			// 3. If an akt context is active, enrich the SDK client.Context
 			//    with context-specific values (chain-id, RPC, keyring, etc.).

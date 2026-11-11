@@ -5,11 +5,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"os"
 	"strconv"
 	"strings"
 
+	"github.com/cosmos/cosmos-sdk/client/input"
 	sdkkeyring "github.com/cosmos/cosmos-sdk/crypto/keyring"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
@@ -21,14 +21,16 @@ import (
 )
 
 func readKeyInput(cmd *cobra.Command, reader *bufio.Reader, prompt, field string) (string, error) {
-	if _, err := fmt.Fprint(cmd.ErrOrStderr(), prompt); err != nil {
-		return "", err
+	if file, ok := cmd.InOrStdin().(*os.File); ok && term.IsTerminal(int(file.Fd())) {
+		if _, err := fmt.Fprint(cmd.ErrOrStderr(), prompt); err != nil {
+			return "", err
+		}
 	}
-	line, err := reader.ReadString('\n')
-	if err != nil && (err != io.EOF || line == "") {
+	line, err := input.GetString("", reader)
+	if err != nil {
 		return "", fmt.Errorf("read %s: %w", field, err)
 	}
-	return strings.TrimSpace(line), nil
+	return line, nil
 }
 
 func confirmKeyAction(cmd *cobra.Command, reader *bufio.Reader, prompt string) (bool, error) {
