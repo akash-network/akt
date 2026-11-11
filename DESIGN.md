@@ -1606,6 +1606,14 @@ command implicitly imports keys from `~/.akash` or changes storage backends.
 The compatibility matrix in SPEC §2.2.3 distinguishes retained akt output and
 confirmation conventions from node-specific server logging flags.
 
+Key recovery follows Akash node's stdin contract: terminal input displays
+prompts, while pipes and redirected files provide mnemonic and passphrase
+lines without prompts. The command and keyring share the SDK client's buffered
+input so subsequent lines survive earlier reads. Recovery validates BIP39
+input, propagates read failures, and requires matching confirmation for a
+nonempty BIP39 passphrase before creating the account. EOF may terminate a
+nonempty final line; it never causes recovery to generate a new mnemonic.
+
 The output flag is an enum at the parsing boundary. A misspelling such as
 `-o josn` is a usage error; it must never fall through to pretty output. The
 same boundary owns the flag's help text so adopted commands cannot advertise a

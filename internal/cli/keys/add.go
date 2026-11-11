@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 
+	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	cryptocodec "github.com/cosmos/cosmos-sdk/crypto/codec"
@@ -21,6 +22,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/cosmos/go-bip39"
 	secp "github.com/decred/dcrd/dcrec/secp256k1/v4"
 	"github.com/spf13/cobra"
 
@@ -40,6 +42,7 @@ func addCmd(getKeyring func() (sdkkeyring.Keyring, error), recorder Recorder) *c
 		Args:  cobra.ExactArgs(1),
 		Example: `  akt context keys add alice
   akt context keys add alice --recover
+  printf '%s\n' "$MNEMONIC" | akt context keys add alice --recover
   akt context keys add signer --pubkey '{"@type":"/cosmos.crypto.secp256k1.PubKey","key":"..."}'
   akt context keys add team --multisig alice,signer --multisig-threshold 2
   akt context keys add ci --yes --no-backup`,
@@ -171,7 +174,13 @@ func addLocalKey(cmd *cobra.Command, kr sdkkeyring.Keyring, recorder Recorder, n
 	recoverKey, _ := cmd.Flags().GetBool(flagdefs.FlagRecover)
 	interactive, _ := cmd.Flags().GetBool(flagdefs.FlagInteractive)
 	source, _ := cmd.Flags().GetString(flagdefs.FlagMnemonicSource)
-	reader := bufio.NewReader(cmd.InOrStdin())
+	// The SDK input buffer is shared with keyring password reads. Standalone
+	// keys command trees use their configured Cobra input.
+	in := sdkclient.GetClientContextFromCmd(cmd).Input
+	if in == nil {
+		in = cmd.InOrStdin()
+	}
+	reader := bufio.NewReader(in)
 	var mnemonic string
 	var err error
 	if source != "" {
@@ -181,12 +190,19 @@ func addLocalKey(cmd *cobra.Command, kr sdkkeyring.Keyring, recorder Recorder, n
 		}
 		mnemonic = strings.TrimSpace(string(data))
 	} else if recoverKey || interactive {
-		mnemonic, err = readKeyInput(cmd, reader, "Enter your mnemonic (empty to generate): ", "mnemonic")
+		prompt := "Enter your bip39 mnemonic: "
+		if !recoverKey {
+			prompt = "Enter your bip39 mnemonic, or hit enter to generate one: "
+		}
+		mnemonic, err = readKeyInput(cmd, reader, prompt, "mnemonic")
 		if err != nil {
 			return err
 		}
 	}
 	generated := mnemonic == "" && !recoverKey && source == ""
+	if !generated && !bip39.IsMnemonicValid(mnemonic) {
+		return fmt.Errorf("invalid mnemonic")
+	}
 	if generated {
 		mnemonic, err = generate()
 		if err != nil {

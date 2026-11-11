@@ -55,7 +55,7 @@ func NewManager(root string, keyrings []aktctx.Keyring, cdc codec.Codec) *Manage
 	}
 }
 
-// SetInput overrides the reader used for password prompts. Primarily for testing.
+// SetInput sets the reader used for password prompts, shared with the commands.
 func (m *Manager) SetInput(r io.Reader) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

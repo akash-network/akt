@@ -2,6 +2,7 @@ package keys
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -141,7 +142,7 @@ func TestKeyImportExportAndMigrationFailuresAreReported(t *testing.T) {
 		"export", "alice", "--unarmored-hex", "--unsafe")
 	require.ErrorContains(t, err, "confirmation")
 	err = executeKeysBoundaryCommand(t, kr.Keyring, "no\n", io.Discard,
-		&keysSequencedWriter{err: wantErr, failAt: 2}, "export", "alice", "--unarmored-hex", "--unsafe")
+		&keysSequencedWriter{err: wantErr, failAt: 1}, "export", "alice", "--unarmored-hex", "--unsafe")
 	require.ErrorIs(t, err, wantErr)
 	err = executeKeysBoundaryCommand(t, kr.Keyring, "", keysFaultWriter{err: wantErr}, io.Discard,
 		"list-key-types", "--output", "pretty")
@@ -163,6 +164,7 @@ func TestMnemonicBoundariesPropagateGenerationAndEncodingFailures(t *testing.T) 
 	}
 	kr := testKeyring(t)
 	cmd := addCmd(func() (sdkkeyring.Keyring, error) { return kr, nil }, nil)
+	cmd.SetContext(context.Background())
 	err := addLocalKey(cmd, kr, nil, "new", "", nil, failGenerate)
 	require.ErrorIs(t, err, wantErr)
 	_, _, err = runKeysCommandWithInput(t, kr, "", "mnemonic", "--unsafe-entropy")
