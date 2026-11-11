@@ -1,1 +1,0 @@
-- Match the node CLI's typed Protobuf JSON public keys in full `context keys show` and `list` output. Preserve the JSON/YAML string field while including key types, base64 bytes, and multisig structure so displayed keys can be imported with `--pubkey`.

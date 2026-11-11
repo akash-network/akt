@@ -4,6 +4,18 @@
 
 ### Fixed
 
+<!-- changelog: keys-recover-stdin.fixed.md -->
+- Match Akash node's key recovery input handling: suppress prompts for piped
+  mnemonics and passphrases, share buffered input with keyring reads, and retain
+  mnemonic validation, input failures, and BIP39 passphrase confirmation.
+<!-- /changelog -->
+
+<!-- changelog: pubkey-output-compatibility.fixed.md -->
+- Match the node CLI's typed Protobuf JSON public keys in full `context keys show` and `list` output. Preserve the JSON/YAML string field while including key types, base64 bytes, and multisig structure so displayed keys can be imported with `--pubkey`.
+<!-- /changelog -->
+
+### Fixed
+
 <!-- changelog: generate-only-offline.fixed.md -->
 - Make `tx --generate-only` construct unsigned transactions without RPC discovery, account queries, or gas simulation, including Sink guardian pause. Use the fixed gas default for `auto`, preserve numeric gas limits, and reject conflicting simulation mode.
 <!-- /changelog -->
